@@ -23,7 +23,7 @@ import uvicorn
 import yaml
 
 from services.event_bus.bus import EventBus
-from services.signal_extractor.extractor import SignalExtractorPipeline
+from services.signal_extractor.pipeline import SignalExtractorPipeline
 from services.prediction_engine.engine import PredictionEngine
 from services.feedback_collector.collector import FeedbackCollector
 from services.rules_engine.engine import RulesEngine, install_default_rules
@@ -58,10 +58,10 @@ class LifeOS:
         self.rules_engine = RulesEngine(self.db)
         self.feedback_collector = FeedbackCollector(self.db, self.user_model_store)
         self.prediction_engine = PredictionEngine(
-            self.db, self.user_model_store, self.ai_engine
+            self.db, self.user_model_store
         )
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
-        self.task_manager = TaskManager(self.db, self.ai_engine)
+        self.task_manager = TaskManager(self.db)
 
         # Browser automation layer
         self.browser_orchestrator = BrowserOrchestrator(self.event_bus, self.db, self.config)
@@ -253,7 +253,7 @@ class LifeOS:
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors."""
-        connector_configs = self.config.get("connectors", {})
+        connector_configs = self.config.get("connectors") or {}
 
         if "proton_mail" in connector_configs:
             from connectors.proton_mail.connector import ProtonMailConnector

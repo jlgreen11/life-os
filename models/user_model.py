@@ -22,6 +22,16 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from models.core import (
+    AutonomyLevel,
+    BoundaryMode,
+    ConfidenceGate,
+    NotificationMode,
+    Priority,
+    Tone,
+    Verbosity,
+)
+
 
 # ===========================================================================
 # SIGNAL PROFILES — Raw behavioral signals extracted from interactions
@@ -555,4 +565,3 @@ class UserModel(BaseModel):
 
 # Need this import at the top for Episode
 import uuid
-from models.core import ConfidenceGate
