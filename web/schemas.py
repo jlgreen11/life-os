@@ -84,3 +84,58 @@ class FeedbackRequest(BaseModel):
 class PreferenceUpdate(BaseModel):
     key: str
     value: Any
+
+
+# ---------------------------------------------------------------------------
+# Context Events (from iOS app / mobile devices)
+# ---------------------------------------------------------------------------
+
+class ContextPayload(BaseModel):
+    """Payload for contextual data from mobile devices."""
+    # Location fields
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    altitude: Optional[float] = None
+    horizontal_accuracy: Optional[float] = None
+    speed: Optional[float] = None
+    place_name: Optional[str] = None
+    place_type: Optional[str] = None
+
+    # Device discovery fields
+    device_name: Optional[str] = None
+    device_type: Optional[str] = None
+    signal_strength: Optional[int] = None
+    is_connected: Optional[bool] = None
+
+    # Time context fields
+    local_time: Optional[str] = None
+    timezone: Optional[str] = None
+    day_of_week: Optional[str] = None
+    is_weekend: Optional[bool] = None
+
+    # Activity fields
+    activity: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class ContextMetadata(BaseModel):
+    """Device metadata from mobile client."""
+    device_model: Optional[str] = None
+    os_version: Optional[str] = None
+    battery_level: Optional[float] = None
+    network_type: Optional[str] = None
+    app_state: Optional[str] = None
+
+
+class ContextEventRequest(BaseModel):
+    """A single context event from the mobile app."""
+    type: str
+    source: str = "ios_app"
+    timestamp: Optional[str] = None
+    payload: ContextPayload
+    metadata: Optional[ContextMetadata] = None
+
+
+class ContextBatchRequest(BaseModel):
+    """A batch of context events from the mobile app."""
+    events: list[ContextEventRequest]

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Life OS</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- Location permissions -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Life OS uses your location to learn your routines, provide location-aware suggestions, and build your personal context model. All data stays on your private server.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Life OS uses your location to provide contextual AI assistance and learn your patterns. All data stays on your private server.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Life OS uses background location to passively learn your routines and provide proactive suggestions. All data stays on your private server.</string>
+
+	<!-- Bluetooth permissions -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Life OS discovers nearby Bluetooth devices to understand who is around you and learn social context patterns. Devices can be attributed to people you know.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Life OS scans for nearby Bluetooth devices to build context about your environment.</string>
+
+	<!-- Local network permissions -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Life OS discovers devices on your local network to understand your environment and which location you are at.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_services._dns-sd._udp</string>
+	</array>
+
+	<!-- Background modes -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>fetch</string>
+		<string>processing</string>
+		<string>bluetooth-central</string>
+	</array>
+
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.lifeos.context-refresh</string>
+		<string>com.lifeos.context-processing</string>
+	</array>
+</dict>
+</plist>

@@ -16,6 +16,8 @@ from fastapi.responses import HTMLResponse
 
 from web.schemas import (
     CommandRequest,
+    ContextBatchRequest,
+    ContextEventRequest,
     DraftRequest,
     FeedbackRequest,
     PreferenceUpdate,
@@ -374,6 +376,207 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.get("/api/browser/vault")
     async def browser_vault_sites():
         return {"sites": life_os.browser_orchestrator.get_vault_sites()}
+
+    # -------------------------------------------------------------------
+    # Context API (iOS / Mobile Device Context Ingestion)
+    # -------------------------------------------------------------------
+
+    @app.post("/api/context/event")
+    async def submit_context_event(req: ContextEventRequest):
+        """Ingest a single context event from a mobile device."""
+        ts = req.timestamp or datetime.now(timezone.utc).isoformat()
+
+        # Map context event type to internal event type
+        event_type_map = {
+            "context.location": "location.changed",
+            "context.device_nearby": "home.device.state_changed",
+            "context.time": "system.user.command",
+            "context.background_refresh": "system.connector.sync_complete",
+            "context.background_processing": "system.connector.sync_complete",
+        }
+
+        internal_type = event_type_map.get(req.type, "system.user.command")
+
+        event = {
+            "type": internal_type,
+            "source": req.source,
+            "timestamp": ts,
+            "priority": "silent",
+            "payload": req.payload.dict(exclude_none=True),
+            "metadata": {
+                "domain": "context",
+                "mobile_event_type": req.type,
+                **(req.metadata.dict(exclude_none=True) if req.metadata else {}),
+            },
+        }
+
+        # Store the event
+        event_id = life_os.event_store.store_event(event)
+
+        # Publish to event bus for signal extraction
+        try:
+            await life_os.event_bus.publish(f"lifeos.context.{req.type}", event)
+        except Exception:
+            pass  # Event bus may not be connected
+
+        # If location event, update places database
+        if req.type == "context.location" and req.payload.latitude is not None:
+            try:
+                _update_place_from_context(life_os, req.payload)
+            except Exception:
+                pass
+
+        # If device event, try to correlate with contacts
+        if req.type == "context.device_nearby" and req.payload.device_name:
+            try:
+                _correlate_device_with_contact(life_os, req.payload)
+            except Exception:
+                pass
+
+        return {"status": "received", "event_id": event_id}
+
+    @app.post("/api/context/batch")
+    async def submit_context_batch(req: ContextBatchRequest):
+        """Ingest a batch of context events from a mobile device."""
+        event_ids = []
+        for event_req in req.events:
+            ts = event_req.timestamp or datetime.now(timezone.utc).isoformat()
+            event = {
+                "type": "system.user.command",
+                "source": event_req.source,
+                "timestamp": ts,
+                "priority": "silent",
+                "payload": event_req.payload.dict(exclude_none=True),
+                "metadata": {
+                    "domain": "context",
+                    "mobile_event_type": event_req.type,
+                    **(event_req.metadata.dict(exclude_none=True) if event_req.metadata else {}),
+                },
+            }
+            event_id = life_os.event_store.store_event(event)
+            event_ids.append(event_id)
+
+            # Publish to event bus
+            try:
+                await life_os.event_bus.publish(f"lifeos.context.{event_req.type}", event)
+            except Exception:
+                pass
+
+        return {"status": "received", "count": len(event_ids), "event_ids": event_ids}
+
+    @app.get("/api/context/summary")
+    async def get_context_summary():
+        """Get a summary of recently collected context data."""
+        recent_events = life_os.event_store.get_events(
+            source="ios_app", limit=100
+        )
+
+        # Aggregate context data
+        locations = []
+        devices = []
+        for evt in recent_events:
+            payload = evt.get("payload", {})
+            meta = evt.get("metadata", {})
+            mobile_type = meta.get("mobile_event_type", "")
+
+            if mobile_type == "context.location" and payload.get("latitude"):
+                locations.append({
+                    "place": payload.get("place_name", "Unknown"),
+                    "lat": payload.get("latitude"),
+                    "lon": payload.get("longitude"),
+                    "timestamp": evt.get("timestamp"),
+                })
+            elif mobile_type == "context.device_nearby":
+                devices.append({
+                    "name": payload.get("device_name", "Unknown"),
+                    "type": payload.get("device_type"),
+                    "signal": payload.get("signal_strength"),
+                    "timestamp": evt.get("timestamp"),
+                })
+
+        # Unique locations and devices
+        unique_places = list({l["place"] for l in locations if l["place"] != "Unknown"})
+        unique_devices = list({d["name"] for d in devices if d["name"] != "Unknown"})
+
+        return {
+            "type": "context_summary",
+            "content": f"Context: {len(locations)} location updates, {len(devices)} device sightings. "
+                       f"Places: {', '.join(unique_places) or 'none tracked'}. "
+                       f"Devices: {', '.join(unique_devices) or 'none detected'}.",
+            "locations": locations[-10:],  # Last 10
+            "devices": devices[-10:],
+            "unique_places": unique_places,
+            "unique_devices": unique_devices,
+        }
+
+    @app.get("/api/context/places")
+    async def get_context_places():
+        """Get learned places from context data."""
+        with life_os.db.get_connection("entities") as conn:
+            rows = conn.execute(
+                "SELECT * FROM places ORDER BY visit_count DESC LIMIT 50"
+            ).fetchall()
+            return {"places": [dict(r) for r in rows]}
+
+    def _update_place_from_context(life_os_instance, payload):
+        """Update or create a place from mobile context location data."""
+        if not payload.latitude or not payload.longitude:
+            return
+
+        place_name = payload.place_name or "Unknown"
+        with life_os_instance.db.get_connection("entities") as conn:
+            # Find nearby existing place (within ~100m)
+            existing = conn.execute(
+                """SELECT id, name, visit_count FROM places
+                   WHERE ABS(latitude - ?) < 0.001 AND ABS(longitude - ?) < 0.001
+                   LIMIT 1""",
+                (payload.latitude, payload.longitude),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "UPDATE places SET visit_count = visit_count + 1, updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), existing["id"]),
+                )
+            else:
+                import uuid
+                conn.execute(
+                    """INSERT INTO places (id, name, latitude, longitude, place_type, visit_count, created_at)
+                       VALUES (?, ?, ?, ?, ?, 1, ?)""",
+                    (str(uuid.uuid4()), place_name, payload.latitude, payload.longitude,
+                     payload.place_type or "unknown", datetime.now(timezone.utc).isoformat()),
+                )
+
+    def _correlate_device_with_contact(life_os_instance, payload):
+        """Try to match a nearby device to a known contact."""
+        if not payload.device_name:
+            return
+
+        device_name = payload.device_name.lower()
+        with life_os_instance.db.get_connection("entities") as conn:
+            # Check if any contact has an alias matching the device name
+            contacts = conn.execute(
+                "SELECT id, name, aliases FROM contacts"
+            ).fetchall()
+
+            for contact in contacts:
+                name_lower = contact["name"].lower()
+                if name_lower in device_name or device_name in name_lower:
+                    # Found a potential match - store as a context observation
+                    life_os_instance.event_store.store_event({
+                        "type": "system.ai.suggestion",
+                        "source": "context_engine",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "priority": "silent",
+                        "payload": {
+                            "suggestion_type": "contact_nearby",
+                            "contact_id": contact["id"],
+                            "contact_name": contact["name"],
+                            "device_name": payload.device_name,
+                            "signal_strength": payload.signal_strength,
+                        },
+                    })
+                    break
 
     # -------------------------------------------------------------------
     # WebSocket

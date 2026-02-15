@@ -64,6 +64,13 @@ class EventType(str, Enum):
     HOME_ARRIVED = "home.arrived"
     HOME_DEPARTED = "home.departed"
 
+    # Mobile Context (iOS app)
+    CONTEXT_LOCATION = "context.location"
+    CONTEXT_DEVICE_NEARBY = "context.device_nearby"
+    CONTEXT_TIME = "context.time"
+    CONTEXT_ACTIVITY = "context.activity"
+    CONTEXT_BACKGROUND_REFRESH = "context.background_refresh"
+
     # System
     CONNECTOR_SYNC_COMPLETE = "system.connector.sync_complete"
     CONNECTOR_ERROR = "system.connector.error"
@@ -103,6 +110,9 @@ class SourceType(str, Enum):
     APPLE_HEALTH = "apple_health"
     GARMIN = "garmin"
     RSS = "rss"
+    IOS_APP = "ios_app"
+    IOS_APP_BACKGROUND = "ios_app_background"
+    CONTEXT_ENGINE = "context_engine"
     USER_INPUT = "user_input"
     AI_ENGINE = "ai_engine"
     RULES_ENGINE = "rules_engine"
