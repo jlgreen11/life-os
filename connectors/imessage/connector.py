@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -36,6 +37,10 @@ from typing import Any, Optional
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+# Recipient addresses must look like a phone number or email — reject
+# anything that could smuggle AppleScript via the ``participant`` string.
+_VALID_RECIPIENT = re.compile(r'^[+\w.@-]+$')
 
 # Apple Core Data epoch (2001-01-01 00:00:00 UTC) expressed as a Unix
 # timestamp.  macOS stores message timestamps as nanoseconds since this
@@ -165,72 +170,70 @@ class iMessageConnector(BaseConnector):
 
         uri = f"file:{self._db_path}?mode=ro"
         conn = sqlite3.connect(uri, uri=True)
-        conn.row_factory = sqlite3.Row
+        try:
+            conn.row_factory = sqlite3.Row
 
-        cursor_val = self.get_sync_cursor() or "0"
-        last_rowid = int(cursor_val)
+            cursor_val = self.get_sync_cursor() or "0"
+            last_rowid = int(cursor_val)
 
-        rows = conn.execute(_SYNC_QUERY, (last_rowid,)).fetchall()
+            rows = conn.execute(_SYNC_QUERY, (last_rowid,)).fetchall()
 
-        count = 0
-        new_last_rowid = last_rowid
+            count = 0
+            new_last_rowid = last_rowid
 
-        for row in rows:
-            text = row["text"]
-            if not text or text.strip() == "":
+            for row in rows:
+                text = row["text"]
+                if not text or text.strip() == "":
+                    new_last_rowid = row["ROWID"]
+                    continue
+
+                service = row["service"] or "iMessage"
+                if not self._include_sms and service.upper() == "SMS":
+                    new_last_rowid = row["ROWID"]
+                    continue
+
+                # Convert Apple nanosecond timestamp to Unix timestamp
+                apple_ns = row["date"] or 0
+                unix_ts = (apple_ns / 1e9) + APPLE_EPOCH_OFFSET
+                ts_iso = datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat()
+
+                is_from_me = bool(row["is_from_me"])
+                sender_id = row["sender_id"] or ""
+                is_group = bool(row["cache_roomnames"])
+                group_name = row["display_name"] or row["cache_roomnames"] or None
+
+                direction = "outbound" if is_from_me else "inbound"
+                event_type = "message.sent" if is_from_me else "message.received"
+
+                payload = {
+                    "message_id": row["guid"],
+                    "channel": "imessage",
+                    "direction": direction,
+                    "from_address": sender_id,
+                    "to_addresses": [],
+                    "body": text,
+                    "body_plain": text,
+                    "snippet": text[:150],
+                    "is_group": is_group,
+                    "group_name": group_name,
+                    "service_type": service,
+                    "timestamp": ts_iso,
+                }
+
+                metadata = {
+                    "related_contacts": [sender_id] if sender_id else [],
+                    "domain": self._classify_domain(group_name),
+                }
+
+                await self.publish_event(
+                    event_type, payload,
+                    priority="normal", metadata=metadata,
+                )
+
+                count += 1
                 new_last_rowid = row["ROWID"]
-                continue
-
-            service = row["service"] or "iMessage"
-            if not self._include_sms and service.upper() == "SMS":
-                new_last_rowid = row["ROWID"]
-                continue
-
-            # Convert Apple nanosecond timestamp to Unix timestamp
-            apple_ns = row["date"] or 0
-            unix_ts = (apple_ns / 1e9) + APPLE_EPOCH_OFFSET
-            ts_iso = datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat()
-
-            is_from_me = bool(row["is_from_me"])
-            sender_id = row["sender_id"] or ""
-            is_group = bool(row["cache_roomnames"])
-            group_name = row["display_name"] or row["cache_roomnames"] or None
-
-            direction = "outbound" if is_from_me else "inbound"
-            event_type = "message.sent" if is_from_me else "message.received"
-
-            payload = {
-                "message_id": row["guid"],
-                "channel": "imessage",
-                "direction": direction,
-                "from_address": sender_id,
-                "to_addresses": [],
-                "body": text,
-                "body_plain": text,
-                "snippet": text[:150],
-                "is_group": is_group,
-                "group_name": group_name,
-                "service_type": service,
-                "timestamp": ts_iso,
-            }
-
-            metadata = {
-                "related_contacts": [sender_id] if sender_id else [],
-                "domain": self._classify_domain(group_name),
-            }
-
-            await self.bus.publish(
-                event_type,
-                payload,
-                source=self.CONNECTOR_ID,
-                priority="normal",
-                metadata=metadata,
-            )
-
-            count += 1
-            new_last_rowid = row["ROWID"]
-
-        conn.close()
+        finally:
+            conn.close()
 
         if new_last_rowid > last_rowid:
             self.set_sync_cursor(str(new_last_rowid))
@@ -251,9 +254,18 @@ class iMessageConnector(BaseConnector):
             recipient = params["to"]
             message = params["message"]
 
+            if not _VALID_RECIPIENT.match(recipient):
+                raise ValueError(f"Invalid recipient format: {recipient}")
+
             # Escape characters that would break AppleScript string literals.
-            safe_message = message.replace("\\", "\\\\").replace('"', '\\"')
-            safe_recipient = recipient.replace("\\", "\\\\").replace('"', '\\"')
+            safe_message = (message
+                .replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\n", "\\n")
+                .replace("\r", "\\r"))
+            safe_recipient = (recipient
+                .replace("\\", "\\\\")
+                .replace('"', '\\"'))
 
             script = (
                 'tell application "Messages"\n'
@@ -276,9 +288,10 @@ class iMessageConnector(BaseConnector):
                 )
 
             # Publish a message.sent event for outbound tracking.
-            await self.bus.publish(
+            await self.publish_event(
                 "message.sent",
                 {
+                    "message_id": str(uuid.uuid4()),
                     "channel": "imessage",
                     "direction": "outbound",
                     "from_address": "me",
@@ -288,7 +301,6 @@ class iMessageConnector(BaseConnector):
                     "snippet": message[:150],
                     "service_type": "iMessage",
                 },
-                source=self.CONNECTOR_ID,
             )
 
             return {"status": "sent", "to": recipient}
@@ -324,9 +336,11 @@ class iMessageConnector(BaseConnector):
         try:
             uri = f"file:{self._db_path}?mode=ro"
             conn = sqlite3.connect(uri, uri=True)
-            conn.row_factory = sqlite3.Row
-            handles = conn.execute("SELECT id, service FROM handle").fetchall()
-            conn.close()
+            try:
+                conn.row_factory = sqlite3.Row
+                handles = conn.execute("SELECT id, service FROM handle").fetchall()
+            finally:
+                conn.close()
         except Exception as e:
             print(f"[imessage] Could not read handles: {e}")
             return
@@ -337,12 +351,13 @@ class iMessageConnector(BaseConnector):
             for h in handles:
                 identifier = h["id"]
                 service = h["service"] or "iMessage"
+                identifier_type = "email" if "@" in identifier else "phone"
 
                 # Check if this identifier already has a contact
                 row = econn.execute(
                     "SELECT contact_id FROM contact_identifiers "
-                    "WHERE identifier = ? AND identifier_type = 'phone'",
-                    (identifier,),
+                    "WHERE identifier = ? AND identifier_type = ?",
+                    (identifier, identifier_type),
                 ).fetchone()
 
                 if row:
@@ -372,9 +387,9 @@ class iMessageConnector(BaseConnector):
                     econn.execute(
                         """INSERT INTO contact_identifiers
                             (identifier, identifier_type, contact_id)
-                           VALUES (?, 'phone', ?)
+                           VALUES (?, ?, ?)
                            ON CONFLICT(identifier, identifier_type) DO UPDATE SET contact_id = ?""",
-                        (identifier, contact_id, contact_id),
+                        (identifier, identifier_type, contact_id, contact_id),
                     )
 
     # ------------------------------------------------------------------
