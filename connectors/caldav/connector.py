@@ -259,12 +259,152 @@ END:VCALENDAR"""
     async def _detect_conflicts(self):
         """Check for overlapping calendar events and alert.
 
-        Stub: in production this would query the event store for all events
-        in the sync window, sort them by start time, and flag any pairs whose
-        time ranges overlap.  Detected conflicts would be published as
-        ``calendar.conflict.detected`` events.
+        Queries all calendar events within the sync window from the event store,
+        sorts them by start time, and detects overlapping time ranges using a
+        sweep-line algorithm. For each detected conflict, publishes a
+        ``calendar.conflict.detected`` event containing both conflicting events'
+        details so downstream services (notification manager, daily briefing)
+        can alert the user.
+
+        Algorithm:
+            1. Fetch all calendar.event.created events from last 24 hours
+            2. Parse start_time and end_time from each event payload
+            3. Sort by start_time
+            4. For each event, check if it overlaps with any following event
+            5. Two events overlap if: start1 < end2 AND start2 < end1
+            6. Publish conflict events for each detected overlap
         """
-        pass
+        try:
+            # Query the event store for all calendar events in the recent window.
+            # We look back 1 day to catch any events that were just synced.
+            import json
+            from datetime import datetime, timedelta, timezone
+
+            since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+
+            # The EventStore is accessible via self.db (DatabaseManager dependency).
+            # We need to import EventStore and create an instance.
+            from storage.event_store import EventStore
+            event_store = EventStore(self.db)
+
+            # Fetch all calendar.event.created events from the last 24 hours.
+            calendar_events = event_store.get_events(
+                event_type="calendar.event.created",
+                since=since,
+                limit=1000  # Generous limit for active calendars
+            )
+
+            if len(calendar_events) < 2:
+                # Need at least 2 events to have a conflict
+                return
+
+            # Parse event times and build a sortable list.
+            # Each entry: (start_time, end_time, event_dict)
+            parsed_events = []
+            for evt in calendar_events:
+                try:
+                    # The payload is always a string in the database — deserialize it.
+                    # Note: EventStore.store_event() JSON-serializes the payload, so
+                    # we get it back as a string. If the original payload was already
+                    # a JSON string (double-encoded), we need to parse twice.
+                    raw_payload = evt["payload"]
+                    payload = json.loads(raw_payload)
+
+                    # If the result is still a string (double-encoded), parse again
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+
+                    # Extract ISO-format timestamps from payload
+                    start_str = payload.get("start_time")
+                    end_str = payload.get("end_time")
+
+                    if not start_str or not end_str:
+                        continue  # Skip events without time bounds
+
+                    # Parse ISO timestamps. fromisoformat handles most formats.
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(start_str)
+                    end_dt = datetime.fromisoformat(end_str)
+
+                    # Skip all-day events — they don't cause scheduling conflicts
+                    # in the traditional sense (you can have multiple all-day markers).
+                    if payload.get("is_all_day"):
+                        continue
+
+                    parsed_events.append((start_dt, end_dt, evt, payload))
+                except Exception as e:
+                    # Log but skip individual parse errors — don't let one
+                    # malformed event block conflict detection for the rest.
+                    print(f"[caldav] Event parse error in conflict detection: {e}")
+                    continue
+
+            if len(parsed_events) < 2:
+                return
+
+            # Sort by start time (earliest first)
+            parsed_events.sort(key=lambda x: x[0])
+
+            # Sweep-line algorithm: compare each event with every event that
+            # starts before it ends (potential overlap).
+            conflicts_detected = set()  # Track (id1, id2) pairs to avoid duplicates
+
+            for i in range(len(parsed_events)):
+                start1, end1, evt1, payload1 = parsed_events[i]
+
+                # Check all subsequent events that could overlap
+                for j in range(i + 1, len(parsed_events)):
+                    start2, end2, evt2, payload2 = parsed_events[j]
+
+                    # If the second event starts after the first one ends,
+                    # no overlap is possible (since list is sorted by start time)
+                    if start2 >= end1:
+                        break  # No need to check further events
+
+                    # Overlap condition: start1 < end2 AND start2 < end1
+                    # (Since we already know start2 < end1 from the break condition,
+                    # we just need to verify start1 < end2)
+                    if start1 < end2:
+                        # Conflict detected!
+                        event_pair = tuple(sorted([evt1["id"], evt2["id"]]))
+
+                        if event_pair not in conflicts_detected:
+                            conflicts_detected.add(event_pair)
+
+                            # Build conflict event payload
+                            conflict_payload = {
+                                "event1": {
+                                    "id": payload1.get("event_id"),
+                                    "title": payload1.get("title"),
+                                    "start_time": start1.isoformat(),
+                                    "end_time": end1.isoformat(),
+                                    "calendar_id": payload1.get("calendar_id"),
+                                    "location": payload1.get("location"),
+                                },
+                                "event2": {
+                                    "id": payload2.get("event_id"),
+                                    "title": payload2.get("title"),
+                                    "start_time": start2.isoformat(),
+                                    "end_time": end2.isoformat(),
+                                    "calendar_id": payload2.get("calendar_id"),
+                                    "location": payload2.get("location"),
+                                },
+                                "overlap_start": max(start1, start2).isoformat(),
+                                "overlap_end": min(end1, end2).isoformat(),
+                            }
+
+                            # Publish the conflict event so the notification manager
+                            # and default rules can fire alerts
+                            await self.publish_event(
+                                "calendar.conflict.detected",
+                                conflict_payload,
+                                priority="high",  # Conflicts are urgent
+                            )
+
+                            print(f"[caldav] Conflict detected: '{payload1.get('title')}' overlaps with '{payload2.get('title')}'")
+
+        except Exception as e:
+            # Fail-open: conflict detection errors should never crash the sync.
+            print(f"[caldav] Conflict detection error: {e}")
 
     async def health_check(self) -> dict[str, Any]:
         """Verify the CalDAV connection is still alive.
