@@ -43,18 +43,15 @@ def event_store(db):
 @pytest.fixture()
 def event_bus():
     """A mock EventBus for testing (no real NATS connection required)."""
+    from unittest.mock import AsyncMock, MagicMock
+
     class MockEventBus:
         """Minimal mock that satisfies UserModelStore telemetry calls."""
         def __init__(self):
             self.is_connected = True
-
-        async def publish(self, subject: str, data: dict, source: str = None, priority: str = None, metadata: dict = None):
-            """No-op publish for tests. Accepts optional priority and metadata parameters."""
-            pass
-
-        async def subscribe_all(self, handler):
-            """No-op subscribe for tests."""
-            pass
+            # Use AsyncMock so tests can verify publish was called
+            self.publish = AsyncMock()
+            self.subscribe_all = AsyncMock()
 
     return MockEventBus()
 
