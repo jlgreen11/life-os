@@ -48,8 +48,8 @@ def event_bus():
         def __init__(self):
             self.is_connected = True
 
-        async def publish(self, subject: str, data: dict, source: str = None):
-            """No-op publish for tests."""
+        async def publish(self, subject: str, data: dict, source: str = None, priority: str = None):
+            """No-op publish for tests. Accepts optional priority parameter."""
             pass
 
         async def subscribe_all(self, handler):
