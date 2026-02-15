@@ -1,0 +1,576 @@
+"""
+Tests for episodic memory creation.
+
+Verifies that the master event handler correctly converts events into
+episodic memory entries in the user_model.db episodes table.
+"""
+
+import json
+import uuid
+from datetime import datetime, timezone
+
+import pytest
+
+from models.core import EventType
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_email_received(db, event_store, user_model_store, event_bus):
+    """Test that email.received events create episodic memories."""
+    from main import LifeOS
+
+    # Create a test email event
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "gmail",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "alice@example.com",
+            "to_addresses": ["me@example.com"],
+            "subject": "Quarterly review meeting",
+            "body_plain": "Let's discuss the Q1 results next Tuesday.",
+            "message_id": "test-message-1",
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    # Initialize LifeOS with minimal config
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    # Manually call the episode creation method
+    await lifeos._create_episode(event)
+
+    # Verify episode was created
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        assert episode["event_id"] == event["id"]
+        assert episode["interaction_type"] == "communication"
+        assert episode["active_domain"] == "work"
+
+        # Verify contacts were extracted
+        contacts = json.loads(episode["contacts_involved"])
+        assert "alice@example.com" in contacts
+
+        # Verify summary is generated
+        assert "alice@example.com" in episode["content_summary"]
+        assert "Quarterly review" in episode["content_summary"]
+
+        # Verify full content is preserved
+        content_full = json.loads(episode["content_full"])
+        assert content_full["subject"] == "Quarterly review meeting"
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_email_sent(db, event_store, user_model_store, event_bus):
+    """Test that email.sent events create episodic memories."""
+    from main import LifeOS
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.EMAIL_SENT.value,
+        "source": "gmail",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "me@example.com",
+            "to_addresses": ["bob@company.com", "charlie@company.com"],
+            "subject": "Project update",
+            "body_plain": "The feature is now complete and ready for review.",
+            "message_id": "test-message-2",
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        assert episode["interaction_type"] == "communication"
+
+        # Verify multiple recipients are captured
+        contacts = json.loads(episode["contacts_involved"])
+        assert "bob@company.com" in contacts
+        assert "charlie@company.com" in contacts
+
+        # Verify summary shows "to" direction
+        assert "Email to" in episode["content_summary"]
+        assert "Project update" in episode["content_summary"]
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_calendar_event(db, event_store, user_model_store, event_bus):
+    """Test that calendar events create episodic memories."""
+    from main import LifeOS
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.CALENDAR_EVENT_CREATED.value,
+        "source": "caldav",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "title": "Team standup",
+            "start_time": "2026-02-16T09:00:00Z",
+            "end_time": "2026-02-16T09:30:00Z",
+            "location": "Conference Room A",
+            "attendees": ["alice@example.com", "bob@example.com"],
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        assert episode["interaction_type"] == "calendar"
+        assert episode["location"] == "Conference Room A"
+
+        # Verify summary contains event details
+        assert "Meeting:" in episode["content_summary"]
+        assert "Team standup" in episode["content_summary"]
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_task_completed(db, event_store, user_model_store, event_bus):
+    """Test that task completion creates episodic memories."""
+    from main import LifeOS
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.TASK_COMPLETED.value,
+        "source": "lifeos",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "title": "Fix authentication bug",
+            "task_id": "task-123",
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        assert episode["interaction_type"] == "task"
+
+        # Verify summary shows task completion
+        assert "Task completed:" in episode["content_summary"]
+        assert "Fix authentication bug" in episode["content_summary"]
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_financial_transaction(db, event_store, user_model_store, event_bus):
+    """Test that financial transactions create episodic memories."""
+    from main import LifeOS
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.TRANSACTION_NEW.value,
+        "source": "plaid",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "amount": 45.23,
+            "merchant": "Whole Foods",
+            "category": "groceries",
+            "account_id": "checking-123",
+        },
+        "metadata": {
+            "domain": "personal",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        assert episode["interaction_type"] == "financial"
+
+        # Verify summary shows transaction details
+        assert "Transaction:" in episode["content_summary"]
+        assert "$45.23" in episode["content_summary"]
+        assert "Whole Foods" in episode["content_summary"]
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_skips_system_events(db, event_store, user_model_store, event_bus):
+    """Test that system events do NOT create episodic memories."""
+    from main import LifeOS
+
+    # System events that should be skipped
+    system_events = [
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CONNECTOR_SYNC_COMPLETE.value,
+            "source": "gmail",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "low",
+            "payload": {},
+            "metadata": {},
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.RULE_TRIGGERED.value,
+            "source": "lifeos",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "low",
+            "payload": {},
+            "metadata": {},
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "type": "usermodel.prediction.generated",
+            "source": "lifeos",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "low",
+            "payload": {},
+            "metadata": {},
+        },
+    ]
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    for event in system_events:
+        await lifeos._create_episode(event)
+
+    # Verify NO episodes were created
+    with db.get_connection("user_model") as conn:
+        for event in system_events:
+            episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+            assert len(episodes) == 0, f"System event {event['type']} should not create an episode"
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_with_mood_context(db, event_store, user_model_store, event_bus):
+    """Test that episodes capture mood context when available."""
+    from main import LifeOS
+
+    # First, store a mood signal in the user model
+    mood_profile = {
+        "samples": [
+            {
+                "energy_level": 0.7,
+                "stress_level": 0.4,
+                "emotional_valence": 0.6,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+    }
+    user_model_store.update_signal_profile("mood_signals", mood_profile)
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "gmail",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "urgent@company.com",
+            "to_addresses": ["me@example.com"],
+            "subject": "URGENT: Production down",
+            "body_plain": "The production server is offline.",
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+
+        # Verify mood was captured
+        assert episode["inferred_mood"] is not None
+        inferred_mood = json.loads(episode["inferred_mood"])
+        assert inferred_mood["energy_level"] == 0.7
+        assert inferred_mood["stress_level"] == 0.4
+        assert inferred_mood["emotional_valence"] == 0.6
+        assert episode["energy_level"] == 0.7
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_message_events(db, event_store, user_model_store, event_bus):
+    """Test that message events (SMS, Slack, iMessage) create episodic memories."""
+    from main import LifeOS
+
+    message_events = [
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.MESSAGE_RECEIVED.value,
+            "source": "slack",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "from_address": "@alice",
+                "channel": "slack",
+                "body_plain": "Can you review the PR?",
+                "snippet": "Can you review the PR?",
+            },
+            "metadata": {"domain": "work"},
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.MESSAGE_SENT.value,
+            "source": "imessage",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "to_addresses": ["+1234567890"],
+                "channel": "imessage",
+                "body_plain": "Running 10 minutes late",
+            },
+            "metadata": {"domain": "personal"},
+        },
+    ]
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    for event in message_events:
+        await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes ORDER BY timestamp").fetchall()
+        assert len(episodes) == 2
+
+        # Verify first message (received)
+        episode1 = dict(episodes[0])
+        assert episode1["interaction_type"] == "communication"
+        assert "Message from @alice" in episode1["content_summary"]
+
+        # Verify second message (sent)
+        episode2 = dict(episodes[1])
+        assert episode2["interaction_type"] == "communication"
+        assert "Message to" in episode2["content_summary"]
+
+
+@pytest.mark.asyncio
+async def test_episodic_memory_location_events(db, event_store, user_model_store, event_bus):
+    """Test that location change events create episodic memories."""
+    from main import LifeOS
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.LOCATION_ARRIVED.value,
+        "source": "ios",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "low",
+        "payload": {
+            "location": "Office",
+            "latitude": 37.7749,
+            "longitude": -122.4194,
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        assert episode["interaction_type"] == "context"
+        assert episode["location"] == "Office"
+        assert "Location arrived at Office" in episode["content_summary"]
+
+
+@pytest.mark.asyncio
+async def test_episode_summary_truncation(db, event_store, user_model_store, event_bus):
+    """Test that episode summaries are truncated to 200 characters."""
+    from main import LifeOS
+
+    # Create an event with a very long subject line
+    long_subject = "A" * 250  # 250 characters
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "gmail",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "test@example.com",
+            "to_addresses": ["me@example.com"],
+            "subject": long_subject,
+            "body_plain": "Body text",
+        },
+        "metadata": {
+            "domain": "work",
+        },
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
+        assert len(episodes) == 1
+
+        episode = dict(episodes[0])
+        # Summary should be truncated to 200 chars
+        assert len(episode["content_summary"]) <= 200

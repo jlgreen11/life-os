@@ -15,8 +15,10 @@ Boots the entire system:
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,8 +45,21 @@ from services.insight_engine.engine import InsightEngine
 class LifeOS:
     """The main application orchestrator."""
 
-    def __init__(self, config_path: str = "config/settings.yaml"):
-        self.config = self._load_config(config_path)
+    def __init__(self, config_path: str = "config/settings.yaml",
+                 db=None, event_bus=None, event_store=None,
+                 user_model_store=None, config=None):
+        """Initialize Life OS.
+
+        For testing, dependencies can be injected directly via keyword args.
+        For production, pass only config_path and all dependencies will be
+        initialized from the config file.
+        """
+        # Allow config override for testing
+        if config is not None:
+            self.config = config
+        else:
+            self.config = self._load_config(config_path)
+
         # Used to signal all background tasks (prediction loop, etc.) to stop
         self.shutdown_event = asyncio.Event()
 
@@ -55,10 +70,12 @@ class LifeOS:
         # declares its dependencies as constructor args rather than importing
         # global singletons).
         data_dir = self.config.get("data_dir", "./data")
-        self.db = DatabaseManager(data_dir)
-        self.event_store = EventStore(self.db)
-        self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
-        self.user_model_store = UserModelStore(self.db, event_bus=self.event_bus)
+
+        # Allow dependency injection for testing
+        self.db = db if db is not None else DatabaseManager(data_dir)
+        self.event_store = event_store if event_store is not None else EventStore(self.db)
+        self.event_bus = event_bus if event_bus is not None else EventBus(self.config.get("nats_url", "nats://localhost:4222"))
+        self.user_model_store = user_model_store if user_model_store is not None else UserModelStore(self.db, event_bus=self.event_bus)
         self.vector_store = VectorStore(
             db_path=str(Path(data_dir) / "vectors"),
             model_name=self.config.get("embedding_model", "all-MiniLM-L6-v2"),
@@ -197,6 +214,16 @@ class LifeOS:
             except Exception as e:
                 print(f"Event store error: {e}")
 
+            # Stage 1.5 — Episodic Memory: convert each event into a memory
+            # episode for the user model's Layer 1 (Episodic) storage.
+            # This provides the raw interaction history that feeds semantic
+            # fact extraction and enables the system to answer "when did I
+            # last talk to X" or "what happened in my meeting yesterday".
+            try:
+                await self._create_episode(event)
+            except Exception as e:
+                print(f"Episode creation error: {e}")
+
             # Stage 2 — Learn: the signal extractor passively analyses the
             # event to update the user model (patterns, preferences, etc.).
             try:
@@ -290,6 +317,203 @@ class LifeOS:
                 source_event_id=event.get("id"),
                 priority=action.get("priority", "normal"),
             )
+
+    async def _create_episode(self, event: dict):
+        """Create an episodic memory from an event.
+
+        Episodic memory (Layer 1 of the user model) stores individual
+        interactions with full context — who was involved, what was discussed,
+        what the user's mood was at the time. This provides the foundation
+        for semantic fact extraction and enables queries like "when did I last
+        talk to X" or "what happened in my meeting yesterday".
+
+        Episodes are created for events that involve meaningful interaction:
+        - Communication (emails, messages, calls)
+        - Calendar events (meetings, appointments)
+        - Financial transactions (spending decisions)
+        - Task completions (work outcomes)
+        - Location changes (context shifts)
+
+        System-internal events (connector syncs, rule triggers, predictions)
+        are NOT converted to episodes — they're metadata, not memories.
+        """
+        event_type = event.get("type", "")
+        payload = event.get("payload", {})
+
+        # Filter: Only create episodes for user-facing interactions.
+        # System events (connector syncs, internal state changes) are
+        # excluded because they're not part of the user's lived experience.
+        episodic_event_types = {
+            "email.received", "email.sent",
+            "message.received", "message.sent",
+            "call.received", "call.missed",
+            "calendar.event.created", "calendar.event.updated",
+            "finance.transaction.new",
+            "task.created", "task.completed",
+            "location.changed", "location.arrived", "location.departed",
+            "context.location", "context.activity",
+            "system.user.command",
+        }
+
+        if event_type not in episodic_event_types:
+            return  # Skip non-episodic events
+
+        # Determine interaction type — maps fine-grained event types to
+        # coarse episodic categories for easier querying.
+        if "email" in event_type or "message" in event_type or "call" in event_type:
+            interaction_type = "communication"
+        elif "calendar" in event_type:
+            interaction_type = "calendar"
+        elif "finance" in event_type:
+            interaction_type = "financial"
+        elif "task" in event_type:
+            interaction_type = "task"
+        elif "location" in event_type or "context" in event_type:
+            interaction_type = "context"
+        elif event_type == "system.user.command":
+            interaction_type = "command"
+        else:
+            interaction_type = "other"
+
+        # Extract contacts involved from the event payload.
+        # For inbound communication, the contact is the sender.
+        # For outbound communication, the contacts are the recipients.
+        contacts_involved = []
+        if payload.get("from_address"):
+            contacts_involved.append(payload["from_address"])
+        if payload.get("to_addresses"):
+            contacts_involved.extend(payload["to_addresses"])
+
+        # Extract topics from existing event metadata if the signal extractor
+        # or AI engine has already processed this event. Topics help with
+        # semantic search ("show me all episodes about the renovation").
+        topics = payload.get("topics", [])
+
+        # Generate content summary: a concise (< 200 char) description of
+        # what happened, suitable for display in timeline UIs.
+        content_summary = self._generate_episode_summary(event)
+
+        # Store the full event payload as content_full for later retrieval
+        # when the user wants complete details ("show me that email again").
+        content_full = json.dumps(payload)
+
+        # Retrieve current mood from the user model if available — this
+        # provides emotional context that helps the system understand why
+        # the user made certain decisions at certain times.
+        inferred_mood = None
+        try:
+            mood_profile = self.user_model_store.get_signal_profile("mood_signals")
+            if mood_profile and mood_profile.get("data"):
+                # Use the most recent mood reading as the inferred state.
+                recent_moods = mood_profile["data"].get("samples", [])
+                if recent_moods:
+                    latest_mood = recent_moods[-1]
+                    inferred_mood = {
+                        "energy_level": latest_mood.get("energy_level", 0.5),
+                        "stress_level": latest_mood.get("stress_level", 0.3),
+                        "emotional_valence": latest_mood.get("emotional_valence", 0.5),
+                    }
+        except Exception:
+            pass  # Mood inference is optional — episode creation should not fail
+
+        # Determine the active domain (work, personal, health, finance) from
+        # event metadata if available. This helps segment episodes by life area.
+        active_domain = event.get("metadata", {}).get("domain", "personal")
+
+        # Build the episode dict matching the schema in user_model.db.
+        episode = {
+            "id": str(uuid.uuid4()),
+            "timestamp": event.get("timestamp"),
+            "event_id": event["id"],
+            "location": payload.get("location"),
+            "inferred_mood": inferred_mood,
+            "active_domain": active_domain,
+            "energy_level": inferred_mood.get("energy_level") if inferred_mood else None,
+            "interaction_type": interaction_type,
+            "content_summary": content_summary,
+            "content_full": content_full,
+            "contacts_involved": contacts_involved,
+            "topics": topics,
+            "entities": payload.get("entities", []),
+            "outcome": None,  # Will be populated later if task is completed
+            "user_satisfaction": None,  # Will be populated from explicit feedback
+            "embedding_id": None,  # Could link to vector store entry if needed
+        }
+
+        # Persist to the episodes table via UserModelStore.
+        self.user_model_store.store_episode(episode)
+
+    def _generate_episode_summary(self, event: dict) -> str:
+        """Generate a concise (< 200 char) summary for an episode.
+
+        The summary is human-readable and suitable for timeline displays.
+        It captures the essence of what happened without overwhelming detail.
+
+        Examples:
+        - "Email from john@company.com: Project update"
+        - "Meeting: Q1 Planning Session"
+        - "Task completed: Fix login bug"
+        - "Transaction: $45.23 at Whole Foods"
+        """
+        event_type = event.get("type", "")
+        payload = event.get("payload", {})
+
+        # Communication events: show direction + sender/recipient + subject
+        if event_type == "email.received":
+            from_addr = payload.get("from_address", "unknown")
+            subject = payload.get("subject", "No subject")
+            return f"Email from {from_addr}: {subject}"[:200]
+        elif event_type == "email.sent":
+            to_addrs = payload.get("to_addresses", [])
+            to_str = ", ".join(to_addrs[:2]) if to_addrs else "unknown"
+            subject = payload.get("subject", "No subject")
+            return f"Email to {to_str}: {subject}"[:200]
+        elif event_type == "message.received":
+            from_addr = payload.get("from_address", "unknown")
+            snippet = payload.get("snippet", payload.get("body_plain", ""))[:50]
+            return f"Message from {from_addr}: {snippet}"[:200]
+        elif event_type == "message.sent":
+            to_addrs = payload.get("to_addresses", [])
+            to_str = ", ".join(to_addrs[:2]) if to_addrs else "unknown"
+            snippet = payload.get("snippet", payload.get("body_plain", ""))[:50]
+            return f"Message to {to_str}: {snippet}"[:200]
+        elif "call" in event_type:
+            from_addr = payload.get("from_address", "unknown")
+            return f"Call from {from_addr}"[:200]
+
+        # Calendar events: show title + time
+        elif "calendar" in event_type:
+            title = payload.get("title", "Untitled event")
+            start_time = payload.get("start_time", "")
+            return f"Meeting: {title} at {start_time}"[:200]
+
+        # Tasks: show title + status
+        elif "task" in event_type:
+            title = payload.get("title", "Untitled task")
+            status = "completed" if event_type == "task.completed" else "created"
+            return f"Task {status}: {title}"[:200]
+
+        # Financial: show amount + merchant
+        elif "finance.transaction" in event_type:
+            amount = payload.get("amount", 0)
+            merchant = payload.get("merchant", "Unknown")
+            return f"Transaction: ${amount:.2f} at {merchant}"[:200]
+
+        # Location: show location name or coordinates
+        elif "location" in event_type:
+            location = payload.get("location", "Unknown location")
+            action = "arrived at" if "arrived" in event_type else "departed from" if "departed" in event_type else "changed to"
+            return f"Location {action} {location}"[:200]
+
+        # User commands: show the command text
+        elif event_type == "system.user.command":
+            command = payload.get("command", "Unknown command")
+            return f"Command: {command}"[:200]
+
+        # Fallback: generic summary
+        else:
+            snippet = payload.get("snippet", payload.get("subject", payload.get("title", "")))
+            return f"{event_type}: {snippet}"[:200]
 
     async def _embed_event(self, event: dict):
         """Embed event content for vector search."""
