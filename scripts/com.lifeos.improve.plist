@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lifeos.improve</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/jeremygreenwood/life-os/scripts/run-improvement.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>22</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/jeremygreenwood/life-os/data/improvement-runs/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/jeremygreenwood/life-os/data/improvement-runs/launchd-stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/jeremygreenwood/life-os</string>
+</dict>
+</plist>
