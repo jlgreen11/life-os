@@ -338,3 +338,38 @@ class UserModelStore:
             "samples_analyzed": template.get("samples_analyzed", 0),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
+
+    def resolve_prediction(self, prediction_id: str, was_accurate: bool,
+                          user_response: str = None):
+        """Mark a prediction as resolved with user feedback.
+
+        Records whether the prediction was accurate and any optional user
+        response text. This feedback drives the accuracy-based confidence
+        adjustment system in the prediction engine.
+
+        Args:
+            prediction_id: UUID of the prediction to resolve
+            was_accurate: True if the prediction was helpful/correct,
+                         False if it was unhelpful/incorrect
+            user_response: Optional free-text feedback from the user
+
+        The resolved_at timestamp is set automatically to track when the
+        user provided feedback. This enables queries like "predictions
+        resolved in the last 30 days" for computing rolling accuracy rates.
+        """
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                """UPDATE predictions
+                   SET was_accurate = ?,
+                       user_response = ?,
+                       resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                   WHERE id = ?""",
+                (int(was_accurate), user_response, prediction_id),
+            )
+
+        self._emit_telemetry("usermodel.prediction.resolved", {
+            "prediction_id": prediction_id,
+            "was_accurate": was_accurate,
+            "has_response": bool(user_response),
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+        })
