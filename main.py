@@ -42,6 +42,7 @@ from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
 from services.contact_classifier import classify_contact_type
 from services.email_classifier import is_marketing_email
+from services.insight_engine.source_weights import SourceWeightManager
 
 
 class LifeOS:
@@ -95,7 +96,11 @@ class LifeOS:
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store
         )
-        self.insight_engine = InsightEngine(self.db, self.user_model_store)
+        self.source_weight_manager = SourceWeightManager(self.db)
+        self.insight_engine = InsightEngine(
+            self.db, self.user_model_store,
+            source_weight_manager=self.source_weight_manager,
+        )
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
@@ -149,6 +154,9 @@ class LifeOS:
         # 1. Initialize databases
         print("[1/7] Initializing databases...")
         self.db.initialize_all()
+
+        # 1.5 — Seed default source weights (no-op if already populated)
+        self.source_weight_manager.seed_defaults()
 
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
@@ -287,6 +295,16 @@ class LifeOS:
                         )
             except Exception as e:
                 print(f"Feedback collector error: {e}")
+
+            # Stage 1.3 — Source Weight Tracking: classify the event into a
+            # source_key and increment its interaction counter.  This builds
+            # the data the AI drift algorithm needs to learn which sources
+            # the user cares about.
+            try:
+                source_key = self.source_weight_manager.classify_event(event)
+                self.source_weight_manager.record_interaction(source_key)
+            except Exception as e:
+                print(f"Source weight tracking error: {e}")
 
             # Stage 1.5 — Episodic Memory: convert each event into a memory
             # episode for the user model's Layer 1 (Episodic) storage.
@@ -759,7 +777,12 @@ class LifeOS:
             await asyncio.sleep(900)  # 15 minutes
 
     async def _insight_loop(self):
-        """Run the insight engine every hour."""
+        """Run the insight engine every hour.
+
+        Also runs the source weight bulk drift recalculation once per
+        cycle so that AI drift adjusts based on aggregate engagement
+        patterns, not just individual feedback events.
+        """
         while not self.shutdown_event.is_set():
             try:
                 insights = await self.insight_engine.generate_insights()
@@ -767,6 +790,13 @@ class LifeOS:
                     print(f"  InsightEngine: generated {len(insights)} new insights")
             except Exception as e:
                 print(f"Insight engine error: {e}")
+
+            # Recalculate AI drift based on engagement ratios
+            try:
+                self.source_weight_manager.bulk_recalculate_drift()
+            except Exception as e:
+                print(f"Source weight drift recalc error: {e}")
+
             await asyncio.sleep(3600)  # 1 hour
 
     async def _start_connectors(self):

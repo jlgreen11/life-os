@@ -25,6 +25,8 @@ from web.schemas import (
     RuleCreateRequest,
     SearchRequest,
     SetupSubmitRequest,
+    SourceWeightCreate,
+    SourceWeightUpdate,
     TaskCreateRequest,
     TaskUpdateRequest,
 )
@@ -742,16 +744,131 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/insights/{insight_id}/feedback")
     async def insight_feedback(insight_id: str, feedback: str = "dismissed"):
-        """Record user feedback on an insight (useful/dismissed)."""
+        """Record user feedback on an insight (useful/dismissed).
+
+        Also updates source weight engagement/dismissal counters so the
+        AI drift can learn from the user's response patterns.
+        """
         if feedback not in ("useful", "dismissed"):
-            from fastapi import HTTPException
             raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful' or 'dismissed'.")
+
+        # Look up the insight to find its source category for weight feedback
+        source_key = None
         with life_os.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                "SELECT category, entity FROM insights WHERE id = ?",
+                (insight_id,),
+            ).fetchone()
             conn.execute(
                 "UPDATE insights SET feedback = ? WHERE id = ?",
                 (feedback, insight_id),
             )
+
+        # Map insight category back to source_key for weight learning
+        if row:
+            category_to_source = {
+                "place": "location.visits",
+                "contact_gap": "messaging.direct",
+                "email_volume": "email.work",
+                "communication_style": "messaging.direct",
+                "relationships": "messaging.direct",
+                "cadence": "messaging.direct",
+                "activity_patterns": "email.work",
+                "location_patterns": "location.visits",
+            }
+            source_key = category_to_source.get(row["category"])
+
+        # Update source weight engagement/dismissal counters
+        if source_key and hasattr(life_os, "source_weight_manager"):
+            try:
+                if feedback == "useful":
+                    life_os.source_weight_manager.record_engagement(source_key)
+                else:
+                    life_os.source_weight_manager.record_dismissal(source_key)
+            except Exception:
+                pass  # Source weight feedback is non-critical
+
         return {"status": "recorded"}
+
+    # -------------------------------------------------------------------
+    # Source Weights (tunable insight engine)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/source-weights")
+    async def list_source_weights():
+        """Return all source weights with effective (user + AI drift) values.
+
+        Each entry contains:
+          - source_key: unique identifier (e.g. "email.marketing")
+          - user_weight: the user's explicit setting (0.0-1.0)
+          - ai_drift: the AI's learned adjustment (-0.3 to +0.3)
+          - effective_weight: clamped(user_weight + decayed_ai_drift)
+          - engagement/dismissal counts and rates
+        """
+        weights = life_os.source_weight_manager.get_all_weights()
+        grouped = {}
+        for w in weights:
+            cat = w["category"]
+            if cat not in grouped:
+                grouped[cat] = []
+            grouped[cat].append(w)
+        return {
+            "weights": weights,
+            "by_category": grouped,
+            "count": len(weights),
+        }
+
+    @app.get("/api/source-weights/{source_key:path}")
+    async def get_source_weight(source_key: str):
+        """Get detailed stats for a single source weight."""
+        stats = life_os.source_weight_manager.get_source_stats(source_key)
+        if not stats:
+            raise HTTPException(404, f"Source weight not found: {source_key}")
+        return stats
+
+    @app.put("/api/source-weights/{source_key:path}")
+    async def update_source_weight(source_key: str, req: SourceWeightUpdate):
+        """Set the user-controlled weight for a source.
+
+        The AI drift is preserved — the user is adjusting their base
+        preference, and the AI will continue to learn on top of it.
+        """
+        try:
+            updated = life_os.source_weight_manager.set_user_weight(
+                source_key, req.weight,
+            )
+            return {"status": "updated", "weight": updated}
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @app.post("/api/source-weights/{source_key:path}/reset-drift")
+    async def reset_source_drift(source_key: str):
+        """Reset the AI drift for a source back to zero.
+
+        Use this when the user changes their weight and wants the AI
+        to start learning fresh from the new baseline.
+        """
+        try:
+            updated = life_os.source_weight_manager.reset_ai_drift(source_key)
+            return {"status": "reset", "weight": updated}
+        except ValueError as e:
+            raise HTTPException(404, str(e))
+
+    @app.post("/api/source-weights")
+    async def create_source_weight(req: SourceWeightCreate):
+        """Create a custom source weight entry.
+
+        Allows users to define fine-grained source categories beyond
+        the defaults, e.g., "email.client_acme" for a specific sender.
+        """
+        result = life_os.source_weight_manager.add_source(
+            source_key=req.source_key,
+            category=req.category,
+            label=req.label,
+            description=req.description,
+            user_weight=req.weight,
+        )
+        return {"status": "created", "weight": result}
 
     # -------------------------------------------------------------------
     # Preferences
