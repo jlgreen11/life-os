@@ -23,21 +23,28 @@ class EventStore:
     def __init__(self, db: DatabaseManager):
         self.db = db
 
-    def store_event(self, event: dict) -> str:
-        """Store an event and return its ID.
+    def store_event(self, event: dict) -> bool:
+        """Store an event and return whether it was newly inserted.
 
         Appends a single event to the immutable log.  The caller is
         responsible for generating a unique ``id`` (typically a UUID).
         ``payload`` and ``metadata`` are serialized to JSON strings so
         that each event type can carry arbitrary structured data without
         requiring schema changes.
+
+        Uses INSERT OR IGNORE so that duplicate event IDs (from connector
+        re-syncs or NATS at-least-once redelivery) are silently dropped
+        instead of raising a constraint violation.
+
+        Returns:
+            True if the event was newly inserted, False if it already existed.
         """
         with self.db.get_connection("events") as conn:
-            # Parameterized query (? placeholders) prevents SQL injection by
-            # ensuring user-supplied values are never interpolated into the SQL
-            # string — SQLite handles escaping internally.
-            conn.execute(
-                """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, embedding_id)
+            # INSERT OR IGNORE: if a row with the same PRIMARY KEY (id)
+            # already exists, the insert is silently skipped.  This makes
+            # event storage idempotent and safe for at-least-once delivery.
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO events (id, type, source, timestamp, priority, payload, metadata, embedding_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event["id"],
@@ -50,7 +57,7 @@ class EventStore:
                     event.get("embedding_id"),
                 ),
             )
-        return event["id"]
+            return cursor.rowcount > 0
 
     def get_events(
         self,

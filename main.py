@@ -208,9 +208,15 @@ class LifeOS:
             """Every event flows through this pipeline."""
 
             # Stage 1 — Persist: store the raw event in the relational DB
-            # so we always have a durable audit trail.
+            # so we always have a durable audit trail.  store_event() uses
+            # INSERT OR IGNORE and returns False when the event ID already
+            # exists (duplicate from connector re-sync or NATS redelivery).
+            # In that case we skip all downstream processing to avoid
+            # double-counting signals, creating duplicate tasks, etc.
             try:
-                self.event_store.store_event(event)
+                is_new = self.event_store.store_event(event)
+                if not is_new:
+                    return  # Duplicate event — already processed
             except Exception as e:
                 print(f"Event store error: {e}")
 

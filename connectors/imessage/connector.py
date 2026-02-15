@@ -225,9 +225,11 @@ class iMessageConnector(BaseConnector):
                     "domain": self._classify_domain(group_name),
                 }
 
+                # Use Apple's Core Data GUID as the dedup_key.
                 await self.publish_event(
                     event_type, payload,
                     priority="normal", metadata=metadata,
+                    dedup_key=f"imessage:{row['guid']}",
                 )
 
                 count += 1

@@ -331,9 +331,12 @@ class SignalConnector(BaseConnector):
                     "domain": self._classify_domain(sender, group_info),
                 }
 
+                # Use sender + timestamp as dedup_key since Signal
+                # does not expose a dedicated message ID.
                 await self.publish_event(
                     "message.received", payload,
                     priority="normal", metadata=metadata,
+                    dedup_key=f"signal:{sender}:{timestamp_ms}",
                 )
                 count += 1
 

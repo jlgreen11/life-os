@@ -115,22 +115,33 @@ class EventBus:
 
     async def publish(self, event_type: str, payload: dict[str, Any],
                       source: str = "system", priority: str = "normal",
-                      metadata: Optional[dict] = None) -> str:
+                      metadata: Optional[dict] = None,
+                      dedup_key: Optional[str] = None) -> str:
         """
         Publish an event to the bus.
-        
+
         Args:
             event_type: Dotted event type (e.g., "email.received")
             payload: Event data
             source: Which connector/service is publishing
             priority: Event priority level
             metadata: Optional metadata (contacts, domain, etc.)
-            
+            dedup_key: Optional content-based key for deduplication. When
+                provided, a deterministic event ID is derived via UUID5 so
+                that re-publishing the same logical event produces the same
+                ID, and the key is sent as the Nats-Msg-Id header to
+                leverage the JetStream deduplication window.
+
         Returns:
             The event ID
         """
-        # Generate a unique event ID (UUID4) for deduplication and tracing.
-        event_id = str(uuid.uuid4())
+        # When a dedup_key is provided, generate a deterministic event ID so
+        # that re-publishing the same content (e.g. re-fetched email) produces
+        # the same ID and is caught by downstream INSERT OR IGNORE.
+        if dedup_key:
+            event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, dedup_key))
+        else:
+            event_id = str(uuid.uuid4())
 
         # --- Event envelope ---
         # Every event on the bus follows this standard envelope schema.
@@ -151,9 +162,17 @@ class EventBus:
         subject = f"lifeos.{event_type}"
         # Serialize the event envelope to JSON bytes for NATS transport.
         data = json.dumps(event).encode()
+
+        # When a dedup_key is provided, set the Nats-Msg-Id header so the
+        # JetStream deduplication window (configured at stream creation)
+        # silently drops duplicate publishes within the window.
+        headers = None
+        if dedup_key:
+            headers = {"Nats-Msg-Id": dedup_key}
+
         # JetStream publish provides at-least-once delivery: the message is
         # persisted to the stream before the publish ack is returned.
-        await self._js.publish(subject, data)
+        await self._js.publish(subject, data, headers=headers)
 
         return event_id
 

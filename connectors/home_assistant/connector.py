@@ -138,8 +138,13 @@ class HomeAssistantConnector(BaseConnector):
                             "last_changed": state.get("last_changed"),
                         }
 
+                        # Use entity_id + last_changed as the dedup_key
+                        # so the same state transition is not re-published
+                        # if the in-memory cache is lost on restart.
+                        last_changed = state.get("last_changed", "")
                         await self.publish_event(
                             event_type, payload, priority=priority,
+                            dedup_key=f"ha:{entity_id}:{last_changed}" if last_changed else None,
                         )
                         count += 1
 
