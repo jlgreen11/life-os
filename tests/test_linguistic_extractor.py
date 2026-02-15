@@ -60,22 +60,22 @@ def test_can_process_voice_command(linguistic_extractor):
     assert linguistic_extractor.can_process(event) is True
 
 
-def test_rejects_inbound_email(linguistic_extractor):
-    """Verify that received emails are ignored (they reflect sender's style, not user's)."""
+def test_accepts_inbound_email(linguistic_extractor):
+    """Verify that received emails are processed for per-contact incoming style profiling."""
     event = {
         "type": EventType.EMAIL_RECEIVED.value,
         "payload": {"body": "Hello world"},
     }
-    assert linguistic_extractor.can_process(event) is False
+    assert linguistic_extractor.can_process(event) is True
 
 
-def test_rejects_inbound_message(linguistic_extractor):
-    """Verify that received messages are ignored."""
+def test_accepts_inbound_message(linguistic_extractor):
+    """Verify that received messages are processed for per-contact incoming style profiling."""
     event = {
         "type": EventType.MESSAGE_RECEIVED.value,
         "payload": {"body": "Hello world"},
     }
-    assert linguistic_extractor.can_process(event) is False
+    assert linguistic_extractor.can_process(event) is True
 
 
 # ---------------------------------------------------------------------------
@@ -607,3 +607,98 @@ def test_handles_no_sentences(linguistic_extractor):
     signals = linguistic_extractor.extract(event)
     # Should still process even without explicit sentence boundaries
     assert len(signals) == 1
+
+
+# ---------------------------------------------------------------------------
+# Inbound Message Analysis Tests
+# ---------------------------------------------------------------------------
+
+
+def test_inbound_email_stores_to_inbound_profile(linguistic_extractor, user_model_store):
+    """Inbound messages should populate the linguistic_inbound profile, not the outbound one."""
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "payload": {
+            "body": "Dear colleague, regarding the quarterly report, I need your input.",
+            "from_address": "bob@clientcorp.com",
+            "to_addresses": ["me@example.com"],
+        },
+    }
+
+    signals = linguistic_extractor.extract(event)
+    assert len(signals) == 1
+    assert signals[0]["direction"] == "inbound"
+    assert signals[0]["contact_id"] == "bob@clientcorp.com"
+
+    # Inbound profile should be populated
+    inbound = user_model_store.get_signal_profile("linguistic_inbound")
+    assert inbound is not None
+    assert "bob@clientcorp.com" in inbound["data"]["per_contact"]
+    assert len(inbound["data"]["per_contact"]["bob@clientcorp.com"]) == 1
+
+    # Outbound profile should NOT be affected
+    outbound = user_model_store.get_signal_profile("linguistic")
+    assert outbound is None
+
+
+def test_inbound_message_builds_per_contact_averages(linguistic_extractor, user_model_store):
+    """Multiple inbound messages from the same contact should produce running averages."""
+    for body in [
+        "Dear team, regarding the budget, please review accordingly.",
+        "Furthermore, the quarterly projections require your attention sincerely.",
+    ]:
+        event = {
+            "type": EventType.MESSAGE_RECEIVED.value,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": body,
+                "from_address": "+15551234567",
+            },
+        }
+        linguistic_extractor.extract(event)
+
+    inbound = user_model_store.get_signal_profile("linguistic_inbound")
+    averages = inbound["data"]["per_contact_averages"]["+15551234567"]
+    assert averages["samples_count"] == 2
+    # Both messages are formal → formality average should be > 0.5
+    assert averages["formality"] > 0.5
+
+
+def test_outbound_still_uses_original_profile(linguistic_extractor, user_model_store):
+    """Outbound messages should still go to the 'linguistic' profile, unchanged."""
+    event = {
+        "type": EventType.EMAIL_SENT.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "payload": {
+            "body": "Hey yeah this is totally casual btw lol haha",
+            "to_addresses": ["friend@example.com"],
+        },
+    }
+
+    signals = linguistic_extractor.extract(event)
+    assert signals[0]["direction"] == "outbound"
+
+    outbound = user_model_store.get_signal_profile("linguistic")
+    assert outbound is not None
+    assert len(outbound["data"]["samples"]) == 1
+
+    # Inbound profile should NOT be affected
+    inbound = user_model_store.get_signal_profile("linguistic_inbound")
+    assert inbound is None
+
+
+def test_inbound_contact_resolved_from_from_address(linguistic_extractor):
+    """Inbound signals should use from_address as contact_id, not to_addresses."""
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "payload": {
+            "body": "Hello there, just checking in on the project status update.",
+            "from_address": "alice@example.com",
+            "to_addresses": ["me@example.com"],
+        },
+    }
+
+    signals = linguistic_extractor.extract(event)
+    assert signals[0]["contact_id"] == "alice@example.com"
