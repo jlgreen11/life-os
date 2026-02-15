@@ -207,9 +207,16 @@ class LifeOS:
             # Stage 3 — React: the rules engine evaluates deterministic,
             # user-defined rules and returns a list of actions to execute
             # (notify, tag, suppress, create_task, etc.).
+            #
+            # Suppress actions are executed first so they can set the
+            # _suppressed flag before any notify actions fire.  This
+            # prevents a race where a notify action from one rule runs
+            # before the suppress action from another rule.
             try:
                 actions = await self.rules_engine.evaluate(event)
-                for action in actions:
+                suppress_actions = [a for a in actions if a["type"] == "suppress"]
+                other_actions = [a for a in actions if a["type"] != "suppress"]
+                for action in suppress_actions + other_actions:
                     await self._execute_rule_action(action, event)
             except Exception as e:
                 print(f"Rules engine error: {e}")
@@ -233,10 +240,22 @@ class LifeOS:
         await self.event_bus.subscribe_all(master_event_handler)
 
     async def _execute_rule_action(self, action: dict, event: dict):
-        """Execute an action triggered by the rules engine."""
+        """Execute an action triggered by the rules engine.
+
+        Supported action types:
+            notify      — create a user-visible notification (skipped if suppressed)
+            tag         — attach a label to the event in event_tags
+            suppress    — flag the event so it is hidden from notifications
+            create_task — auto-create a task linked to the source event
+        """
         action_type = action.get("type")
 
         if action_type == "notify":
+            # Respect the suppress flag set by earlier suppress actions — if
+            # the event was suppressed (by this or another rule), skip the
+            # notification entirely.
+            if event.get("_suppressed"):
+                return
             await self.notification_manager.create_notification(
                 title=f"Rule: {action.get('rule_name', 'Unknown')}",
                 body=event.get("payload", {}).get("snippet", ""),
@@ -245,14 +264,25 @@ class LifeOS:
                 domain=event.get("metadata", {}).get("domain"),
             )
         elif action_type == "tag":
-            # Store tag on the event
-            pass  # TODO [FLAGGED]: implement event tagging
+            # Persist the tag in the event_tags table (separate from the
+            # append-only events table to preserve its immutability).
+            self.event_store.add_tag(
+                event_id=event["id"],
+                tag=action.get("value", ""),
+                rule_id=action.get("rule_id"),
+            )
         elif action_type == "suppress":
-            # Mark event as suppressed so downstream stages (especially
-            # NotificationManager) know not to surface it to the user.
-            # Currently a no-op; the suppress flag should be persisted on the
-            # event record once event-tagging (above) is implemented.
-            pass
+            # Two-part suppression:
+            #   1. In-memory flag so downstream pipeline stages (task extraction,
+            #      embedding, other rule actions) can check event["_suppressed"].
+            #   2. Persistent tag so the web UI and search can filter out suppressed
+            #      events and the audit trail is preserved.
+            event["_suppressed"] = True
+            self.event_store.add_tag(
+                event_id=event["id"],
+                tag="system:suppressed",
+                rule_id=action.get("rule_id"),
+            )
         elif action_type == "create_task":
             await self.task_manager.create_task(
                 title=action.get("title", "Auto-created task"),
