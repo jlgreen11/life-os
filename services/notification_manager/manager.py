@@ -81,6 +81,13 @@ class NotificationManager:
                 priority=priority,
             )
 
+        # Mark prediction as surfaced if this notification came from a prediction.
+        # This enables the accuracy feedback loop — only surfaced predictions count
+        # toward accuracy metrics (we can't measure accuracy for predictions the
+        # user never saw).
+        if domain == "prediction" and source_event_id:
+            self._mark_prediction_surfaced(source_event_id)
+
         # --- Delivery decision flow ---
         # Three possible outcomes:
         #   "immediate" -> push to the user right now (via event bus)
@@ -283,6 +290,26 @@ class NotificationManager:
     async def mark_read(self, notif_id: str):
         """Mark notification as read."""
         self._mark_status(notif_id, "read")
+
+    def _mark_prediction_surfaced(self, prediction_id: str):
+        """Mark a prediction as surfaced (shown to the user via notification).
+
+        This is critical for the accuracy feedback loop. Only predictions that
+        were actually surfaced to the user should be included in accuracy
+        calculations — we can't measure whether a prediction was "accurate"
+        if the user never saw it.
+
+        This method is called when a notification is created from a prediction,
+        regardless of whether it's delivered immediately, batched, or suppressed
+        by quiet hours. The key distinction is:
+        - was_surfaced = 1: A notification was created (user *will* see it)
+        - was_surfaced = 0: Filtered by confidence gates, never shown at all
+        """
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                "UPDATE predictions SET was_surfaced = 1 WHERE id = ?",
+                (prediction_id,),
+            )
 
     def _update_linked_prediction(self, notif_id: str, was_accurate: bool):
         """If this notification came from a prediction, update prediction accuracy.
