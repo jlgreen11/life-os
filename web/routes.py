@@ -216,7 +216,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         # --- Tasks ---
         if topic in (None, "inbox", "tasks"):
             try:
-                tasks = life_os.task_manager.get_tasks(status="pending", limit=limit)
+                tasks = life_os.task_manager.get_pending_tasks(limit=limit)
                 for t in tasks:
                     items.append({
                         "id": t.get("id"),
@@ -312,7 +312,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/tasks")
     async def list_tasks(status: str = "pending", limit: int = 50):
-        tasks = life_os.task_manager.get_tasks(status=status, limit=limit)
+        tasks = life_os.task_manager.get_pending_tasks(limit=limit)
         return {"tasks": tasks, "count": len(tasks)}
 
     @app.post("/api/tasks")
