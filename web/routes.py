@@ -174,6 +174,119 @@ def register_routes(app: FastAPI, life_os) -> None:
             return {"type": "ai_response", "content": response}
 
     # -------------------------------------------------------------------
+    # Dashboard Feed (unified, priority-sorted view)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/dashboard/feed")
+    async def dashboard_feed(topic: Optional[str] = None, limit: int = 50):
+        """Unified feed for the dashboard. Aggregates notifications, tasks,
+        and recent events into a single priority-sorted list.
+
+        Query params:
+            topic: Filter by category — inbox (all), messages, email,
+                   calendar, tasks, insights, system. Default: inbox.
+            limit: Max items to return. Default: 50.
+        """
+        items = []
+
+        # --- Notifications (all topics except 'system') ---
+        if topic in (None, "inbox", "messages", "email"):
+            try:
+                notifications = life_os.notification_manager.get_pending(limit=limit)
+                for n in notifications:
+                    source_type = n.get("source", "")
+                    if topic == "messages" and "message" not in source_type and "signal" not in source_type:
+                        continue
+                    if topic == "email" and "email" not in source_type:
+                        continue
+                    items.append({
+                        "id": n.get("id"),
+                        "kind": "notification",
+                        "channel": "message" if "message" in source_type or "signal" in source_type else "email" if "email" in source_type else "system",
+                        "title": n.get("title", ""),
+                        "body": n.get("body", ""),
+                        "priority": n.get("priority", "normal"),
+                        "timestamp": n.get("created_at", n.get("timestamp", "")),
+                        "source": source_type,
+                        "metadata": n.get("metadata", {}),
+                    })
+            except Exception:
+                pass
+
+        # --- Tasks ---
+        if topic in (None, "inbox", "tasks"):
+            try:
+                tasks = life_os.task_manager.get_tasks(status="pending", limit=limit)
+                for t in tasks:
+                    items.append({
+                        "id": t.get("id"),
+                        "kind": "task",
+                        "channel": "task",
+                        "title": t.get("title", ""),
+                        "body": t.get("description", ""),
+                        "priority": t.get("priority", "normal"),
+                        "timestamp": t.get("created_at", ""),
+                        "source": t.get("domain", ""),
+                        "metadata": {"due_date": t.get("due_date"), "domain": t.get("domain")},
+                    })
+            except Exception:
+                pass
+
+        # --- Recent events (email, messages, calendar) ---
+        if topic in (None, "inbox", "messages", "email", "calendar"):
+            try:
+                event_types = []
+                if topic in (None, "inbox", "email"):
+                    event_types.append("email.received")
+                if topic in (None, "inbox", "messages"):
+                    event_types.append("message.received")
+                if topic in (None, "inbox", "calendar"):
+                    event_types.extend(["calendar.event.created", "calendar.event.updated", "calendar.event.reminder"])
+
+                for et in event_types:
+                    events = life_os.event_store.get_events(event_type=et, limit=20)
+                    for ev in events:
+                        payload = ev.get("payload", {}) if isinstance(ev.get("payload"), dict) else {}
+                        channel = "email" if "email" in et else "message" if "message" in et else "calendar"
+                        items.append({
+                            "id": ev.get("id"),
+                            "kind": "event",
+                            "channel": channel,
+                            "title": payload.get("subject", payload.get("title", et)),
+                            "body": payload.get("snippet", payload.get("body", payload.get("description", "")))[:200],
+                            "priority": "high" if payload.get("urgency", 0) > 0.7 else "normal",
+                            "timestamp": ev.get("timestamp", ""),
+                            "source": ev.get("source", ""),
+                            "metadata": {
+                                "sender": payload.get("sender", payload.get("from", "")),
+                                "sentiment": payload.get("sentiment"),
+                                "action_items": payload.get("action_items", []),
+                                "attendees": payload.get("attendees", []),
+                                "location": payload.get("location", ""),
+                                "start_time": payload.get("start_time", payload.get("start", "")),
+                                "end_time": payload.get("end_time", payload.get("end", "")),
+                            },
+                        })
+            except Exception:
+                pass
+
+        # --- Sort by priority (critical > high > normal > low), then newest first ---
+        priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
+        items.sort(key=lambda x: (
+            priority_order.get(x["priority"], 2),
+            "" if x.get("timestamp") else "z",  # items with timestamps before those without
+        ))
+        # Within same priority, sort by timestamp descending (newest first)
+        from itertools import groupby
+        sorted_items = []
+        for _, group in groupby(items, key=lambda x: priority_order.get(x["priority"], 2)):
+            group_list = list(group)
+            group_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            sorted_items.extend(group_list)
+
+        return {"items": sorted_items[:limit], "count": len(sorted_items[:limit]), "topic": topic or "inbox"}
+
+    # -------------------------------------------------------------------
     # Briefing
     # -------------------------------------------------------------------
 
