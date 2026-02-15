@@ -332,6 +332,280 @@ def register_routes(app: FastAPI, life_os) -> None:
         }
 
     # -------------------------------------------------------------------
+    # Insights (aggregated signal profiles → human-readable summaries)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/insights/summary")
+    async def insights_summary():
+        """Aggregate signal profiles into human-readable insights.
+
+        Pulls data from relationship, cadence, linguistic, and topic signal
+        profiles plus the events and places tables.  Each insight is a dict
+        with ``type``, ``summary``, ``confidence``, ``category``, and an
+        optional ``entity``.  Missing or empty profiles are silently skipped.
+        """
+        insights: list[dict] = []
+
+        # -- 1. Relationship profile: contacts overdue vs their usual interval --
+        try:
+            rel_profile = life_os.user_model_store.get_signal_profile("relationships")
+            if rel_profile and rel_profile.get("data"):
+                contacts = rel_profile["data"].get("contacts", {})
+                for address, profile in contacts.items():
+                    timestamps = profile.get("interaction_timestamps", [])
+                    if len(timestamps) >= 2:
+                        # Compute the average interval between interactions
+                        from datetime import datetime as _dt
+                        parsed = []
+                        for ts in timestamps:
+                            try:
+                                parsed.append(_dt.fromisoformat(ts.replace("Z", "+00:00")))
+                            except (ValueError, AttributeError):
+                                continue
+                        if len(parsed) >= 2:
+                            parsed.sort()
+                            deltas = [
+                                (parsed[i + 1] - parsed[i]).total_seconds()
+                                for i in range(len(parsed) - 1)
+                            ]
+                            avg_interval = sum(deltas) / len(deltas)
+                            last = parsed[-1]
+                            now = datetime.now(timezone.utc)
+                            seconds_since_last = (now - last).total_seconds()
+                            if avg_interval > 0 and seconds_since_last > avg_interval * 1.5:
+                                overdue_days = round((seconds_since_last - avg_interval) / 86400, 1)
+                                usual_days = round(avg_interval / 86400, 1)
+                                insights.append({
+                                    "type": "relationship_overdue",
+                                    "summary": (
+                                        f"You usually interact with {address} every "
+                                        f"{usual_days} days, but it has been "
+                                        f"{round(seconds_since_last / 86400, 1)} days "
+                                        f"since your last contact ({overdue_days} days overdue)."
+                                    ),
+                                    "confidence": min(0.9, 0.5 + len(timestamps) * 0.02),
+                                    "category": "relationships",
+                                    "entity": address,
+                                })
+
+                    # Top contacts by interaction count
+                    count = profile.get("interaction_count", 0)
+                    if count >= 5:
+                        inbound = profile.get("inbound_count", 0)
+                        outbound = profile.get("outbound_count", 0)
+                        if count > 0:
+                            ratio = outbound / count
+                            if ratio < 0.3:
+                                direction_note = "They reach out far more than you reply."
+                            elif ratio > 0.7:
+                                direction_note = "You initiate most conversations."
+                            else:
+                                direction_note = "Communication is roughly balanced."
+                            insights.append({
+                                "type": "relationship_dynamics",
+                                "summary": (
+                                    f"{address}: {count} total interactions "
+                                    f"({inbound} inbound, {outbound} outbound). "
+                                    f"{direction_note}"
+                                ),
+                                "confidence": min(0.85, 0.4 + count * 0.01),
+                                "category": "relationships",
+                                "entity": address,
+                            })
+        except Exception:
+            pass  # Gracefully skip if profile is missing or malformed
+
+        # -- 2. Cadence profile: per-contact response times vs overall average --
+        try:
+            cadence_profile = life_os.user_model_store.get_signal_profile("cadence")
+            if cadence_profile and cadence_profile.get("data"):
+                cdata = cadence_profile["data"]
+                global_rts = cdata.get("response_times", [])
+                if global_rts:
+                    avg_rt = sum(global_rts) / len(global_rts)
+                    avg_rt_hours = round(avg_rt / 3600, 1)
+                    insights.append({
+                        "type": "cadence_overall",
+                        "summary": (
+                            f"Your average response time across all contacts is "
+                            f"{avg_rt_hours} hours."
+                        ),
+                        "confidence": min(0.9, 0.5 + len(global_rts) * 0.01),
+                        "category": "cadence",
+                    })
+
+                per_contact = cdata.get("per_contact_response_times", {})
+                if global_rts and per_contact:
+                    avg_global = sum(global_rts) / len(global_rts)
+                    for contact_id, rts in per_contact.items():
+                        if len(rts) >= 3:
+                            avg_contact = sum(rts) / len(rts)
+                            if avg_global > 0:
+                                ratio = avg_contact / avg_global
+                                if ratio < 0.5:
+                                    insights.append({
+                                        "type": "cadence_fast_responder",
+                                        "summary": (
+                                            f"You reply to {contact_id} significantly faster "
+                                            f"than average ({round(avg_contact / 3600, 1)}h vs "
+                                            f"{round(avg_global / 3600, 1)}h overall)."
+                                        ),
+                                        "confidence": min(0.85, 0.5 + len(rts) * 0.02),
+                                        "category": "cadence",
+                                        "entity": contact_id,
+                                    })
+                                elif ratio > 2.0:
+                                    insights.append({
+                                        "type": "cadence_slow_responder",
+                                        "summary": (
+                                            f"You take much longer to reply to {contact_id} "
+                                            f"({round(avg_contact / 3600, 1)}h vs "
+                                            f"{round(avg_global / 3600, 1)}h overall)."
+                                        ),
+                                        "confidence": min(0.85, 0.5 + len(rts) * 0.02),
+                                        "category": "cadence",
+                                        "entity": contact_id,
+                                    })
+
+                # Peak activity hours
+                hourly = cdata.get("hourly_activity", {})
+                if hourly:
+                    sorted_hours = sorted(hourly.items(), key=lambda x: x[1], reverse=True)
+                    top_hours = sorted_hours[:3]
+                    if top_hours:
+                        hour_labels = [f"{int(h)}:00" for h, _ in top_hours]
+                        insights.append({
+                            "type": "cadence_peak_hours",
+                            "summary": (
+                                f"Your most active communication hours are "
+                                f"{', '.join(hour_labels)}."
+                            ),
+                            "confidence": min(0.9, 0.5 + sum(hourly.values()) * 0.005),
+                            "category": "cadence",
+                        })
+        except Exception:
+            pass  # Gracefully skip if profile is missing or malformed
+
+        # -- 3. Linguistic profile: formality score --
+        try:
+            ling_profile = life_os.user_model_store.get_signal_profile("linguistic")
+            if ling_profile and ling_profile.get("data"):
+                ldata = ling_profile["data"]
+                averages = ldata.get("averages", {})
+                formality = averages.get("formality")
+                if formality is not None:
+                    if formality > 0.7:
+                        style = "formal"
+                    elif formality < 0.3:
+                        style = "casual"
+                    else:
+                        style = "balanced"
+                    insights.append({
+                        "type": "linguistic_formality",
+                        "summary": (
+                            f"Your overall writing style is {style} "
+                            f"(formality score: {round(formality, 2)})."
+                        ),
+                        "confidence": min(0.9, 0.5 + len(ldata.get("samples", [])) * 0.01),
+                        "category": "communication_style",
+                    })
+
+                # Greetings and closings
+                greetings = ldata.get("common_greetings", [])
+                closings = ldata.get("common_closings", [])
+                if greetings:
+                    insights.append({
+                        "type": "linguistic_greetings",
+                        "summary": (
+                            f"Your most common greetings: {', '.join(greetings)}."
+                        ),
+                        "confidence": 0.7,
+                        "category": "communication_style",
+                    })
+                if closings:
+                    insights.append({
+                        "type": "linguistic_closings",
+                        "summary": (
+                            f"Your most common sign-offs: {', '.join(closings)}."
+                        ),
+                        "confidence": 0.7,
+                        "category": "communication_style",
+                    })
+        except Exception:
+            pass  # Gracefully skip if profile is missing or malformed
+
+        # -- 4. Events table: email volume by day of week (last 30 days) --
+        try:
+            with life_os.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """SELECT timestamp FROM events
+                       WHERE type IN ('email.received', 'email.sent')
+                       AND timestamp >= datetime('now', '-30 days')"""
+                ).fetchall()
+                if rows:
+                    from collections import Counter as _Counter
+                    day_counts = _Counter()
+                    for row in rows:
+                        try:
+                            dt = datetime.fromisoformat(
+                                row["timestamp"].replace("Z", "+00:00")
+                            )
+                            day_counts[dt.strftime("%A")] += 1
+                        except (ValueError, AttributeError):
+                            continue
+                    if day_counts:
+                        busiest = day_counts.most_common(1)[0]
+                        quietest = day_counts.most_common()[-1]
+                        insights.append({
+                            "type": "email_volume_pattern",
+                            "summary": (
+                                f"In the last 30 days, your busiest email day is "
+                                f"{busiest[0]} ({busiest[1]} emails) and quietest is "
+                                f"{quietest[0]} ({quietest[1]} emails)."
+                            ),
+                            "confidence": min(0.85, 0.4 + len(rows) * 0.005),
+                            "category": "activity_patterns",
+                        })
+        except Exception:
+            pass  # Gracefully skip if query fails
+
+        # -- 5. Places table: most visited places --
+        try:
+            with life_os.db.get_connection("entities") as conn:
+                rows = conn.execute(
+                    """SELECT name, place_type, visit_count
+                       FROM places
+                       WHERE visit_count > 0
+                       ORDER BY visit_count DESC
+                       LIMIT 5"""
+                ).fetchall()
+                if rows:
+                    place_summaries = []
+                    for row in rows:
+                        name = row["name"]
+                        visits = row["visit_count"]
+                        place_type = row["place_type"] or "unknown"
+                        place_summaries.append(f"{name} ({visits} visits, {place_type})")
+                    insights.append({
+                        "type": "frequent_places",
+                        "summary": (
+                            f"Your most visited places: {'; '.join(place_summaries)}."
+                        ),
+                        "confidence": min(0.9, 0.5 + len(rows) * 0.08),
+                        "category": "location_patterns",
+                    })
+        except Exception:
+            pass  # Gracefully skip if query fails
+
+        # Sort all insights by confidence descending
+        insights.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+
+        return {
+            "insights": insights,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # -------------------------------------------------------------------
     # Preferences
     # -------------------------------------------------------------------
 
