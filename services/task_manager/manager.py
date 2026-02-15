@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+
 from models.core import Priority, Task
 from storage.database import DatabaseManager
 
@@ -24,10 +25,16 @@ from storage.database import DatabaseManager
 class TaskManager:
     """Manages the lifecycle of tasks across all sources."""
 
-    def __init__(self, db: DatabaseManager):
+    def __init__(self, db: DatabaseManager, event_bus: Any = None):
         self.db = db
+        self.bus = event_bus
 
-    def create_task(
+    async def _publish_telemetry(self, event_type: str, payload: dict):
+        """Publish a telemetry event if the event bus is available."""
+        if self.bus and self.bus.is_connected:
+            await self.bus.publish(event_type, payload, source="task_manager")
+
+    async def create_task(
         self,
         title: str,
         description: Optional[str] = None,
@@ -49,7 +56,7 @@ class TaskManager:
 
         with self.db.get_connection("state") as conn:
             conn.execute(
-                """INSERT INTO tasks 
+                """INSERT INTO tasks
                    (id, title, description, source, source_event_id, source_context,
                     domain, priority, tags, due_date, reminder_at, estimated_minutes,
                     related_contacts, related_events, status, created_at, updated_at)
@@ -64,18 +71,43 @@ class TaskManager:
                     now, now,
                 ),
             )
+
+        await self._publish_telemetry("task.created", {
+            "task_id": task_id,
+            "title": title,
+            "source": source,
+            "source_event_id": source_event_id,
+            "domain": domain,
+            "priority": priority,
+            "has_due_date": due_date is not None,
+            "tags": tags or [],
+            "created_at": now,
+        })
+
         return task_id
 
-    def complete_task(self, task_id: str):
+    async def complete_task(self, task_id: str):
         """Mark a task as completed."""
         now = datetime.now(timezone.utc).isoformat()
+
+        # Fetch task details before completing for telemetry
+        task_details = {}
         with self.db.get_connection("state") as conn:
+            row = conn.execute("SELECT title, source, domain, priority, created_at FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row:
+                task_details = dict(row)
             conn.execute(
                 "UPDATE tasks SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
                 (now, now, task_id),
             )
 
-    def update_task(self, task_id: str, **fields):
+        await self._publish_telemetry("task.completed", {
+            "task_id": task_id,
+            "completed_at": now,
+            **task_details,
+        })
+
+    async def update_task(self, task_id: str, **fields):
         """Update specific fields on a task."""
         allowed = {
             "title", "description", "domain", "priority", "tags",
@@ -101,6 +133,12 @@ class TaskManager:
                 values,
             )
 
+        await self._publish_telemetry("task.updated", {
+            "task_id": task_id,
+            "updated_fields": list(updates.keys()),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
     def get_pending_tasks(
         self,
         domain: Optional[str] = None,
@@ -119,10 +157,10 @@ class TaskManager:
             params.append(priority)
 
         query += """
-            ORDER BY 
-                CASE priority 
-                    WHEN 'critical' THEN 1 WHEN 'high' THEN 2 
-                    WHEN 'normal' THEN 3 ELSE 4 
+            ORDER BY
+                CASE priority
+                    WHEN 'critical' THEN 1 WHEN 'high' THEN 2
+                    WHEN 'normal' THEN 3 ELSE 4
                 END,
                 due_date ASC NULLS LAST
             LIMIT ?"""
@@ -137,7 +175,7 @@ class TaskManager:
         now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection("state") as conn:
             rows = conn.execute(
-                """SELECT * FROM tasks 
+                """SELECT * FROM tasks
                    WHERE status = 'pending' AND due_date IS NOT NULL AND due_date < ?
                    ORDER BY due_date ASC""",
                 (now,),
@@ -150,8 +188,8 @@ class TaskManager:
         deadline = (now + timedelta(hours=hours)).isoformat()
         with self.db.get_connection("state") as conn:
             rows = conn.execute(
-                """SELECT * FROM tasks 
-                   WHERE status = 'pending' AND due_date IS NOT NULL 
+                """SELECT * FROM tasks
+                   WHERE status = 'pending' AND due_date IS NOT NULL
                    AND due_date BETWEEN ? AND ?
                    ORDER BY due_date ASC""",
                 (now.isoformat(), deadline),
@@ -194,13 +232,13 @@ class TaskManager:
 
         return context
 
-    def ingest_ai_extracted_tasks(self, tasks: list[dict], source_event_id: str):
+    async def ingest_ai_extracted_tasks(self, tasks: list[dict], source_event_id: str):
         """
         Store tasks extracted by the AI engine from messages/emails.
         Each task dict should have: title, due_hint (optional), priority.
         """
         for task_data in tasks:
-            self.create_task(
+            await self.create_task(
                 title=task_data.get("title", "Untitled task"),
                 source="ai_extracted",
                 source_event_id=source_event_id,
@@ -216,19 +254,19 @@ class TaskManager:
             ).fetchone()["cnt"]
 
             completed_today = conn.execute(
-                """SELECT COUNT(*) as cnt FROM tasks 
-                   WHERE status = 'completed' 
+                """SELECT COUNT(*) as cnt FROM tasks
+                   WHERE status = 'completed'
                    AND completed_at > datetime('now', '-1 day')"""
             ).fetchone()["cnt"]
 
             overdue = conn.execute(
-                """SELECT COUNT(*) as cnt FROM tasks 
-                   WHERE status = 'pending' AND due_date IS NOT NULL 
+                """SELECT COUNT(*) as cnt FROM tasks
+                   WHERE status = 'pending' AND due_date IS NOT NULL
                    AND due_date < datetime('now')"""
             ).fetchone()["cnt"]
 
             by_domain = conn.execute(
-                """SELECT domain, COUNT(*) as cnt FROM tasks 
+                """SELECT domain, COUNT(*) as cnt FROM tasks
                    WHERE status = 'pending' GROUP BY domain"""
             ).fetchall()
 

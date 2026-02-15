@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -35,10 +36,16 @@ from storage.database import DatabaseManager
 class RulesEngine:
     """Evaluates rules against events and executes matching actions."""
 
-    def __init__(self, db: DatabaseManager):
+    def __init__(self, db: DatabaseManager, event_bus: Any = None):
         self.db = db
+        self.bus = event_bus
         self._rules_cache: list[dict] = []
         self._cache_loaded_at: Optional[datetime] = None
+
+    async def _publish_telemetry(self, event_type: str, payload: dict):
+        """Publish a telemetry event if the event bus is available."""
+        if self.bus and self.bus.is_connected:
+            await self.bus.publish(event_type, payload, source="rules_engine")
 
     def load_rules(self):
         """Load active rules from the database into memory."""
@@ -86,17 +93,17 @@ class RulesEngine:
                         **action,
                     })
 
-                # Update rule trigger count
-                self._record_trigger(rule["id"])
+                # Update rule trigger count and publish telemetry
+                await self._record_trigger(rule["id"], rule["name"], event_type, event.get("id"))
 
         return matching_actions
 
-    def add_rule(self, name: str, trigger_event: str,
-                 conditions: list[dict], actions: list[dict],
-                 created_by: str = "user") -> str:
+    async def add_rule(self, name: str, trigger_event: str,
+                       conditions: list[dict], actions: list[dict],
+                       created_by: str = "user") -> str:
         """Add a new rule."""
-        import uuid
         rule_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
 
         with self.db.get_connection("preferences") as conn:
             conn.execute(
@@ -110,13 +117,36 @@ class RulesEngine:
 
         # Reload cache
         self.load_rules()
+
+        await self._publish_telemetry("system.rule.created", {
+            "rule_id": rule_id,
+            "name": name,
+            "trigger_event": trigger_event,
+            "conditions_count": len(conditions),
+            "actions_count": len(actions),
+            "action_types": [a.get("type") for a in actions],
+            "created_by": created_by,
+            "created_at": now,
+        })
+
         return rule_id
 
-    def remove_rule(self, rule_id: str):
+    async def remove_rule(self, rule_id: str):
         """Deactivate a rule."""
+        # Fetch rule details for telemetry before deactivating
+        rule_name = None
         with self.db.get_connection("preferences") as conn:
+            row = conn.execute("SELECT name FROM rules WHERE id = ?", (rule_id,)).fetchone()
+            if row:
+                rule_name = row["name"]
             conn.execute("UPDATE rules SET is_active = 0 WHERE id = ?", (rule_id,))
         self.load_rules()
+
+        await self._publish_telemetry("system.rule.deactivated", {
+            "rule_id": rule_id,
+            "name": rule_name,
+            "deactivated_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     def get_all_rules(self) -> list[dict]:
         """Get all rules (active and inactive)."""
@@ -203,16 +233,27 @@ class RulesEngine:
                 return None
         return current
 
-    def _record_trigger(self, rule_id: str):
-        """Update the trigger count for a rule."""
+    async def _record_trigger(self, rule_id: str, rule_name: Optional[str] = None,
+                              event_type: Optional[str] = None,
+                              event_id: Optional[str] = None):
+        """Update the trigger count for a rule and publish telemetry."""
+        now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection("preferences") as conn:
             conn.execute(
-                """UPDATE rules SET 
+                """UPDATE rules SET
                    times_triggered = times_triggered + 1,
                    last_triggered = ?
                    WHERE id = ?""",
-                (datetime.now(timezone.utc).isoformat(), rule_id),
+                (now, rule_id),
             )
+
+        await self._publish_telemetry("system.rule.triggered", {
+            "rule_id": rule_id,
+            "rule_name": rule_name,
+            "trigger_event_type": event_type,
+            "trigger_event_id": event_id,
+            "triggered_at": now,
+        })
 
 
 # -------------------------------------------------------------------
@@ -264,15 +305,15 @@ DEFAULT_RULES = [
 ]
 
 
-def install_default_rules(db: DatabaseManager):
+async def install_default_rules(db: DatabaseManager, event_bus: Any = None):
     """Install the default rules on first run."""
-    engine = RulesEngine(db)
+    engine = RulesEngine(db, event_bus=event_bus)
     existing = engine.get_all_rules()
     existing_names = {r["name"] for r in existing}
 
     for rule in DEFAULT_RULES:
         if rule["name"] not in existing_names:
-            engine.add_rule(
+            await engine.add_rule(
                 name=rule["name"],
                 trigger_event=rule["trigger_event"],
                 conditions=rule["conditions"],

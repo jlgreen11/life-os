@@ -45,23 +45,23 @@ class LifeOS:
         # Core infrastructure
         self.db = DatabaseManager(self.config.get("data_dir", "./data"))
         self.event_store = EventStore(self.db)
-        self.user_model_store = UserModelStore(self.db)
+        self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
+        self.user_model_store = UserModelStore(self.db, event_bus=self.event_bus)
         self.vector_store = VectorStore(
             db_path=str(Path(self.config.get("data_dir", "./data")) / "vectors"),
             model_name=self.config.get("embedding_model", "all-MiniLM-L6-v2"),
         )
-        self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
 
-        # Services
+        # Services (all wired to event bus for data creation telemetry)
         self.signal_extractor = SignalExtractorPipeline(self.db, self.user_model_store)
         self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}))
-        self.rules_engine = RulesEngine(self.db)
-        self.feedback_collector = FeedbackCollector(self.db, self.user_model_store)
+        self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
+        self.feedback_collector = FeedbackCollector(self.db, self.user_model_store, event_bus=self.event_bus)
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store
         )
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
-        self.task_manager = TaskManager(self.db)
+        self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
 
         # Browser automation layer
         self.browser_orchestrator = BrowserOrchestrator(self.event_bus, self.db, self.config)
@@ -103,7 +103,6 @@ class LifeOS:
         # 1. Initialize databases
         print("[1/7] Initializing databases...")
         self.db.initialize_all()
-        install_default_rules(self.db)
 
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
@@ -117,6 +116,9 @@ class LifeOS:
         except Exception as e:
             print(f"       NATS connection failed: {e}")
             print("       Running in degraded mode (no event bus).")
+
+        # Install default rules (after event bus is available for telemetry)
+        await install_default_rules(self.db, event_bus=self.event_bus)
 
         # 4. Register core event handlers
         print("[4/7] Registering event handlers...")

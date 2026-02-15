@@ -75,21 +75,45 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         lower = text.lower()
 
+        # Determine command type for telemetry
         if lower.startswith("search ") or lower.startswith("find "):
+            command_type = "search"
+        elif lower.startswith("task ") or lower.startswith("todo "):
+            command_type = "task"
+        elif lower == "briefing" or lower == "morning briefing":
+            command_type = "briefing"
+        elif lower.startswith("draft "):
+            command_type = "draft"
+        else:
+            command_type = "ai_query"
+
+        # Publish command telemetry
+        if life_os.event_bus.is_connected:
+            await life_os.event_bus.publish(
+                "system.user.command",
+                {
+                    "command_type": command_type,
+                    "text_length": len(text),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                source="web_api",
+            )
+
+        if command_type == "search":
             query = text.split(" ", 1)[1]
             results = life_os.vector_store.search(query, limit=10)
             return {"type": "search_results", "results": results}
 
-        elif lower.startswith("task ") or lower.startswith("todo "):
+        elif command_type == "task":
             title = text.split(" ", 1)[1]
             task_id = await life_os.task_manager.create_task(title=title)
             return {"type": "task_created", "task_id": task_id}
 
-        elif lower == "briefing" or lower == "morning briefing":
+        elif command_type == "briefing":
             briefing = await life_os.ai_engine.generate_briefing()
             return {"type": "briefing", "content": briefing}
 
-        elif lower.startswith("draft "):
+        elif command_type == "draft":
             context = text.split(" ", 1)[1]
             draft = await life_os.ai_engine.draft_reply(
                 contact_id=None, channel="email",
@@ -143,12 +167,12 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, req: TaskUpdateRequest):
-        life_os.task_manager.update_task(task_id, req.dict(exclude_none=True))
+        await life_os.task_manager.update_task(task_id, **req.dict(exclude_none=True))
         return {"status": "updated"}
 
     @app.post("/api/tasks/{task_id}/complete")
     async def complete_task(task_id: str):
-        life_os.task_manager.complete_task(task_id)
+        await life_os.task_manager.complete_task(task_id)
         return {"status": "completed"}
 
     # -------------------------------------------------------------------
@@ -204,7 +228,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/rules")
     async def create_rule(req: RuleCreateRequest):
-        rule_id = life_os.rules_engine.add_rule(
+        rule_id = await life_os.rules_engine.add_rule(
             name=req.name,
             trigger_event=req.trigger_event,
             conditions=req.conditions,
@@ -214,7 +238,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.delete("/api/rules/{rule_id}")
     async def delete_rule(rule_id: str):
-        life_os.rules_engine.remove_rule(rule_id)
+        await life_os.rules_engine.remove_rule(rule_id)
         return {"status": "deactivated"}
 
     # -------------------------------------------------------------------
@@ -263,13 +287,27 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.put("/api/preferences")
     async def update_preference(req: PreferenceUpdate):
+        now = datetime.now(timezone.utc).isoformat()
+        serialized_value = json.dumps(req.value) if not isinstance(req.value, str) else req.value
+
         with life_os.db.get_connection("preferences") as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO user_preferences (key, value, set_by, updated_at)
                    VALUES (?, ?, 'user', ?)""",
-                (req.key, json.dumps(req.value) if not isinstance(req.value, str) else req.value,
-                 datetime.now(timezone.utc).isoformat()),
+                (req.key, serialized_value, now),
             )
+
+        # Publish preference update telemetry
+        if life_os.event_bus.is_connected:
+            await life_os.event_bus.publish(
+                "system.preference.updated",
+                {
+                    "key": req.key,
+                    "updated_at": now,
+                },
+                source="web_api",
+            )
+
         return {"status": "updated"}
 
     # -------------------------------------------------------------------

@@ -56,10 +56,26 @@ class NotificationManager:
         # Store the notification
         with self.db.get_connection("state") as conn:
             conn.execute(
-                """INSERT INTO notifications 
+                """INSERT INTO notifications
                    (id, title, body, priority, source_event_id, domain, status, action_url)
                    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
                 (notif_id, title, body, priority, source_event_id, domain, action_url),
+            )
+
+        # Publish creation telemetry event
+        if self.bus and self.bus.is_connected:
+            await self.bus.publish(
+                "notification.created",
+                {
+                    "notification_id": notif_id,
+                    "title": title,
+                    "priority": priority,
+                    "source_event_id": source_event_id,
+                    "domain": domain,
+                    "created_at": now.isoformat(),
+                },
+                source="notification_manager",
+                priority=priority,
             )
 
         # Decision: deliver now or later?
