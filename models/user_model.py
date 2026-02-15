@@ -67,7 +67,7 @@ class LinguisticProfile(BaseModel):
     greeting_patterns: list[str] = Field(default_factory=list)      # ["hey", "hi there"]
     closing_patterns: list[str] = Field(default_factory=list)       # ["cheers", "talk soon"]
 
-    # Per-Contact Style Variations
+    # Per-Contact Style Variations — enables per-contact voice matching for AI-drafted messages
     style_by_contact: dict[str, dict[str, Any]] = Field(default_factory=dict)
     # {"contact_id": {"formality": 0.8, "emoji_rate": 0.1, "avg_length": 45}}
 
@@ -100,7 +100,7 @@ class CadenceProfile(BaseModel):
     thread_completion_rate: float = 0.5          # Do they follow through on threads?
     avg_thread_length: float = 3.0               # Messages per conversation
 
-    # Avoidance signals
+    # Avoidance signals — read_not_replied is a key avoidance detection signal
     read_not_replied: list[dict[str, Any]] = Field(default_factory=list)  # Messages seen but ignored
     avg_delay_for_difficult_topics: Optional[float] = None  # Seconds longer for hard conversations
 
@@ -212,7 +212,7 @@ class MoodState(BaseModel):
     CRITICAL: This is NEVER shared with anyone. It's used solely to 
     adjust the AI's behavior (tone, timing, proactivity).
     """
-    # Core dimensions (all 0.0 to 1.0)
+    # Core dimensions — all use a 0.0-1.0 scale convention across every dimension
     energy_level: float = 0.5
     stress_level: float = 0.3
     social_battery: float = 0.5
@@ -530,11 +530,13 @@ class QuietHours(BaseModel):
 # COMPOSITE: THE COMPLETE USER MODEL
 # ===========================================================================
 
+# Composite object that aggregates all four memory layers (episodic, semantic,
+# procedural, predictive) along with signal profiles and user preferences
 class UserModel(BaseModel):
     """
     The complete model of the user. This is the single source of truth
     that every service in the system reads from.
-    
+
     It's stored locally, encrypted at rest, and never transmitted.
     """
     # Explicit preferences (from onboarding + manual updates)

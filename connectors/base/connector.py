@@ -86,7 +86,9 @@ class BaseConnector(ABC):
         if self._running:
             return
 
-        # Authenticate first
+        # Startup sequence: authenticate first to verify the external service
+        # is reachable. Only after a successful auth do we spin up the
+        # background sync loop and subscribe to inbound action requests.
         success = await self.authenticate()
         if not success:
             await self._update_state("error", "Authentication failed")
@@ -116,6 +118,9 @@ class BaseConnector(ABC):
 
     async def _sync_loop(self):
         """Main polling loop."""
+        # Poll-based sync: call the subclass's sync() at a fixed interval.
+        # When sync() returns count > 0, we publish a sync_complete event so
+        # downstream consumers (AI agents, dashboards) know new data arrived.
         while self._running:
             try:
                 count = await self.sync()
@@ -164,6 +169,9 @@ class BaseConnector(ABC):
 
     async def _handle_sync_error(self, error: Exception):
         """Handle sync errors with exponential backoff tracking."""
+        # Error tracking is persisted in the database via _update_state, which
+        # increments the error_count column. This allows the UI and health
+        # checks to surface repeated failures without in-memory state.
         error_msg = str(error)
         print(f"[{self.CONNECTOR_ID}] Sync error: {error_msg}")
 
@@ -181,9 +189,11 @@ class BaseConnector(ABC):
                             error_count_reset: bool = False):
         """Update connector state in the database."""
         with self.db.get_connection("state") as conn:
+            # Branch 1 — Success reset: after a successful sync, reset the
+            # error_count back to 0 and record the last_sync timestamp.
             if error_count_reset:
                 conn.execute(
-                    """INSERT OR REPLACE INTO connector_state 
+                    """INSERT OR REPLACE INTO connector_state
                        (connector_id, status, last_sync, error_count, updated_at)
                        VALUES (?, ?, ?, 0, ?)""",
                     (
@@ -194,11 +204,15 @@ class BaseConnector(ABC):
                     ),
                 )
             elif error:
+                # Branch 2 — Error increment: on failure, upsert the row and
+                # increment error_count. Uses ON CONFLICT so the very first
+                # error creates the row while subsequent errors just bump the
+                # counter and update last_error.
                 conn.execute(
                     """INSERT INTO connector_state (connector_id, status, last_error, error_count, updated_at)
                        VALUES (?, ?, ?, 1, ?)
                        ON CONFLICT(connector_id) DO UPDATE SET
-                           status = ?, last_error = ?, 
+                           status = ?, last_error = ?,
                            error_count = error_count + 1,
                            updated_at = ?""",
                     (
@@ -209,8 +223,10 @@ class BaseConnector(ABC):
                     ),
                 )
             else:
+                # Branch 3 — Simple status update: just change the status
+                # (e.g., "active" or "inactive") without touching error state.
                 conn.execute(
-                    """INSERT OR REPLACE INTO connector_state 
+                    """INSERT OR REPLACE INTO connector_state
                        (connector_id, status, updated_at)
                        VALUES (?, ?, ?)""",
                     (self.CONNECTOR_ID, status, datetime.now(timezone.utc).isoformat()),
@@ -241,6 +257,8 @@ class BaseConnector(ABC):
     async def publish_event(self, event_type: str, payload: dict,
                             priority: str = "normal", metadata: Optional[dict] = None) -> str:
         """Convenience method to publish an event from this connector."""
+        # Auto-sets the source field to this connector's CONNECTOR_ID so
+        # downstream consumers always know which connector produced the event.
         return await self.bus.publish(
             event_type,
             payload,

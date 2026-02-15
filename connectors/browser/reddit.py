@@ -36,16 +36,22 @@ from connectors.browser.engine import HumanEmulator, PageInteractor
 
 
 class RedditConnector(BrowserBaseConnector):
+    """
+    Scrapes old.reddit.com for front-page posts and unread inbox messages.
+    Uses old Reddit because its DOM is simpler, faster, and less aggressive
+    with anti-bot detection than the modern redesign.
+    """
 
     CONNECTOR_ID = "reddit"
     DISPLAY_NAME = "Reddit"
-    SITE_ID = "reddit"
+    SITE_ID = "reddit"                       # Credential vault key
     LOGIN_URL = "https://old.reddit.com/login"
-    SYNC_INTERVAL_SECONDS = 600
-    MIN_REQUEST_INTERVAL = 3.0
-    MAX_PAGES_PER_SYNC = 5
+    SYNC_INTERVAL_SECONDS = 600              # 10-minute polling interval
+    MIN_REQUEST_INTERVAL = 3.0               # 3 seconds between page loads
+    MAX_PAGES_PER_SYNC = 5                   # Safety cap on pages per sync
 
     def get_login_selectors(self) -> dict[str, str]:
+        """CSS selectors for the old.reddit.com login form."""
         return {
             "username": "#user_login input[name='user']",
             "password": "#user_login input[name='passwd']",
@@ -53,6 +59,7 @@ class RedditConnector(BrowserBaseConnector):
         }
 
     async def is_logged_in(self, page: Any) -> bool:
+        """Detect login state by checking for the username link in the header."""
         try:
             # old.reddit.com shows username in the header when logged in
             user_link = await page.query_selector("span.user a.login-required, .user a[href*='/user/']")
@@ -62,16 +69,18 @@ class RedditConnector(BrowserBaseConnector):
 
     async def browser_sync(self, page: Any, human: HumanEmulator,
                            interactor: PageInteractor) -> int:
+        """Two-phase sync: (1) scrape the personalised front page for new posts,
+        then (2) check the inbox for unread messages/replies."""
         count = 0
         max_posts = self.config.get("max_posts_per_sync", 25)
 
-        # 1. Scrape the front page (personalized feed)
+        # Phase 1: Scrape the front page (shows posts from subscribed subreddits)
         await self.navigate_with_rate_limit(page, "https://old.reddit.com/")
         await human.wait_human(1.5, 3.0)
 
         posts = await self._extract_posts(page)
 
-        # Filter to new posts only (using cursor)
+        # Deduplicate against previously seen post IDs stored in the sync cursor
         seen_ids = self._get_seen_ids()
         new_posts = [p for p in posts if p.get("id") not in seen_ids]
 
@@ -88,7 +97,8 @@ class RedditConnector(BrowserBaseConnector):
                 "is_self": post.get("is_self", False),
             }
 
-            # Determine if this is from a priority subreddit
+            # Priority subreddits get "normal" priority; everything else is "low".
+            # This lets the AI agent surface homelab/selfhosted/privacy posts faster.
             priority_subs = self.config.get("priority_subreddits", [])
             is_priority = post["subreddit"].lower() in [s.lower() for s in priority_subs]
 
@@ -108,7 +118,7 @@ class RedditConnector(BrowserBaseConnector):
             new_ids = [p["id"] for p in new_posts]
             self._update_seen_ids(new_ids)
 
-        # 2. Check inbox for messages/replies
+        # Phase 2: Check inbox for unread messages and comment replies
         await self.rate_limit_wait()
         await self.navigate_with_rate_limit(page, "https://old.reddit.com/message/unread/")
         await human.wait_human(1.0, 2.0)
@@ -197,6 +207,7 @@ class RedditConnector(BrowserBaseConnector):
         """)
 
     def _get_seen_ids(self) -> set:
+        """Load previously seen Reddit post fullnames from the sync cursor."""
         cursor = self.get_sync_cursor()
         if cursor:
             try:
@@ -207,14 +218,19 @@ class RedditConnector(BrowserBaseConnector):
         return set()
 
     def _update_seen_ids(self, new_ids: list[str]):
+        """Persist new post IDs to the sync cursor, capping at 1000 entries."""
         import json
         seen = self._get_seen_ids()
         seen.update(new_ids)
-        # Keep last 1000
+        # Keep last 1000 to prevent unbounded growth of the cursor
         self.set_sync_cursor(json.dumps(list(seen)[-1000:]))
 
     def _extract_topics(self, title: str) -> list[str]:
-        """Quick keyword extraction from post title."""
+        """Quick keyword extraction from post title.
+
+        Strips common stop words and short tokens, returning up to 5 keywords
+        that the AI agent can use for topic-based routing and summarisation.
+        """
         stop_words = {"the", "a", "an", "is", "it", "to", "in", "for", "of", "and", "or", "on", "at", "i", "my", "me"}
         words = title.lower().split()
         return [w for w in words if len(w) > 3 and w not in stop_words][:5]

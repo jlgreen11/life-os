@@ -1,0 +1,1 @@
+"""Prediction engine — forward-looking intelligence that anticipates user needs."""

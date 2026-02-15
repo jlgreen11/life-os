@@ -47,16 +47,21 @@ class BrowserBaseConnector(BaseConnector):
         - browser_sync() — browser-based fallback
         - get_login_url() — where to navigate for login
         - get_login_selectors() — CSS selectors for login form
+
+    This class extends BaseConnector by layering browser-specific capabilities
+    on top: a shared BrowserEngine for headless Chromium, a CredentialVault for
+    secure login, a HumanEmulator for realistic interactions, and automatic
+    API-to-browser failover after consecutive API errors.
     """
 
     # Subclasses override these
-    SITE_ID: str = ""
-    LOGIN_URL: str = ""
-    REQUIRES_2FA: bool = False
+    SITE_ID: str = ""       # Used as the key for session storage and credential lookup
+    LOGIN_URL: str = ""     # Where to navigate for browser-based login
+    REQUIRES_2FA: bool = False  # Whether the site needs a TOTP code after password
 
-    # Rate limiting
+    # Rate limiting — keeps browser requests respectful
     MIN_REQUEST_INTERVAL: float = 2.0  # Seconds between page loads
-    MAX_PAGES_PER_SYNC: int = 20
+    MAX_PAGES_PER_SYNC: int = 20       # Safety cap on pages visited per sync cycle
 
     def __init__(self, event_bus: EventBus, db: DatabaseManager,
                  config: dict[str, Any],
@@ -64,12 +69,16 @@ class BrowserBaseConnector(BaseConnector):
                  credential_vault: Optional[CredentialVault] = None):
         super().__init__(event_bus, db, config)
 
+        # Accept shared instances from the orchestrator, or create standalone
+        # ones if this connector is used independently.
         self._browser_engine = browser_engine or BrowserEngine(
             data_dir=config.get("browser_data_dir", "./data/browser")
         )
         self._credential_vault = credential_vault or CredentialVault(
             vault_path=config.get("credential_vault_path", "./data/credentials")
         )
+        # Human emulator and page interactor provide realistic mouse/keyboard
+        # behavior so browser automation is not flagged as a bot.
         self._human = HumanEmulator(
             speed_factor=config.get("human_speed_factor", 1.0)
         )
@@ -78,6 +87,8 @@ class BrowserBaseConnector(BaseConnector):
         self._context = None  # Browser context (persistent per site)
         self._page = None     # Active page
 
+        # API-to-browser failover: start in API mode and switch to browser
+        # after _api_failure_threshold consecutive API errors.
         self._api_mode = config.get("prefer_api", True)
         self._api_failures = 0
         self._api_failure_threshold = config.get("api_failure_threshold", 3)
@@ -108,6 +119,10 @@ class BrowserBaseConnector(BaseConnector):
         Try API sync first. On failure, switch to browser mode.
         After N consecutive API failures, auto-switch to browser-only.
         """
+        # Failover logic: attempt API while below the failure threshold.
+        # Each API success resets the counter; each failure increments it.
+        # Once the threshold is breached, all subsequent syncs go straight
+        # to the browser path until the connector is restarted.
         if self._api_mode and self._api_failures < self._api_failure_threshold:
             try:
                 count = await self.api_sync()
@@ -137,7 +152,8 @@ class BrowserBaseConnector(BaseConnector):
     async def stop(self):
         """Clean up browser resources."""
         if self._context:
-            # Save session before closing
+            # Persist the browser session (cookies/local-storage) so the next
+            # startup can skip re-login, then close the context to free memory.
             try:
                 await self._browser_engine.save_session(self._context, self.SITE_ID)
             except Exception:
@@ -146,6 +162,7 @@ class BrowserBaseConnector(BaseConnector):
                 await self._context.close()
             except Exception:
                 pass
+        # Delegate to BaseConnector.stop() to cancel the sync loop task
         await super().stop()
 
     # ------------------------------------------------------------------
@@ -155,8 +172,9 @@ class BrowserBaseConnector(BaseConnector):
     async def _browser_login(self) -> bool:
         """
         Log in to a website using stored credentials.
-        Handles: credential lookup → navigate → fill form → 2FA → save session
+        Handles: credential lookup -> navigate -> fill form -> 2FA -> save session
         """
+        # Step 1: Look up credentials from the vault (Proton Pass or manual)
         creds = self._credential_vault.get_credential(self.SITE_ID)
         if not creds:
             print(f"  [{self.CONNECTOR_ID}] No credentials found for {self.SITE_ID}")
@@ -164,10 +182,10 @@ class BrowserBaseConnector(BaseConnector):
             return False
 
         try:
-            # Start browser if needed
+            # Step 2: Ensure the shared browser engine is running
             await self._browser_engine.start()
 
-            # Create context (reuses saved session if available)
+            # Step 3: Create an isolated context for this site (reuses saved session if available)
             self._context = await self._browser_engine.create_context(
                 self.SITE_ID,
                 timezone_id=self.config.get("timezone", "America/Chicago"),
@@ -230,6 +248,7 @@ class BrowserBaseConnector(BaseConnector):
 
     async def _browser_sync_wrapper(self) -> int:
         """Wraps browser_sync with rate limiting and error recovery."""
+        # Ensure we have an active page; if not, trigger the login flow first
         if not self._page:
             success = await self._browser_login()
             if not success:
@@ -238,14 +257,17 @@ class BrowserBaseConnector(BaseConnector):
         try:
             count = await self.browser_sync(self._page, self._human, self._interactor)
 
-            # Save session after successful sync
+            # Persist session after a successful sync so future runs can
+            # skip login entirely.
             if self._context:
                 await self._browser_engine.save_session(self._context, self.SITE_ID)
 
             return count
 
         except Exception as e:
-            # Session might have expired
+            # Heuristic session-expiry detection: if the error message
+            # mentions "session" or "login", clear the stale session file
+            # and attempt a fresh login before retrying the sync.
             if "session" in str(e).lower() or "login" in str(e).lower():
                 print(f"  [{self.CONNECTOR_ID}] Session expired, re-authenticating...")
                 self._browser_engine.session_manager.clear_session(self.SITE_ID)
@@ -255,6 +277,8 @@ class BrowserBaseConnector(BaseConnector):
 
     async def rate_limit_wait(self):
         """Enforce minimum time between page loads."""
+        # Calculates remaining wait time and adds random jitter (+/- 30%)
+        # so requests are not perfectly periodic (helps avoid detection).
         now = asyncio.get_event_loop().time()
         elapsed = now - self._last_request_time
         if elapsed < self.MIN_REQUEST_INTERVAL:

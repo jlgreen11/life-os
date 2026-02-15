@@ -28,7 +28,29 @@ from web.websocket import ws_manager
 
 
 def register_routes(app: FastAPI, life_os) -> None:
-    """Register all API routes on the FastAPI app."""
+    """Register all API routes on the FastAPI app.
+
+    Routes are organized by domain:
+        Health & Status    — /health, /api/status
+        Command Bar        — /api/command  (NLP-like routing)
+        Briefing           — /api/briefing
+        Search             — /api/search
+        Tasks              — /api/tasks (CRUD)
+        Notifications      — /api/notifications (lifecycle)
+        Draft Messages     — /api/draft
+        Rules              — /api/rules (automation engine)
+        User Model         — /api/user-model (facts, mood)
+        Preferences        — /api/preferences
+        Feedback           — /api/feedback
+        Events             — /api/events (debug/inspection)
+        Connectors         — /api/connectors, /api/browser/*
+        WebSocket          — /ws (real-time push)
+        Web UI             — / (HTML dashboard)
+
+    All handlers access Life OS services through the ``life_os`` closure
+    variable captured here, rather than through ``app.state``, keeping the
+    route code concise.
+    """
 
     # -------------------------------------------------------------------
     # Health & Status
@@ -36,12 +58,16 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/health")
     async def health():
+        """Aggregate health check — polls every connector and returns a
+        unified status payload used by the dashboard status bar."""
         connectors = []
         for c in life_os.connectors:
             try:
                 status = await c.health_check()
                 connectors.append(status)
             except Exception as e:
+                # Individual connector failures should not break the overall
+                # health endpoint; report the error inline instead.
                 connectors.append({"connector": c.CONNECTOR_ID, "status": "error", "details": str(e)})
 
         return {
@@ -69,26 +95,44 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/command")
     async def command(req: CommandRequest):
+        """Unified command bar — routes natural-language input to the right service.
+
+        NLP-like routing:  The command text is matched against simple keyword
+        prefixes to determine intent.  This avoids a full NLP pipeline for the
+        most common actions while still falling back to the AI engine for
+        anything unrecognized.
+
+        Routing rules (evaluated top to bottom):
+            "search ..." / "find ..."  ->  vector store semantic search
+            "task ..." / "todo ..."    ->  task manager quick-capture
+            "briefing"                 ->  AI-generated morning briefing
+            "draft ..."               ->  AI-generated message draft
+            (anything else)            ->  free-form AI search/answer
+        """
         text = req.text.strip()
         if not text:
             raise HTTPException(400, "Empty command")
 
         lower = text.lower()
 
+        # --- Intent: search / find ---
         if lower.startswith("search ") or lower.startswith("find "):
             query = text.split(" ", 1)[1]
             results = life_os.vector_store.search(query, limit=10)
             return {"type": "search_results", "results": results}
 
+        # --- Intent: quick task creation ---
         elif lower.startswith("task ") or lower.startswith("todo "):
             title = text.split(" ", 1)[1]
             task_id = await life_os.task_manager.create_task(title=title)
             return {"type": "task_created", "task_id": task_id}
 
+        # --- Intent: generate briefing ---
         elif lower == "briefing" or lower == "morning briefing":
             briefing = await life_os.ai_engine.generate_briefing()
             return {"type": "briefing", "content": briefing}
 
+        # --- Intent: draft a message ---
         elif lower.startswith("draft "):
             context = text.split(" ", 1)[1]
             draft = await life_os.ai_engine.draft_reply(
@@ -97,6 +141,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             )
             return {"type": "draft", "content": draft}
 
+        # --- Fallback: pass to AI engine for open-ended search/response ---
         else:
             response = await life_os.ai_engine.search_life(text)
             return {"type": "ai_response", "content": response}
@@ -223,21 +268,29 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/user-model")
     async def get_user_model():
+        """Return the full user model summary from the signal extractor."""
         return life_os.signal_extractor.get_user_summary()
 
     @app.get("/api/user-model/facts")
     async def get_facts(min_confidence: float = 0.0):
+        """Return semantic facts, optionally filtered by minimum confidence."""
         facts = life_os.user_model_store.get_semantic_facts(min_confidence=min_confidence)
         return {"facts": facts}
 
     @app.delete("/api/user-model/facts/{key}")
     async def delete_fact(key: str):
+        """Delete a single semantic fact by key (user correction flow)."""
         with life_os.db.get_connection("user_model") as conn:
             conn.execute("DELETE FROM semantic_facts WHERE key = ?", (key,))
         return {"status": "deleted"}
 
     @app.get("/api/user-model/mood")
     async def get_mood():
+        """Return the current inferred mood state.
+
+        Handles both Pydantic models (with ``.dict()``) and plain dataclass-like
+        objects by falling back to manual attribute access.
+        """
         mood = life_os.signal_extractor.get_current_mood()
         return {
             "mood": mood.dict() if hasattr(mood, "dict") else {
@@ -328,17 +381,33 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for real-time push updates.
+
+        Connection lifecycle:
+        1. Client connects -> ``ws_manager.connect`` accepts the handshake and
+           adds the socket to the active connections list.
+        2. The handler enters an infinite receive loop, keeping the connection
+           alive.  Incoming messages can carry commands (type: "command"), but
+           this is currently a placeholder for future client-to-server messages.
+        3. When the client disconnects, ``WebSocketDisconnect`` is raised and
+           the connection is removed from the manager's active list.
+
+        Meanwhile, server-side services can call ``ws_manager.broadcast(...)``
+        at any time to push notifications/events to all connected clients.
+        """
         await ws_manager.connect(websocket)
         try:
             while True:
+                # Block until the client sends a message (keeps the connection alive).
                 data = await websocket.receive_text()
                 try:
                     msg = json.loads(data)
                     if msg.get("type") == "command":
-                        pass  # Handle incoming websocket commands
+                        pass  # Placeholder for future client-to-server commands.
                 except json.JSONDecodeError:
                     pass
         except WebSocketDisconnect:
+            # Client closed the connection — clean up the active connections list.
             ws_manager.disconnect(websocket)
 
     # -------------------------------------------------------------------
@@ -347,5 +416,11 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
+        """Serve the single-page HTML dashboard.
+
+        The template is imported lazily (inside the handler) to avoid circular
+        imports at module load time and to keep the template module independent
+        of the FastAPI app.
+        """
         from web.template import HTML_TEMPLATE
         return HTML_TEMPLATE
