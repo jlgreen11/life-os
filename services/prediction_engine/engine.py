@@ -104,18 +104,20 @@ class PredictionEngine:
             if reaction.predicted_reaction in ("helpful", "neutral"):
                 filtered.append(pred)
 
-        # Store ALL predictions (including filtered-out ones) for accuracy
-        # tracking. This lets us measure both precision (were surfaced
-        # predictions helpful?) and recall (did we miss anything important?).
-        for pred in predictions:
-            self.ums.store_prediction(pred.model_dump())
-
         # Confidence floor — don't surface anything below 0.6
         filtered = [p for p in filtered if p.confidence >= 0.6]
 
         # Cap at 5 surfaced predictions per cycle, prioritized by confidence
         filtered.sort(key=lambda p: p.confidence, reverse=True)
         filtered = filtered[:5]
+
+        # Store ALL predictions (including filtered-out ones) for accuracy
+        # tracking. Mark which ones were actually surfaced so the feedback
+        # loop can distinguish them via was_surfaced=1 in queries.
+        surfaced_ids = {p.id for p in filtered}
+        for pred in predictions:
+            pred.was_surfaced = pred.id in surfaced_ids
+            self.ums.store_prediction(pred.model_dump())
 
         return filtered
 

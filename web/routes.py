@@ -630,6 +630,9 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.post("/api/insights/{insight_id}/feedback")
     async def insight_feedback(insight_id: str, feedback: str = "dismissed"):
         """Record user feedback on an insight (useful/dismissed)."""
+        if feedback not in ("useful", "dismissed"):
+            from fastapi import HTTPException
+            raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful' or 'dismissed'.")
         with life_os.db.get_connection("user_model") as conn:
             conn.execute(
                 "UPDATE insights SET feedback = ? WHERE id = ?",
