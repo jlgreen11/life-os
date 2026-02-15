@@ -40,6 +40,7 @@ from connectors.registry import CONNECTOR_REGISTRY, get_connector_class
 from connectors.crypto import ConfigEncryptor
 from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
+from services.email_classifier import is_marketing_email
 
 
 class LifeOS:
@@ -220,6 +221,25 @@ class LifeOS:
             except Exception as e:
                 print(f"Event store error: {e}")
 
+            # Stage 1.1 — Marketing Classification: identify marketing and
+            # automated emails early, BEFORE they generate noise through
+            # episodic memory, signal extraction, task extraction, and
+            # notifications.  Uses sender patterns, domain heuristics, subject
+            # analysis, and body indicators (unsubscribe links, opt-out text).
+            # Suppressed emails are still stored (Stage 1) and embedded
+            # (Stage 5) for completeness, but skip the noisy middle stages.
+            try:
+                event_type = event.get("type", "")
+                if event_type == "email.received":
+                    payload = event.get("payload", {})
+                    from_addr = payload.get("from_address", "")
+                    if is_marketing_email(from_addr, payload):
+                        event["_suppressed"] = True
+                        self.event_store.add_tag(event["id"], "marketing")
+                        self.event_store.add_tag(event["id"], "system:suppressed")
+            except Exception as e:
+                print(f"Marketing classification error: {e}")
+
             # Stage 1.2 — Feedback Loop: process notification feedback events
             # (acted_on, dismissed) to close the learning loop. This enables
             # the system to learn which notifications are useful vs annoying.
@@ -251,17 +271,23 @@ class LifeOS:
             # This provides the raw interaction history that feeds semantic
             # fact extraction and enables the system to answer "when did I
             # last talk to X" or "what happened in my meeting yesterday".
-            try:
-                await self._create_episode(event)
-            except Exception as e:
-                print(f"Episode creation error: {e}")
+            # Skip for suppressed events — marketing emails shouldn't pollute
+            # the user's episodic memory with promotional content.
+            if not event.get("_suppressed"):
+                try:
+                    await self._create_episode(event)
+                except Exception as e:
+                    print(f"Episode creation error: {e}")
 
             # Stage 2 — Learn: the signal extractor passively analyses the
             # event to update the user model (patterns, preferences, etc.).
-            try:
-                await self.signal_extractor.process_event(event)
-            except Exception as e:
-                print(f"Signal extractor error: {e}")
+            # Skip for suppressed events — marketing emails shouldn't skew
+            # topic profiles or communication cadence patterns.
+            if not event.get("_suppressed"):
+                try:
+                    await self.signal_extractor.process_event(event)
+                except Exception as e:
+                    print(f"Signal extractor error: {e}")
 
             # Stage 3 — React: the rules engine evaluates deterministic,
             # user-defined rules and returns a list of actions to execute
@@ -282,10 +308,13 @@ class LifeOS:
 
             # Stage 4 — Extract tasks: scan the event payload (e.g. email
             # body, chat message) for actionable items and create tasks.
-            try:
-                await self.task_manager.process_event(event)
-            except Exception as e:
-                print(f"Task manager error: {e}")
+            # Skip for suppressed events — marketing emails should never
+            # generate tasks ("Buy now!" is not an action item).
+            if not event.get("_suppressed"):
+                try:
+                    await self.task_manager.process_event(event)
+                except Exception as e:
+                    print(f"Task manager error: {e}")
 
             # Stage 5 — Embed: generate a vector embedding of the event
             # content so it can be retrieved via semantic search later.

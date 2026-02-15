@@ -328,13 +328,23 @@ class RulesEngine:
 # Each rule follows the standard format: trigger_event, conditions, actions.
 
 DEFAULT_RULES = [
-    # Auto-tag and suppress marketing emails (detected by "unsubscribe" link)
+    # Auto-tag and suppress marketing emails (detected by "unsubscribe" link).
+    # This rule acts as a safety net alongside the early pipeline classifier
+    # (services/email_classifier.py) which catches sender-pattern-based
+    # marketing before this rule even runs. This rule catches body-based
+    # indicators that the sender-pattern checks may miss.
     {
         "name": "Archive marketing emails",
         "trigger_event": "email.received",
         "conditions": [
             {"field": "payload.body_plain", "op": "contains_any",
-             "value": ["unsubscribe", "opt out", "manage preferences"]},
+             "value": ["unsubscribe", "opt out", "opt-out",
+                       "manage preferences", "email preferences",
+                       "update your preferences",
+                       "no longer wish to receive",
+                       "mailing list", "subscription preferences",
+                       "stop receiving these emails",
+                       "remove from this list"]},
         ],
         "actions": [
             {"type": "tag", "value": "marketing"},
