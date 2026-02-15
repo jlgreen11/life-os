@@ -1,0 +1,111 @@
+import Foundation
+
+final class WebSocketManager: NSObject {
+    private let baseURL: String
+    private var webSocketTask: URLSessionWebSocketTask?
+    private var session: URLSession?
+    private var isConnected = false
+    private var reconnectAttempts = 0
+    private let maxReconnectAttempts = 10
+
+    var onMessage: ((WebSocketMessage) -> Void)?
+    var onConnectionChange: ((Bool) -> Void)?
+
+    init(baseURL: String) {
+        let cleaned = baseURL
+            .replacingOccurrences(of: "http://", with: "ws://")
+            .replacingOccurrences(of: "https://", with: "wss://")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        self.baseURL = cleaned
+        super.init()
+        self.session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    }
+
+    func connect() {
+        guard let url = URL(string: "\(baseURL)/ws") else { return }
+        webSocketTask = session?.webSocketTask(with: url)
+        webSocketTask?.resume()
+        isConnected = true
+        reconnectAttempts = 0
+        onConnectionChange?(true)
+        receiveMessage()
+    }
+
+    func disconnect() {
+        isConnected = false
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        onConnectionChange?(false)
+    }
+
+    func send(_ message: String) {
+        let wsMessage = URLSessionWebSocketTask.Message.string(message)
+        webSocketTask?.send(wsMessage) { error in
+            if let error = error {
+                print("WebSocket send error: \(error)")
+            }
+        }
+    }
+
+    private func receiveMessage() {
+        webSocketTask?.receive { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self.handleMessage(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        self.handleMessage(text)
+                    }
+                @unknown default:
+                    break
+                }
+                self.receiveMessage()
+            case .failure(let error):
+                print("WebSocket receive error: \(error)")
+                self.handleDisconnect()
+            }
+        }
+    }
+
+    private func handleMessage(_ text: String) {
+        guard let data = text.data(using: .utf8) else { return }
+        do {
+            let message = try JSONDecoder().decode(WebSocketMessage.self, from: data)
+            DispatchQueue.main.async {
+                self.onMessage?(message)
+            }
+        } catch {
+            print("WebSocket decode error: \(error)")
+        }
+    }
+
+    private func handleDisconnect() {
+        isConnected = false
+        DispatchQueue.main.async {
+            self.onConnectionChange?(false)
+        }
+        guard reconnectAttempts < maxReconnectAttempts else { return }
+        reconnectAttempts += 1
+        let delay = pow(2.0, Double(min(reconnectAttempts, 6)))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.connect()
+        }
+    }
+}
+
+extension WebSocketManager: URLSessionWebSocketDelegate {
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        isConnected = true
+        reconnectAttempts = 0
+        DispatchQueue.main.async {
+            self.onConnectionChange?(true)
+        }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        handleDisconnect()
+    }
+}

@@ -1,0 +1,1 @@
+"""Rules engine — deterministic automations evaluated against every event on the bus."""

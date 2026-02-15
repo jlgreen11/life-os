@@ -16,6 +16,8 @@ from fastapi.responses import HTMLResponse
 
 from web.schemas import (
     CommandRequest,
+    ContextBatchRequest,
+    ContextEventRequest,
     DraftRequest,
     FeedbackRequest,
     PreferenceUpdate,
@@ -28,7 +30,29 @@ from web.websocket import ws_manager
 
 
 def register_routes(app: FastAPI, life_os) -> None:
-    """Register all API routes on the FastAPI app."""
+    """Register all API routes on the FastAPI app.
+
+    Routes are organized by domain:
+        Health & Status    — /health, /api/status
+        Command Bar        — /api/command  (NLP-like routing)
+        Briefing           — /api/briefing
+        Search             — /api/search
+        Tasks              — /api/tasks (CRUD)
+        Notifications      — /api/notifications (lifecycle)
+        Draft Messages     — /api/draft
+        Rules              — /api/rules (automation engine)
+        User Model         — /api/user-model (facts, mood)
+        Preferences        — /api/preferences
+        Feedback           — /api/feedback
+        Events             — /api/events (debug/inspection)
+        Connectors         — /api/connectors, /api/browser/*
+        WebSocket          — /ws (real-time push)
+        Web UI             — / (HTML dashboard)
+
+    All handlers access Life OS services through the ``life_os`` closure
+    variable captured here, rather than through ``app.state``, keeping the
+    route code concise.
+    """
 
     # -------------------------------------------------------------------
     # Health & Status
@@ -36,12 +60,16 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/health")
     async def health():
+        """Aggregate health check — polls every connector and returns a
+        unified status payload used by the dashboard status bar."""
         connectors = []
         for c in life_os.connectors:
             try:
                 status = await c.health_check()
                 connectors.append(status)
             except Exception as e:
+                # Individual connector failures should not break the overall
+                # health endpoint; report the error inline instead.
                 connectors.append({"connector": c.CONNECTOR_ID, "status": "error", "details": str(e)})
 
         return {
@@ -69,13 +97,27 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/command")
     async def command(req: CommandRequest):
+        """Unified command bar — routes natural-language input to the right service.
+
+        NLP-like routing:  The command text is matched against simple keyword
+        prefixes to determine intent.  This avoids a full NLP pipeline for the
+        most common actions while still falling back to the AI engine for
+        anything unrecognized.
+
+        Routing rules (evaluated top to bottom):
+            "search ..." / "find ..."  ->  vector store semantic search
+            "task ..." / "todo ..."    ->  task manager quick-capture
+            "briefing"                 ->  AI-generated morning briefing
+            "draft ..."               ->  AI-generated message draft
+            (anything else)            ->  free-form AI search/answer
+        """
         text = req.text.strip()
         if not text:
             raise HTTPException(400, "Empty command")
 
         lower = text.lower()
 
-        # Determine command type for telemetry
+        # --- Intent detection (also used for telemetry) ---
         if lower.startswith("search ") or lower.startswith("find "):
             command_type = "search"
         elif lower.startswith("task ") or lower.startswith("todo "):
@@ -104,15 +146,18 @@ def register_routes(app: FastAPI, life_os) -> None:
             results = life_os.vector_store.search(query, limit=10)
             return {"type": "search_results", "results": results}
 
+        # --- Intent: quick task creation ---
         elif command_type == "task":
             title = text.split(" ", 1)[1]
             task_id = await life_os.task_manager.create_task(title=title)
             return {"type": "task_created", "task_id": task_id}
 
+        # --- Intent: generate briefing ---
         elif command_type == "briefing":
             briefing = await life_os.ai_engine.generate_briefing()
             return {"type": "briefing", "content": briefing}
 
+        # --- Intent: draft a message ---
         elif command_type == "draft":
             context = text.split(" ", 1)[1]
             draft = await life_os.ai_engine.draft_reply(
@@ -121,6 +166,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             )
             return {"type": "draft", "content": draft}
 
+        # --- Fallback: pass to AI engine for open-ended search/response ---
         else:
             response = await life_os.ai_engine.search_life(text)
             return {"type": "ai_response", "content": response}
@@ -247,21 +293,29 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/user-model")
     async def get_user_model():
+        """Return the full user model summary from the signal extractor."""
         return life_os.signal_extractor.get_user_summary()
 
     @app.get("/api/user-model/facts")
     async def get_facts(min_confidence: float = 0.0):
+        """Return semantic facts, optionally filtered by minimum confidence."""
         facts = life_os.user_model_store.get_semantic_facts(min_confidence=min_confidence)
         return {"facts": facts}
 
     @app.delete("/api/user-model/facts/{key}")
     async def delete_fact(key: str):
+        """Delete a single semantic fact by key (user correction flow)."""
         with life_os.db.get_connection("user_model") as conn:
             conn.execute("DELETE FROM semantic_facts WHERE key = ?", (key,))
         return {"status": "deleted"}
 
     @app.get("/api/user-model/mood")
     async def get_mood():
+        """Return the current inferred mood state.
+
+        Handles both Pydantic models (with ``.dict()``) and plain dataclass-like
+        objects by falling back to manual attribute access.
+        """
         mood = life_os.signal_extractor.get_current_mood()
         return {
             "mood": mood.dict() if hasattr(mood, "dict") else {
@@ -361,22 +415,239 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {"sites": life_os.browser_orchestrator.get_vault_sites()}
 
     # -------------------------------------------------------------------
+    # Context API (iOS / Mobile Device Context Ingestion)
+    # -------------------------------------------------------------------
+
+    @app.post("/api/context/event")
+    async def submit_context_event(req: ContextEventRequest):
+        """Ingest a single context event from a mobile device."""
+        ts = req.timestamp or datetime.now(timezone.utc).isoformat()
+
+        # Map context event type to internal event type
+        event_type_map = {
+            "context.location": "location.changed",
+            "context.device_nearby": "home.device.state_changed",
+            "context.time": "system.user.command",
+            "context.background_refresh": "system.connector.sync_complete",
+            "context.background_processing": "system.connector.sync_complete",
+        }
+
+        internal_type = event_type_map.get(req.type, "system.user.command")
+
+        event = {
+            "type": internal_type,
+            "source": req.source,
+            "timestamp": ts,
+            "priority": "silent",
+            "payload": req.payload.dict(exclude_none=True),
+            "metadata": {
+                "domain": "context",
+                "mobile_event_type": req.type,
+                **(req.metadata.dict(exclude_none=True) if req.metadata else {}),
+            },
+        }
+
+        # Store the event
+        event_id = life_os.event_store.store_event(event)
+
+        # Publish to event bus for signal extraction
+        try:
+            await life_os.event_bus.publish(f"lifeos.context.{req.type}", event)
+        except Exception:
+            pass  # Event bus may not be connected
+
+        # If location event, update places database
+        if req.type == "context.location" and req.payload.latitude is not None:
+            try:
+                _update_place_from_context(life_os, req.payload)
+            except Exception:
+                pass
+
+        # If device event, try to correlate with contacts
+        if req.type == "context.device_nearby" and req.payload.device_name:
+            try:
+                _correlate_device_with_contact(life_os, req.payload)
+            except Exception:
+                pass
+
+        return {"status": "received", "event_id": event_id}
+
+    @app.post("/api/context/batch")
+    async def submit_context_batch(req: ContextBatchRequest):
+        """Ingest a batch of context events from a mobile device."""
+        event_ids = []
+        for event_req in req.events:
+            ts = event_req.timestamp or datetime.now(timezone.utc).isoformat()
+            event = {
+                "type": "system.user.command",
+                "source": event_req.source,
+                "timestamp": ts,
+                "priority": "silent",
+                "payload": event_req.payload.dict(exclude_none=True),
+                "metadata": {
+                    "domain": "context",
+                    "mobile_event_type": event_req.type,
+                    **(event_req.metadata.dict(exclude_none=True) if event_req.metadata else {}),
+                },
+            }
+            event_id = life_os.event_store.store_event(event)
+            event_ids.append(event_id)
+
+            # Publish to event bus
+            try:
+                await life_os.event_bus.publish(f"lifeos.context.{event_req.type}", event)
+            except Exception:
+                pass
+
+        return {"status": "received", "count": len(event_ids), "event_ids": event_ids}
+
+    @app.get("/api/context/summary")
+    async def get_context_summary():
+        """Get a summary of recently collected context data."""
+        recent_events = life_os.event_store.get_events(
+            source="ios_app", limit=100
+        )
+
+        # Aggregate context data
+        locations = []
+        devices = []
+        for evt in recent_events:
+            payload = evt.get("payload", {})
+            meta = evt.get("metadata", {})
+            mobile_type = meta.get("mobile_event_type", "")
+
+            if mobile_type == "context.location" and payload.get("latitude"):
+                locations.append({
+                    "place": payload.get("place_name", "Unknown"),
+                    "lat": payload.get("latitude"),
+                    "lon": payload.get("longitude"),
+                    "timestamp": evt.get("timestamp"),
+                })
+            elif mobile_type == "context.device_nearby":
+                devices.append({
+                    "name": payload.get("device_name", "Unknown"),
+                    "type": payload.get("device_type"),
+                    "signal": payload.get("signal_strength"),
+                    "timestamp": evt.get("timestamp"),
+                })
+
+        # Unique locations and devices
+        unique_places = list({l["place"] for l in locations if l["place"] != "Unknown"})
+        unique_devices = list({d["name"] for d in devices if d["name"] != "Unknown"})
+
+        return {
+            "type": "context_summary",
+            "content": f"Context: {len(locations)} location updates, {len(devices)} device sightings. "
+                       f"Places: {', '.join(unique_places) or 'none tracked'}. "
+                       f"Devices: {', '.join(unique_devices) or 'none detected'}.",
+            "locations": locations[-10:],  # Last 10
+            "devices": devices[-10:],
+            "unique_places": unique_places,
+            "unique_devices": unique_devices,
+        }
+
+    @app.get("/api/context/places")
+    async def get_context_places():
+        """Get learned places from context data."""
+        with life_os.db.get_connection("entities") as conn:
+            rows = conn.execute(
+                "SELECT * FROM places ORDER BY visit_count DESC LIMIT 50"
+            ).fetchall()
+            return {"places": [dict(r) for r in rows]}
+
+    def _update_place_from_context(life_os_instance, payload):
+        """Update or create a place from mobile context location data."""
+        if not payload.latitude or not payload.longitude:
+            return
+
+        place_name = payload.place_name or "Unknown"
+        with life_os_instance.db.get_connection("entities") as conn:
+            # Find nearby existing place (within ~100m)
+            existing = conn.execute(
+                """SELECT id, name, visit_count FROM places
+                   WHERE ABS(latitude - ?) < 0.001 AND ABS(longitude - ?) < 0.001
+                   LIMIT 1""",
+                (payload.latitude, payload.longitude),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "UPDATE places SET visit_count = visit_count + 1, updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), existing["id"]),
+                )
+            else:
+                import uuid
+                conn.execute(
+                    """INSERT INTO places (id, name, latitude, longitude, place_type, visit_count, created_at)
+                       VALUES (?, ?, ?, ?, ?, 1, ?)""",
+                    (str(uuid.uuid4()), place_name, payload.latitude, payload.longitude,
+                     payload.place_type or "unknown", datetime.now(timezone.utc).isoformat()),
+                )
+
+    def _correlate_device_with_contact(life_os_instance, payload):
+        """Try to match a nearby device to a known contact."""
+        if not payload.device_name:
+            return
+
+        device_name = payload.device_name.lower()
+        with life_os_instance.db.get_connection("entities") as conn:
+            # Check if any contact has an alias matching the device name
+            contacts = conn.execute(
+                "SELECT id, name, aliases FROM contacts"
+            ).fetchall()
+
+            for contact in contacts:
+                name_lower = contact["name"].lower()
+                if name_lower in device_name or device_name in name_lower:
+                    # Found a potential match - store as a context observation
+                    life_os_instance.event_store.store_event({
+                        "type": "system.ai.suggestion",
+                        "source": "context_engine",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "priority": "silent",
+                        "payload": {
+                            "suggestion_type": "contact_nearby",
+                            "contact_id": contact["id"],
+                            "contact_name": contact["name"],
+                            "device_name": payload.device_name,
+                            "signal_strength": payload.signal_strength,
+                        },
+                    })
+                    break
+
+    # -------------------------------------------------------------------
     # WebSocket
     # -------------------------------------------------------------------
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for real-time push updates.
+
+        Connection lifecycle:
+        1. Client connects -> ``ws_manager.connect`` accepts the handshake and
+           adds the socket to the active connections list.
+        2. The handler enters an infinite receive loop, keeping the connection
+           alive.  Incoming messages can carry commands (type: "command"), but
+           this is currently a placeholder for future client-to-server messages.
+        3. When the client disconnects, ``WebSocketDisconnect`` is raised and
+           the connection is removed from the manager's active list.
+
+        Meanwhile, server-side services can call ``ws_manager.broadcast(...)``
+        at any time to push notifications/events to all connected clients.
+        """
         await ws_manager.connect(websocket)
         try:
             while True:
+                # Block until the client sends a message (keeps the connection alive).
                 data = await websocket.receive_text()
                 try:
                     msg = json.loads(data)
                     if msg.get("type") == "command":
-                        pass  # Handle incoming websocket commands
+                        pass  # Placeholder for future client-to-server commands.
                 except json.JSONDecodeError:
                     pass
         except WebSocketDisconnect:
+            # Client closed the connection — clean up the active connections list.
             ws_manager.disconnect(websocket)
 
     # -------------------------------------------------------------------
@@ -385,5 +656,11 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
+        """Serve the single-page HTML dashboard.
+
+        The template is imported lazily (inside the handler) to avoid circular
+        imports at module load time and to keep the template module independent
+        of the FastAPI app.
+        """
         from web.template import HTML_TEMPLATE
         return HTML_TEMPLATE

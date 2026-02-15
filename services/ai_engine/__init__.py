@@ -1,8 +1,4 @@
-"""
-Life OS — AI Engine Package
-
-Orchestrates all LLM interactions with PII protection and context assembly.
-"""
+"""AI engine — LLM orchestration with context building, PII masking, and response generation."""
 
 from services.ai_engine.pii import PIIShield
 from services.ai_engine.context import ContextAssembler

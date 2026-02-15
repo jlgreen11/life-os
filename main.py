@@ -40,9 +40,15 @@ class LifeOS:
 
     def __init__(self, config_path: str = "config/settings.yaml"):
         self.config = self._load_config(config_path)
+        # Used to signal all background tasks (prediction loop, etc.) to stop
         self.shutdown_event = asyncio.Event()
 
-        # Core infrastructure
+        # --- Core infrastructure ---
+        # Initialization order matters: DB must be created first because almost
+        # every other component receives it via constructor injection (the
+        # dependency-injection pattern used throughout Life OS — each service
+        # declares its dependencies as constructor args rather than importing
+        # global singletons).
         self.db = DatabaseManager(self.config.get("data_dir", "./data"))
         self.event_store = EventStore(self.db)
         self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
@@ -52,7 +58,11 @@ class LifeOS:
             model_name=self.config.get("embedding_model", "all-MiniLM-L6-v2"),
         )
 
-        # Services (all wired to event bus for data creation telemetry)
+        # --- Services ---
+        # Each service receives only the dependencies it needs (db,
+        # user_model_store, event_bus, config) — keeping coupling explicit and
+        # making unit-testing straightforward via mock injection.
+        # All services are wired to the event bus for data creation telemetry.
         self.signal_extractor = SignalExtractorPipeline(self.db, self.user_model_store)
         self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}))
         self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
@@ -60,19 +70,25 @@ class LifeOS:
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store
         )
+        # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
 
-        # Browser automation layer
+        # --- Browser automation layer ---
+        # Wraps Playwright and manages browser-based connectors separately
         self.browser_orchestrator = BrowserOrchestrator(self.event_bus, self.db, self.config)
 
-        # Connectors (loaded dynamically based on config)
+        # Connectors are loaded dynamically in _start_connectors() based on
+        # which keys are present in the config; empty list until then.
         self.connectors = []
 
     def _load_config(self, path: str) -> dict:
         """Load configuration from YAML file."""
         config_path = Path(path)
         if not config_path.exists():
+            # Fallback: if the YAML config file is missing, return a complete
+            # set of sensible defaults so the app can still boot (useful for
+            # first-run / development).  See _default_config() for the values.
             print(f"Config not found at {path}, using defaults.")
             return self._default_config()
 
@@ -115,6 +131,11 @@ class LifeOS:
             print("       Connected to NATS.")
         except Exception as e:
             print(f"       NATS connection failed: {e}")
+            # Degraded mode: the app continues to run without the event bus.
+            # In this mode, connectors cannot publish events, the signal
+            # extractor / rules engine won't fire, and real-time notifications
+            # are unavailable.  The web UI, DB, and prediction engine still
+            # work — so users can still browse history and manage tasks.
             print("       Running in degraded mode (no event bus).")
 
         # Install default rules (after event bus is available for telemetry)
@@ -122,6 +143,8 @@ class LifeOS:
 
         # 4. Register core event handlers
         print("[4/7] Registering event handlers...")
+        # Only register handlers when the bus is actually connected;
+        # in degraded mode this block is skipped entirely.
         if self.event_bus.is_connected:
             await self._register_event_handlers()
 
@@ -146,21 +169,31 @@ class LifeOS:
     async def _register_event_handlers(self):
         """Wire up the core event processing pipeline."""
 
+        # master_event_handler is the core event-processing pipeline.  ALL
+        # events from every connector flow through this single handler, which
+        # fans them out to each processing stage in order.  Each stage is
+        # wrapped in its own try/except so that a failure in one stage never
+        # blocks the remaining stages from executing.
         async def master_event_handler(event: dict):
             """Every event flows through this pipeline."""
-            # Store the raw event
+
+            # Stage 1 — Persist: store the raw event in the relational DB
+            # so we always have a durable audit trail.
             try:
                 self.event_store.store_event(event)
             except Exception as e:
                 print(f"Event store error: {e}")
 
-            # Run through signal extractor (passive learning)
+            # Stage 2 — Learn: the signal extractor passively analyses the
+            # event to update the user model (patterns, preferences, etc.).
             try:
                 await self.signal_extractor.process_event(event)
             except Exception as e:
                 print(f"Signal extractor error: {e}")
 
-            # Run through rules engine (deterministic actions)
+            # Stage 3 — React: the rules engine evaluates deterministic,
+            # user-defined rules and returns a list of actions to execute
+            # (notify, tag, suppress, create_task, etc.).
             try:
                 actions = await self.rules_engine.evaluate(event)
                 for action in actions:
@@ -168,18 +201,22 @@ class LifeOS:
             except Exception as e:
                 print(f"Rules engine error: {e}")
 
-            # Run through task manager (extract tasks from messages)
+            # Stage 4 — Extract tasks: scan the event payload (e.g. email
+            # body, chat message) for actionable items and create tasks.
             try:
                 await self.task_manager.process_event(event)
             except Exception as e:
                 print(f"Task manager error: {e}")
 
-            # Embed for vector search
+            # Stage 5 — Embed: generate a vector embedding of the event
+            # content so it can be retrieved via semantic search later.
             try:
                 await self._embed_event(event)
             except Exception as e:
                 print(f"Embedding error: {e}")
 
+        # Subscribe with a wildcard so every subject published on the bus
+        # is routed to master_event_handler.
         await self.event_bus.subscribe_all(master_event_handler)
 
     async def _execute_rule_action(self, action: dict, event: dict):
@@ -196,9 +233,12 @@ class LifeOS:
             )
         elif action_type == "tag":
             # Store tag on the event
-            pass  # TODO: implement event tagging
+            pass  # TODO [FLAGGED]: implement event tagging
         elif action_type == "suppress":
-            # Mark event as suppressed (don't notify)
+            # Mark event as suppressed so downstream stages (especially
+            # NotificationManager) know not to surface it to the user.
+            # Currently a no-op; the suppress flag should be persisted on the
+            # event record once event-tagging (above) is implemented.
             pass
         elif action_type == "create_task":
             await self.task_manager.create_task(
@@ -211,6 +251,17 @@ class LifeOS:
     async def _embed_event(self, event: dict):
         """Embed event content for vector search."""
         payload = event.get("payload", {})
+
+        # Text-extraction strategy: pull from multiple payload fields to
+        # build the richest possible text representation of the event.
+        # Priority order:
+        #   1. "subject"    — email subjects, message titles (always short)
+        #   2. "body_plain" — plain-text body (preferred over HTML)
+        #      "body"       — HTML/rich body, used as a fallback when no
+        #                     plain-text variant exists
+        #   3. "title"      — calendar event titles, task titles, etc.
+        # Bodies are truncated to 2 000 chars to keep embeddings focused on
+        # the most relevant content and to limit memory / compute cost.
         text_parts = []
 
         if payload.get("subject"):
@@ -223,6 +274,8 @@ class LifeOS:
             text_parts.append(payload["title"])
 
         text = " ".join(text_parts).strip()
+        # Skip events with very little textual content (< 20 chars).  Short
+        # strings produce low-quality embeddings that pollute search results.
         if len(text) < 20:
             return
 
@@ -242,6 +295,8 @@ class LifeOS:
             try:
                 predictions = await self.prediction_engine.run_predictions()
                 for prediction in predictions:
+                    # Only surface predictions the engine deems worth
+                    # interrupting the user for (high-confidence / high-value).
                     if prediction.get("should_surface"):
                         await self.notification_manager.create_notification(
                             title=prediction.get("title", "Suggestion"),
@@ -251,11 +306,22 @@ class LifeOS:
             except Exception as e:
                 print(f"Prediction engine error: {e}")
 
+            # 900 seconds = 15 minutes.  This interval balances freshness
+            # against compute cost; predictions depend on aggregated patterns,
+            # so sub-minute granularity is unnecessary.
             await asyncio.sleep(900)  # 15 minutes
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors."""
         connector_configs = self.config.get("connectors") or {}
+
+        # Dynamic / lazy import pattern: connector modules are imported
+        # inside their respective ``if`` blocks rather than at the top of
+        # the file.  This avoids importing heavy dependencies (e.g.
+        # Playwright, protonmail-bridge, signalc) when the connector is
+        # not enabled in the config, which speeds up startup and lets the
+        # app run on machines where those optional libraries are not
+        # installed.
 
         if "proton_mail" in connector_configs:
             from connectors.proton_mail.connector import ProtonMailConnector
@@ -292,6 +358,8 @@ class LifeOS:
             )
             self.connectors.append(connector)
 
+        # Attempt to start each instantiated connector.  Failures are logged
+        # but do not prevent other connectors from starting.
         for connector in self.connectors:
             try:
                 await connector.start()
@@ -308,42 +376,70 @@ class LifeOS:
     async def stop(self):
         """Graceful shutdown."""
         print("\nShutting down Life OS...")
+        # Signal all background loops (_prediction_loop, etc.) to exit
         self.shutdown_event.set()
 
+        # Shutdown order is the reverse of startup:
+        # 1. Stop connectors first so no new events are produced.
         for connector in self.connectors:
             try:
                 await connector.stop()
             except Exception:
                 pass
 
+        # 2. Tear down the browser automation layer (closes Playwright
+        #    browser contexts and the shared engine).
         if self.browser_orchestrator.is_enabled:
             await self.browser_orchestrator.stop()
 
+        # 3. Disconnect from NATS last — this ensures that any in-flight
+        #    events published during connector shutdown can still be delivered
+        #    before the bus goes away.
         if self.event_bus.is_connected:
             await self.event_bus.disconnect()
 
         print("Goodbye.")
 
 
+# ---------------------------------------------------------------------------
+# Dual entry-point pattern
+# ---------------------------------------------------------------------------
+# Life OS can be started in two ways:
+#
+#   1. ASGI factory  — ``create_app()`` returns a FastAPI instance that an
+#      external ASGI server (e.g. ``uvicorn main:create_app --factory``) can
+#      serve.  This is the recommended approach for production deployments.
+#
+#   2. Direct run    — ``python main.py`` calls ``main()`` which boots the
+#      full system (DB, connectors, event bus, prediction loop) AND starts
+#      an embedded Uvicorn server.  Convenient for local development.
+# ---------------------------------------------------------------------------
+
+
 def create_app():
-    """Create the FastAPI application (imported by web module)."""
+    """Create the FastAPI application (imported by web module).
+
+    ASGI factory entry point — used when an external server manages the
+    process (e.g. ``uvicorn main:create_app --factory``).
+    """
     from web.app import create_web_app
     life_os = LifeOS()
     return create_web_app(life_os)
 
 
 async def main():
-    """Main entry point."""
+    """Main entry point for direct execution (``python main.py``)."""
     life_os = LifeOS()
 
-    # Handle Ctrl+C
+    # Handle Ctrl+C and SIGTERM so the app shuts down gracefully
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(life_os.stop()))
 
+    # Boot all subsystems (DB, connectors, event bus, prediction loop, etc.)
     await life_os.start()
 
-    # Run web server
+    # Run the embedded web server — blocks until shutdown
     from web.app import create_web_app
     app = create_web_app(life_os)
 

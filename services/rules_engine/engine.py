@@ -39,6 +39,9 @@ class RulesEngine:
     def __init__(self, db: DatabaseManager, event_bus: Any = None):
         self.db = db
         self.bus = event_bus
+        # --- Rule caching ---
+        # Rules are loaded from DB into memory to avoid per-event DB queries.
+        # The cache is refreshed every 60 seconds (see evaluate()).
         self._rules_cache: list[dict] = []
         self._cache_loaded_at: Optional[datetime] = None
 
@@ -48,7 +51,13 @@ class RulesEngine:
             await self.bus.publish(event_type, payload, source="rules_engine")
 
     def load_rules(self):
-        """Load active rules from the database into memory."""
+        """
+        Load active rules from the database into memory.
+
+        Only active rules (is_active=1) are loaded. Conditions and actions
+        are stored as JSON strings in the DB and deserialized here so the
+        evaluation path works with native Python dicts.
+        """
         with self.db.get_connection("preferences") as conn:
             rows = conn.execute(
                 "SELECT * FROM rules WHERE is_active = 1 ORDER BY ROWID"
@@ -57,6 +66,7 @@ class RulesEngine:
             self._rules_cache = []
             for row in rows:
                 rule = dict(row)
+                # Deserialize JSON-encoded conditions and actions
                 rule["conditions"] = json.loads(rule["conditions"])
                 rule["actions"] = json.loads(rule["actions"])
                 self._rules_cache.append(rule)
@@ -67,8 +77,19 @@ class RulesEngine:
         """
         Evaluate all rules against an event.
         Returns a list of actions to execute.
+
+        Rule evaluation flow (for each rule):
+            1. Trigger matching  -> does the rule's trigger_event match this event type?
+            2. Condition evaluation -> do ALL conditions pass? (AND logic)
+            3. Action collection   -> if yes, collect the rule's actions for execution
+
+        This runs on every event on the bus, so it must be fast. The
+        in-memory cache avoids DB round-trips on the hot path.
         """
-        # Reload rules periodically (every 60 seconds)
+        # --- Periodic cache reload ---
+        # Refresh the rules cache every 60 seconds to pick up changes
+        # without requiring a full restart. The staleness window is
+        # acceptable because rule changes are infrequent.
         if (
             not self._cache_loaded_at
             or (datetime.now(timezone.utc) - self._cache_loaded_at).seconds > 60
@@ -79,13 +100,15 @@ class RulesEngine:
         matching_actions = []
 
         for rule in self._rules_cache:
-            # Check if the rule's trigger matches this event type
+            # Step 1: Trigger matching — does this rule care about this event type?
+            # Supports exact match, wildcard ("*"), and glob patterns ("email.*").
             if not self._matches_trigger(rule["trigger_event"], event_type):
                 continue
 
-            # Evaluate all conditions
+            # Step 2: Condition evaluation — all conditions must pass (AND logic)
             if self._evaluate_conditions(rule["conditions"], event):
-                # All conditions met — collect the actions
+                # Step 3: Action collection — attach rule metadata to each action
+                # so downstream handlers know which rule fired.
                 for action in rule["actions"]:
                     matching_actions.append({
                         "rule_id": rule["id"],
@@ -93,7 +116,8 @@ class RulesEngine:
                         **action,
                     })
 
-                # Update rule trigger count and publish telemetry
+                # Record that this rule was triggered (for analytics and
+                # the "times_triggered" display in the rules management UI).
                 await self._record_trigger(rule["id"], rule["name"], event_type, event.get("id"))
 
         return matching_actions
@@ -101,7 +125,7 @@ class RulesEngine:
     async def add_rule(self, name: str, trigger_event: str,
                        conditions: list[dict], actions: list[dict],
                        created_by: str = "user") -> str:
-        """Add a new rule."""
+        """Add a new rule and reload the cache so it takes effect immediately."""
         rule_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
@@ -132,7 +156,7 @@ class RulesEngine:
         return rule_id
 
     async def remove_rule(self, rule_id: str):
-        """Deactivate a rule."""
+        """Deactivate a rule (soft delete — sets is_active=0, not a hard delete)."""
         # Fetch rule details for telemetry before deactivating
         rule_name = None
         with self.db.get_connection("preferences") as conn:
@@ -165,43 +189,75 @@ class RulesEngine:
     # -------------------------------------------------------------------
 
     def _matches_trigger(self, trigger: str, event_type: str) -> bool:
-        """Check if a trigger pattern matches an event type."""
+        """
+        Check if a trigger pattern matches an event type.
+
+        Supports three matching modes:
+            "*"            -> matches every event (catch-all rule)
+            "email.*"      -> glob-style wildcard (converted to regex)
+            "email.received" -> exact string match
+        """
         if trigger == "*":
-            return True
+            return True  # Wildcard: matches all event types
         if "*" in trigger:
+            # Convert glob-style pattern to regex: escape dots, then
+            # replace "*" with ".*" for regex wildcard matching.
             pattern = trigger.replace(".", r"\.").replace("*", ".*")
             return bool(re.match(pattern, event_type))
-        return trigger == event_type
+        return trigger == event_type  # Exact match
 
     def _evaluate_conditions(self, conditions: list[dict], event: dict) -> bool:
-        """Evaluate all conditions against an event. All must be true (AND)."""
+        """Evaluate all conditions against an event. All must be true (AND logic)."""
         for condition in conditions:
             if not self._evaluate_single_condition(condition, event):
                 return False
         return True
 
     def _evaluate_single_condition(self, condition: dict, event: dict) -> bool:
-        """Evaluate a single condition against an event."""
+        """
+        Evaluate a single condition against an event.
+
+        Each condition has three parts:
+            field  - dot-notation path into the event dict (e.g., "payload.from_address")
+            op     - comparison operator (see the operator system below)
+            value  - the expected value to compare against
+
+        The operator system supports:
+            eq           - exact equality
+            neq          - not equal
+            contains     - case-insensitive substring match (field must be str)
+            contains_any - field contains ANY of the values in the list
+            in           - actual value is a member of the expected list
+            not_in       - actual value is NOT in the expected list
+            gt / lt      - greater than / less than (numeric comparison)
+            gte / lte    - greater than or equal / less than or equal
+            exists       - field is present and not None
+            not_exists   - field is absent or None
+            regex        - case-insensitive regex match (field must be str)
+        """
         field_path = condition.get("field", "")
         op = condition.get("op", "eq")
         expected = condition.get("value")
 
-        # Resolve the field value from the event using dot notation
+        # Resolve the field value from the event using dot-notation traversal
         actual = self._resolve_field(field_path, event)
 
-        # Apply the operator
+        # --- Apply the operator ---
         if op == "eq":
             return actual == expected
         elif op == "neq":
             return actual != expected
         elif op == "contains":
+            # Case-insensitive substring match
             return isinstance(actual, str) and expected.lower() in actual.lower()
         elif op == "contains_any":
+            # True if the field string contains ANY of the expected values
             if not isinstance(actual, str):
                 return False
             actual_lower = actual.lower()
             return any(v.lower() in actual_lower for v in expected)
         elif op == "in":
+            # Actual value is a member of the expected list
             return actual in expected
         elif op == "not_in":
             return actual not in expected
@@ -218,25 +274,33 @@ class RulesEngine:
         elif op == "not_exists":
             return actual is None
         elif op == "regex":
+            # Case-insensitive regex search within the field value
             return isinstance(actual, str) and bool(re.search(expected, actual, re.IGNORECASE))
         else:
-            return False
+            return False  # Unknown operator — fail closed
 
     def _resolve_field(self, field_path: str, obj: dict) -> Any:
-        """Resolve a dotted field path like 'payload.from_address' from a dict."""
+        """
+        Resolve a dotted field path like 'payload.from_address' from a dict.
+
+        Dot-notation field resolution walks the nested dict structure one
+        key at a time. For example, "payload.from_address" on the event
+        {"type": "email.received", "payload": {"from_address": "a@b.com"}}
+        would return "a@b.com". Returns None if any segment is missing.
+        """
         parts = field_path.split(".")
         current = obj
         for part in parts:
             if isinstance(current, dict):
                 current = current.get(part)
             else:
-                return None
+                return None  # Path broken — intermediate value isn't a dict
         return current
 
     async def _record_trigger(self, rule_id: str, rule_name: Optional[str] = None,
                               event_type: Optional[str] = None,
                               event_id: Optional[str] = None):
-        """Update the trigger count for a rule and publish telemetry."""
+        """Update the trigger count and last-triggered timestamp for a rule, and publish telemetry."""
         now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection("preferences") as conn:
             conn.execute(
@@ -257,10 +321,14 @@ class RulesEngine:
 
 
 # -------------------------------------------------------------------
-# Default Rules — Installed on first run
+# Default Rules -- Installed on first run
 # -------------------------------------------------------------------
+# These rules ship with the system and provide sensible out-of-the-box
+# automation. They can be deactivated or edited by the user at any time.
+# Each rule follows the standard format: trigger_event, conditions, actions.
 
 DEFAULT_RULES = [
+    # Auto-tag and suppress marketing emails (detected by "unsubscribe" link)
     {
         "name": "Archive marketing emails",
         "trigger_event": "email.received",
@@ -273,6 +341,7 @@ DEFAULT_RULES = [
             {"type": "suppress"},
         ],
     },
+    # Tag emails with attachments so users can find them easily later
     {
         "name": "Flag emails with attachments",
         "trigger_event": "email.received",
@@ -283,6 +352,7 @@ DEFAULT_RULES = [
             {"type": "tag", "value": "has-attachments"},
         ],
     },
+    # Immediately notify the user when a calendar conflict is detected
     {
         "name": "High priority: calendar conflict",
         "trigger_event": "calendar.conflict.detected",
@@ -291,6 +361,7 @@ DEFAULT_RULES = [
             {"type": "notify", "priority": "high"},
         ],
     },
+    # Alert on transactions over $500 — catches fraud and big purchases
     {
         "name": "Alert on large transactions",
         "trigger_event": "finance.transaction.new",
@@ -306,12 +377,19 @@ DEFAULT_RULES = [
 
 
 async def install_default_rules(db: DatabaseManager, event_bus: Any = None):
-    """Install the default rules on first run."""
+    """
+    Install the default rules on first run.
+
+    Idempotent: checks existing rule names before inserting so running
+    this multiple times won't create duplicates. Called during app
+    initialization / database migration.
+    """
     engine = RulesEngine(db, event_bus=event_bus)
     existing = engine.get_all_rules()
     existing_names = {r["name"] for r in existing}
 
     for rule in DEFAULT_RULES:
+        # Only install if a rule with this name doesn't already exist
         if rule["name"] not in existing_names:
             await engine.add_rule(
                 name=rule["name"],

@@ -25,7 +25,24 @@ from storage.database import DatabaseManager
 # Onboarding Flow Definition
 # ---------------------------------------------------------------------------
 
+# Each phase is a single screen in the onboarding flow, inspired by Apple's
+# one-idea-per-screen pattern. Phases are ordered to build trust progressively:
+#   1. Welcome        (info)  — set expectations, no input needed
+#   2. Communication  (choice) — morning style, tone, proactivity
+#   3. Autonomy       (choice) — how much the AI should do on its own
+#   4. Life Structure  (free_text) — domains and priority people
+#   5. Privacy         (choice) — work/life boundary, Vault setup
+#   6. Attention       (choice + free_text) — notification mode, quiet hours
+#   7. Close           (info)  — confirmation, privacy reassurance
+#
+# "type" determines the UI component:
+#   "info"      -> read-only screen, no user input
+#   "choice"    -> single-select buttons
+#   "free_text" -> open text input (parsed by _parse_* helpers)
+#
+# "maps_to" links each answer to a key in the UserPreferences model.
 ONBOARDING_PHASES = [
+    # --- Phase 0: Welcome (info-only, no input captured) ---
     {
         "id": "welcome",
         "title": "Welcome",
@@ -37,7 +54,10 @@ ONBOARDING_PHASES = [
         "type": "info",
     },
 
-    # Phase 1: Communication Style
+    # --- Phase 1: Communication Style ---
+    # These three screens capture how the AI should talk to the user.
+    # The values ("minimal"/"detailed", "warm"/"professional"/"casual", etc.)
+    # directly map to UserPreferences fields used by the AI engine.
     {
         "id": "morning_style",
         "title": "Morning Personality",
@@ -87,7 +107,9 @@ ONBOARDING_PHASES = [
         "maps_to": "proactivity",
     },
 
-    # Phase 2: Autonomy
+    # --- Phase 2: Autonomy ---
+    # Controls the "leash length" — how much the AI can do without asking.
+    # "supervised" = ask about everything, "high" = handle as much as possible.
     {
         "id": "autonomy",
         "title": "The Leash",
@@ -120,7 +142,9 @@ ONBOARDING_PHASES = [
         "maps_to": "draft_replies",
     },
 
-    # Phase 3: Life Structure
+    # --- Phase 3: Life Structure ---
+    # Free-text inputs that are parsed into structured data by the
+    # _parse_domains and _parse_contacts helpers below.
     {
         "id": "domains",
         "title": "Life Domains",
@@ -143,7 +167,10 @@ ONBOARDING_PHASES = [
         "maps_to": "priority_contacts",
     },
 
-    # Phase 4: Privacy & Boundaries
+    # --- Phase 4: Privacy & Boundaries ---
+    # The boundary_mode controls whether work events bleed into personal
+    # time and vice versa. The Vault is an optional encrypted compartment
+    # for sensitive data that won't appear in search or briefings.
     {
         "id": "work_life_boundary",
         "title": "Work/Life Wall",
@@ -178,7 +205,9 @@ ONBOARDING_PHASES = [
         "maps_to": "vault_enabled",
     },
 
-    # Phase 5: Attention
+    # --- Phase 5: Attention ---
+    # Notification mode + quiet hours together define when and how
+    # the system is allowed to interrupt the user.
     {
         "id": "notifications",
         "title": "Notification Philosophy",
@@ -207,7 +236,8 @@ ONBOARDING_PHASES = [
         "hint": "Example: '10pm to 7am' or 'I don't need quiet hours'",
     },
 
-    # Phase 6: Close
+    # --- Phase 6: Close (info-only, no input captured) ---
+    # Reassures the user about data ownership and privacy before starting.
     {
         "id": "close",
         "title": "You're All Set",
@@ -231,6 +261,9 @@ class OnboardingManager:
 
     def __init__(self, db: DatabaseManager):
         self.db = db
+        # In-memory session holding step_id -> answer pairs.
+        # This is ephemeral — it only lives for the duration of the
+        # onboarding conversation. finalize() flushes it to the DB.
         self._session: dict[str, Any] = {}
 
     def get_flow(self) -> list[dict]:
@@ -238,7 +271,13 @@ class OnboardingManager:
         return ONBOARDING_PHASES
 
     def get_current_step(self) -> Optional[dict]:
-        """Get the next unanswered step."""
+        """
+        Get the next unanswered step.
+
+        Iterates through the phases in order and returns the first one
+        that (a) requires user input (type != "info") and (b) hasn't
+        been answered yet. Returns None when all steps are complete.
+        """
         answered = set(self._session.keys())
         for phase in ONBOARDING_PHASES:
             if phase["type"] != "info" and phase["id"] not in answered:
@@ -250,7 +289,11 @@ class OnboardingManager:
         self._session[step_id] = value
 
     def is_complete(self) -> bool:
-        """Check if all required questions have been answered."""
+        """
+        Check if all required questions have been answered.
+
+        Only non-info phases require answers; info screens are display-only.
+        """
         required = [p["id"] for p in ONBOARDING_PHASES if p["type"] != "info"]
         return all(q in self._session for q in required)
 
@@ -261,6 +304,10 @@ class OnboardingManager:
         """
         preferences = {}
 
+        # --- Step 1: Map raw answers to preference keys ---
+        # Each phase's "maps_to" field names the UserPreferences key.
+        # Choice answers are already structured (e.g., "minimal", True);
+        # free-text answers need further parsing (see Step 2).
         for phase in ONBOARDING_PHASES:
             if phase["type"] == "info":
                 continue
@@ -272,7 +319,9 @@ class OnboardingManager:
             if maps_to and value is not None:
                 preferences[maps_to] = value
 
-        # Process free-text fields
+        # --- Step 2: Parse free-text fields into structured data ---
+        # Free-text responses are natural language; the _parse_* helpers
+        # convert them into lists/dicts the rest of the system can use.
         if "life_domains" in preferences:
             preferences["life_domains"] = self._parse_domains(
                 preferences["life_domains"]
@@ -288,12 +337,17 @@ class OnboardingManager:
                 preferences["quiet_hours"]
             )
 
-        # Handle vault
+        # --- Step 3: Handle vault setup ---
+        # Convert the boolean "vault_enabled" answer into a vaults config
+        # object, then remove the transient key so it's not persisted as-is.
         if preferences.get("vault_enabled"):
             preferences["vaults"] = [{"name": "Vault", "auth_method": "pin"}]
         preferences.pop("vault_enabled", None)
 
-        # Save to database
+        # --- Step 4: Persist all preferences to the database ---
+        # Each preference is stored as a key-value pair. Non-string values
+        # are JSON-serialized. "set_by" is tagged as "onboarding" so the
+        # system can distinguish onboarding defaults from later user edits.
         with self.db.get_connection("preferences") as conn:
             for key, value in preferences.items():
                 serialized = json.dumps(value) if not isinstance(value, str) else value
@@ -303,7 +357,8 @@ class OnboardingManager:
                     (key, serialized, datetime.now(timezone.utc).isoformat()),
                 )
 
-            # Mark onboarding as complete
+            # Mark onboarding as complete so the app knows to skip the
+            # onboarding flow on subsequent launches.
             conn.execute(
                 """INSERT OR REPLACE INTO user_preferences (key, value, set_by, updated_at)
                    VALUES ('onboarding_completed', 'true', 'system', ?)""",
@@ -313,22 +368,38 @@ class OnboardingManager:
         return preferences
 
     def _parse_domains(self, text: str) -> list[dict]:
-        """Parse free-text domain description into structured domains."""
-        # Simple parsing — in production, use LLM
+        """
+        Parse free-text domain description into structured domains.
+
+        Accepts comma-separated, newline-separated, or bullet-pointed
+        lists (e.g., "work, family, health" or "- work\n- family").
+        Each domain gets a default "soft_separation" boundary mode.
+        Falls back to ["personal", "work"] if parsing yields nothing.
+        """
+        # Simple parsing — in production, use LLM for more robust extraction
         domains = []
+        # Normalize commas to newlines, then split and strip list markers
         for part in text.replace(",", "\n").split("\n"):
-            part = part.strip().strip("-•*").strip()
+            part = part.strip().strip("-\u2022*").strip()
             if part:
                 domains.append({"name": part.lower(), "boundary": "soft_separation"})
         return domains if domains else [{"name": "personal"}, {"name": "work"}]
 
     def _parse_contacts(self, text: str) -> list[dict]:
-        """Parse free-text contact list into structured contacts."""
+        """
+        Parse free-text contact list into structured contacts.
+
+        Supports formats like:
+            "Sarah - wife, Tom - coworker, Mom"
+            "Sarah (wife)\nTom (coworker)\nMom"
+        The relationship is optional; if absent, it's stored as None.
+        """
         contacts = []
         for line in text.replace(",", "\n").split("\n"):
-            line = line.strip().strip("-•*").strip()
+            line = line.strip().strip("-\u2022*").strip()
             if line:
-                # Try to extract name and relationship
+                # Try to extract name and relationship from "Name - role"
+                # or "Name (role)" format
                 parts = line.split("-", 1) if "-" in line else line.split("(", 1)
                 name = parts[0].strip()
                 relationship = parts[1].strip().strip(")") if len(parts) > 1 else None
@@ -336,12 +407,28 @@ class OnboardingManager:
         return contacts
 
     def _parse_quiet_hours(self, text: str) -> list[dict]:
-        """Parse free-text quiet hours into structured time ranges."""
+        """
+        Parse free-text quiet hours into structured time ranges.
+
+        Handles inputs like "10pm to 7am", "22:00 - 07:00", or
+        "I don't need quiet hours". Returns a list of time-range dicts
+        compatible with the notification manager's quiet hours format.
+        """
         text = text.lower().strip()
+
+        # If the user declines quiet hours, return an empty list
         if "no" in text or "don't" in text or "none" in text:
             return []
 
-        # Try to extract time range
+        # --- Time regex pattern ---
+        # Captures a time range in many natural formats:
+        #   Group 1: start hour   (required, 1-2 digits)
+        #   Group 2: start minutes (optional, after colon)
+        #   Group 3: start am/pm   (optional)
+        #   Group 4: end hour     (required, 1-2 digits)
+        #   Group 5: end minutes  (optional, after colon)
+        #   Group 6: end am/pm    (optional)
+        # The separator between start and end can be "to" or "-".
         import re
         time_pattern = r'(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?'
         match = re.search(time_pattern, text)
@@ -354,15 +441,18 @@ class OnboardingManager:
             end_m = int(match.group(5) or 0)
             end_ampm = match.group(6)
 
+            # Convert 12-hour to 24-hour format when am/pm is present
             if start_ampm == "pm" and start_h < 12:
                 start_h += 12
             if end_ampm == "pm" and end_h < 12:
                 end_h += 12
             if start_ampm == "am" and start_h == 12:
-                start_h = 0
+                start_h = 0   # 12am = midnight = 00:00
             if end_ampm == "am" and end_h == 12:
-                end_h = 0
+                end_h = 0     # 12am = midnight = 00:00
 
+            # Default to every day of the week. The user can customize
+            # per-day ranges later through the settings UI.
             return [{
                 "start": f"{start_h:02d}:{start_m:02d}",
                 "end": f"{end_h:02d}:{end_m:02d}",
@@ -370,7 +460,8 @@ class OnboardingManager:
                          "friday", "saturday", "sunday"],
             }]
 
-        # Default fallback
+        # Default fallback: if the user said something like "yes" or
+        # "evening" without specific times, use a sensible default.
         return [{"start": "22:00", "end": "07:00",
                  "days": ["monday", "tuesday", "wednesday", "thursday",
                           "friday", "saturday", "sunday"]}]

@@ -1,0 +1,1 @@
+"""Task manager — lifecycle management for tasks from users, AI extraction, and rules."""

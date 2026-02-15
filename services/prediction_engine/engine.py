@@ -44,8 +44,8 @@ class PredictionEngine:
     """
 
     def __init__(self, db: DatabaseManager, ums: UserModelStore):
-        self.db = db
-        self.ums = ums
+        self.db = db   # Database access for events, user_model, and preferences tables
+        self.ums = ums  # User-model store for signal profiles and semantic memory
 
     async def generate_predictions(self, current_context: dict) -> list[Prediction]:
         """
@@ -54,22 +54,31 @@ class PredictionEngine:
         """
         predictions = []
 
-        predictions.extend(await self._check_calendar_conflicts(current_context))
-        predictions.extend(await self._check_follow_up_needs(current_context))
-        predictions.extend(await self._check_routine_deviations(current_context))
-        predictions.extend(await self._check_relationship_maintenance(current_context))
-        predictions.extend(await self._check_preparation_needs(current_context))
-        predictions.extend(await self._check_spending_patterns(current_context))
+        # --- Prediction generation pipeline ---
+        # Each _check_* method is a specialized detector that looks for one
+        # category of predictable user need. They run independently and
+        # return zero or more Prediction objects. The full set of prediction
+        # types covers the most common "blown away" moments:
+        predictions.extend(await self._check_calendar_conflicts(current_context))    # Scheduling overlaps & tight transitions
+        predictions.extend(await self._check_follow_up_needs(current_context))       # Unreplied messages from important people
+        predictions.extend(await self._check_routine_deviations(current_context))    # Missed habits or routines
+        predictions.extend(await self._check_relationship_maintenance(current_context))  # Contacts going cold
+        predictions.extend(await self._check_preparation_needs(current_context))     # Upcoming events needing prep
+        predictions.extend(await self._check_spending_patterns(current_context))     # Spending anomalies
 
-        # Filter through the reaction predictor — will the user find this helpful
-        # or annoying right now?
+        # --- Reaction prediction gatekeeper ---
+        # Before surfacing any prediction, ask: "Will the user find this
+        # helpful or annoying right now?" This prevents piling on during
+        # stressful moments or when the user has been dismissing alerts.
         filtered = []
         for pred in predictions:
             reaction = await self.predict_reaction(pred, current_context)
             if reaction.predicted_reaction in ("helpful", "neutral"):
                 filtered.append(pred)
 
-        # Store all predictions for accuracy tracking
+        # Store ALL predictions (including filtered-out ones) for accuracy
+        # tracking. This lets us measure both precision (were surfaced
+        # predictions helpful?) and recall (did we miss anything important?).
         for pred in predictions:
             self.ums.store_prediction(pred.model_dump())
 
@@ -80,7 +89,14 @@ class PredictionEngine:
     # -------------------------------------------------------------------
 
     async def _check_calendar_conflicts(self, ctx: dict) -> list[Prediction]:
-        """Detect scheduling conflicts and tight transitions."""
+        """
+        Detect scheduling conflicts and tight transitions.
+
+        Scans a 48-hour lookahead window and compares consecutive events
+        pairwise. Flags two scenarios:
+            - Overlap (gap < 0 min)  -> CONFLICT at 0.95 confidence
+            - Tight transition (<15 min gap) -> RISK at 0.70 confidence
+        """
         predictions = []
 
         with self.db.get_connection("events") as conn:
@@ -97,9 +113,9 @@ class PredictionEngine:
             ).fetchall()
 
         if len(events) < 2:
-            return predictions
+            return predictions  # Need at least two events to find conflicts
 
-        # Check for overlaps and tight transitions
+        # Compare each consecutive pair of events for overlap or tight gaps
         for i in range(len(events) - 1):
             curr_payload = json.loads(events[i]["payload"])
             next_payload = json.loads(events[i + 1]["payload"])
@@ -109,12 +125,13 @@ class PredictionEngine:
 
             if curr_end and next_start:
                 try:
+                    # Normalize Z-suffix timestamps to proper UTC offset format
                     end_dt = datetime.fromisoformat(curr_end.replace("Z", "+00:00"))
                     start_dt = datetime.fromisoformat(next_start.replace("Z", "+00:00"))
                     gap_minutes = (start_dt - end_dt).total_seconds() / 60
 
                     if gap_minutes < 0:
-                        # Overlap!
+                        # Negative gap = events overlap in time
                         predictions.append(Prediction(
                             prediction_type="conflict",
                             description=(
@@ -148,8 +165,16 @@ class PredictionEngine:
 
     async def _check_follow_up_needs(self, ctx: dict) -> list[Prediction]:
         """
-        Detect messages that need a reply — things the user read but
+        Detect messages that need a reply -- things the user read but
         hasn't responded to, especially from priority contacts.
+
+        Strategy:
+            1. Fetch all inbound messages from the last 48 hours
+            2. Fetch all outbound messages in the same window
+            3. Build a set of thread IDs we've already replied to
+            4. Any inbound message not in that set and older than 3 hours
+               is flagged, with confidence boosted for priority contacts
+               and messages explicitly requiring a response.
         """
         predictions = []
 
@@ -173,7 +198,8 @@ class PredictionEngine:
                 (cutoff,),
             ).fetchall()
 
-        # Build set of addresses we've replied to
+        # Build a set of thread/message IDs we've already replied to,
+        # so we can exclude them from the "needs follow-up" list.
         replied_to_threads = set()
         for msg in outbound:
             payload = json.loads(msg["payload"])
@@ -190,7 +216,8 @@ class PredictionEngine:
             if message_id in replied_to_threads:
                 continue
 
-            # Skip marketing/automated
+            # Skip marketing/automated emails — they contain "unsubscribe"
+            # links and don't warrant a follow-up reminder.
             if payload.get("snippet", "").lower().count("unsubscribe") > 0:
                 continue
 
@@ -208,17 +235,21 @@ class PredictionEngine:
             except (ValueError, TypeError):
                 hours_ago = 24
 
-            # Only flag if it's been more than a few hours
+            # Don't nag about very recent messages — give the user time
             if hours_ago < 3:
                 continue
 
+            # --- Confidence scoring for follow-up predictions ---
+            # Base confidence is low (0.4) to avoid false positives.
+            # Boosted by: priority contact (+0.3), age > 24h (+0.2),
+            # explicit "requires_response" flag (+0.2). Capped at 0.9.
             confidence = 0.4
             if is_priority:
-                confidence = 0.7
+                confidence = 0.7   # Priority contacts start higher
             if hours_ago > 24:
-                confidence = min(confidence + 0.2, 0.9)
+                confidence = min(confidence + 0.2, 0.9)  # Aging messages get more urgent
             if payload.get("requires_response"):
-                confidence = min(confidence + 0.2, 0.9)
+                confidence = min(confidence + 0.2, 0.9)  # Explicit response request
 
             subject = payload.get("subject", "No subject")
             predictions.append(Prediction(
@@ -240,10 +271,14 @@ class PredictionEngine:
         """
         Detect when the user deviates from their usual patterns.
         E.g., usually exercises Mon/Wed/Fri but hasn't today.
+
+        Only considers routines with consistency_score > 0.6 — these are
+        habits the user follows at least 60% of the time, so deviations
+        are meaningful rather than noisy.
         """
         predictions = []
 
-        # Check procedural memory for routines
+        # Load established routines from procedural memory
         with self.db.get_connection("user_model") as conn:
             routines = conn.execute(
                 "SELECT * FROM routines WHERE consistency_score > 0.6"
@@ -257,7 +292,8 @@ class PredictionEngine:
 
         for routine in routines:
             trigger = routine["trigger_condition"]
-            # Simple day-based check
+            # Simple day-based check: if today's day name appears in the
+            # routine's trigger condition, the routine should have fired today.
             if day_name in trigger.lower():
                 # Check if the routine has been executed today
                 # (Look for related events in the last 12 hours)
@@ -280,9 +316,15 @@ class PredictionEngine:
         """
         Detect contacts the user hasn't been in touch with for longer
         than their typical frequency.
+
+        Uses the "relationships" signal profile, which tracks per-contact
+        interaction history. For each contact with enough data (5+
+        interactions), we compute the average gap between interactions
+        and flag when the current gap exceeds 1.5x the average.
         """
         predictions = []
 
+        # Load the relationships signal profile from the user model
         rel_profile = self.ums.get_signal_profile("relationships")
         if not rel_profile:
             return predictions
@@ -294,6 +336,8 @@ class PredictionEngine:
             last = data.get("last_interaction")
             count = data.get("interaction_count", 0)
 
+            # Skip contacts with too little history — we need at least 5
+            # interactions to establish a reliable frequency baseline.
             if not last or count < 5:
                 continue
 
@@ -303,7 +347,8 @@ class PredictionEngine:
             except (ValueError, TypeError):
                 continue
 
-            # Estimate their typical contact frequency from timestamps
+            # Estimate typical contact frequency from the last 10 timestamps.
+            # We compute the average gap in days between consecutive interactions.
             timestamps = data.get("interaction_timestamps", [])
             if len(timestamps) >= 3:
                 try:
@@ -316,6 +361,9 @@ class PredictionEngine:
                 except (ValueError, TypeError):
                     avg_gap = 30
 
+                # Flag if the current gap exceeds 1.5x the average AND
+                # it's been at least 7 days (avoid nagging about daily contacts).
+                # Confidence scales linearly with how far past the threshold.
                 if days_since > avg_gap * 1.5 and days_since > 7:
                     confidence = min(0.6, 0.3 + (days_since / avg_gap - 1.5) * 0.2)
                     predictions.append(Prediction(
@@ -336,12 +384,18 @@ class PredictionEngine:
     async def _check_preparation_needs(self, ctx: dict) -> list[Prediction]:
         """
         Detect upcoming events that require preparation based on
-        learned patterns. E.g., "You have a flight tomorrow — pack tonight."
+        learned patterns. E.g., "You have a flight tomorrow -- pack tonight."
+
+        Looks at events 12-48 hours out (the "preparation window") and
+        checks for keywords that signal preparation needs:
+            - Travel keywords -> packing & reservation checks
+            - Large meetings (>3 attendees) -> agenda review
         """
         predictions = []
 
         with self.db.get_connection("events") as conn:
-            # Events in the next 24-48 hours
+            # Look 12-48 hours ahead — the sweet spot for preparation reminders
+            # (too early = noise, too late = not enough time to act).
             now = datetime.now(timezone.utc)
             window_start = now + timedelta(hours=12)
             window_end = now + timedelta(hours=48)
@@ -358,7 +412,8 @@ class PredictionEngine:
             title = payload.get("title", "").lower()
             location = payload.get("location", "")
 
-            # Travel detection
+            # --- Travel detection ---
+            # Keyword-based check for travel-related events.
             travel_keywords = ["flight", "airport", "hotel", "travel", "trip"]
             if any(kw in title for kw in travel_keywords):
                 predictions.append(Prediction(
@@ -370,7 +425,8 @@ class PredictionEngine:
                     suggested_action="Check packing list and confirm reservations",
                 ))
 
-            # Meeting with external people
+            # --- Large meeting detection ---
+            # Meetings with many attendees often need an agenda and talking points.
             attendees = payload.get("attendees", [])
             if len(attendees) > 3:
                 predictions.append(Prediction(
@@ -385,7 +441,14 @@ class PredictionEngine:
         return predictions
 
     async def _check_spending_patterns(self, ctx: dict) -> list[Prediction]:
-        """Detect spending anomalies and subscription waste."""
+        """
+        Detect spending anomalies and subscription waste.
+
+        Aggregates the last 30 days of transactions by category and
+        flags any single category that consumes >25% of total spend
+        AND exceeds $200 absolute. The dual threshold avoids false
+        positives for low overall spending or evenly-split budgets.
+        """
         predictions = []
 
         with self.db.get_connection("events") as conn:
@@ -400,9 +463,9 @@ class PredictionEngine:
             ).fetchall()
 
         if len(transactions) < 5:
-            return predictions
+            return predictions  # Not enough data for meaningful patterns
 
-        # Calculate spending by category
+        # Aggregate spending by category from transaction payloads
         by_category: dict[str, float] = {}
         for txn in transactions:
             payload = json.loads(txn["payload"])
@@ -414,7 +477,7 @@ class PredictionEngine:
         if total == 0:
             return predictions
 
-        # Flag categories that are >25% of total spending
+        # Flag categories that dominate spending (>25% share AND >$200 absolute)
         for cat, amount in by_category.items():
             pct = amount / total
             if pct > 0.25 and amount > 200:
@@ -441,12 +504,21 @@ class PredictionEngine:
         """
         Before surfacing a prediction, estimate whether the user will
         find it helpful, annoying, or intrusive right now.
+
+        This is the reaction prediction gatekeeper. It scores each
+        prediction on a -1.0 to +1.0 scale using multiple signals,
+        then classifies the result:
+            score > 0.4  -> "helpful"  (surface it)
+            score > 0.1  -> "neutral"  (surface it, but lower priority)
+            score <= 0.1 -> "annoying" (suppress it)
         """
-        # Get current mood
+        # --- Gather context signals ---
+        # Current mood from the mood_signals profile
         mood_profile = self.ums.get_signal_profile("mood_signals")
         mood_data = mood_profile["data"] if mood_profile else {}
 
-        # Count recent dismissals (from feedback log)
+        # Count how many notifications the user dismissed in the last 2 hours.
+        # A high count means they're in "leave me alone" mode.
         with self.db.get_connection("preferences") as conn:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
             row = conn.execute(
@@ -456,37 +528,42 @@ class PredictionEngine:
             ).fetchone()
             recent_dismissals = row["cnt"] if row else 0
 
-        # Scoring logic
-        score = 0.5  # Start neutral
+        # --- Scoring logic ---
+        # Start at 0.5 (neutral) and adjust based on contextual signals.
+        score = 0.5
 
-        # High stress = lower threshold for surfacing
+        # Stress detection: check the last 5 mood signals for negative
+        # language or calendar overload. If stressed, reduce score to
+        # avoid piling more onto an overwhelmed user.
         stress_signals = mood_data.get("recent_signals", [])
         stress_count = sum(1 for s in stress_signals[-5:]
                           if s.get("signal_type") in ["negative_language", "calendar_density"])
         if stress_count > 2:
             score -= 0.2  # Don't pile on when they're stressed
 
-        # Many recent dismissals = they don't want interruptions
+        # Dismissal fatigue: >3 dismissals in 2 hours = strong "go away" signal
         if recent_dismissals > 3:
             score -= 0.3
 
-        # High confidence predictions are more likely helpful
+        # High-confidence predictions are more likely to be genuinely helpful
         if prediction.confidence > 0.7:
             score += 0.2
 
-        # Conflicts and risks are more urgent than opportunities
+        # Urgency weighting: conflicts and risks warrant interruption more
+        # than opportunities (which are nice-to-have, not need-to-know).
         if prediction.prediction_type in ("conflict", "risk"):
             score += 0.2
         elif prediction.prediction_type == "opportunity":
             score -= 0.1
 
-        # Time of day matters
+        # Time-of-day penalty: suppress non-urgent predictions during
+        # early morning (before 7) and late night (after 22).
         hour = datetime.now(timezone.utc).hour
-        # Don't surface low-priority stuff in early morning or late night
         if hour < 7 or hour > 22:
             if prediction.prediction_type not in ("conflict", "risk"):
                 score -= 0.3
 
+        # --- Classify the final score into a reaction label ---
         predicted = "helpful" if score > 0.4 else ("neutral" if score > 0.1 else "annoying")
 
         return ReactionPrediction(
@@ -502,6 +579,15 @@ class PredictionEngine:
 
     @staticmethod
     def _gate_from_confidence(confidence: float) -> ConfidenceGate:
+        """
+        Map a numeric confidence score to a ConfidenceGate enum.
+
+        Confidence gate thresholds:
+            < 0.3  -> OBSERVE    (watch silently, keep learning)
+            0.3-0.6 -> SUGGEST   (ask "would you like me to...")
+            0.6-0.8 -> DEFAULT   (do it, but make it easy to undo)
+            > 0.8  -> AUTONOMOUS (just handle it without asking)
+        """
         if confidence < 0.3:
             return ConfidenceGate.OBSERVE
         elif confidence < 0.6:

@@ -1,0 +1,1 @@
+"""Onboarding system — guided preference capture with voice-first, one-idea-per-screen flow."""

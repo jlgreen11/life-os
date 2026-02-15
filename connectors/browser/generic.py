@@ -62,7 +62,8 @@ class GenericBrowserConnector(BrowserBaseConnector):
                  config: dict[str, Any],
                  browser_engine: Optional[BrowserEngine] = None,
                  credential_vault: Optional[CredentialVault] = None):
-        # Set class attributes from config before calling super
+        # Override class-level constants from config BEFORE calling super(),
+        # because BaseConnector.__init__ reads CONNECTOR_ID for subscriptions.
         self.CONNECTOR_ID = config.get("site_id", "generic")
         self.DISPLAY_NAME = config.get("name", "Generic Browser")
         self.SITE_ID = config.get("site_id", "generic")
@@ -71,12 +72,14 @@ class GenericBrowserConnector(BrowserBaseConnector):
 
         super().__init__(event_bus, db, config, browser_engine, credential_vault)
 
-        self._feed_url = config.get("feed_url", "")
-        self._selectors = config.get("selectors", {})
+        # All extraction behaviour is driven by these config values —
+        # no custom code needed per site.
+        self._feed_url = config.get("feed_url", "")         # Page to scrape
+        self._selectors = config.get("selectors", {})        # CSS selectors for data extraction
         self._event_type = config.get("event_type", "content.feed.new_item")
-        self._max_items = config.get("max_items", 30)
+        self._max_items = config.get("max_items", 30)        # Cap to prevent runaway scraping
         self._custom_login_selectors = config.get("login_selectors", {})
-        self._requires_login = bool(config.get("login_url"))
+        self._requires_login = bool(config.get("login_url"))  # Skip login flow for public sites
 
     def get_login_selectors(self) -> dict[str, str]:
         if self._custom_login_selectors:
@@ -97,22 +100,25 @@ class GenericBrowserConnector(BrowserBaseConnector):
         """Extract items from the configured feed URL using CSS selectors."""
         count = 0
 
+        # Navigate to the configured feed page with rate limiting
         await self.navigate_with_rate_limit(page, self._feed_url)
         await human.wait_human(1.5, 3.0)
 
-        # Scroll to load dynamic content
+        # Scroll a couple of times to trigger lazy-loaded / infinite-scroll content
         for _ in range(2):
             await human.scroll(page, "down", 600)
             await human.wait_human(0.8, 1.5)
 
-        # Build extraction JavaScript from selectors
+        # Build and run a JavaScript snippet that extracts structured data
+        # from the page using the user-configured CSS selectors.
         item_selector = self._selectors.get("item", "article, .item, .post")
         field_selectors = {k: v for k, v in self._selectors.items() if k != "item"}
 
         js_code = self._build_extraction_js(item_selector, field_selectors)
         items = await page.evaluate(js_code)
 
-        # Filter to new items only
+        # Deduplicate: compute an MD5 hash of each item's content and compare
+        # against previously seen hashes stored in the sync cursor.
         seen_hashes = self._get_seen_hashes()
         new_items = []
 
@@ -149,10 +155,15 @@ class GenericBrowserConnector(BrowserBaseConnector):
 
     def _build_extraction_js(self, item_selector: str,
                               field_selectors: dict[str, str]) -> str:
-        """Build JavaScript extraction code from CSS selectors."""
+        """Build JavaScript extraction code from CSS selectors.
+
+        Generates a self-contained JS function that iterates over DOM elements
+        matching item_selector and extracts the configured fields from each.
+        """
         field_extractors = []
         for field_name, selector in field_selectors.items():
-            # Support @attr syntax: "a@href" means get href attribute of <a>
+            # Support @attr syntax: "a@href" means get the href attribute of <a>
+            # (as opposed to the default textContent extraction).
             if "@" in selector:
                 css_part, attr = selector.rsplit("@", 1)
                 field_extractors.append(
@@ -193,6 +204,7 @@ class GenericBrowserConnector(BrowserBaseConnector):
         """
 
     def _get_seen_hashes(self) -> set:
+        """Load previously seen item hashes from the sync cursor."""
         cursor = self.get_sync_cursor()
         if cursor:
             try:
@@ -202,8 +214,10 @@ class GenericBrowserConnector(BrowserBaseConnector):
         return set()
 
     def _update_seen_hashes(self, new_hashes: list[str]):
+        """Persist new hashes to the sync cursor, capping at 2000 entries."""
         seen = self._get_seen_hashes()
         seen.update(new_hashes)
+        # Keep only the most recent 2000 hashes to prevent unbounded growth
         self.set_sync_cursor(json.dumps(list(seen)[-2000:]))
 
     async def execute(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +240,11 @@ def create_browser_connectors(
 ) -> list[GenericBrowserConnector]:
     """
     Factory function to create multiple browser connectors from config.
-    
+
+    Each entry in *configs* becomes one GenericBrowserConnector instance.
+    The shared browser_engine and credential_vault are injected so all
+    generic connectors share a single Chromium process and credential store.
+
     Usage in settings.yaml:
         connectors:
           browser_sources:

@@ -26,6 +26,18 @@ class DatabaseManager:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
 
+        # --- 5-Database Architecture ---
+        # Data is split across five separate SQLite files by domain concern:
+        #   events       — Append-only event log; the single source of truth.
+        #   entities     — People, places, subscriptions, relationships (reference data).
+        #   state        — Mutable current state: tasks, notifications, connector cursors.
+        #   user_model   — Learned user profile: episodes, facts, routines, mood, predictions.
+        #   preferences  — Explicit user settings, automation rules, feedback, vaults.
+        #
+        # Keeping them separate provides:
+        #   1. Independent backup/restore — e.g. wipe state without losing the event history.
+        #   2. Reduced write contention — high-throughput event writes don't block task reads.
+        #   3. Clear ownership boundaries — each store module touches only its own DB.
         self._databases: dict[str, str] = {
             "events": str(self.data_dir / "events.db"),
             "entities": str(self.data_dir / "entities.db"),
@@ -46,9 +58,23 @@ class DatabaseManager:
     def get_connection(self, db_name: str) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with WAL mode and foreign keys enabled."""
         conn = sqlite3.connect(self._databases[db_name])
+
+        # WAL (Write-Ahead Logging) mode allows concurrent readers while a writer
+        # is active, which is critical because the event bus may write events at
+        # the same time the web layer is reading tasks or notifications.
         conn.execute("PRAGMA journal_mode=WAL")
+
+        # Foreign keys are disabled by default in SQLite; enable them so that
+        # ON DELETE / REFERENCES constraints in the schema are actually enforced.
         conn.execute("PRAGMA foreign_keys=ON")
+
+        # sqlite3.Row lets us access columns by name (dict-like), so callers can
+        # write ``row["id"]`` instead of relying on positional indexing.
         conn.row_factory = sqlite3.Row
+
+        # Context-manager pattern: yield the connection to the caller, then
+        # commit on success.  If the caller raises an exception, roll back all
+        # changes made during the ``with`` block so the DB stays consistent.
         try:
             yield conn
             conn.commit()
@@ -63,6 +89,24 @@ class DatabaseManager:
     # -----------------------------------------------------------------------
 
     def _init_events_db(self):
+        """Create the events database schema.
+
+        The events table is the immutable, append-only log at the heart of Life OS.
+        Every piece of incoming data (emails, messages, calendar changes, etc.) is
+        recorded here as a typed event before any downstream processing occurs.
+
+        Design decisions:
+        - ``id`` is a caller-supplied TEXT (UUID), not AUTOINCREMENT, so that
+          connectors can generate deterministic IDs for deduplication.
+        - ``payload`` and ``metadata`` are stored as JSON TEXT blobs, giving each
+          event type full flexibility in its schema without table-per-type overhead.
+        - ``embedding_id`` links to the vector store for semantic search over events.
+        - Indexes on type, source, timestamp, and priority support the most common
+          query patterns (filter-by-type, recent-events, priority triage).
+        - ``event_processing_log`` tracks which downstream services (e.g. signal
+          extractor, notification manager) have already processed a given event,
+          enabling exactly-once processing via the composite PRIMARY KEY.
+        """
         with self.get_connection("events") as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS events (
@@ -97,6 +141,25 @@ class DatabaseManager:
     # -----------------------------------------------------------------------
 
     def _init_entities_db(self):
+        """Create the entities database schema.
+
+        Stores reference/master data for the people, places, and services in
+        the user's life.  These are "slowly changing" records (unlike the fast
+        append-only event log), so UPDATE operations are expected.
+
+        Design decisions:
+        - ``contacts`` uses JSON arrays (aliases, emails, phones, notes) for
+          multi-value fields to avoid many-to-many join tables for simple lists.
+        - ``contact_identifiers`` provides a fast reverse-lookup table so an
+          incoming email/phone/handle can be resolved to a contact in O(1).
+          Its composite PRIMARY KEY (identifier, identifier_type) prevents
+          duplicates while allowing the same string for different types.
+        - ``entity_relationships`` is a generic graph-edge table connecting any
+          entity to any other entity with a typed relationship and weight,
+          supporting queries like "who is related to this project?".
+        - Indexes target the primary query paths: name search, priority contacts,
+          and relationship traversal from either side.
+        """
         with self.get_connection("entities") as conn:
             conn.executescript("""
                 -- Contacts (people in the user's life)
@@ -192,6 +255,24 @@ class DatabaseManager:
     # -----------------------------------------------------------------------
 
     def _init_state_db(self):
+        """Create the state database schema.
+
+        Holds all *mutable* current-state data: tasks, notifications, connector
+        sync cursors, and a general-purpose key-value store.
+
+        Design decisions:
+        - ``tasks`` carries rich context (source_event_id, source_context,
+          related_contacts, related_files, depends_on) so the AI engine can
+          explain *why* a task exists and prioritize it intelligently.
+        - ``notifications`` track a full lifecycle (pending -> delivered ->
+          read -> acted_on / dismissed) with separate timestamp columns for
+          each transition, enabling response-latency analytics.
+        - ``connector_state`` persists sync cursors and error counts so that
+          connectors can resume from where they left off after a restart and
+          implement exponential back-off on repeated failures.
+        - ``kv_store`` is a simple key-value table for miscellaneous state
+          that does not justify its own table (e.g. "last_briefing_time").
+        """
         with self.get_connection("state") as conn:
             conn.executescript("""
                 -- Tasks
@@ -266,6 +347,32 @@ class DatabaseManager:
     # -----------------------------------------------------------------------
 
     def _init_user_model_db(self):
+        """Create the user-model database schema.
+
+        Implements a three-layer cognitive memory architecture:
+
+        Layer 1 — Episodic memory (``episodes``):
+            Individual interaction records with context (location, mood, domain).
+            Indexed by timestamp, interaction_type, and domain for temporal and
+            categorical recall.
+
+        Layer 2 — Semantic memory (``semantic_facts``):
+            Distilled facts and preferences with a confidence score that grows
+            each time the fact is re-confirmed (+0.05 per confirmation, capped
+            at 1.0).  ``is_user_corrected`` flags override inferred values.
+
+        Layer 3 — Procedural memory (``routines``, ``communication_templates``):
+            Learned behavioral patterns — daily routines with consistency scores
+            and per-contact/channel communication style templates.
+
+        Supporting tables:
+        - ``signal_profiles``  — JSON blobs for linguistic/cadence/behavioral
+          profiles, updated incrementally (samples_count tracks how many data
+          points have been incorporated).
+        - ``mood_history``     — Time-series of inferred mood dimensions.
+        - ``predictions``      — Logged predictions with later accuracy tracking,
+          enabling the system to learn from its own forecast quality.
+        """
         with self.get_connection("user_model") as conn:
             conn.executescript("""
                 -- Episodic memory (Layer 1)
@@ -389,6 +496,25 @@ class DatabaseManager:
     # -----------------------------------------------------------------------
 
     def _init_preferences_db(self):
+        """Create the preferences database schema.
+
+        Stores explicit user intent — settings, automation rules, feedback, and
+        vault definitions — as opposed to inferred knowledge in user_model.db.
+
+        Design decisions:
+        - ``user_preferences`` uses a key-value layout so new preference
+          types can be added without schema changes.  ``set_by`` tracks whether
+          a value came from onboarding, the API, or a rule action.
+        - ``rules`` implements an event-driven automation engine: each rule
+          specifies a trigger_event type, a list of JSON conditions, and a list
+          of JSON actions.  ``times_triggered`` + ``last_triggered`` support
+          analytics and rate-limiting.
+        - ``feedback_log`` captures explicit user feedback (thumbs up/down,
+          corrections) with response latency and mood context, providing the
+          training signal for the learning loop.
+        - ``vaults`` define sensitive-data containers that are excluded from
+          search, briefing, and inbox by default, ensuring privacy-by-design.
+        """
         with self.get_connection("preferences") as conn:
             conn.executescript("""
                 -- User preferences (the onboarding output + manual updates)
