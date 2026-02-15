@@ -33,22 +33,29 @@ from connectors.browser.engine import HumanEmulator, PageInteractor
 
 
 class WhatsAppConnector(BrowserBaseConnector):
+    """
+    Browser-only connector for WhatsApp Web. WhatsApp has no public API for
+    personal accounts, so all access goes through the web UI. First run
+    requires a QR code scan; after that the session persists for weeks.
+    """
 
     CONNECTOR_ID = "whatsapp"
     DISPLAY_NAME = "WhatsApp"
     SITE_ID = "whatsapp"
     LOGIN_URL = "https://web.whatsapp.com"
-    SYNC_INTERVAL_SECONDS = 10
-    MIN_REQUEST_INTERVAL = 1.0
+    SYNC_INTERVAL_SECONDS = 10     # Poll frequently for near-real-time messages
+    MIN_REQUEST_INTERVAL = 1.0     # WhatsApp Web is a SPA, so page loads are rare
 
     async def api_authenticate(self) -> bool:
-        return False  # No API — browser only
+        # WhatsApp has no personal API; always fall through to browser mode
+        return False
 
     async def api_sync(self) -> int:
         raise NotImplementedError("WhatsApp has no personal API")
 
     def get_login_selectors(self) -> dict[str, str]:
-        # WhatsApp Web uses QR code, not username/password
+        # WhatsApp Web uses QR code authentication, not username/password,
+        # so we return an empty dict to skip the standard login form flow.
         return {}
 
     async def is_logged_in(self, page: Any) -> bool:
@@ -70,7 +77,7 @@ class WhatsAppConnector(BrowserBaseConnector):
             self._context = await self._browser_engine.create_context(self.SITE_ID)
             self._page = await self._browser_engine.new_page(self._context)
 
-            # Check for existing session
+            # Try to reuse an existing session (saved cookies from a previous run)
             await self._page.goto(self.LOGIN_URL, wait_until="networkidle")
             await self._human.wait_human(3.0, 5.0)
 
@@ -78,21 +85,22 @@ class WhatsAppConnector(BrowserBaseConnector):
                 print(f"  [{self.CONNECTOR_ID}] Existing session valid")
                 return True
 
-            # Need QR code scan
+            # No valid session -- the user must scan the QR code with their phone.
+            # We screenshot it to a known path so it can be viewed externally.
             print(f"  [{self.CONNECTOR_ID}] Waiting for QR code scan...")
             print(f"  [{self.CONNECTOR_ID}] Open a browser to see the QR code,")
             print(f"  [{self.CONNECTOR_ID}] or check the screenshot at data/browser/whatsapp_qr.png")
 
-            # Screenshot the QR code for the user
             await self._interactor.screenshot(
                 self._page, "data/browser/whatsapp_qr.png"
             )
 
-            # Wait up to 2 minutes for the user to scan
+            # Poll every ~5 seconds for up to 2 minutes (24 iterations)
             for _ in range(24):
                 await self._human.wait_human(5.0, 5.0)
                 if await self.is_logged_in(self._page):
                     print(f"  [{self.CONNECTOR_ID}] QR code scanned, connected!")
+                    # Save the authenticated session for future reuse
                     await self._browser_engine.save_session(self._context, self.SITE_ID)
                     return True
 
@@ -105,20 +113,24 @@ class WhatsAppConnector(BrowserBaseConnector):
 
     async def browser_sync(self, page: Any, human: HumanEmulator,
                            interactor: PageInteractor) -> int:
-        """Scrape new messages from WhatsApp Web."""
+        """Scrape new messages from WhatsApp Web.
+
+        Reads the sidebar for chats with unread badges, clicks into each
+        conversation, and extracts the recent messages.
+        """
         count = 0
         max_convos = self.config.get("max_conversations_per_sync", 10)
 
-        # Extract unread conversations from the sidebar
+        # Step 1: Scan the sidebar for chats that have unread message badges
         unread_chats = await self._get_unread_chats(page)
 
         for chat in unread_chats[:max_convos]:
             try:
-                # Click into the conversation
+                # Step 2: Click the conversation to open it in the main panel
                 await human.click(page, f'span[title="{chat["name"]}"]')
                 await human.wait_human(0.5, 1.5)
 
-                # Extract recent messages
+                # Step 3: Extract the last 20 messages from the open conversation
                 messages = await self._extract_messages(page)
 
                 for msg in messages:
@@ -209,12 +221,16 @@ class WhatsAppConnector(BrowserBaseConnector):
         """)
 
     async def execute(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Send a message through WhatsApp Web."""
+        """Send a message through WhatsApp Web.
+
+        Uses the search box to find the recipient, clicks into the chat,
+        types the message with human-like keystrokes, and presses Enter.
+        """
         if action == "send_message" and self._page:
             recipient = params["to"]
             message = params["message"]
 
-            # Search for the contact
+            # Use WhatsApp's search to find the contact by name
             search_box = await self._page.wait_for_selector(
                 '[aria-label="Search input textbox"], [title="Search input textbox"]'
             )
@@ -256,6 +272,8 @@ class WhatsAppConnector(BrowserBaseConnector):
         raise ValueError(f"Unknown action: {action}")
 
     def _classify_priority(self, contact_name: str) -> str:
+        """Assign "high" priority to contacts in the priority_contacts list,
+        so the AI agent surfaces their messages immediately."""
         priority_contacts = self.config.get("priority_contacts", [])
         if contact_name in priority_contacts:
             return "high"

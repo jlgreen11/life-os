@@ -1,0 +1,1 @@
+"""Notification manager — intelligent routing, batching, and delivery of alerts."""

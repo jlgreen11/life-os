@@ -272,6 +272,7 @@ class Subscription(BaseModel):
 # Communication Models
 # ---------------------------------------------------------------------------
 
+# Used by EMAIL_RECEIVED, EMAIL_SENT, MESSAGE_RECEIVED, MESSAGE_SENT events
 class MessagePayload(BaseModel):
     """Payload for any message event (email, chat, SMS)."""
     message_id: Optional[str] = None
@@ -303,6 +304,8 @@ class MessagePayload(BaseModel):
     requires_response: Optional[bool] = None
 
 
+# Used by CALENDAR_EVENT_CREATED, CALENDAR_EVENT_UPDATED, CALENDAR_EVENT_DELETED,
+# CALENDAR_EVENT_REMINDER, and CALENDAR_CONFLICT_DETECTED events
 class CalendarEventPayload(BaseModel):
     """Payload for calendar events."""
     event_id: Optional[str] = None
@@ -320,6 +323,8 @@ class CalendarEventPayload(BaseModel):
     reminders: list[int] = Field(default_factory=list)         # Minutes before
 
 
+# Used by TRANSACTION_NEW, BALANCE_CHANGE, SUBSCRIPTION_DETECTED,
+# and SPENDING_ANOMALY events
 class TransactionPayload(BaseModel):
     """Payload for financial transactions."""
     transaction_id: Optional[str] = None
@@ -366,7 +371,7 @@ class Task(BaseModel):
     related_events: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)        # Other task IDs
 
-    # State
+    # State — valid values: "pending", "in_progress", "completed", "cancelled"
     status: str = "pending"                                    # "pending", "in_progress", "completed", "cancelled"
     completed_at: Optional[datetime] = None
 

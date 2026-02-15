@@ -1,0 +1,1 @@
+"""Feedback collector — captures implicit and explicit user feedback for learning."""

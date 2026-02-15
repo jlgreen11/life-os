@@ -1,8 +1,4 @@
-"""
-Life OS — Web Package
-
-FastAPI-based web interface with REST API, WebSocket, and HTML UI.
-"""
+"""Web application — FastAPI REST API, WebSocket real-time updates, and HTML dashboard."""
 
 from web.app import create_web_app
 from web.websocket import ws_manager, ConnectionManager

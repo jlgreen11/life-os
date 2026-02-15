@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+# Playwright is an optional dependency — the rest of the system can run
+# without browser automation.  We gate all browser usage behind this flag.
 try:
     from playwright.async_api import (
         async_playwright,
@@ -403,6 +405,10 @@ class BrowserEngine:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.session_manager = SessionManager(str(self.data_dir / "sessions"))
+        # Shared browser instance pattern: a single Playwright process and
+        # a single Chromium browser are shared across ALL browser connectors.
+        # Each connector gets its own BrowserContext (isolated cookies/storage)
+        # but they all share one browser process to save ~500 MB RAM.
         self._playwright: Optional[Any] = None
         self._browser: Optional[Any] = None
 
@@ -413,6 +419,8 @@ class BrowserEngine:
                 "Playwright not installed. Run: pip install playwright && playwright install chromium"
             )
 
+        # Launch a single headless Chromium with stealth flags that disable
+        # common automation-detection signals (AutomationControlled, infobars).
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(
             headless=True,
@@ -430,6 +438,8 @@ class BrowserEngine:
 
     async def stop(self):
         """Shut down the browser engine."""
+        # Cleanup order matters: close the browser first (which closes all
+        # contexts and pages), then stop the Playwright process wrapper.
         if self._browser:
             await self._browser.close()
         if self._playwright:
@@ -442,11 +452,15 @@ class BrowserEngine:
         Create a stealth browser context for a specific site.
         Reuses stored session if available.
         """
+        # Lazy-start the browser if it hasn't been launched yet
         if not self._browser:
             await self.start()
 
+        # Randomise viewport and user-agent per context so each site sees
+        # a slightly different browser fingerprint.
         viewport = random.choice(self.VIEWPORTS)
         user_agent = random.choice(self.USER_AGENTS)
+        # Restore saved cookies/local-storage so we skip re-login when possible
         storage_state = self.session_manager.get_storage_state(site_id)
 
         context = await self._browser.new_context(
@@ -523,6 +537,8 @@ class BrowserEngine:
 
     async def new_page(self, context: Any) -> Any:
         """Create a new page in an existing context."""
+        # Pages inherit the stealth patches from their context (applied via
+        # the "page" event handler registered in create_context).
         page = await context.new_page()
         return page
 

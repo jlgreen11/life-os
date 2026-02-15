@@ -53,19 +53,24 @@ class BrowserOrchestrator:
     def __init__(self, event_bus: EventBus, db: DatabaseManager, config: dict):
         self.event_bus = event_bus
         self.db = db
+        # Extract the "browser" sub-key from the top-level config
         self.config = config.get("browser", {})
 
         self._enabled = self.config.get("enabled", False)
         self._data_dir = self.config.get("data_dir", "./data/browser")
 
-        # Shared infrastructure
+        # Shared infrastructure — one engine and one vault are created once
+        # and injected into every browser connector to avoid duplication.
         self._engine: Optional[BrowserEngine] = None
         self._vault: Optional[CredentialVault] = None
 
-        # Managed connectors
+        # Managed connectors — all browser-based connectors created by
+        # _create_connectors() are stored here for lifecycle management.
         self._connectors: list[BrowserBaseConnector] = []
 
-        # Global rate limiting
+        # Global rate limiting — ensures ALL browser connectors collectively
+        # respect a minimum delay between page loads, and limits how many
+        # sites can be browsed concurrently via an asyncio semaphore.
         self._last_global_request = 0
         self._global_rate_limit = self.config.get("global_rate_limit", 2.0)
         self._semaphore = asyncio.Semaphore(
@@ -87,7 +92,8 @@ class BrowserOrchestrator:
 
         print("  [browser] Initializing browser automation layer...")
 
-        # Initialize shared browser engine
+        # Launch the single shared Chromium instance that all browser
+        # connectors will share (one process, many isolated contexts).
         self._engine = BrowserEngine(data_dir=self._data_dir)
         await self._engine.start()
         print("  [browser] ✓ Chromium launched (stealth mode)")
@@ -121,7 +127,8 @@ class BrowserOrchestrator:
         """Create all browser-based connectors from config."""
         connector_configs = self.config.get("connectors", {})
 
-        # Named browser connectors
+        # Named browser connectors — each is instantiated only if its key
+        # appears in the config, and receives the shared engine + vault.
         if "whatsapp" in connector_configs:
             from connectors.browser.whatsapp import WhatsAppConnector
             c = WhatsAppConnector(
@@ -146,7 +153,9 @@ class BrowserOrchestrator:
             )
             self._connectors.append(c)
 
-        # Generic browser sources (from YAML selectors)
+        # Generic browser sources — user-defined scraping targets configured
+        # entirely via YAML (CSS selectors, URLs). Uses the factory function
+        # to create one GenericBrowserConnector per source entry.
         generic_configs = connector_configs.get("generic_sources", [])
         if generic_configs:
             generics = create_browser_connectors(
@@ -169,6 +178,9 @@ class BrowserOrchestrator:
 
     async def stop(self):
         """Shut down all browser connectors and the shared engine."""
+        # Stop connectors first (saves sessions), then tear down the
+        # shared engine. Errors are swallowed so one failing connector
+        # does not prevent the others from cleaning up.
         for connector in self._connectors:
             try:
                 await connector.stop()
@@ -180,6 +192,8 @@ class BrowserOrchestrator:
 
     async def global_rate_limit(self):
         """Enforce global rate limiting across all browser connectors."""
+        # The semaphore caps concurrent page loads; the elapsed-time check
+        # enforces a minimum delay between any two requests system-wide.
         async with self._semaphore:
             now = time.time()
             elapsed = now - self._last_global_request
@@ -188,7 +202,7 @@ class BrowserOrchestrator:
             self._last_global_request = time.time()
 
     def get_status(self) -> dict:
-        """Get status of all browser connectors."""
+        """Get status of all browser connectors, including current mode (API or browser)."""
         return {
             "enabled": self._enabled,
             "engine_running": self._engine is not None,
@@ -234,11 +248,13 @@ class APIFallbackWrapper:
                  browser_engine: BrowserEngine,
                  credential_vault: CredentialVault,
                  fallback_config: dict):
+        # Wraps an existing API connector and adds browser fallback on failure
         self.api_connector = api_connector
         self._browser_engine = browser_engine
         self._credential_vault = credential_vault
         self._fallback_config = fallback_config
 
+        # Tracks consecutive API failures to decide when to switch modes
         self._api_failures = 0
         self._failure_threshold = fallback_config.get("failure_threshold", 3)
         self._browser_context = None
