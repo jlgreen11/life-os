@@ -235,13 +235,15 @@ class PredictionEngine:
             if message_id in replied_to_threads:
                 continue
 
-            # Skip marketing/automated emails — they contain "unsubscribe"
-            # links and don't warrant a follow-up reminder.
-            if payload.get("snippet", "").lower().count("unsubscribe") > 0:
-                continue
-
             # Check if from a priority contact
             from_addr = payload.get("from_address", "")
+
+            # Skip marketing/automated emails — no-reply senders, bulk
+            # sender patterns, and messages containing "unsubscribe" in
+            # snippet, body_plain, or body.
+            if self._is_marketing_or_noreply(from_addr, payload):
+                continue
+
             is_priority = any(
                 from_addr in contacts
                 for contacts in [metadata.get("related_contacts", [])]
@@ -595,6 +597,32 @@ class PredictionEngine:
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------
+
+    @staticmethod
+    def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
+        """Check if an email is marketing/automated and shouldn't generate follow-up predictions."""
+        addr_lower = from_addr.lower()
+
+        # No-reply senders
+        noreply_patterns = ("no-reply@", "noreply@", "do-not-reply@", "donotreply@")
+        if any(pattern in addr_lower for pattern in noreply_patterns):
+            return True
+
+        # Check body and snippet for unsubscribe indicators
+        text = " ".join(filter(None, [
+            payload.get("body_plain", ""),
+            payload.get("snippet", ""),
+            payload.get("body", ""),
+        ])).lower()
+        if "unsubscribe" in text:
+            return True
+
+        # Common bulk sender patterns
+        bulk_patterns = ("newsletter@", "notifications@", "updates@", "digest@", "mailer@", "bulk@", "promo@")
+        if any(pattern in addr_lower for pattern in bulk_patterns):
+            return True
+
+        return False
 
     @staticmethod
     def _gate_from_confidence(confidence: float) -> ConfidenceGate:
