@@ -33,6 +33,9 @@ from services.task_manager.manager import TaskManager
 from storage.database import DatabaseManager, EventStore, UserModelStore
 from storage.vector_store import VectorStore
 from connectors.browser.orchestrator import BrowserOrchestrator
+from connectors.registry import CONNECTOR_REGISTRY, get_connector_class
+from connectors.crypto import ConfigEncryptor
+from services.onboarding.manager import OnboardingManager
 
 
 class LifeOS:
@@ -49,12 +52,13 @@ class LifeOS:
         # dependency-injection pattern used throughout Life OS — each service
         # declares its dependencies as constructor args rather than importing
         # global singletons).
-        self.db = DatabaseManager(self.config.get("data_dir", "./data"))
+        data_dir = self.config.get("data_dir", "./data")
+        self.db = DatabaseManager(data_dir)
         self.event_store = EventStore(self.db)
         self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
         self.user_model_store = UserModelStore(self.db, event_bus=self.event_bus)
         self.vector_store = VectorStore(
-            db_path=str(Path(self.config.get("data_dir", "./data")) / "vectors"),
+            db_path=str(Path(data_dir) / "vectors"),
             model_name=self.config.get("embedding_model", "all-MiniLM-L6-v2"),
         )
 
@@ -78,9 +82,13 @@ class LifeOS:
         # Wraps Playwright and manages browser-based connectors separately
         self.browser_orchestrator = BrowserOrchestrator(self.event_bus, self.db, self.config)
 
-        # Connectors are loaded dynamically in _start_connectors() based on
-        # which keys are present in the config; empty list until then.
-        self.connectors = []
+        # Onboarding
+        self.onboarding = OnboardingManager(self.db)
+
+        # Connector management
+        self.config_encryptor = ConfigEncryptor(data_dir)
+        self.connector_map: dict[str, object] = {}  # connector_id -> BaseConnector
+        self.connectors = []  # flat list for backward compat
 
     def _load_config(self, path: str) -> dict:
         """Load configuration from YAML file."""
@@ -293,16 +301,15 @@ class LifeOS:
         """Run the prediction engine every 15 minutes."""
         while not self.shutdown_event.is_set():
             try:
-                predictions = await self.prediction_engine.run_predictions()
+                predictions = await self.prediction_engine.generate_predictions({})
                 for prediction in predictions:
-                    # Only surface predictions the engine deems worth
-                    # interrupting the user for (high-confidence / high-value).
-                    if prediction.get("should_surface"):
-                        await self.notification_manager.create_notification(
-                            title=prediction.get("title", "Suggestion"),
-                            body=prediction.get("description", ""),
-                            priority=prediction.get("priority", "low"),
-                        )
+                    await self.notification_manager.create_notification(
+                        title=f"{prediction.prediction_type.title()}: {prediction.description[:80]}",
+                        body=prediction.description,
+                        priority="high" if prediction.prediction_type in ("conflict", "risk") else "normal",
+                        source_event_id=None,
+                        domain=None,
+                    )
             except Exception as e:
                 print(f"Prediction engine error: {e}")
 
@@ -312,66 +319,252 @@ class LifeOS:
             await asyncio.sleep(900)  # 15 minutes
 
     async def _start_connectors(self):
-        """Initialize and start all configured connectors."""
-        connector_configs = self.config.get("connectors") or {}
+        """Initialize and start all configured connectors.
 
-        # Dynamic / lazy import pattern: connector modules are imported
-        # inside their respective ``if`` blocks rather than at the top of
-        # the file.  This avoids importing heavy dependencies (e.g.
-        # Playwright, protonmail-bridge, signalc) when the connector is
-        # not enabled in the config, which speeds up startup and lets the
-        # app run on machines where those optional libraries are not
-        # installed.
+        Config priority: DB config > YAML config > connector defaults.
+        Starts connectors that have DB config with status 'active', plus
+        any YAML-configured connectors not yet in the DB.
+        """
+        yaml_configs = self.config.get("connectors") or {}
 
-        if "proton_mail" in connector_configs:
-            from connectors.proton_mail.connector import ProtonMailConnector
-            connector = ProtonMailConnector(
-                self.event_bus, self.db, connector_configs["proton_mail"]
-            )
-            self.connectors.append(connector)
+        # Build set of connectors to start: YAML-configured + DB-enabled
+        to_start: dict[str, dict] = {}
 
-        if "signal" in connector_configs:
-            from connectors.signal_msg.connector import SignalConnector
-            connector = SignalConnector(
-                self.event_bus, self.db, connector_configs["signal"]
-            )
-            self.connectors.append(connector)
+        # YAML-configured API connectors
+        for cid in ("proton_mail", "signal", "caldav", "finance", "home_assistant", "google"):
+            if cid in yaml_configs:
+                to_start[cid] = yaml_configs[cid]
 
-        if "caldav" in connector_configs:
-            from connectors.caldav.connector import CalDAVConnector
-            connector = CalDAVConnector(
-                self.event_bus, self.db, connector_configs["caldav"]
-            )
-            self.connectors.append(connector)
+        # Check DB for previously-enabled connectors (admin UI configs)
+        with self.db.get_connection("state") as conn:
+            rows = conn.execute(
+                "SELECT connector_id, config, status FROM connector_state WHERE status = 'active'"
+            ).fetchall()
+            for row in rows:
+                cid = row["connector_id"]
+                if cid in CONNECTOR_REGISTRY and cid not in to_start:
+                    import json
+                    db_config = json.loads(row["config"]) if row["config"] else {}
+                    if db_config:
+                        to_start[cid] = db_config
 
-        if "finance" in connector_configs:
-            from connectors.finance.connector import FinanceConnector
-            connector = FinanceConnector(
-                self.event_bus, self.db, connector_configs["finance"]
-            )
-            self.connectors.append(connector)
-
-        if "home_assistant" in connector_configs:
-            from connectors.home_assistant.connector import HomeAssistantConnector
-            connector = HomeAssistantConnector(
-                self.event_bus, self.db, connector_configs["home_assistant"]
-            )
-            self.connectors.append(connector)
-
-        # Attempt to start each instantiated connector.  Failures are logged
-        # but do not prevent other connectors from starting.
-        for connector in self.connectors:
+        # Start API connectors via registry
+        for cid, raw_config in to_start.items():
+            typedef = CONNECTOR_REGISTRY.get(cid)
+            if not typedef or typedef.category != "api":
+                continue
             try:
+                config = self._resolve_connector_config(cid, raw_config)
+                cls = get_connector_class(cid)
+                connector = cls(self.event_bus, self.db, config)
                 await connector.start()
+                self.connector_map[cid] = connector
+                self.connectors.append(connector)
                 print(f"       ✓ {connector.DISPLAY_NAME}")
             except Exception as e:
-                print(f"       ✗ {connector.DISPLAY_NAME}: {e}")
+                print(f"       ✗ {typedef.display_name}: {e}")
 
         # Start browser automation layer (shared engine + browser connectors)
         if self.browser_orchestrator.is_enabled:
             await self.browser_orchestrator.start()
             await self.browser_orchestrator.start_connectors()
-            self.connectors.extend(self.browser_orchestrator.connectors)
+            for c in self.browser_orchestrator.connectors:
+                self.connector_map[c.CONNECTOR_ID] = c
+                self.connectors.append(c)
+
+    # -------------------------------------------------------------------
+    # Runtime connector management (used by admin API)
+    # -------------------------------------------------------------------
+
+    def _get_sensitive_fields(self, connector_id: str) -> set[str]:
+        """Return set of sensitive field names for a connector type."""
+        typedef = CONNECTOR_REGISTRY.get(connector_id)
+        if not typedef:
+            return set()
+        return {f.name for f in typedef.config_fields if f.sensitive}
+
+    def _resolve_connector_config(self, connector_id: str,
+                                  override: dict | None = None) -> dict:
+        """Merge and decrypt config: DB > override/YAML > defaults."""
+        import json
+
+        typedef = CONNECTOR_REGISTRY.get(connector_id)
+        if not typedef:
+            raise ValueError(f"Unknown connector: {connector_id}")
+
+        # Start with field defaults from registry
+        config = {}
+        for f in typedef.config_fields:
+            if f.default is not None:
+                config[f.name] = f.default
+
+        # Layer YAML config
+        yaml_configs = self.config.get("connectors") or {}
+        if connector_id in yaml_configs:
+            config.update(yaml_configs[connector_id])
+
+        # Layer DB config (highest priority)
+        with self.db.get_connection("state") as conn:
+            row = conn.execute(
+                "SELECT config FROM connector_state WHERE connector_id = ?",
+                (connector_id,),
+            ).fetchone()
+            if row and row["config"]:
+                db_config = json.loads(row["config"])
+                if db_config:
+                    config.update(db_config)
+
+        # Apply override if provided
+        if override:
+            config.update(override)
+
+        # Decrypt sensitive fields
+        sensitive = self._get_sensitive_fields(connector_id)
+        config = self.config_encryptor.decrypt_config(config, sensitive)
+
+        return config
+
+    def get_connector_status(self, connector_id: str) -> dict:
+        """Get full status for a connector including DB state and runtime health."""
+        import json
+
+        result = {
+            "connector_id": connector_id,
+            "running": connector_id in self.connector_map,
+            "status": "unconfigured",
+            "last_sync": None,
+            "error_count": 0,
+            "last_error": None,
+        }
+
+        with self.db.get_connection("state") as conn:
+            row = conn.execute(
+                "SELECT status, last_sync, error_count, last_error, config, updated_at "
+                "FROM connector_state WHERE connector_id = ?",
+                (connector_id,),
+            ).fetchone()
+            if row:
+                result["status"] = row["status"]
+                result["last_sync"] = row["last_sync"]
+                result["error_count"] = row["error_count"] or 0
+                result["last_error"] = row["last_error"]
+                result["updated_at"] = row["updated_at"]
+                db_config = json.loads(row["config"]) if row["config"] else {}
+                result["has_config"] = bool(db_config)
+            else:
+                # Check if YAML has config
+                yaml_configs = self.config.get("connectors") or {}
+                result["has_config"] = connector_id in yaml_configs
+
+        if not result["has_config"] and result["status"] == "inactive":
+            result["status"] = "unconfigured"
+
+        return result
+
+    def get_connector_config(self, connector_id: str) -> dict:
+        """Get the merged config for a connector, masked for API response."""
+        config = self._resolve_connector_config(connector_id)
+        sensitive = self._get_sensitive_fields(connector_id)
+        return self.config_encryptor.mask_config(config, sensitive)
+
+    def save_connector_config(self, connector_id: str, new_config: dict):
+        """Validate, encrypt, and store connector config in the DB."""
+        import json
+
+        typedef = CONNECTOR_REGISTRY.get(connector_id)
+        if not typedef:
+            raise ValueError(f"Unknown connector: {connector_id}")
+
+        sensitive = self._get_sensitive_fields(connector_id)
+
+        # Preserve existing encrypted values for unchanged password fields
+        existing = {}
+        with self.db.get_connection("state") as conn:
+            row = conn.execute(
+                "SELECT config FROM connector_state WHERE connector_id = ?",
+                (connector_id,),
+            ).fetchone()
+            if row and row["config"]:
+                existing = json.loads(row["config"])
+
+        # If a sensitive field is "********", keep the existing encrypted value
+        final = {}
+        for key, value in new_config.items():
+            if key in sensitive and value == "********" and key in existing:
+                final[key] = existing[key]  # keep existing encrypted value
+            else:
+                final[key] = value
+
+        # Encrypt sensitive fields
+        encrypted = self.config_encryptor.encrypt_config(final, sensitive)
+
+        # Store in DB
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection("state") as conn:
+            conn.execute(
+                """INSERT INTO connector_state (connector_id, config, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(connector_id) DO UPDATE SET
+                       config = ?, updated_at = ?""",
+                (connector_id, json.dumps(encrypted), now,
+                 json.dumps(encrypted), now),
+            )
+
+    async def enable_connector(self, connector_id: str) -> dict:
+        """Instantiate, start, and register a connector at runtime."""
+        if connector_id in self.connector_map:
+            return {"status": "already_running"}
+
+        typedef = CONNECTOR_REGISTRY.get(connector_id)
+        if not typedef:
+            raise ValueError(f"Unknown connector: {connector_id}")
+
+        if typedef.category == "browser":
+            return {"status": "error",
+                    "detail": "Browser connectors are managed via the browser orchestrator"}
+
+        config = self._resolve_connector_config(connector_id)
+        cls = get_connector_class(connector_id)
+        connector = cls(self.event_bus, self.db, config)
+        await connector.start()
+
+        self.connector_map[connector_id] = connector
+        self.connectors.append(connector)
+        return {"status": "started"}
+
+    async def disable_connector(self, connector_id: str) -> dict:
+        """Stop and unregister a running connector."""
+        connector = self.connector_map.pop(connector_id, None)
+        if not connector:
+            return {"status": "not_running"}
+
+        await connector.stop()
+        if connector in self.connectors:
+            self.connectors.remove(connector)
+        return {"status": "stopped"}
+
+    async def test_connector(self, connector_id: str,
+                             config: dict | None = None) -> dict:
+        """Create a temporary connector instance and test authentication."""
+        typedef = CONNECTOR_REGISTRY.get(connector_id)
+        if not typedef:
+            raise ValueError(f"Unknown connector: {connector_id}")
+
+        if typedef.category == "browser":
+            return {"success": False,
+                    "detail": "Browser connectors require the browser engine to test"}
+
+        resolved = self._resolve_connector_config(connector_id, override=config)
+        cls = get_connector_class(connector_id)
+        tmp = cls(self.event_bus, self.db, resolved)
+
+        try:
+            success = await tmp.authenticate()
+            return {"success": success,
+                    "detail": "Authentication successful" if success else "Authentication failed"}
+        except Exception as e:
+            return {"success": False, "detail": str(e)}
 
     async def stop(self):
         """Graceful shutdown."""

@@ -40,6 +40,15 @@ pyotp>=2.9.0               # For TOTP 2FA codes
 # Email parsing
 # (email, imaplib, smtplib are all stdlib)
 
+# Google APIs (Gmail, Calendar, Contacts)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# Encryption (connector credential storage)
+cryptography>=41.0.0
+
 # Utilities
 python-multipart>=0.0.6
 

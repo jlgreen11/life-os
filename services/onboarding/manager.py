@@ -270,6 +270,10 @@ class OnboardingManager:
         """Return the full onboarding flow definition."""
         return ONBOARDING_PHASES
 
+    def get_answers(self) -> dict[str, Any]:
+        """Return all answers collected so far."""
+        return dict(self._session)
+
     def get_current_step(self) -> Optional[dict]:
         """
         Get the next unanswered step.

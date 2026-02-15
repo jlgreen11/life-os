@@ -20,12 +20,16 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+# How often to re-sync contacts/groups (seconds)
+CONTACT_SYNC_INTERVAL = 3600  # 1 hour
 
 
 class SignalConnector(BaseConnector):
@@ -59,6 +63,186 @@ class SignalConnector(BaseConnector):
         self._phone = config.get("phone_number", "")
         # Monotonically increasing ID for JSON-RPC request correlation.
         self._request_id = 0
+        self._contact_sync_task: Optional[asyncio.Task] = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle overrides
+    # ------------------------------------------------------------------
+
+    async def start(self):
+        """Start the connector, then kick off an initial contact sync."""
+        await super().start()
+        if self._running:
+            # Initial sync, then periodic
+            await self.sync_contacts()
+            self._contact_sync_task = asyncio.create_task(self._contact_sync_loop())
+
+    async def stop(self):
+        if self._contact_sync_task:
+            self._contact_sync_task.cancel()
+            try:
+                await self._contact_sync_task
+            except asyncio.CancelledError:
+                pass
+        await super().stop()
+
+    async def _contact_sync_loop(self):
+        """Re-sync contacts/groups every CONTACT_SYNC_INTERVAL seconds."""
+        while self._running:
+            await asyncio.sleep(CONTACT_SYNC_INTERVAL)
+            try:
+                await self.sync_contacts()
+            except Exception as e:
+                print(f"[signal] Contact sync error: {e}")
+
+    # ------------------------------------------------------------------
+    # Contact & Group Sync
+    # ------------------------------------------------------------------
+
+    async def sync_contacts(self):
+        """Pull contacts and groups from signal-cli into entities.db."""
+        contacts = await self._rpc_call("listContacts") or []
+        groups = await self._rpc_call("listGroups") or []
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Build a phone→contact_id map for deduplication
+        phone_to_id = self._load_existing_phone_map()
+
+        with self.db.get_connection("entities") as conn:
+            # ---- Contacts ----
+            synced = 0
+            for c in contacts:
+                number = c.get("number")
+                if not number:
+                    continue
+
+                name = c.get("name") or c.get("profileName") or c.get("contactName") or ""
+                if not name:
+                    # Skip contacts with no name at all
+                    continue
+
+                # Skip self
+                if number == self._phone:
+                    continue
+
+                blocked = c.get("isBlocked", False)
+
+                if number in phone_to_id:
+                    # Update existing contact
+                    contact_id = phone_to_id[number]
+                    conn.execute(
+                        """UPDATE contacts SET
+                            name = CASE WHEN name LIKE '%Unknown%' OR name = '' THEN ? ELSE name END,
+                            phones = ?,
+                            channels = json_set(COALESCE(channels, '{}'), '$.signal', ?),
+                            updated_at = ?
+                           WHERE id = ?""",
+                        (name, json.dumps([number]), number, now, contact_id),
+                    )
+                else:
+                    # Try to match by name (fuzzy: first name match)
+                    contact_id = self._find_contact_by_name(conn, name)
+
+                    if contact_id:
+                        # Enrich existing contact with phone/channel
+                        conn.execute(
+                            """UPDATE contacts SET
+                                phones = ?,
+                                channels = json_set(COALESCE(channels, '{}'), '$.signal', ?),
+                                updated_at = ?
+                               WHERE id = ?""",
+                            (json.dumps([number]), number, now, contact_id),
+                        )
+                    else:
+                        # Create new contact
+                        contact_id = str(uuid.uuid4())
+                        conn.execute(
+                            """INSERT INTO contacts
+                                (id, name, phones, channels, domains, created_at, updated_at)
+                               VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
+                            (
+                                contact_id, name,
+                                json.dumps([number]),
+                                json.dumps({"signal": number}),
+                                now, now,
+                            ),
+                        )
+
+                    phone_to_id[number] = contact_id
+
+                # Upsert identifier
+                conn.execute(
+                    """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
+                       VALUES (?, 'phone', ?)
+                       ON CONFLICT(identifier, identifier_type) DO UPDATE SET contact_id = ?""",
+                    (number, contact_id, contact_id),
+                )
+                synced += 1
+
+            # ---- Groups ----
+            group_count = 0
+            for g in groups:
+                group_id = g.get("id", "")
+                group_name = g.get("name", "Unknown Group")
+                members = g.get("members", [])
+
+                # Store group as an entity relationship between members
+                member_ids = []
+                for m in members:
+                    m_number = m.get("number")
+                    if m_number and m_number in phone_to_id:
+                        member_ids.append(phone_to_id[m_number])
+
+                # Create pairwise relationships for group members
+                for i, mid_a in enumerate(member_ids):
+                    for mid_b in member_ids[i + 1:]:
+                        rel_id = f"signal-group-{group_id}-{mid_a}-{mid_b}"
+                        conn.execute(
+                            """INSERT INTO entity_relationships
+                                (id, entity_a_type, entity_a_id, relationship,
+                                 entity_b_type, entity_b_id, weight, metadata, created_at)
+                               VALUES (?, 'contact', ?, 'signal_group_member',
+                                       'contact', ?, 1.0, ?, ?)
+                               ON CONFLICT(id) DO UPDATE SET metadata = ?, created_at = ?""",
+                            (
+                                rel_id, mid_a, mid_b,
+                                json.dumps({"group_name": group_name, "group_id": group_id}),
+                                now,
+                                json.dumps({"group_name": group_name, "group_id": group_id}),
+                                now,
+                            ),
+                        )
+                group_count += 1
+
+        print(f"[signal] Synced {synced} contacts, {group_count} groups")
+
+    def _load_existing_phone_map(self) -> dict[str, str]:
+        """Load phone→contact_id map from existing identifiers."""
+        with self.db.get_connection("entities") as conn:
+            rows = conn.execute(
+                "SELECT identifier, contact_id FROM contact_identifiers WHERE identifier_type = 'phone'"
+            ).fetchall()
+            return {row["identifier"]: row["contact_id"] for row in rows}
+
+    def _find_contact_by_name(self, conn, name: str) -> Optional[str]:
+        """Try to match a Signal contact name to an existing contact by first name."""
+        first_name = name.split()[0].lower() if name else ""
+        if not first_name or len(first_name) < 2:
+            return None
+
+        rows = conn.execute(
+            "SELECT id, name FROM contacts"
+        ).fetchall()
+        for row in rows:
+            existing_name = row["name"].lower()
+            # Match if existing name contains the first name
+            if first_name in existing_name:
+                return row["id"]
+        return None
+
+    # ------------------------------------------------------------------
+    # Original lifecycle methods
+    # ------------------------------------------------------------------
 
     async def authenticate(self) -> bool:
         """Verify that the signal-cli daemon is running and the socket is reachable.
@@ -68,8 +252,8 @@ class SignalConnector(BaseConnector):
         fail and we return False.
         """
         try:
-            result = await self._rpc_call("listAccounts")
-            return result is not None
+            result = await self._rpc_call("listGroups")
+            return isinstance(result, list)
         except Exception as e:
             print(f"[signal] Auth failed: {e}")
             return False
@@ -201,7 +385,7 @@ class SignalConnector(BaseConnector):
     async def health_check(self) -> dict[str, Any]:
         """Check that the signal-cli daemon is responsive via ``listAccounts``."""
         try:
-            result = await self._rpc_call("listAccounts")
+            result = await self._rpc_call("listGroups")
             return {"status": "ok", "connector": self.CONNECTOR_ID}
         except Exception as e:
             return {"status": "error", "details": str(e)}

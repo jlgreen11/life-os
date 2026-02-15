@@ -187,7 +187,8 @@ class BaseConnector(ABC):
 
     async def _update_state(self, status: str, error: Optional[str] = None,
                             error_count_reset: bool = False):
-        """Update connector state in the database."""
+        """Update connector state in the database, preserving existing config."""
+        now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection("state") as conn:
             # Branch 1 — Success reset: after a successful sync, reset the
             # error_count back to 0 and record the last_sync timestamp.
