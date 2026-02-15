@@ -18,6 +18,7 @@ people behave differently than they self-report.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -28,7 +29,7 @@ from storage.database import DatabaseManager, UserModelStore
 class FeedbackCollector:
     """
     Collects and processes feedback signals to improve the user model.
-    
+
     Subscribes to:
         - notification.acted_on / notification.dismissed
         - system.ai.action_taken (with user response)
@@ -36,9 +37,15 @@ class FeedbackCollector:
         - Explicit feedback ("that was helpful" / "don't do that")
     """
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore):
+    def __init__(self, db: DatabaseManager, ums: UserModelStore, event_bus: Any = None):
         self.db = db   # Database access for feedback_log and notification tables
         self.ums = ums  # User-model store for updating semantic facts from feedback
+        self.bus = event_bus
+
+    async def _publish_telemetry(self, event_type: str, payload: dict):
+        """Publish a telemetry event if the event bus is available."""
+        if self.bus and self.bus.is_connected:
+            await self.bus.publish(event_type, payload, source="feedback_collector")
 
     async def process_notification_response(self, notification_id: str,
                                              response_type: str,
@@ -46,7 +53,7 @@ class FeedbackCollector:
                                              context: Optional[dict] = None):
         """
         Process how the user responded to a notification.
-        
+
         response_type: "acted_on", "dismissed", "ignored", "delayed"
         """
         # Retrieve the original notification so we can correlate feedback
@@ -76,7 +83,7 @@ class FeedbackCollector:
             },
         }
 
-        self._store_feedback(feedback)
+        await self._store_feedback(feedback)
 
         # --- Implicit feedback inference ---
         # The three response types map to distinct learning signals:
@@ -101,7 +108,7 @@ class FeedbackCollector:
         if original_draft == final_message:
             # User accepted the draft as-is — strong positive signal.
             # This means the AI's tone, length, and content were all on target.
-            self._store_feedback({
+            await self._store_feedback({
                 "action_id": f"draft-{datetime.now(timezone.utc).isoformat()}",
                 "action_type": "draft",
                 "feedback_type": FeedbackType.ENGAGED.value,
@@ -151,7 +158,7 @@ class FeedbackCollector:
             },
         }
 
-        self._store_feedback(feedback)
+        await self._store_feedback(feedback)
 
         # If we know the contact or channel, feed the edit signal back into
         # the communication template so future drafts are closer to the
@@ -183,14 +190,14 @@ class FeedbackCollector:
             },
         }
 
-        self._store_feedback(feedback)
+        await self._store_feedback(feedback)
 
         # Close the loop: mark the prediction record with the user's actual
         # response so the prediction engine can compute its hit rate and
         # recalibrate confidence thresholds over time.
         with self.db.get_connection("user_model") as conn:
             conn.execute(
-                """UPDATE predictions SET 
+                """UPDATE predictions SET
                    user_response = ?, was_accurate = ?, resolved_at = ?
                    WHERE id = ?""",
                 (
@@ -203,7 +210,7 @@ class FeedbackCollector:
 
     async def process_explicit_feedback(self, message: str):
         """
-        Process explicit verbal feedback like "that was helpful" 
+        Process explicit verbal feedback like "that was helpful"
         or "don't do that again" or "I prefer X over Y".
         """
         # Classify the raw message into positive / negative / neutral using
@@ -219,7 +226,7 @@ class FeedbackCollector:
             "notes": message,
         }
 
-        self._store_feedback(feedback)
+        await self._store_feedback(feedback)
 
         # If the message contains preference-indicating language ("prefer",
         # "like", "don't"), promote it to a semantic fact in the user model.
@@ -366,25 +373,27 @@ class FeedbackCollector:
     # Storage
     # -------------------------------------------------------------------
 
-    def _store_feedback(self, feedback: dict):
+    async def _store_feedback(self, feedback: dict):
         """
-        Persist a feedback entry to the feedback_log table.
+        Persist a feedback entry to the feedback_log table and publish telemetry.
 
         Every feedback record — implicit or explicit — lands here. The log
         is the single source of truth for evaluating how well the AI's
         actions match user expectations. Analytics queries aggregate this
         table to surface trends (e.g., rising dismissal rate for a domain).
         """
-        import uuid
+        feedback_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
         with self.db.get_connection("preferences") as conn:
             conn.execute(
-                """INSERT INTO feedback_log 
+                """INSERT INTO feedback_log
                    (id, timestamp, action_id, action_type, feedback_type,
                     response_latency_seconds, context, notes)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid.uuid4()),
-                    datetime.now(timezone.utc).isoformat(),
+                    feedback_id,
+                    now,
                     feedback["action_id"],
                     feedback["action_type"],
                     feedback["feedback_type"],
@@ -393,6 +402,15 @@ class FeedbackCollector:
                     feedback.get("notes"),
                 ),
             )
+
+        await self._publish_telemetry("system.feedback.recorded", {
+            "feedback_id": feedback_id,
+            "action_id": feedback["action_id"],
+            "action_type": feedback["action_type"],
+            "feedback_type": feedback["feedback_type"],
+            "response_latency_seconds": feedback.get("response_latency_seconds"),
+            "recorded_at": now,
+        })
 
     def get_feedback_summary(self) -> dict:
         """

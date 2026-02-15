@@ -8,6 +8,7 @@ and communication templates.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -22,8 +23,25 @@ class UserModelStore:
     procedural) plus mood tracking, signal profiles, and predictions.
     """
 
-    def __init__(self, db: DatabaseManager):
+    def __init__(self, db: DatabaseManager, event_bus: Any = None):
         self.db = db
+        self._event_bus = event_bus
+
+    def _emit_telemetry(self, event_type: str, payload: dict):
+        """Fire-and-forget telemetry event publication.
+
+        Since UserModelStore methods are synchronous but called from async
+        contexts, this uses asyncio.create_task for non-blocking publishing.
+        """
+        if not self._event_bus or not self._event_bus.is_connected:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._event_bus.publish(event_type, payload, source="user_model_store")
+            )
+        except RuntimeError:
+            pass  # No running event loop — skip telemetry
 
     def store_episode(self, episode: dict):
         """Store an episodic memory.
@@ -65,6 +83,16 @@ class UserModelStore:
                 ),
             )
 
+        self._emit_telemetry("usermodel.episode.stored", {
+            "episode_id": episode["id"],
+            "event_id": episode["event_id"],
+            "interaction_type": episode["interaction_type"],
+            "active_domain": episode.get("active_domain"),
+            "contacts_count": len(episode.get("contacts_involved", [])),
+            "topics_count": len(episode.get("topics", [])),
+            "stored_at": episode["timestamp"],
+        })
+
     def update_semantic_fact(self, key: str, category: str, value: Any,
                             confidence: float, episode_id: Optional[str] = None):
         """Update or create a semantic memory fact.
@@ -78,6 +106,7 @@ class UserModelStore:
         - ``source_episodes`` accumulates the list of episode IDs that support
           this fact, providing an audit trail back to raw observations.
         """
+        is_new = False
         with self.db.get_connection("user_model") as conn:
             # Check whether this fact already exists in semantic memory.
             existing = conn.execute(
@@ -105,12 +134,22 @@ class UserModelStore:
                 )
             else:
                 # --- New fact: insert with the initial confidence from the caller ---
+                is_new = True
                 episodes = [episode_id] if episode_id else []
                 conn.execute(
                     """INSERT INTO semantic_facts (key, category, value, confidence, source_episodes)
                        VALUES (?, ?, ?, ?, ?)""",
                     (key, category, json.dumps(value), confidence, json.dumps(episodes)),
                 )
+
+        self._emit_telemetry("usermodel.fact.learned", {
+            "key": key,
+            "category": category,
+            "confidence": confidence if is_new else min(1.0, (existing["confidence"] if existing else confidence) + 0.05),
+            "is_new": is_new,
+            "episode_id": episode_id,
+            "learned_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     def get_semantic_facts(self, category: Optional[str] = None,
                           min_confidence: float = 0.0) -> list[dict]:
@@ -151,6 +190,11 @@ class UserModelStore:
                 (profile_type, json.dumps(data), profile_type),
             )
 
+        self._emit_telemetry("usermodel.signal_profile.updated", {
+            "profile_type": profile_type,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
     def get_signal_profile(self, profile_type: str) -> Optional[dict]:
         """Retrieve a signal profile.
 
@@ -176,14 +220,15 @@ class UserModelStore:
         provided for all dimensions so that partial mood readings (e.g. only
         energy and stress) can still be recorded without raising errors.
         """
+        timestamp = mood.get("timestamp", datetime.now(timezone.utc).isoformat())
         with self.db.get_connection("user_model") as conn:
             conn.execute(
-                """INSERT INTO mood_history 
+                """INSERT INTO mood_history
                    (timestamp, energy_level, stress_level, social_battery,
                     cognitive_load, emotional_valence, confidence, contributing_signals, trend)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    mood.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    timestamp,
                     mood.get("energy_level", 0.5),
                     mood.get("stress_level", 0.3),
                     mood.get("social_battery", 0.5),
@@ -195,6 +240,18 @@ class UserModelStore:
                 ),
             )
 
+        self._emit_telemetry("usermodel.mood.recorded", {
+            "energy_level": mood.get("energy_level", 0.5),
+            "stress_level": mood.get("stress_level", 0.3),
+            "social_battery": mood.get("social_battery", 0.5),
+            "cognitive_load": mood.get("cognitive_load", 0.3),
+            "emotional_valence": mood.get("emotional_valence", 0.5),
+            "confidence": mood.get("confidence", 0.0),
+            "trend": mood.get("trend", "stable"),
+            "signals_count": len(mood.get("contributing_signals", [])),
+            "recorded_at": timestamp,
+        })
+
     def store_prediction(self, prediction: dict):
         """Store a prediction for later accuracy evaluation.
 
@@ -204,7 +261,7 @@ class UserModelStore:
         """
         with self.db.get_connection("user_model") as conn:
             conn.execute(
-                """INSERT INTO predictions 
+                """INSERT INTO predictions
                    (id, prediction_type, description, confidence, confidence_gate,
                     time_horizon, suggested_action, supporting_signals, was_surfaced)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -220,6 +277,17 @@ class UserModelStore:
                     prediction.get("was_surfaced", False),
                 ),
             )
+
+        self._emit_telemetry("usermodel.prediction.generated", {
+            "prediction_id": prediction["id"],
+            "prediction_type": prediction["prediction_type"],
+            "confidence": prediction["confidence"],
+            "confidence_gate": prediction["confidence_gate"],
+            "time_horizon": prediction.get("time_horizon"),
+            "was_surfaced": prediction.get("was_surfaced", False),
+            "signals_count": len(prediction.get("supporting_signals", [])),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     def store_communication_template(self, template: dict):
         """Store or update a communication template.
@@ -261,3 +329,12 @@ class UserModelStore:
                     template.get("samples_analyzed", 0),
                 ),
             )
+
+        self._emit_telemetry("usermodel.template.updated", {
+            "template_id": template["id"],
+            "contact_id": template.get("contact_id"),
+            "channel": template.get("channel"),
+            "formality": template.get("formality", 0.5),
+            "samples_analyzed": template.get("samples_analyzed", 0),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })

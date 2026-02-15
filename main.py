@@ -51,28 +51,28 @@ class LifeOS:
         # global singletons).
         self.db = DatabaseManager(self.config.get("data_dir", "./data"))
         self.event_store = EventStore(self.db)
-        self.user_model_store = UserModelStore(self.db)
+        self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
+        self.user_model_store = UserModelStore(self.db, event_bus=self.event_bus)
         self.vector_store = VectorStore(
             db_path=str(Path(self.config.get("data_dir", "./data")) / "vectors"),
             model_name=self.config.get("embedding_model", "all-MiniLM-L6-v2"),
         )
-        # EventBus wraps NATS; actual connection happens later in start()
-        self.event_bus = EventBus(self.config.get("nats_url", "nats://localhost:4222"))
 
         # --- Services ---
         # Each service receives only the dependencies it needs (db,
         # user_model_store, event_bus, config) — keeping coupling explicit and
         # making unit-testing straightforward via mock injection.
+        # All services are wired to the event bus for data creation telemetry.
         self.signal_extractor = SignalExtractorPipeline(self.db, self.user_model_store)
         self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}))
-        self.rules_engine = RulesEngine(self.db)
-        self.feedback_collector = FeedbackCollector(self.db, self.user_model_store)
+        self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
+        self.feedback_collector = FeedbackCollector(self.db, self.user_model_store, event_bus=self.event_bus)
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store
         )
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
-        self.task_manager = TaskManager(self.db)
+        self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
 
         # --- Browser automation layer ---
         # Wraps Playwright and manages browser-based connectors separately
@@ -119,7 +119,6 @@ class LifeOS:
         # 1. Initialize databases
         print("[1/7] Initializing databases...")
         self.db.initialize_all()
-        install_default_rules(self.db)
 
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
@@ -138,6 +137,9 @@ class LifeOS:
             # are unavailable.  The web UI, DB, and prediction engine still
             # work — so users can still browse history and manage tasks.
             print("       Running in degraded mode (no event bus).")
+
+        # Install default rules (after event bus is available for telemetry)
+        await install_default_rules(self.db, event_bus=self.event_bus)
 
         # 4. Register core event handlers
         print("[4/7] Registering event handlers...")

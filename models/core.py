@@ -85,6 +85,24 @@ class EventType(str, Enum):
     NOTIFICATION_DISMISSED = "notification.dismissed"
     NOTIFICATION_ACTED_ON = "notification.acted_on"
 
+    # Rules
+    RULE_CREATED = "system.rule.created"
+    RULE_DEACTIVATED = "system.rule.deactivated"
+
+    # Feedback
+    FEEDBACK_RECORDED = "system.feedback.recorded"
+
+    # Preferences
+    PREFERENCE_UPDATED = "system.preference.updated"
+
+    # User Model
+    EPISODE_STORED = "usermodel.episode.stored"
+    FACT_LEARNED = "usermodel.fact.learned"
+    SIGNAL_PROFILE_UPDATED = "usermodel.signal_profile.updated"
+    MOOD_RECORDED = "usermodel.mood.recorded"
+    PREDICTION_GENERATED = "usermodel.prediction.generated"
+    TEMPLATE_UPDATED = "usermodel.template.updated"
+
 
 class Priority(str, Enum):
     CRITICAL = "critical"       # Wake them up
