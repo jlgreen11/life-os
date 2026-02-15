@@ -134,6 +134,25 @@ class DatabaseManager:
                     result          TEXT,
                     PRIMARY KEY (event_id, service)
                 );
+
+                -- Event annotations (tags, flags) stored separately to preserve
+                -- the append-only invariant on the events table itself.  Rules
+                -- engine actions like "tag" and "suppress" write here.
+                CREATE TABLE IF NOT EXISTS event_tags (
+                    event_id    TEXT NOT NULL,
+                    tag         TEXT NOT NULL,
+                    rule_id     TEXT,
+                    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (event_id, tag)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_event_tags_tag ON event_tags(tag);
+
+                -- Expression index on payload.message_id for fast response-time
+                -- lookups in the cadence extractor.  json_extract is available in
+                -- SQLite 3.38+ (bundled with Python 3.12).
+                CREATE INDEX IF NOT EXISTS idx_events_payload_message_id
+                    ON events(json_extract(payload, '$.message_id'));
             """)
 
     # -----------------------------------------------------------------------

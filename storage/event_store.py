@@ -97,3 +97,61 @@ class EventStore:
         with self.db.get_connection("events") as conn:
             row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
             return row["cnt"]
+
+    # -------------------------------------------------------------------
+    # Event tagging — stored in event_tags (separate from the immutable
+    # event log) so that annotations like rule-applied tags and suppress
+    # flags don't violate the append-only invariant on the events table.
+    # -------------------------------------------------------------------
+
+    def add_tag(self, event_id: str, tag: str,
+                rule_id: Optional[str] = None) -> None:
+        """Attach a tag to an event.
+
+        Uses INSERT OR IGNORE so re-tagging the same event with the same
+        tag is a safe no-op (idempotent).
+        """
+        with self.db.get_connection("events") as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO event_tags (event_id, tag, rule_id)
+                   VALUES (?, ?, ?)""",
+                (event_id, tag, rule_id),
+            )
+
+    def get_tags(self, event_id: str) -> list[str]:
+        """Return all tags for an event."""
+        with self.db.get_connection("events") as conn:
+            rows = conn.execute(
+                "SELECT tag FROM event_tags WHERE event_id = ?",
+                (event_id,),
+            ).fetchall()
+            return [row["tag"] for row in rows]
+
+    def has_tag(self, event_id: str, tag: str) -> bool:
+        """Check whether an event has a specific tag."""
+        with self.db.get_connection("events") as conn:
+            row = conn.execute(
+                "SELECT 1 FROM event_tags WHERE event_id = ? AND tag = ?",
+                (event_id, tag),
+            ).fetchone()
+            return row is not None
+
+    def is_suppressed(self, event_id: str) -> bool:
+        """Check whether an event has been suppressed by a rule action."""
+        return self.has_tag(event_id, "system:suppressed")
+
+    def get_timestamp_by_message_id(self, message_id: str) -> Optional[str]:
+        """Look up an event's timestamp by its payload.message_id.
+
+        Used by the cadence extractor to calculate response times.  The
+        query uses json_extract() against an expression index on
+        payload.message_id for O(log n) lookups.
+        """
+        with self.db.get_connection("events") as conn:
+            row = conn.execute(
+                """SELECT timestamp FROM events
+                   WHERE json_extract(payload, '$.message_id') = ?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (message_id,),
+            ).fetchone()
+            return row["timestamp"] if row else None

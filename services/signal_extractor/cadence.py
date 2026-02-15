@@ -91,16 +91,46 @@ class CadenceExtractor(BaseExtractor):
 
     def _calculate_response_time(self, original_message_id: str,
                                   response_timestamp: str) -> Optional[float]:
-        """Look up the original message and calculate response time.
+        """Look up the original inbound message and calculate response time.
 
-        In a full implementation this would query the event store for the
-        inbound message matching ``original_message_id``, extract its
-        timestamp, and return the delta in seconds.  The result reveals how
-        quickly the user replies to specific contacts or channels — a strong
-        signal of priority and engagement.
+        Queries the event store for the event whose payload.message_id
+        matches ``original_message_id``, then returns the delta in seconds
+        between the original timestamp and the user's reply.  This reveals
+        how quickly the user replies to specific contacts or channels — a
+        strong signal of priority and engagement.
+
+        Uses an expression index on ``json_extract(payload, '$.message_id')``
+        for O(log n) lookups (see storage/manager.py schema migration).
+
+        Returns None if the original message isn't found or if timestamps
+        can't be parsed (fail-open: the cadence profile simply doesn't
+        record a response-time sample for this event).
         """
-        # Placeholder — requires an event-store index keyed by payload.message_id.
-        return None
+        with self.db.get_connection("events") as conn:
+            row = conn.execute(
+                """SELECT timestamp FROM events
+                   WHERE json_extract(payload, '$.message_id') = ?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (original_message_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        try:
+            original_dt = datetime.fromisoformat(
+                row["timestamp"].replace("Z", "+00:00")
+            )
+            response_dt = datetime.fromisoformat(
+                response_timestamp.replace("Z", "+00:00")
+            )
+            delta = (response_dt - original_dt).total_seconds()
+            # Only return positive deltas — a negative value would mean the
+            # "reply" was timestamped before the original, which indicates a
+            # clock-skew or message-ID collision.  Silently discard.
+            return delta if delta > 0 else None
+        except (ValueError, AttributeError):
+            return None
 
     def _update_profile(self, signals: list[dict]):
         """Incrementally merge new signals into the persisted cadence profile.
