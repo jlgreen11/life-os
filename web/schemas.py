@@ -148,3 +148,21 @@ class ConnectorConfigRequest(BaseModel):
 class SetupSubmitRequest(BaseModel):
     step_id: str
     value: Any
+
+
+# ---------------------------------------------------------------------------
+# Source Weights (tunable insight engine)
+# ---------------------------------------------------------------------------
+
+class SourceWeightUpdate(BaseModel):
+    """Update the user-controlled weight for a data source."""
+    weight: float  # 0.0 = ignore, 1.0 = max influence
+
+
+class SourceWeightCreate(BaseModel):
+    """Create a custom source weight entry."""
+    source_key: str
+    category: str
+    label: str
+    description: str = ""
+    weight: float = 0.5
