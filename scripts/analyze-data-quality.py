@@ -7,10 +7,10 @@ and identify areas for improvement. Outputs a JSON report.
 Usage: python scripts/analyze-data-quality.py [--data-dir ./data]
 """
 
+import argparse
 import json
 import sqlite3
-import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -44,54 +44,67 @@ def analyze(data_dir: str = "./data") -> dict:
     # --- Prediction accuracy ---
     um_db = str(data_path / "user_model.db")
     try:
-        conn = sqlite3.connect(um_db)
-        conn.row_factory = sqlite3.Row
+        um_conn = sqlite3.connect(um_db)
+        um_conn.row_factory = sqlite3.Row
+    except Exception as e:
+        um_conn = None
+        report["sections"]["prediction_accuracy"] = {"error": str(e)}
+        report["sections"]["signal_profiles"] = {"error": str(e)}
+        report["sections"]["insight_feedback"] = {"error": str(e)}
 
-        pred_stats = conn.execute(
-            """SELECT prediction_type,
-                COUNT(*) as total,
-                SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate,
-                SUM(CASE WHEN was_accurate = 0 THEN 1 ELSE 0 END) as inaccurate,
-                SUM(CASE WHEN was_accurate IS NULL THEN 1 ELSE 0 END) as unresolved
-               FROM predictions
-               WHERE was_surfaced = 1
-               GROUP BY prediction_type"""
-        ).fetchall()
+    if um_conn:
+        try:
+            pred_stats = um_conn.execute(
+                """SELECT prediction_type,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate,
+                    SUM(CASE WHEN was_accurate = 0 THEN 1 ELSE 0 END) as inaccurate,
+                    SUM(CASE WHEN was_accurate IS NULL THEN 1 ELSE 0 END) as unresolved
+                   FROM predictions
+                   WHERE was_surfaced = 1
+                   GROUP BY prediction_type"""
+            ).fetchall()
 
-        report["sections"]["prediction_accuracy"] = {
-            r["prediction_type"]: {
-                "total": r["total"],
-                "accurate": r["accurate"],
-                "inaccurate": r["inaccurate"],
-                "unresolved": r["unresolved"],
-                "accuracy_rate": r["accurate"] / max(r["total"] - r["unresolved"], 1),
+            report["sections"]["prediction_accuracy"] = {
+                r["prediction_type"]: {
+                    "total": r["total"],
+                    "accurate": r["accurate"],
+                    "inaccurate": r["inaccurate"],
+                    "unresolved": r["unresolved"],
+                    "accuracy_rate": r["accurate"] / max(r["total"] - r["unresolved"], 1),
+                }
+                for r in pred_stats
             }
-            for r in pred_stats
-        }
+        except Exception as e:
+            report["sections"]["prediction_accuracy"] = {"error": str(e)}
 
         # Signal profiles freshness
-        profiles = conn.execute(
-            "SELECT profile_type, samples_count, updated_at FROM signal_profiles"
-        ).fetchall()
-        report["sections"]["signal_profiles"] = {
-            r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]}
-            for r in profiles
-        }
+        try:
+            profiles = um_conn.execute(
+                "SELECT profile_type, samples_count, updated_at FROM signal_profiles"
+            ).fetchall()
+            report["sections"]["signal_profiles"] = {
+                r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]}
+                for r in profiles
+            }
+        except Exception as e:
+            report["sections"]["signal_profiles"] = {"error": str(e)}
 
         # Insight feedback
-        insight_stats = conn.execute(
-            """SELECT type, feedback, COUNT(*) as c
-               FROM insights
-               GROUP BY type, feedback"""
-        ).fetchall()
-        report["sections"]["insight_feedback"] = [
-            {"type": r["type"], "feedback": r["feedback"], "count": r["c"]}
-            for r in insight_stats
-        ]
+        try:
+            insight_stats = um_conn.execute(
+                """SELECT type, feedback, COUNT(*) as c
+                   FROM insights
+                   GROUP BY type, feedback"""
+            ).fetchall()
+            report["sections"]["insight_feedback"] = [
+                {"type": r["type"], "feedback": r["feedback"], "count": r["c"]}
+                for r in insight_stats
+            ]
+        except Exception as e:
+            report["sections"]["insight_feedback"] = {"error": str(e)}
 
-        conn.close()
-    except Exception as e:
-        report["sections"]["prediction_accuracy"] = {"error": str(e)}
+        um_conn.close()
 
     # --- Notification dismissal rate ---
     state_db = str(data_path / "state.db")
@@ -133,6 +146,8 @@ def analyze(data_dir: str = "./data") -> dict:
 
 
 if __name__ == "__main__":
-    data_dir = sys.argv[1] if len(sys.argv) > 1 else "./data"
-    result = analyze(data_dir)
+    parser = argparse.ArgumentParser(description="Life OS data quality analysis")
+    parser.add_argument("--data-dir", default="./data", help="Path to data directory")
+    args = parser.parse_args()
+    result = analyze(args.data_dir)
     print(json.dumps(result, indent=2))
