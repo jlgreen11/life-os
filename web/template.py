@@ -95,7 +95,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         <h1>Life OS</h1>
-        <p class="subtitle">Your private command center</p>
+        <p class="subtitle">Your private command center &middot; <a href="/admin" style="color:#4a9eff;text-decoration:none">Manage Connectors</a> &middot; <a href="/admin/db" style="color:#4a9eff;text-decoration:none">Database</a></p>
         
         <div class="command-bar">
             <input type="text" id="commandInput" 

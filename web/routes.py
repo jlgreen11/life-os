@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 
 from web.schemas import (
     CommandRequest,
+    ConnectorConfigRequest,
     ContextBatchRequest,
     ContextEventRequest,
     DraftRequest,
@@ -23,6 +24,7 @@ from web.schemas import (
     PreferenceUpdate,
     RuleCreateRequest,
     SearchRequest,
+    SetupSubmitRequest,
     TaskCreateRequest,
     TaskUpdateRequest,
 )
@@ -328,6 +330,315 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "trend": mood.trend,
             }
         }
+
+    # -------------------------------------------------------------------
+    # Insights (aggregated signal profiles → human-readable summaries)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/insights/summary")
+    async def insights_summary():
+        """Aggregate signal profiles into human-readable insights.
+
+        Pulls data from relationship, cadence, linguistic, and topic signal
+        profiles plus the events and places tables.  Each insight is a dict
+        with ``type``, ``summary``, ``confidence``, ``category``, and an
+        optional ``entity``.  Missing or empty profiles are silently skipped.
+        """
+        insights: list[dict] = []
+
+        # -- 1. Relationship profile: contacts overdue vs their usual interval --
+        try:
+            rel_profile = life_os.user_model_store.get_signal_profile("relationships")
+            if rel_profile and rel_profile.get("data"):
+                contacts = rel_profile["data"].get("contacts", {})
+                for address, profile in contacts.items():
+                    timestamps = profile.get("interaction_timestamps", [])
+                    if len(timestamps) >= 2:
+                        # Compute the average interval between interactions
+                        from datetime import datetime as _dt
+                        parsed = []
+                        for ts in timestamps:
+                            try:
+                                parsed.append(_dt.fromisoformat(ts.replace("Z", "+00:00")))
+                            except (ValueError, AttributeError):
+                                continue
+                        if len(parsed) >= 2:
+                            parsed.sort()
+                            deltas = [
+                                (parsed[i + 1] - parsed[i]).total_seconds()
+                                for i in range(len(parsed) - 1)
+                            ]
+                            avg_interval = sum(deltas) / len(deltas)
+                            last = parsed[-1]
+                            now = datetime.now(timezone.utc)
+                            seconds_since_last = (now - last).total_seconds()
+                            if avg_interval > 0 and seconds_since_last > avg_interval * 1.5:
+                                overdue_days = round((seconds_since_last - avg_interval) / 86400, 1)
+                                usual_days = round(avg_interval / 86400, 1)
+                                insights.append({
+                                    "type": "relationship_overdue",
+                                    "summary": (
+                                        f"You usually interact with {address} every "
+                                        f"{usual_days} days, but it has been "
+                                        f"{round(seconds_since_last / 86400, 1)} days "
+                                        f"since your last contact ({overdue_days} days overdue)."
+                                    ),
+                                    "confidence": min(0.9, 0.5 + len(timestamps) * 0.02),
+                                    "category": "relationships",
+                                    "entity": address,
+                                })
+
+                    # Top contacts by interaction count
+                    count = profile.get("interaction_count", 0)
+                    if count >= 5:
+                        inbound = profile.get("inbound_count", 0)
+                        outbound = profile.get("outbound_count", 0)
+                        if count > 0:
+                            ratio = outbound / count
+                            if ratio < 0.3:
+                                direction_note = "They reach out far more than you reply."
+                            elif ratio > 0.7:
+                                direction_note = "You initiate most conversations."
+                            else:
+                                direction_note = "Communication is roughly balanced."
+                            insights.append({
+                                "type": "relationship_dynamics",
+                                "summary": (
+                                    f"{address}: {count} total interactions "
+                                    f"({inbound} inbound, {outbound} outbound). "
+                                    f"{direction_note}"
+                                ),
+                                "confidence": min(0.85, 0.4 + count * 0.01),
+                                "category": "relationships",
+                                "entity": address,
+                            })
+        except Exception:
+            pass  # Gracefully skip if profile is missing or malformed
+
+        # -- 2. Cadence profile: per-contact response times vs overall average --
+        try:
+            cadence_profile = life_os.user_model_store.get_signal_profile("cadence")
+            if cadence_profile and cadence_profile.get("data"):
+                cdata = cadence_profile["data"]
+                global_rts = cdata.get("response_times", [])
+                if global_rts:
+                    avg_rt = sum(global_rts) / len(global_rts)
+                    avg_rt_hours = round(avg_rt / 3600, 1)
+                    insights.append({
+                        "type": "cadence_overall",
+                        "summary": (
+                            f"Your average response time across all contacts is "
+                            f"{avg_rt_hours} hours."
+                        ),
+                        "confidence": min(0.9, 0.5 + len(global_rts) * 0.01),
+                        "category": "cadence",
+                    })
+
+                per_contact = cdata.get("per_contact_response_times", {})
+                if global_rts and per_contact:
+                    avg_global = sum(global_rts) / len(global_rts)
+                    for contact_id, rts in per_contact.items():
+                        if len(rts) >= 3:
+                            avg_contact = sum(rts) / len(rts)
+                            if avg_global > 0:
+                                ratio = avg_contact / avg_global
+                                if ratio < 0.5:
+                                    insights.append({
+                                        "type": "cadence_fast_responder",
+                                        "summary": (
+                                            f"You reply to {contact_id} significantly faster "
+                                            f"than average ({round(avg_contact / 3600, 1)}h vs "
+                                            f"{round(avg_global / 3600, 1)}h overall)."
+                                        ),
+                                        "confidence": min(0.85, 0.5 + len(rts) * 0.02),
+                                        "category": "cadence",
+                                        "entity": contact_id,
+                                    })
+                                elif ratio > 2.0:
+                                    insights.append({
+                                        "type": "cadence_slow_responder",
+                                        "summary": (
+                                            f"You take much longer to reply to {contact_id} "
+                                            f"({round(avg_contact / 3600, 1)}h vs "
+                                            f"{round(avg_global / 3600, 1)}h overall)."
+                                        ),
+                                        "confidence": min(0.85, 0.5 + len(rts) * 0.02),
+                                        "category": "cadence",
+                                        "entity": contact_id,
+                                    })
+
+                # Peak activity hours
+                hourly = cdata.get("hourly_activity", {})
+                if hourly:
+                    sorted_hours = sorted(hourly.items(), key=lambda x: x[1], reverse=True)
+                    top_hours = sorted_hours[:3]
+                    if top_hours:
+                        hour_labels = [f"{int(h)}:00" for h, _ in top_hours]
+                        insights.append({
+                            "type": "cadence_peak_hours",
+                            "summary": (
+                                f"Your most active communication hours are "
+                                f"{', '.join(hour_labels)}."
+                            ),
+                            "confidence": min(0.9, 0.5 + sum(hourly.values()) * 0.005),
+                            "category": "cadence",
+                        })
+        except Exception:
+            pass  # Gracefully skip if profile is missing or malformed
+
+        # -- 3. Linguistic profile: formality score --
+        try:
+            ling_profile = life_os.user_model_store.get_signal_profile("linguistic")
+            if ling_profile and ling_profile.get("data"):
+                ldata = ling_profile["data"]
+                averages = ldata.get("averages", {})
+                formality = averages.get("formality")
+                if formality is not None:
+                    if formality > 0.7:
+                        style = "formal"
+                    elif formality < 0.3:
+                        style = "casual"
+                    else:
+                        style = "balanced"
+                    insights.append({
+                        "type": "linguistic_formality",
+                        "summary": (
+                            f"Your overall writing style is {style} "
+                            f"(formality score: {round(formality, 2)})."
+                        ),
+                        "confidence": min(0.9, 0.5 + len(ldata.get("samples", [])) * 0.01),
+                        "category": "communication_style",
+                    })
+
+                # Greetings and closings
+                greetings = ldata.get("common_greetings", [])
+                closings = ldata.get("common_closings", [])
+                if greetings:
+                    insights.append({
+                        "type": "linguistic_greetings",
+                        "summary": (
+                            f"Your most common greetings: {', '.join(greetings)}."
+                        ),
+                        "confidence": 0.7,
+                        "category": "communication_style",
+                    })
+                if closings:
+                    insights.append({
+                        "type": "linguistic_closings",
+                        "summary": (
+                            f"Your most common sign-offs: {', '.join(closings)}."
+                        ),
+                        "confidence": 0.7,
+                        "category": "communication_style",
+                    })
+        except Exception:
+            pass  # Gracefully skip if profile is missing or malformed
+
+        # -- 4. Events table: email volume by day of week (last 30 days) --
+        try:
+            with life_os.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """SELECT timestamp FROM events
+                       WHERE type IN ('email.received', 'email.sent')
+                       AND timestamp >= datetime('now', '-30 days')"""
+                ).fetchall()
+                if rows:
+                    from collections import Counter as _Counter
+                    day_counts = _Counter()
+                    for row in rows:
+                        try:
+                            dt = datetime.fromisoformat(
+                                row["timestamp"].replace("Z", "+00:00")
+                            )
+                            day_counts[dt.strftime("%A")] += 1
+                        except (ValueError, AttributeError):
+                            continue
+                    if day_counts:
+                        busiest = day_counts.most_common(1)[0]
+                        quietest = day_counts.most_common()[-1]
+                        insights.append({
+                            "type": "email_volume_pattern",
+                            "summary": (
+                                f"In the last 30 days, your busiest email day is "
+                                f"{busiest[0]} ({busiest[1]} emails) and quietest is "
+                                f"{quietest[0]} ({quietest[1]} emails)."
+                            ),
+                            "confidence": min(0.85, 0.4 + len(rows) * 0.005),
+                            "category": "activity_patterns",
+                        })
+        except Exception:
+            pass  # Gracefully skip if query fails
+
+        # -- 5. Places table: most visited places --
+        try:
+            with life_os.db.get_connection("entities") as conn:
+                rows = conn.execute(
+                    """SELECT name, place_type, visit_count
+                       FROM places
+                       WHERE visit_count > 0
+                       ORDER BY visit_count DESC
+                       LIMIT 5"""
+                ).fetchall()
+                if rows:
+                    place_summaries = []
+                    for row in rows:
+                        name = row["name"]
+                        visits = row["visit_count"]
+                        place_type = row["place_type"] or "unknown"
+                        place_summaries.append(f"{name} ({visits} visits, {place_type})")
+                    insights.append({
+                        "type": "frequent_places",
+                        "summary": (
+                            f"Your most visited places: {'; '.join(place_summaries)}."
+                        ),
+                        "confidence": min(0.9, 0.5 + len(rows) * 0.08),
+                        "category": "location_patterns",
+                    })
+        except Exception:
+            pass  # Gracefully skip if query fails
+
+        # Sort all insights by confidence descending
+        insights.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+
+        return {
+            "insights": insights,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.get("/api/insights")
+    async def list_insights(limit: int = 20):
+        """Return recent insights from the InsightEngine."""
+        with life_os.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT * FROM insights
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            # Parse JSON evidence field
+            if isinstance(d.get("evidence"), str):
+                try:
+                    d["evidence"] = json.loads(d["evidence"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(d)
+        return {"insights": results}
+
+    @app.post("/api/insights/{insight_id}/feedback")
+    async def insight_feedback(insight_id: str, feedback: str = "dismissed"):
+        """Record user feedback on an insight (useful/dismissed)."""
+        if feedback not in ("useful", "dismissed"):
+            from fastapi import HTTPException
+            raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful' or 'dismissed'.")
+        with life_os.db.get_connection("user_model") as conn:
+            conn.execute(
+                "UPDATE insights SET feedback = ? WHERE id = ?",
+                (feedback, insight_id),
+            )
+        return {"status": "recorded"}
 
     # -------------------------------------------------------------------
     # Preferences
@@ -651,16 +962,350 @@ def register_routes(app: FastAPI, life_os) -> None:
             ws_manager.disconnect(websocket)
 
     # -------------------------------------------------------------------
+    # Admin — Connector Management
+    # -------------------------------------------------------------------
+
+    @app.get("/admin", response_class=HTMLResponse)
+    async def admin_page():
+        from web.admin_template import ADMIN_HTML_TEMPLATE
+        return ADMIN_HTML_TEMPLATE
+
+    @app.get("/api/admin/connectors/registry")
+    async def admin_connector_registry():
+        """Return all connector type definitions with config schemas."""
+        from connectors.registry import CONNECTOR_REGISTRY
+        from dataclasses import asdict
+        registry = {}
+        for cid, typedef in CONNECTOR_REGISTRY.items():
+            entry = asdict(typedef)
+            # Remove internal fields not needed by frontend
+            entry.pop("module_path", None)
+            entry.pop("class_name", None)
+            registry[cid] = entry
+        return {"registry": registry}
+
+    @app.get("/api/admin/connectors")
+    async def admin_list_connectors():
+        """Return all connectors with status, health, and masked config."""
+        from connectors.registry import CONNECTOR_REGISTRY
+        connectors = []
+        for cid, typedef in CONNECTOR_REGISTRY.items():
+            status = life_os.get_connector_status(cid)
+            try:
+                config = life_os.get_connector_config(cid)
+            except Exception:
+                config = {}
+            connectors.append({
+                "connector_id": cid,
+                "display_name": typedef.display_name,
+                "description": typedef.description,
+                "category": typedef.category,
+                "status": status,
+                "config": config,
+            })
+        return {"connectors": connectors}
+
+    @app.put("/api/admin/connectors/{connector_id}/config")
+    async def admin_save_config(connector_id: str, req: ConnectorConfigRequest):
+        """Save connector configuration (preserves unchanged password fields)."""
+        try:
+            life_os.save_connector_config(connector_id, req.config)
+            return {"status": "saved"}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/admin/connectors/{connector_id}/test")
+    async def admin_test_connector(connector_id: str, req: ConnectorConfigRequest):
+        """Test connector credentials without saving."""
+        try:
+            result = await life_os.test_connector(connector_id, config=req.config)
+            return result
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            return {"success": False, "detail": str(e)}
+
+    @app.post("/api/admin/connectors/{connector_id}/enable")
+    async def admin_enable_connector(connector_id: str):
+        """Start a connector at runtime."""
+        try:
+            result = await life_os.enable_connector(connector_id)
+            return result
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(500, f"Failed to start connector: {e}")
+
+    @app.post("/api/admin/connectors/{connector_id}/disable")
+    async def admin_disable_connector(connector_id: str):
+        """Stop a running connector."""
+        try:
+            result = await life_os.disable_connector(connector_id)
+            return result
+        except Exception as e:
+            raise HTTPException(500, f"Failed to stop connector: {e}")
+
+    # -------------------------------------------------------------------
+    # Admin — Google OAuth
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/connectors/google/auth")
+    async def admin_google_auth():
+        """Start the Google OAuth flow — opens browser for user approval."""
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+
+            SCOPES = [
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/contacts.readonly",
+            ]
+
+            # Get config for file paths
+            config = life_os.get_connector_config("google")
+            credentials_file = config.get("credentials_file", "data/google_credentials.json")
+            token_file = config.get("token_file", "data/google_token.json")
+
+            import os
+            if not os.path.exists(credentials_file):
+                raise HTTPException(400,
+                    f"Credentials file not found at {credentials_file}. "
+                    "Download it from Google Cloud Console and place it there.")
+
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
+            creds = flow.run_local_server(port=0, open_browser=True)
+
+            # Save token
+            with open(token_file, "w") as f:
+                f.write(creds.to_json())
+
+            # Get email from profile
+            from googleapiclient.discovery import build
+            service = build("gmail", "v1", credentials=creds)
+            profile = service.users().getProfile(userId="me").execute()
+            email_addr = profile.get("emailAddress", "")
+
+            return {"status": "authorized", "email": email_addr}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"OAuth flow failed: {e}")
+
+    @app.get("/api/admin/connectors/google/status")
+    async def admin_google_status():
+        """Check if Google OAuth token exists and is valid."""
+        import os
+
+        config = life_os.get_connector_config("google")
+        token_file = config.get("token_file", "data/google_token.json")
+
+        if not os.path.exists(token_file):
+            return {"authorized": False}
+
+        try:
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_file(token_file)
+
+            return {
+                "authorized": creds.valid or bool(creds.refresh_token),
+                "email": config.get("email_address", ""),
+                "scopes": list(creds.scopes) if creds.scopes else [],
+                "expired": creds.expired if hasattr(creds, "expired") else False,
+            }
+        except Exception as e:
+            return {"authorized": False, "error": str(e)}
+
+    # -------------------------------------------------------------------
+    # Admin — Database Viewer
+    # -------------------------------------------------------------------
+
+    DB_NAMES = ["events", "entities", "state", "user_model", "preferences"]
+
+    @app.get("/admin/db", response_class=HTMLResponse)
+    async def admin_db_page():
+        from web.db_template import DB_HTML_TEMPLATE
+        return DB_HTML_TEMPLATE
+
+    @app.get("/api/admin/db")
+    async def admin_db_schema():
+        """Return all databases, tables, columns, and row counts."""
+        databases = {}
+        for db_name in DB_NAMES:
+            tables = {}
+            with life_os.db.get_connection(db_name) as conn:
+                tbl_rows = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                ).fetchall()
+                for tbl_row in tbl_rows:
+                    tbl = tbl_row["name"]
+                    count = conn.execute(f'SELECT COUNT(*) as c FROM "{tbl}"').fetchone()["c"]
+                    cols = [row["name"] for row in conn.execute(f'PRAGMA table_info("{tbl}")').fetchall()]
+                    tables[tbl] = {"columns": cols, "count": count}
+            databases[db_name] = tables
+        return {"databases": databases}
+
+    @app.get("/api/admin/db/{db_name}/{table_name}")
+    async def admin_db_query(db_name: str, table_name: str,
+                             limit: int = 50, offset: int = 0,
+                             search: Optional[str] = None,
+                             sort: Optional[str] = None,
+                             dir: str = "asc"):
+        """Query rows from a specific table with optional search, sort, and pagination."""
+        if db_name not in DB_NAMES:
+            raise HTTPException(400, f"Unknown database: {db_name}")
+
+        with life_os.db.get_connection(db_name) as conn:
+            # Validate table exists
+            tables = [r["name"] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()]
+            if table_name not in tables:
+                raise HTTPException(404, f"Table not found: {table_name}")
+
+            # Get columns
+            columns = [r["name"] for r in conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()]
+
+            # Build query
+            where = ""
+            params: list = []
+            if search:
+                # Search across all text columns
+                clauses = [f'CAST("{col}" AS TEXT) LIKE ?' for col in columns]
+                where = "WHERE " + " OR ".join(clauses)
+                params = [f"%{search}%" for _ in columns]
+
+            # Count total
+            count_sql = f'SELECT COUNT(*) as c FROM "{table_name}" {where}'
+            total = conn.execute(count_sql, params).fetchone()["c"]
+
+            # Sort
+            order = ""
+            if sort and sort in columns:
+                direction = "ASC" if dir == "asc" else "DESC"
+                order = f'ORDER BY "{sort}" {direction}'
+            else:
+                # Default: try common columns
+                for default_col in ("created_at", "timestamp", "updated_at", "id", "rowid"):
+                    if default_col in columns:
+                        order = f'ORDER BY "{default_col}" DESC'
+                        break
+                if not order:
+                    order = "ORDER BY rowid DESC"
+
+            query = f'SELECT * FROM "{table_name}" {where} {order} LIMIT ? OFFSET ?'
+            rows = conn.execute(query, params + [limit, offset]).fetchall()
+
+            return {
+                "columns": columns,
+                "rows": [dict(r) for r in rows],
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+
+    # -------------------------------------------------------------------
+    # Setup / Onboarding
+    # -------------------------------------------------------------------
+
+    @app.get("/setup", response_class=HTMLResponse)
+    async def setup_page():
+        from web.setup_template import SETUP_HTML_TEMPLATE
+        return SETUP_HTML_TEMPLATE
+
+    @app.get("/api/setup/status")
+    async def setup_status():
+        """Check if onboarding is complete, and return current answers."""
+        with life_os.db.get_connection("preferences") as conn:
+            row = conn.execute(
+                "SELECT value FROM user_preferences WHERE key = 'onboarding_completed'"
+            ).fetchone()
+            completed = bool(row and row["value"] == "true")
+        return {
+            "completed": completed,
+            "answers": life_os.onboarding.get_answers(),
+        }
+
+    @app.get("/api/setup/flow")
+    async def setup_flow():
+        """Return the onboarding flow phases."""
+        from services.onboarding.manager import ONBOARDING_PHASES
+        # Sanitize for JSON (convert any non-serializable values)
+        phases = []
+        for p in ONBOARDING_PHASES:
+            phase = dict(p)
+            if "options" in phase:
+                phase["options"] = [
+                    {"label": o["label"], "value": o["value"]}
+                    for o in phase["options"]
+                ]
+            phases.append(phase)
+        return {"phases": phases}
+
+    @app.post("/api/setup/submit")
+    async def setup_submit(req: SetupSubmitRequest):
+        """Submit a single onboarding answer."""
+        life_os.onboarding.submit_answer(req.step_id, req.value)
+        return {"status": "ok"}
+
+    @app.post("/api/setup/finalize")
+    async def setup_finalize():
+        """Finalize onboarding: save preferences, seed contacts, create vaults."""
+        try:
+            preferences = life_os.onboarding.finalize()
+
+            # Seed priority contacts into the entities DB
+            priority_contacts = preferences.get("priority_contacts", [])
+            if priority_contacts:
+                _seed_contacts(life_os, priority_contacts)
+
+            # Create vault if requested
+            vaults = preferences.get("vaults", [])
+            for vault in vaults:
+                _seed_vault(life_os, vault)
+
+            return {"status": "ok", "preferences": preferences}
+        except Exception as e:
+            return {"status": "error", "detail": str(e)}
+
+    def _seed_contacts(life_os_ref, contacts: list[dict]):
+        """Create contact records from onboarding priority people."""
+        import uuid
+        with life_os_ref.db.get_connection("entities") as conn:
+            for contact in contacts:
+                contact_id = str(uuid.uuid4())
+                name = contact.get("name", "Unknown")
+                relationship = contact.get("relationship")
+                conn.execute(
+                    """INSERT OR IGNORE INTO contacts
+                       (id, name, relationship, is_priority, always_surface, domains)
+                       VALUES (?, ?, ?, 1, 1, '["personal"]')""",
+                    (contact_id, name, relationship),
+                )
+
+    def _seed_vault(life_os_ref, vault: dict):
+        """Create a vault record."""
+        with life_os_ref.db.get_connection("preferences") as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO vaults (name, auth_method)
+                   VALUES (?, ?)""",
+                (vault.get("name", "Vault"), vault.get("auth_method", "pin")),
+            )
+
+    # -------------------------------------------------------------------
     # Web UI
     # -------------------------------------------------------------------
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        """Serve the single-page HTML dashboard.
-
-        The template is imported lazily (inside the handler) to avoid circular
-        imports at module load time and to keep the template module independent
-        of the FastAPI app.
-        """
+        # Check if onboarding is complete — if not, redirect to setup
+        with life_os.db.get_connection("preferences") as conn:
+            row = conn.execute(
+                "SELECT value FROM user_preferences WHERE key = 'onboarding_completed'"
+            ).fetchone()
+            if not row or row["value"] != "true":
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse("/setup")
         from web.template import HTML_TEMPLATE
         return HTML_TEMPLATE

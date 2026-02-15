@@ -139,3 +139,12 @@ class ContextEventRequest(BaseModel):
 class ContextBatchRequest(BaseModel):
     """A batch of context events from the mobile app."""
     events: list[ContextEventRequest]
+
+
+class ConnectorConfigRequest(BaseModel):
+    config: dict[str, Any]
+
+
+class SetupSubmitRequest(BaseModel):
+    step_id: str
+    value: Any

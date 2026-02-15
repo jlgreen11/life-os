@@ -34,6 +34,15 @@ class TaskManager:
         if self.bus and self.bus.is_connected:
             await self.bus.publish(event_type, payload, source="task_manager")
 
+    async def process_event(self, event: dict):
+        """Process an event for potential task extraction (no-op for now).
+
+        Full AI-based task extraction (via LLM) is too slow to run on every
+        event. Instead, the prediction engine handles follow-up detection
+        and the AI engine's extract_action_items() can be called on-demand.
+        """
+        pass
+
     async def create_task(
         self,
         title: str,

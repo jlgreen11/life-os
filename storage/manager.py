@@ -326,6 +326,7 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS connector_state (
                     connector_id    TEXT PRIMARY KEY,
                     status          TEXT DEFAULT 'inactive',
+                    enabled         INTEGER DEFAULT 0,
                     last_sync       TEXT,
                     sync_cursor     TEXT,
                     error_count     INTEGER DEFAULT 0,
@@ -489,6 +490,25 @@ class DatabaseManager:
 
                 CREATE INDEX IF NOT EXISTS idx_predictions_type ON predictions(prediction_type);
                 CREATE INDEX IF NOT EXISTS idx_predictions_accuracy ON predictions(was_accurate);
+
+                -- Insights (cross-signal discoveries from InsightEngine)
+                CREATE TABLE IF NOT EXISTS insights (
+                    id                  TEXT PRIMARY KEY,
+                    type                TEXT NOT NULL,
+                    summary             TEXT NOT NULL,
+                    confidence          REAL NOT NULL,
+                    evidence            TEXT DEFAULT '[]',
+                    category            TEXT DEFAULT '',
+                    entity              TEXT,
+                    staleness_ttl_hours INTEGER DEFAULT 168,
+                    dedup_key           TEXT,
+                    feedback            TEXT,
+                    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(type);
+                CREATE INDEX IF NOT EXISTS idx_insights_dedup ON insights(dedup_key);
+                CREATE INDEX IF NOT EXISTS idx_insights_created ON insights(created_at);
             """)
 
     # -----------------------------------------------------------------------

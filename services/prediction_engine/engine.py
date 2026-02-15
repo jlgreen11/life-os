@@ -46,12 +46,31 @@ class PredictionEngine:
     def __init__(self, db: DatabaseManager, ums: UserModelStore):
         self.db = db   # Database access for events, user_model, and preferences tables
         self.ums = ums  # User-model store for signal profiles and semantic memory
+        self._last_event_cursor: int = 0  # rowid of last processed event
+
+    def _has_new_events(self) -> bool:
+        """Check if any new events have arrived since last prediction run."""
+        with self.db.get_connection("events") as conn:
+            row = conn.execute(
+                "SELECT MAX(rowid) as max_id FROM events"
+            ).fetchone()
+            current_max = row["max_id"] if row and row["max_id"] else 0
+
+        if current_max <= self._last_event_cursor:
+            return False
+
+        self._last_event_cursor = current_max
+        return True
 
     async def generate_predictions(self, current_context: dict) -> list[Prediction]:
         """
         Main prediction loop. Called periodically (every 15 min)
         and on significant context changes (location, calendar event start, etc.)
         """
+        # Skip if no new events since last run
+        if not self._has_new_events():
+            return []
+
         predictions = []
 
         # --- Prediction generation pipeline ---
@@ -66,6 +85,15 @@ class PredictionEngine:
         predictions.extend(await self._check_preparation_needs(current_context))     # Upcoming events needing prep
         predictions.extend(await self._check_spending_patterns(current_context))     # Spending anomalies
 
+        # --- Accuracy-based confidence decay/boost ---
+        # Adjust confidence based on historical accuracy for each prediction type.
+        # This closes the feedback loop: predictions that keep getting dismissed
+        # have their confidence reduced, eventually suppressing them entirely.
+        for pred in predictions:
+            multiplier = self._get_accuracy_multiplier(pred.prediction_type)
+            pred.confidence *= multiplier
+            pred.confidence_gate = self._gate_from_confidence(pred.confidence)
+
         # --- Reaction prediction gatekeeper ---
         # Before surfacing any prediction, ask: "Will the user find this
         # helpful or annoying right now?" This prevents piling on during
@@ -76,10 +104,19 @@ class PredictionEngine:
             if reaction.predicted_reaction in ("helpful", "neutral"):
                 filtered.append(pred)
 
+        # Confidence floor — don't surface anything below 0.6
+        filtered = [p for p in filtered if p.confidence >= 0.6]
+
+        # Cap at 5 surfaced predictions per cycle, prioritized by confidence
+        filtered.sort(key=lambda p: p.confidence, reverse=True)
+        filtered = filtered[:5]
+
         # Store ALL predictions (including filtered-out ones) for accuracy
-        # tracking. This lets us measure both precision (were surfaced
-        # predictions helpful?) and recall (did we miss anything important?).
+        # tracking. Mark which ones were actually surfaced so the feedback
+        # loop can distinguish them via was_surfaced=1 in queries.
+        surfaced_ids = {p.id for p in filtered}
         for pred in predictions:
+            pred.was_surfaced = pred.id in surfaced_ids
             self.ums.store_prediction(pred.model_dump())
 
         return filtered
@@ -216,13 +253,15 @@ class PredictionEngine:
             if message_id in replied_to_threads:
                 continue
 
-            # Skip marketing/automated emails — they contain "unsubscribe"
-            # links and don't warrant a follow-up reminder.
-            if payload.get("snippet", "").lower().count("unsubscribe") > 0:
-                continue
-
             # Check if from a priority contact
             from_addr = payload.get("from_address", "")
+
+            # Skip marketing/automated emails — no-reply senders, bulk
+            # sender patterns, and messages containing "unsubscribe" in
+            # snippet, body_plain, or body.
+            if self._is_marketing_or_noreply(from_addr, payload):
+                continue
+
             is_priority = any(
                 from_addr in contacts
                 for contacts in [metadata.get("related_contacts", [])]
@@ -576,6 +615,67 @@ class PredictionEngine:
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------
+
+    def _get_accuracy_multiplier(self, prediction_type: str) -> float:
+        """Compute confidence multiplier based on historical accuracy for this prediction type.
+
+        Returns:
+            0.0 — auto-suppress (<20% accuracy after 10+ resolved)
+            0.5-1.1 — scaled by accuracy rate (50% accuracy = 1.0x baseline)
+            1.0 — insufficient data (<5 resolved predictions)
+        """
+        with self.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                """SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                   FROM predictions
+                   WHERE prediction_type = ?
+                     AND was_surfaced = 1
+                     AND resolved_at IS NOT NULL""",
+                (prediction_type,),
+            ).fetchone()
+
+        total = row["total"] if row else 0
+        accurate = row["accurate"] if row else 0
+
+        if total < 5:
+            return 1.0  # Not enough data to adjust
+
+        accuracy_rate = accurate / total
+
+        # Auto-suppress types with <20% accuracy after sufficient samples
+        if accuracy_rate < 0.2 and total >= 10:
+            return 0.0
+
+        # Scale: 50% accuracy = 1.0x, 0% = 0.5x, 100% = 1.1x
+        return 0.5 + (accuracy_rate * 0.6)
+
+    @staticmethod
+    def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
+        """Check if an email is marketing/automated and shouldn't generate follow-up predictions."""
+        addr_lower = from_addr.lower()
+
+        # No-reply senders
+        noreply_patterns = ("no-reply@", "noreply@", "do-not-reply@", "donotreply@")
+        if any(pattern in addr_lower for pattern in noreply_patterns):
+            return True
+
+        # Check body and snippet for unsubscribe indicators
+        text = " ".join(filter(None, [
+            payload.get("body_plain", ""),
+            payload.get("snippet", ""),
+            payload.get("body", ""),
+        ])).lower()
+        if "unsubscribe" in text:
+            return True
+
+        # Common bulk sender patterns
+        bulk_patterns = ("newsletter@", "notifications@", "updates@", "digest@", "mailer@", "bulk@", "promo@")
+        if any(pattern in addr_lower for pattern in bulk_patterns):
+            return True
+
+        return False
 
     @staticmethod
     def _gate_from_confidence(confidence: float) -> ConfidenceGate:
