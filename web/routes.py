@@ -605,6 +605,38 @@ def register_routes(app: FastAPI, life_os) -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    @app.get("/api/insights")
+    async def list_insights(limit: int = 20):
+        """Return recent insights from the InsightEngine."""
+        with life_os.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT * FROM insights
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            # Parse JSON evidence field
+            if isinstance(d.get("evidence"), str):
+                try:
+                    d["evidence"] = json.loads(d["evidence"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append(d)
+        return {"insights": results}
+
+    @app.post("/api/insights/{insight_id}/feedback")
+    async def insight_feedback(insight_id: str, feedback: str = "dismissed"):
+        """Record user feedback on an insight (useful/dismissed)."""
+        with life_os.db.get_connection("user_model") as conn:
+            conn.execute(
+                "UPDATE insights SET feedback = ? WHERE id = ?",
+                (feedback, insight_id),
+            )
+        return {"status": "recorded"}
+
     # -------------------------------------------------------------------
     # Preferences
     # -------------------------------------------------------------------

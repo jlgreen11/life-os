@@ -37,6 +37,7 @@ from connectors.browser.orchestrator import BrowserOrchestrator
 from connectors.registry import CONNECTOR_REGISTRY, get_connector_class
 from connectors.crypto import ConfigEncryptor
 from services.onboarding.manager import OnboardingManager
+from services.insight_engine.engine import InsightEngine
 
 
 class LifeOS:
@@ -76,6 +77,7 @@ class LifeOS:
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store
         )
+        self.insight_engine = InsightEngine(self.db, self.user_model_store)
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
@@ -165,6 +167,7 @@ class LifeOS:
         # 6. Start prediction engine background loop
         print("[6/7] Starting prediction engine...")
         asyncio.create_task(self._prediction_loop())
+        asyncio.create_task(self._insight_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
@@ -319,6 +322,17 @@ class LifeOS:
             # against compute cost; predictions depend on aggregated patterns,
             # so sub-minute granularity is unnecessary.
             await asyncio.sleep(900)  # 15 minutes
+
+    async def _insight_loop(self):
+        """Run the insight engine every hour."""
+        while not self.shutdown_event.is_set():
+            try:
+                insights = await self.insight_engine.generate_insights()
+                if insights:
+                    print(f"  InsightEngine: generated {len(insights)} new insights")
+            except Exception as e:
+                print(f"Insight engine error: {e}")
+            await asyncio.sleep(3600)  # 1 hour
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
