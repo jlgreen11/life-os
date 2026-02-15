@@ -60,13 +60,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
            subtle border, and hover feedback.  Priority variants add a colored
            left border to draw attention (orange for high, red for critical). */
         .card { background: #1a1a1a; border: 1px solid #222; border-radius: 10px;
-                padding: 16px; margin-bottom: 8px; cursor: pointer;
+                padding: 16px; margin-bottom: 8px;
                 transition: border-color 0.2s; }
         .card:hover { border-color: #444; }
-        .card-title { font-weight: 500; margin-bottom: 4px; }
-        .card-meta { font-size: 13px; color: #666; }
+        .card-title { font-weight: 500; margin-bottom: 8px; }
+        .card-meta { font-size: 13px; color: #666; margin-bottom: 12px; }
         .card-priority-high { border-left: 3px solid #ff6b35; }
         .card-priority-critical { border-left: 3px solid #ff3535; }
+
+        /* --- Card Actions ---
+           Action buttons inside notification cards.  Primary (Act On) is blue,
+           Secondary (Dismiss) is gray. Buttons are sized for touch targets. */
+        .card-actions { display: flex; gap: 8px; margin-top: 12px; }
+        .btn-action { padding: 8px 16px; border: none; border-radius: 6px;
+                      font-size: 13px; font-weight: 500; cursor: pointer;
+                      transition: background-color 0.2s; flex: 1; }
+        .btn-primary { background: #4a9eff; color: white; }
+        .btn-primary:hover { background: #3a7fd0; }
+        .btn-secondary { background: #2a2a2a; color: #999; }
+        .btn-secondary:hover { background: #3a3a3a; }
 
         /* --- Response Area ---
            Hidden by default (display:none); toggled visible when the command bar
@@ -191,9 +203,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 }
                 
                 el.innerHTML = data.notifications.map(n => `
-                    <div class="card card-priority-${n.priority}" onclick="dismissNotif('${n.id}')">
+                    <div class="card card-priority-${n.priority}">
                         <div class="card-title">${n.title}</div>
                         <div class="card-meta">${n.body || ''}</div>
+                        <div class="card-actions">
+                            <button class="btn-action btn-primary" onclick="event.stopPropagation(); actOnNotif('${n.id}')">Act On</button>
+                            <button class="btn-action btn-secondary" onclick="event.stopPropagation(); dismissNotif('${n.id}')">Dismiss</button>
+                        </div>
                     </div>
                 `).join('');
             } catch (e) {
@@ -202,7 +218,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
         
-        // Dismiss a notification (called on card click) and refresh the list.
+        // Act on a notification (positive feedback signal for predictions).
+        // Marks the notification as acted upon and records accurate=True if
+        // the notification originated from a prediction. This closes the
+        // prediction accuracy feedback loop.
+        async function actOnNotif(id) {
+            await fetch(`${API}/api/notifications/${id}/act`, {method: 'POST'});
+            loadNotifications();
+        }
+
+        // Dismiss a notification (negative feedback signal for predictions).
+        // Marks the notification as dismissed and records accurate=False if
+        // the notification originated from a prediction.
         async function dismissNotif(id) {
             await fetch(`${API}/api/notifications/${id}/dismiss`, {method: 'POST'});
             loadNotifications();
