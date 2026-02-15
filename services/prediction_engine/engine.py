@@ -653,26 +653,60 @@ class PredictionEngine:
 
     @staticmethod
     def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
-        """Check if an email is marketing/automated and shouldn't generate follow-up predictions."""
+        """Check if an email is marketing/automated and shouldn't generate follow-up predictions.
+
+        Filters out:
+        - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
+        - Bulk/marketing email patterns (newsletter@, reply@, email@, etc.)
+        - Marketing domain patterns (news-*.com, email.*.com, etc.)
+        - Emails containing unsubscribe links
+
+        This prevents low-quality prediction spam and protects the accuracy
+        feedback loop from being polluted by marketing emails that should
+        never have generated follow-up reminders.
+        """
         addr_lower = from_addr.lower()
 
-        # No-reply senders
-        noreply_patterns = ("no-reply@", "noreply@", "do-not-reply@", "donotreply@")
+        # No-reply and automated system senders
+        # Includes variations like noreply@, no-reply@, mailer-daemon@, postmaster@
+        noreply_patterns = (
+            "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
+            "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
+            "autoreply@", "automated@",
+        )
         if any(pattern in addr_lower for pattern in noreply_patterns):
             return True
 
+        # Common bulk sender local-parts (the part before @)
+        # These patterns must match at the start of the email address to avoid
+        # false positives like john.email@company.com or sarah.reply@startup.io
+        bulk_localpart_patterns = (
+            "newsletter@", "notifications@", "updates@", "digest@",
+            "mailer@", "bulk@", "promo@", "marketing@",
+            "reply@", "email@", "news@", "offers@", "deals@",
+            "hello@", "info@", "support@", "help@",
+        )
+        if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
+            return True
+
+        # Marketing domain patterns (the part after @)
+        # These catch domains like news-us.hugoboss.com, email.d23.com, reply.*.com
+        marketing_domain_patterns = (
+            "@news-", "@email.", "@reply.", "@mailing.",
+            "@newsletters.", "@promo.", "@marketing.",
+            "@em.", "@mg.", "@mail.",  # Common email service provider patterns
+        )
+        if any(pattern in addr_lower for pattern in marketing_domain_patterns):
+            return True
+
         # Check body and snippet for unsubscribe indicators
+        # Marketing emails are legally required to include unsubscribe links
         text = " ".join(filter(None, [
             payload.get("body_plain", ""),
             payload.get("snippet", ""),
             payload.get("body", ""),
         ])).lower()
         if "unsubscribe" in text:
-            return True
-
-        # Common bulk sender patterns
-        bulk_patterns = ("newsletter@", "notifications@", "updates@", "digest@", "mailer@", "bulk@", "promo@")
-        if any(pattern in addr_lower for pattern in bulk_patterns):
             return True
 
         return False
