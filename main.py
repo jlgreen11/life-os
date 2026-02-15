@@ -560,6 +560,7 @@ class LifeOS:
         """Run the prediction engine every 15 minutes."""
         while not self.shutdown_event.is_set():
             try:
+                # Generate new predictions based on current context and patterns
                 predictions = await self.prediction_engine.generate_predictions({})
                 for prediction in predictions:
                     await self.notification_manager.create_notification(
@@ -569,6 +570,14 @@ class LifeOS:
                         source_event_id=prediction.id,
                         domain="prediction",
                     )
+
+                # Auto-resolve stale prediction notifications to close the feedback loop.
+                # Predictions that users ignore for 24+ hours are marked inaccurate so
+                # the prediction engine can learn which types to suppress.
+                resolved = await self.notification_manager.auto_resolve_stale_predictions(timeout_hours=24)
+                if resolved > 0:
+                    print(f"  Auto-resolved {resolved} stale prediction(s)")
+
             except Exception as e:
                 print(f"Prediction engine error: {e}")
 

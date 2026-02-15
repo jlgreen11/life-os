@@ -399,8 +399,73 @@ class NotificationManager:
         """Get notification statistics grouped by status for the dashboard."""
         with self.db.get_connection("state") as conn:
             rows = conn.execute(
-                """SELECT status, COUNT(*) as cnt 
-                   FROM notifications 
+                """SELECT status, COUNT(*) as cnt
+                   FROM notifications
                    GROUP BY status"""
             ).fetchall()
             return {row["status"]: row["cnt"] for row in rows}
+
+    async def auto_resolve_stale_predictions(self, timeout_hours: int = 24):
+        """
+        Auto-resolve prediction notifications that users ignored for too long.
+
+        When a prediction notification remains in "delivered" status beyond the
+        timeout period with no user interaction (no dismiss, no act-on, no read),
+        it's a signal that the prediction wasn't relevant or compelling enough
+        to warrant attention. This method marks such predictions as inaccurate,
+        closing the feedback loop so the prediction engine can learn from the
+        implicit dismissal.
+
+        Why this matters:
+        - Without auto-resolution, ignored predictions remain unresolved forever
+        - This breaks the accuracy feedback loop (_get_accuracy_multiplier)
+        - The prediction engine can't learn which predictions are unhelpful
+        - Confidence gates never adjust downward for noisy prediction types
+
+        Args:
+            timeout_hours: Number of hours after delivery to consider stale.
+                          Default is 24h (1 day). Predictions older than this
+                          with no user interaction are marked inaccurate.
+
+        Returns:
+            Number of predictions auto-resolved.
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=timeout_hours)).isoformat()
+
+        # Find stale prediction notifications: delivered more than timeout_hours
+        # ago, still in "delivered" status (never read, acted on, or dismissed).
+        with self.db.get_connection("state") as conn:
+            stale = conn.execute(
+                """SELECT id, source_event_id FROM notifications
+                   WHERE domain = 'prediction'
+                     AND status = 'delivered'
+                     AND delivered_at < ?
+                     AND source_event_id IS NOT NULL""",
+                (cutoff,),
+            ).fetchall()
+
+        resolved_count = 0
+        for notif in stale:
+            # Mark the prediction as inaccurate (user ignored it = not helpful).
+            # Use was_accurate=0, user_response='ignored' to distinguish from
+            # explicit dismissals (user_response='dismissed').
+            prediction_id = notif["source_event_id"]
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    """UPDATE predictions SET
+                       was_accurate = 0,
+                       resolved_at = ?,
+                       user_response = 'ignored'
+                       WHERE id = ? AND resolved_at IS NULL""",
+                    (now.isoformat(), prediction_id),
+                )
+                if conn.total_changes > 0:
+                    resolved_count += 1
+
+            # Mark the notification as expired so it doesn't clutter the UI.
+            self._mark_status(notif["id"], "expired")
+
+        return resolved_count
