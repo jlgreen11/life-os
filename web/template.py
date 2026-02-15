@@ -33,8 +33,10 @@ Architecture:
                4. AI sidebar: briefing, predictions, people radar, mood
                   snapshot -- each with independent refresh.
                5. Command bar: sends input to POST /api/command on Enter.
-               6. WebSocket: connects to /ws for real-time push updates.
-               7. Polling: status every 30s, badges every 60s, sidebar 60s.
+               6. WebSocket: connects to /ws; shows "New items" banner on
+                  push updates (user clicks to refresh -- no auto-reload).
+               7. Refresh-on-open only: all data loads once when the page
+                  opens.  A manual "Refresh" button reloads everything.
                8. Security: all dynamic content passes through escHtml()
                   before DOM insertion.
 """
@@ -246,6 +248,23 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-weight: 600;
             color: #fff;
             margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .feed-header .refresh-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .feed-header .refresh-btn:hover {
+            color: #fff;
+            border-color: var(--accent-blue);
         }
         .new-items-banner {
             display: none;
@@ -714,7 +733,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <main class="main-feed" id="mainFeed">
             <div class="new-items-banner" id="newItemsBanner" onclick="scrollToTop()">New items available</div>
             <div id="response"></div>
-            <div class="feed-header" id="feedHeader">Inbox</div>
+            <div class="feed-header"><span id="feedHeader">Inbox</span><button class="refresh-btn" onclick="refreshAll()" title="Refresh">&#8635; Refresh</button></div>
             <div id="feedContent">
                 <div class="skeleton skeleton-card"></div>
                 <div class="skeleton skeleton-card"></div>
@@ -1398,11 +1417,25 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
     }
 
+    // --- Manual Refresh ---
+    function refreshAll() {
+        loadFeed();
+        loadBadges();
+        loadStatus();
+        loadBriefing();
+        loadPredictions();
+        loadPeopleRadar();
+        loadMood();
+    }
+
     // --- Scroll ---
     function scrollToTop() {
         var feed = document.getElementById('mainFeed');
         feed.scrollTop = 0;
         document.getElementById('newItemsBanner').classList.remove('visible');
+        // Refresh data when user clicks the banner
+        loadFeed();
+        loadBadges();
     }
 
     // --- WebSocket ---
@@ -1413,12 +1446,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             try {
                 var data = JSON.parse(e.data);
                 if (data.type === 'notification' || data.type === 'event') {
-                    var feed = document.getElementById('mainFeed');
-                    if (feed.scrollTop > 100) {
-                        document.getElementById('newItemsBanner').classList.add('visible');
-                    }
-                    loadFeed();
-                    loadBadges();
+                    // Show banner so the user can choose to refresh -- don't
+                    // auto-reload the feed or badges.
+                    document.getElementById('newItemsBanner').classList.add('visible');
                 }
             } catch(err) {}
         };
@@ -1462,15 +1492,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     loadPeopleRadar();
     loadMood();
 
-    // --- Polling ---
-    setInterval(loadStatus, 30000);
-    setInterval(loadBadges, 60000);
-    setInterval(function() {
-        loadBriefing();
-        loadPredictions();
-        loadPeopleRadar();
-        loadMood();
-    }, 60000);
+    // --- No automatic polling ---
+    // Data loads once on page open; user can refresh manually via the
+    // refresh button or by reloading the page.  WebSocket still shows a
+    // banner when new items arrive.
 
     // --- WebSocket ---
     try { connectWS(); } catch(e) {}
