@@ -41,6 +41,25 @@ def event_store(db):
 
 
 @pytest.fixture()
-def user_model_store(db):
-    """A UserModelStore wired to the temporary DatabaseManager (no event bus)."""
-    return UserModelStore(db)
+def event_bus():
+    """A mock EventBus for testing (no real NATS connection required)."""
+    class MockEventBus:
+        """Minimal mock that satisfies UserModelStore telemetry calls."""
+        def __init__(self):
+            self.is_connected = True
+
+        async def publish(self, subject: str, data: dict, source: str = None):
+            """No-op publish for tests."""
+            pass
+
+        async def subscribe_all(self, handler):
+            """No-op subscribe for tests."""
+            pass
+
+    return MockEventBus()
+
+
+@pytest.fixture()
+def user_model_store(db, event_bus):
+    """A UserModelStore wired to the temporary DatabaseManager and mock event bus."""
+    return UserModelStore(db, event_bus=event_bus)
