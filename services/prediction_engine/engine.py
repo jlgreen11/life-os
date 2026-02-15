@@ -85,6 +85,15 @@ class PredictionEngine:
         predictions.extend(await self._check_preparation_needs(current_context))     # Upcoming events needing prep
         predictions.extend(await self._check_spending_patterns(current_context))     # Spending anomalies
 
+        # --- Accuracy-based confidence decay/boost ---
+        # Adjust confidence based on historical accuracy for each prediction type.
+        # This closes the feedback loop: predictions that keep getting dismissed
+        # have their confidence reduced, eventually suppressing them entirely.
+        for pred in predictions:
+            multiplier = self._get_accuracy_multiplier(pred.prediction_type)
+            pred.confidence *= multiplier
+            pred.confidence_gate = self._gate_from_confidence(pred.confidence)
+
         # --- Reaction prediction gatekeeper ---
         # Before surfacing any prediction, ask: "Will the user find this
         # helpful or annoying right now?" This prevents piling on during
@@ -597,6 +606,41 @@ class PredictionEngine:
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------
+
+    def _get_accuracy_multiplier(self, prediction_type: str) -> float:
+        """Compute confidence multiplier based on historical accuracy for this prediction type.
+
+        Returns:
+            0.0 — auto-suppress (<20% accuracy after 10+ resolved)
+            0.5-1.1 — scaled by accuracy rate (50% accuracy = 1.0x baseline)
+            1.0 — insufficient data (<5 resolved predictions)
+        """
+        with self.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                """SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                   FROM predictions
+                   WHERE prediction_type = ?
+                     AND was_surfaced = 1
+                     AND resolved_at IS NOT NULL""",
+                (prediction_type,),
+            ).fetchone()
+
+        total = row["total"] if row else 0
+        accurate = row["accurate"] if row else 0
+
+        if total < 5:
+            return 1.0  # Not enough data to adjust
+
+        accuracy_rate = accurate / total
+
+        # Auto-suppress types with <20% accuracy after sufficient samples
+        if accuracy_rate < 0.2 and total >= 10:
+            return 0.0
+
+        # Scale: 50% accuracy = 1.0x, 0% = 0.5x, 100% = 1.1x
+        return 0.5 + (accuracy_rate * 0.6)
 
     @staticmethod
     def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:

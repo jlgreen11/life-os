@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -68,7 +69,8 @@ class LifeOS:
         # making unit-testing straightforward via mock injection.
         # All services are wired to the event bus for data creation telemetry.
         self.signal_extractor = SignalExtractorPipeline(self.db, self.user_model_store)
-        self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}))
+        self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}),
+                                   vector_store=self.vector_store)
         self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
         self.feedback_collector = FeedbackCollector(self.db, self.user_model_store, event_bus=self.event_bus)
         self.prediction_engine = PredictionEngine(
@@ -307,8 +309,8 @@ class LifeOS:
                         title=f"{prediction.prediction_type.title()}: {prediction.description[:80]}",
                         body=prediction.description,
                         priority="high" if prediction.prediction_type in ("conflict", "risk") else "normal",
-                        source_event_id=None,
-                        domain=None,
+                        source_event_id=prediction.id,
+                        domain="prediction",
                     )
             except Exception as e:
                 print(f"Prediction engine error: {e}")
@@ -335,10 +337,12 @@ class LifeOS:
             if cid in yaml_configs:
                 to_start[cid] = yaml_configs[cid]
 
-        # Check DB for previously-enabled connectors (admin UI configs)
+        # Check DB for previously-enabled connectors (admin UI configs).
+        # Uses the `enabled` flag which persists across restarts — unlike
+        # `status` which gets overwritten to 'inactive' during shutdown.
         with self.db.get_connection("state") as conn:
             rows = conn.execute(
-                "SELECT connector_id, config, status FROM connector_state WHERE status = 'active'"
+                "SELECT connector_id, config FROM connector_state WHERE enabled = 1"
             ).fetchall()
             for row in rows:
                 cid = row["connector_id"]
@@ -499,7 +503,6 @@ class LifeOS:
         encrypted = self.config_encryptor.encrypt_config(final, sensitive)
 
         # Store in DB
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection("state") as conn:
             conn.execute(
@@ -512,7 +515,11 @@ class LifeOS:
             )
 
     async def enable_connector(self, connector_id: str) -> dict:
-        """Instantiate, start, and register a connector at runtime."""
+        """Instantiate, start, and register a connector at runtime.
+
+        Persists status='active' in the DB so the connector auto-starts
+        on the next service restart.
+        """
         if connector_id in self.connector_map:
             return {"status": "already_running"}
 
@@ -531,10 +538,24 @@ class LifeOS:
 
         self.connector_map[connector_id] = connector
         self.connectors.append(connector)
+
+        # Persist enabled flag so connector auto-starts on next boot.
+        # The `enabled` column is never touched by _update_state(), so it
+        # survives the shutdown race where stop() writes status='inactive'.
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection("state") as conn:
+            conn.execute(
+                "UPDATE connector_state SET enabled = 1, updated_at = ? WHERE connector_id = ?",
+                (now, connector_id),
+            )
+
         return {"status": "started"}
 
     async def disable_connector(self, connector_id: str) -> dict:
-        """Stop and unregister a running connector."""
+        """Stop and unregister a running connector.
+
+        Persists status='inactive' so the connector stays off on restart.
+        """
         connector = self.connector_map.pop(connector_id, None)
         if not connector:
             return {"status": "not_running"}
@@ -542,6 +563,15 @@ class LifeOS:
         await connector.stop()
         if connector in self.connectors:
             self.connectors.remove(connector)
+
+        # Persist disabled flag so connector stays off on restart
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection("state") as conn:
+            conn.execute(
+                "UPDATE connector_state SET enabled = 0, updated_at = ? WHERE connector_id = ?",
+                (now, connector_id),
+            )
+
         return {"status": "stopped"}
 
     async def test_connector(self, connector_id: str,

@@ -284,14 +284,50 @@ class NotificationManager:
         """Mark notification as read."""
         self._mark_status(notif_id, "read")
 
+    def _update_linked_prediction(self, notif_id: str, was_accurate: bool):
+        """If this notification came from a prediction, update prediction accuracy.
+
+        Traces from the notification back to the originating prediction via
+        source_event_id and updates the prediction's was_accurate and
+        resolved_at fields. This closes the feedback loop so the prediction
+        engine can learn from user responses.
+        """
+        with self.db.get_connection("state") as conn:
+            notif = conn.execute(
+                "SELECT source_event_id, domain FROM notifications WHERE id = ?",
+                (notif_id,),
+            ).fetchone()
+
+        if not notif or notif["domain"] != "prediction" or not notif["source_event_id"]:
+            return
+
+        prediction_id = notif["source_event_id"]
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                """UPDATE predictions SET
+                   was_accurate = ?, resolved_at = ?,
+                   user_response = ?
+                   WHERE id = ?""",
+                (
+                    1 if was_accurate else 0,
+                    now,
+                    "acted_on" if was_accurate else "dismissed",
+                    prediction_id,
+                ),
+            )
+
     async def mark_acted_on(self, notif_id: str):
         """
         Mark notification as acted on (strong positive signal).
 
         Also publishes a bus event so the feedback collector can record
         this as an implicit positive signal for the notification's domain.
+        If the notification originated from a prediction, updates that
+        prediction's accuracy tracking (was_accurate = True).
         """
         self._mark_status(notif_id, "acted_on")
+        self._update_linked_prediction(notif_id, was_accurate=True)
         if self.bus and self.bus.is_connected:
             await self.bus.publish(
                 "notification.acted_on",
@@ -305,8 +341,11 @@ class NotificationManager:
 
         The bus event allows the feedback collector to learn that this
         type of notification was unwanted, informing future suppression.
+        If the notification originated from a prediction, updates that
+        prediction's accuracy tracking (was_accurate = False).
         """
         self._mark_status(notif_id, "dismissed")
+        self._update_linked_prediction(notif_id, was_accurate=False)
         if self.bus and self.bus.is_connected:
             await self.bus.publish(
                 "notification.dismissed",
