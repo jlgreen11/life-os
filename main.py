@@ -214,6 +214,32 @@ class LifeOS:
             except Exception as e:
                 print(f"Event store error: {e}")
 
+            # Stage 1.2 — Feedback Loop: process notification feedback events
+            # (acted_on, dismissed) to close the learning loop. This enables
+            # the system to learn which notifications are useful vs annoying.
+            try:
+                event_type = event.get("type", "")
+                if event_type == "notification.acted_on":
+                    # User acted on a notification - strong positive signal
+                    notif_id = event.get("payload", {}).get("notification_id")
+                    if notif_id:
+                        await self.feedback_collector.process_notification_response(
+                            notification_id=notif_id,
+                            response_type="engaged",
+                            response_time_seconds=0,  # We don't track timing yet
+                        )
+                elif event_type == "notification.dismissed":
+                    # User dismissed a notification - negative signal
+                    notif_id = event.get("payload", {}).get("notification_id")
+                    if notif_id:
+                        await self.feedback_collector.process_notification_response(
+                            notification_id=notif_id,
+                            response_type="dismissed",
+                            response_time_seconds=0,
+                        )
+            except Exception as e:
+                print(f"Feedback collector error: {e}")
+
             # Stage 1.5 — Episodic Memory: convert each event into a memory
             # episode for the user model's Layer 1 (Episodic) storage.
             # This provides the raw interaction history that feeds semantic
@@ -266,6 +292,29 @@ class LifeOS:
         # is routed to master_event_handler.
         await self.event_bus.subscribe_all(master_event_handler)
 
+    def _infer_domain_from_event_type(self, event_type: str) -> str:
+        """Infer notification domain from event type.
+
+        Extracts the primary domain from an event type string by taking
+        the first segment before a dot. This enables the feedback loop to
+        work for all notification types, not just predictions.
+
+        Examples:
+            email.received → email
+            calendar.event.created → calendar
+            message.sent → message
+            usermodel.prediction.generated → usermodel
+
+        Args:
+            event_type: The event type string (e.g., "email.received")
+
+        Returns:
+            The inferred domain (e.g., "email")
+        """
+        if not event_type or "." not in event_type:
+            return "system"  # Fallback for malformed event types
+        return event_type.split(".")[0]
+
     async def _execute_rule_action(self, action: dict, event: dict):
         """Execute an action triggered by the rules engine.
 
@@ -283,12 +332,19 @@ class LifeOS:
             # notification entirely.
             if event.get("_suppressed"):
                 return
+
+            # Infer domain from event type if not explicitly provided in metadata.
+            # This enables feedback loop tracking for all notification types.
+            domain = event.get("metadata", {}).get("domain")
+            if not domain:
+                domain = self._infer_domain_from_event_type(event.get("type", ""))
+
             await self.notification_manager.create_notification(
                 title=f"Rule: {action.get('rule_name', 'Unknown')}",
                 body=event.get("payload", {}).get("snippet", ""),
                 priority=action.get("priority", "normal"),
                 source_event_id=event.get("id"),
-                domain=event.get("metadata", {}).get("domain"),
+                domain=domain,
             )
         elif action_type == "tag":
             # Persist the tag in the event_tags table (separate from the

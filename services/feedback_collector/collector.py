@@ -255,8 +255,8 @@ class FeedbackCollector:
         We store this as a semantic fact so future notification decisions
         can check whether the user tends to dismiss this domain/priority.
         """
-        domain = notification.get("domain")
-        priority = notification.get("priority")
+        domain = notification["domain"]
+        priority = notification["priority"]
 
         # Quick dismissal (<2 sec) = "this was irrelevant"
         # Slow dismissal (>10 sec) = "I read it but don't need to act"
@@ -275,8 +275,8 @@ class FeedbackCollector:
         Fast engagement (< 30 sec) is especially valuable: it means the
         notification was timely and relevant enough to act on immediately.
         """
-        domain = notification.get("domain")
-        priority = notification.get("priority")
+        domain = notification["domain"]
+        priority = notification["priority"]
 
         # Fast engagement means high relevance — store as positive signal
         if response_time < 30:
@@ -295,7 +295,7 @@ class FeedbackCollector:
         with at all. This is more informative than a dismissal because the
         user didn't even bother to swipe it away.
         """
-        domain = notification.get("domain")
+        domain = notification["domain"]
         self.ums.update_semantic_fact(
             key=f"notification_unwanted_{domain}",
             category="notification_preference",
