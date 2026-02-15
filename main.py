@@ -40,6 +40,8 @@ from connectors.registry import CONNECTOR_REGISTRY, get_connector_class
 from connectors.crypto import ConfigEncryptor
 from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
+from services.contact_classifier import classify_contact_type
+from services.email_classifier import is_marketing_email
 
 
 class LifeOS:
@@ -207,11 +209,58 @@ class LifeOS:
             """Every event flows through this pipeline."""
 
             # Stage 1 — Persist: store the raw event in the relational DB
-            # so we always have a durable audit trail.
+            # so we always have a durable audit trail.  store_event() uses
+            # INSERT OR IGNORE and returns False when the event ID already
+            # exists (duplicate from connector re-sync or NATS redelivery).
+            # In that case we skip all downstream processing to avoid
+            # double-counting signals, creating duplicate tasks, etc.
             try:
-                self.event_store.store_event(event)
+                is_new = self.event_store.store_event(event)
+                if not is_new:
+                    return  # Duplicate event — already processed
             except Exception as e:
                 print(f"Event store error: {e}")
+
+            # Stage 1.1 — Marketing Classification: identify marketing and
+            # automated emails early, BEFORE they generate noise through
+            # episodic memory, signal extraction, task extraction, and
+            # notifications.  Uses sender patterns, domain heuristics, subject
+            # analysis, and body indicators (unsubscribe links, opt-out text).
+            # Suppressed emails are still stored (Stage 1) and embedded
+            # (Stage 5) for completeness, but skip the noisy middle stages.
+            try:
+                event_type = event.get("type", "")
+                if event_type == "email.received":
+                    payload = event.get("payload", {})
+                    from_addr = payload.get("from_address", "")
+                    if is_marketing_email(from_addr, payload):
+                        event["_suppressed"] = True
+                        self.event_store.add_tag(event["id"], "marketing")
+                        self.event_store.add_tag(event["id"], "system:suppressed")
+            except Exception as e:
+                print(f"Marketing classification error: {e}")
+
+            # Stage 1.15 — Contact Type Classification: classify the sender
+            # as "person" or "business" so downstream stages (predictions,
+            # notifications, relationship maintenance) can prioritize people.
+            # Only runs for email events since messaging contacts (iMessage,
+            # Signal) are classified during connector contact sync.
+            try:
+                event_type = event.get("type", "")
+                if event_type in ("email.received", "email.sent"):
+                    payload = event.get("payload", {})
+                    addresses = []
+                    if event_type == "email.received":
+                        addresses = [payload.get("from_address", "")]
+                    else:
+                        addresses = payload.get("to_addresses", [])
+
+                    for addr in addresses:
+                        if not addr:
+                            continue
+                        self._ensure_contact_type(addr)
+            except Exception as e:
+                print(f"Contact classification error: {e}")
 
             # Stage 1.2 — Feedback Loop: process notification feedback events
             # (acted_on, dismissed) to close the learning loop. This enables
@@ -244,17 +293,23 @@ class LifeOS:
             # This provides the raw interaction history that feeds semantic
             # fact extraction and enables the system to answer "when did I
             # last talk to X" or "what happened in my meeting yesterday".
-            try:
-                await self._create_episode(event)
-            except Exception as e:
-                print(f"Episode creation error: {e}")
+            # Skip for suppressed events — marketing emails shouldn't pollute
+            # the user's episodic memory with promotional content.
+            if not event.get("_suppressed"):
+                try:
+                    await self._create_episode(event)
+                except Exception as e:
+                    print(f"Episode creation error: {e}")
 
             # Stage 2 — Learn: the signal extractor passively analyses the
             # event to update the user model (patterns, preferences, etc.).
-            try:
-                await self.signal_extractor.process_event(event)
-            except Exception as e:
-                print(f"Signal extractor error: {e}")
+            # Skip for suppressed events — marketing emails shouldn't skew
+            # topic profiles or communication cadence patterns.
+            if not event.get("_suppressed"):
+                try:
+                    await self.signal_extractor.process_event(event)
+                except Exception as e:
+                    print(f"Signal extractor error: {e}")
 
             # Stage 3 — React: the rules engine evaluates deterministic,
             # user-defined rules and returns a list of actions to execute
@@ -275,10 +330,13 @@ class LifeOS:
 
             # Stage 4 — Extract tasks: scan the event payload (e.g. email
             # body, chat message) for actionable items and create tasks.
-            try:
-                await self.task_manager.process_event(event)
-            except Exception as e:
-                print(f"Task manager error: {e}")
+            # Skip for suppressed events — marketing emails should never
+            # generate tasks ("Buy now!" is not an action item).
+            if not event.get("_suppressed"):
+                try:
+                    await self.task_manager.process_event(event)
+                except Exception as e:
+                    print(f"Task manager error: {e}")
 
             # Stage 5 — Embed: generate a vector embedding of the event
             # content so it can be retrieved via semantic search later.
@@ -569,6 +627,57 @@ class LifeOS:
         else:
             snippet = payload.get("snippet", payload.get("subject", payload.get("title", "")))
             return f"{event_type}: {snippet}"[:200]
+
+    def _ensure_contact_type(self, address: str):
+        """Ensure a contact has a contact_type classification.
+
+        Looks up the contact by address via the identifier index. If the
+        contact exists but has no contact_type, classifies it using the
+        heuristic classifier and persists the result.
+
+        This runs on every email event to gradually backfill contact types
+        for contacts that were created before the classification feature
+        was added. The DB write only happens when contact_type is NULL,
+        so it's a one-time cost per contact.
+        """
+        try:
+            with self.db.get_connection("entities") as conn:
+                row = conn.execute(
+                    """SELECT c.id, c.contact_type, c.is_priority, c.relationship,
+                              c.phones, c.channels, c.name
+                       FROM contact_identifiers ci
+                       JOIN contacts c ON ci.contact_id = c.id
+                       WHERE ci.identifier = ?
+                       LIMIT 1""",
+                    (address,),
+                ).fetchone()
+
+                if not row:
+                    return  # No contact record for this address
+
+                if row["contact_type"]:
+                    return  # Already classified
+
+                # Classify using available signals
+                phones = json.loads(row["phones"]) if row["phones"] else []
+                channels = json.loads(row["channels"]) if row["channels"] else {}
+                contact_type = classify_contact_type(
+                    email_address=address,
+                    name=row["name"],
+                    relationship=row["relationship"],
+                    phones=phones,
+                    channels=channels,
+                    is_priority=bool(row["is_priority"]),
+                )
+
+                # Persist the classification
+                now = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "UPDATE contacts SET contact_type = ?, updated_at = ? WHERE id = ?",
+                    (contact_type, now, row["id"]),
+                )
+        except Exception as e:
+            print(f"Contact type classification error for {address}: {e}")
 
     async def _embed_event(self, event: dict):
         """Embed event content for vector search."""

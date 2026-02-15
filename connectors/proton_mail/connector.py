@@ -283,11 +283,15 @@ class ProtonMailConnector(BaseConnector):
             priority = "high"
 
         # Publish the normalised email event to the bus.
+        # Use the RFC 2822 Message-ID as the dedup_key so that re-fetching
+        # the same email (common with IMAP SINCE date-granular cursors)
+        # produces a deterministic event ID and is dropped as a duplicate.
         await self.publish_event(
             event_type,
             payload,
             priority=priority,
             metadata=metadata,
+            dedup_key=f"proton_mail:{message_id}" if message_id else None,
         )
 
         return 1

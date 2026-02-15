@@ -156,8 +156,10 @@ class FinanceConnector(BaseConnector):
                     if amount >= self._large_threshold:
                         priority = "high"
 
+                    # Use Plaid's transaction_id as the dedup_key.
                     await self.publish_event(
                         "finance.transaction.new", payload, priority=priority,
+                        dedup_key=f"plaid:{txn.transaction_id}",
                     )
                     count += 1
 

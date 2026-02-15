@@ -256,8 +256,17 @@ class BaseConnector(ABC):
             )
 
     async def publish_event(self, event_type: str, payload: dict,
-                            priority: str = "normal", metadata: Optional[dict] = None) -> str:
-        """Convenience method to publish an event from this connector."""
+                            priority: str = "normal", metadata: Optional[dict] = None,
+                            dedup_key: Optional[str] = None) -> str:
+        """Convenience method to publish an event from this connector.
+
+        Args:
+            dedup_key: Optional content-based key for deduplication. When
+                provided, a deterministic event ID is generated so that
+                re-syncing the same data does not create duplicate events.
+                Connectors should pass a stable unique identifier from the
+                source system (e.g. email Message-ID, calendar UID).
+        """
         # Auto-sets the source field to this connector's CONNECTOR_ID so
         # downstream consumers always know which connector produced the event.
         return await self.bus.publish(
@@ -266,4 +275,5 @@ class BaseConnector(ABC):
             source=self.CONNECTOR_ID,
             priority=priority,
             metadata=metadata,
+            dedup_key=dedup_key,
         )

@@ -190,9 +190,13 @@ class CalDAVConnector(BaseConnector):
 
                         # Publish to the event bus so other services can react
                         # (e.g., daily briefing builder, conflict detector).
+                        # Use the iCalendar UID as the dedup_key so
+                        # re-syncing the same calendar window does not
+                        # create duplicate events.
                         await self.publish_event(
                             "calendar.event.created", payload,
                             metadata=metadata,
+                            dedup_key=f"caldav:{event_id}",
                         )
                         count += 1
 

@@ -1420,8 +1420,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                 relationship = contact.get("relationship")
                 conn.execute(
                     """INSERT OR IGNORE INTO contacts
-                       (id, name, relationship, is_priority, always_surface, domains)
-                       VALUES (?, ?, ?, 1, 1, '["personal"]')""",
+                       (id, name, relationship, is_priority, always_surface,
+                        contact_type, domains)
+                       VALUES (?, ?, ?, 1, 1, 'person', '["personal"]')""",
                     (contact_id, name, relationship),
                 )
 

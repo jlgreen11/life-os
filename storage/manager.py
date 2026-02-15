@@ -181,7 +181,7 @@ class DatabaseManager:
         """
         with self.get_connection("entities") as conn:
             conn.executescript("""
-                -- Contacts (people in the user's life)
+                -- Contacts (people and businesses in the user's life)
                 CREATE TABLE IF NOT EXISTS contacts (
                     id                      TEXT PRIMARY KEY,
                     name                    TEXT NOT NULL,
@@ -189,6 +189,7 @@ class DatabaseManager:
                     emails                  TEXT DEFAULT '[]',
                     phones                  TEXT DEFAULT '[]',
                     channels                TEXT DEFAULT '{}',
+                    contact_type            TEXT DEFAULT NULL,
                     relationship            TEXT,
                     domains                 TEXT DEFAULT '[]',
                     is_priority             INTEGER DEFAULT 0,
@@ -205,6 +206,7 @@ class DatabaseManager:
 
                 CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
                 CREATE INDEX IF NOT EXISTS idx_contacts_priority ON contacts(is_priority);
+                CREATE INDEX IF NOT EXISTS idx_contacts_type ON contacts(contact_type);
 
                 -- Contact identifiers (for quick lookup by email/phone/handle)
                 CREATE TABLE IF NOT EXISTS contact_identifiers (
@@ -268,6 +270,16 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_rel_a ON entity_relationships(entity_a_type, entity_a_id);
                 CREATE INDEX IF NOT EXISTS idx_rel_b ON entity_relationships(entity_b_type, entity_b_id);
             """)
+
+            # --- Migration: add contact_type column for existing databases ---
+            # Safe to run repeatedly: checks if the column already exists first.
+            try:
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(contacts)").fetchall()]
+                if "contact_type" not in cols:
+                    conn.execute("ALTER TABLE contacts ADD COLUMN contact_type TEXT DEFAULT NULL")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_type ON contacts(contact_type)")
+            except Exception:
+                pass  # Column already exists or table doesn't exist yet
 
     # -----------------------------------------------------------------------
     # state.db — Current state of the world
