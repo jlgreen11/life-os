@@ -578,6 +578,14 @@ class LifeOS:
                 if resolved > 0:
                     print(f"  Auto-resolved {resolved} stale prediction(s)")
 
+                # Auto-resolve filtered predictions to prevent database bloat.
+                # Predictions with was_surfaced=0 were filtered by confidence gates
+                # or reaction prediction and never shown to the user. After 1 hour,
+                # these are no longer relevant and should be cleaned up.
+                filtered_resolved = self.notification_manager.auto_resolve_filtered_predictions(timeout_hours=1)
+                if filtered_resolved > 0:
+                    print(f"  Auto-resolved {filtered_resolved} filtered prediction(s)")
+
             except Exception as e:
                 print(f"Prediction engine error: {e}")
 

@@ -63,3 +63,10 @@ def event_bus():
 def user_model_store(db, event_bus):
     """A UserModelStore wired to the temporary DatabaseManager and mock event bus."""
     return UserModelStore(db, event_bus=event_bus)
+
+
+@pytest.fixture()
+def notification_manager(db, event_bus):
+    """A NotificationManager wired to the temporary DatabaseManager and mock event bus."""
+    from services.notification_manager.manager import NotificationManager
+    return NotificationManager(db, event_bus, config={})

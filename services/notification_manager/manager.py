@@ -469,3 +469,52 @@ class NotificationManager:
             self._mark_status(notif["id"], "expired")
 
         return resolved_count
+
+    def auto_resolve_filtered_predictions(self, timeout_hours: int = 1) -> int:
+        """Auto-resolve predictions that were filtered out before surfacing.
+
+        Predictions with was_surfaced=0 were filtered by confidence gates or
+        reaction prediction and never shown to the user. After a timeout period,
+        these should be auto-resolved to prevent database bloat and polluted
+        accuracy metrics.
+
+        These predictions are marked with:
+        - was_accurate = NULL (we never tested them, so can't measure accuracy)
+        - user_response = 'filtered' (to distinguish from 'ignored' surfaced ones)
+        - resolved_at = now
+
+        This is critical for data quality:
+        - Without this, 270k+ filtered predictions sit unresolved forever
+        - Accuracy queries become slow (scanning hundreds of thousands of rows)
+        - The "unresolved predictions" metric becomes meaningless
+        - Database bloat from storing predictions that will never be used
+
+        Args:
+            timeout_hours: Hours after creation to consider a filtered prediction
+                          stale. Default is 1 hour (short because these were never
+                          surfaced, so they're immediately irrelevant).
+
+        Returns:
+            Number of filtered predictions auto-resolved.
+        """
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=timeout_hours)).isoformat()
+
+        # Find unsurfaced predictions created more than timeout_hours ago
+        # that are still unresolved.
+        with self.db.get_connection("user_model") as conn:
+            result = conn.execute(
+                """UPDATE predictions SET
+                   was_accurate = NULL,
+                   resolved_at = ?,
+                   user_response = 'filtered'
+                   WHERE was_surfaced = 0
+                     AND resolved_at IS NULL
+                     AND created_at < ?""",
+                (now.isoformat(), cutoff),
+            )
+            resolved_count = result.rowcount
+
+        return resolved_count
