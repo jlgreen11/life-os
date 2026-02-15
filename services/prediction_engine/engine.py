@@ -46,12 +46,31 @@ class PredictionEngine:
     def __init__(self, db: DatabaseManager, ums: UserModelStore):
         self.db = db   # Database access for events, user_model, and preferences tables
         self.ums = ums  # User-model store for signal profiles and semantic memory
+        self._last_event_cursor: int = 0  # rowid of last processed event
+
+    def _has_new_events(self) -> bool:
+        """Check if any new events have arrived since last prediction run."""
+        with self.db.get_connection("events") as conn:
+            row = conn.execute(
+                "SELECT MAX(rowid) as max_id FROM events"
+            ).fetchone()
+            current_max = row["max_id"] if row and row["max_id"] else 0
+
+        if current_max <= self._last_event_cursor:
+            return False
+
+        self._last_event_cursor = current_max
+        return True
 
     async def generate_predictions(self, current_context: dict) -> list[Prediction]:
         """
         Main prediction loop. Called periodically (every 15 min)
         and on significant context changes (location, calendar event start, etc.)
         """
+        # Skip if no new events since last run
+        if not self._has_new_events():
+            return []
+
         predictions = []
 
         # --- Prediction generation pipeline ---
