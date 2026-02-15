@@ -7,9 +7,12 @@ created in a temp directory so no Full Disk Access is required.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import sqlite3
 import time
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -429,3 +432,482 @@ class TestClassifyDomain:
         assert connector._classify_domain("Family") == "personal"
         assert connector._classify_domain(None) == "personal"
         assert connector._classify_domain("") == "personal"
+
+
+# ---------------------------------------------------------------------------
+# TestContactSync
+# ---------------------------------------------------------------------------
+
+class TestContactSync:
+    """Test contact synchronization from chat.db to entities.db."""
+
+    def test_sync_contacts_creates_new_contacts(self, connector, fake_chat_db):
+        """New handles should create contact records with imessage channel."""
+        conn = sqlite3.connect(fake_chat_db)
+        conn.execute(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            ("+15551234567", "iMessage"),
+        )
+        conn.commit()
+        conn.close()
+
+        connector._sync_contacts()
+
+        with connector.db.get_connection("entities") as econn:
+            row = econn.execute(
+                "SELECT * FROM contact_identifiers WHERE identifier = ?",
+                ("+15551234567",),
+            ).fetchone()
+            assert row is not None
+            assert row["identifier_type"] == "phone"
+
+            contact = econn.execute(
+                "SELECT * FROM contacts WHERE id = ?",
+                (row["contact_id"],),
+            ).fetchone()
+            assert contact is not None
+            channels = json.loads(contact["channels"])
+            assert "imessage" in channels
+            assert channels["imessage"] == "+15551234567"
+
+    def test_sync_contacts_updates_existing_contacts(self, connector, fake_chat_db):
+        """Existing contacts should have imessage channel added."""
+        # Create a pre-existing contact with email
+        contact_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        with connector.db.get_connection("entities") as econn:
+            econn.execute(
+                """INSERT INTO contacts
+                   (id, name, channels, domains, created_at, updated_at)
+                   VALUES (?, ?, ?, '["personal"]', ?, ?)""",
+                (contact_id, "Test User", json.dumps({"email": "test@example.com"}), now, now),
+            )
+            econn.execute(
+                """INSERT INTO contact_identifiers
+                   (identifier, identifier_type, contact_id)
+                   VALUES (?, ?, ?)""",
+                ("test@example.com", "email", contact_id),
+            )
+
+        # Add the same email to chat.db handles
+        conn = sqlite3.connect(fake_chat_db)
+        conn.execute(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            ("test@example.com", "iMessage"),
+        )
+        conn.commit()
+        conn.close()
+
+        connector._sync_contacts()
+
+        # Verify imessage channel was added to existing contact
+        with connector.db.get_connection("entities") as econn:
+            contact = econn.execute(
+                "SELECT * FROM contacts WHERE id = ?",
+                (contact_id,),
+            ).fetchone()
+            channels = json.loads(contact["channels"])
+            assert "imessage" in channels
+            assert channels["imessage"] == "test@example.com"
+
+    def test_sync_contacts_handles_email_vs_phone(self, connector, fake_chat_db):
+        """Email and phone identifiers should be typed correctly."""
+        conn = sqlite3.connect(fake_chat_db)
+        conn.executemany(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            [
+                ("+15551234567", "iMessage"),
+                ("user@example.com", "iMessage"),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        connector._sync_contacts()
+
+        with connector.db.get_connection("entities") as econn:
+            phone_row = econn.execute(
+                "SELECT identifier_type FROM contact_identifiers WHERE identifier = ?",
+                ("+15551234567",),
+            ).fetchone()
+            assert phone_row["identifier_type"] == "phone"
+
+            email_row = econn.execute(
+                "SELECT identifier_type FROM contact_identifiers WHERE identifier = ?",
+                ("user@example.com",),
+            ).fetchone()
+            assert email_row["identifier_type"] == "email"
+
+    def test_sync_contacts_handles_missing_db(self, mock_event_bus, db, tmp_path):
+        """Should not crash if chat.db doesn't exist."""
+        missing = os.path.join(str(tmp_path), "nonexistent", "chat.db")
+        c = iMessageConnector(
+            event_bus=mock_event_bus, db=db,
+            config={"db_path": missing},
+        )
+        # Should not raise
+        c._sync_contacts()
+
+    def test_sync_contacts_handles_db_error(self, connector, fake_chat_db):
+        """Should handle database errors gracefully."""
+        # Corrupt the database
+        conn = sqlite3.connect(fake_chat_db)
+        conn.execute("DROP TABLE handle")
+        conn.commit()
+        conn.close()
+
+        # Should not raise
+        connector._sync_contacts()
+
+    def test_sync_contacts_uses_service_type(self, connector, fake_chat_db):
+        """Should respect service type from handle table."""
+        conn = sqlite3.connect(fake_chat_db)
+        conn.execute(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            ("+15551234567", "SMS"),
+        )
+        conn.commit()
+        conn.close()
+
+        connector._sync_contacts()
+
+        # Should still create contact (service type doesn't affect contact creation)
+        with connector.db.get_connection("entities") as econn:
+            row = econn.execute(
+                "SELECT * FROM contact_identifiers WHERE identifier = ?",
+                ("+15551234567",),
+            ).fetchone()
+            assert row is not None
+
+    def test_sync_contacts_multiple_handles(self, connector, fake_chat_db):
+        """Should handle batch sync of many handles."""
+        conn = sqlite3.connect(fake_chat_db)
+        handles = [(f"+155512345{i:02d}", "iMessage") for i in range(50)]
+        conn.executemany(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            handles,
+        )
+        conn.commit()
+        conn.close()
+
+        connector._sync_contacts()
+
+        with connector.db.get_connection("entities") as econn:
+            count = econn.execute(
+                "SELECT COUNT(*) as cnt FROM contact_identifiers WHERE identifier_type = 'phone'"
+            ).fetchone()["cnt"]
+            assert count == 50
+
+
+# ---------------------------------------------------------------------------
+# TestLifecycle
+# ---------------------------------------------------------------------------
+
+class TestLifecycle:
+    """Test connector lifecycle: start, stop, background tasks."""
+
+    @pytest.mark.asyncio
+    async def test_start_kicks_off_contact_sync(self, connector, mock_event_bus):
+        """Start should trigger initial contact sync and background task."""
+        with patch.object(connector, "_sync_contacts") as mock_sync:
+            await connector.start()
+            # Should call sync_contacts once immediately
+            mock_sync.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_contact_sync_task(self, connector, mock_event_bus):
+        """Stop should cancel the background contact sync task."""
+        await connector.start()
+        assert connector._contact_sync_task is not None
+        task = connector._contact_sync_task
+
+        await connector.stop()
+
+        assert task.cancelled()
+
+    @pytest.mark.asyncio
+    async def test_contact_sync_loop_runs_periodically(self, connector, mock_event_bus):
+        """The contact sync loop should run every CONTACT_SYNC_INTERVAL."""
+        from connectors.imessage.connector import CONTACT_SYNC_INTERVAL
+
+        # Patch the sleep interval to make tests fast
+        with patch.object(connector, "_sync_contacts") as mock_sync:
+            with patch("connectors.imessage.connector.CONTACT_SYNC_INTERVAL", 0.01):
+                await connector.start()
+
+                # Wait for at least 2 sync cycles
+                await asyncio.sleep(0.05)
+
+                await connector.stop()
+
+                # Should have called sync multiple times (initial + loop iterations)
+                assert mock_sync.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_contact_sync_loop_handles_errors(self, connector, mock_event_bus, fake_chat_db):
+        """Contact sync errors in the loop should not crash the background task."""
+        call_count = 0
+
+        def failing_sync():
+            nonlocal call_count
+            call_count += 1
+            # First call succeeds (initial sync in start()), second call fails
+            if call_count == 2:
+                raise Exception("Simulated sync error")
+
+        with patch.object(connector, "_sync_contacts", side_effect=failing_sync):
+            with patch("connectors.imessage.connector.CONTACT_SYNC_INTERVAL", 0.01):
+                await connector.start()
+                await asyncio.sleep(0.05)
+                await connector.stop()
+
+                # Should continue after error (initial + error + recovery)
+                assert call_count >= 3
+
+
+# ---------------------------------------------------------------------------
+# TestExecuteEdgeCases
+# ---------------------------------------------------------------------------
+
+class TestExecuteEdgeCases:
+    """Additional edge cases for the execute() method."""
+
+    @pytest.mark.asyncio
+    async def test_send_message_invalid_recipient_rejected(self, connector):
+        """Recipients with invalid characters should be rejected."""
+        invalid_recipients = [
+            "'; DROP TABLE messages; --",
+            "../../../etc/passwd",
+            "recipient\ntell application \"Finder\"",
+            'recipient" & "malicious',
+        ]
+        for recipient in invalid_recipients:
+            with pytest.raises(ValueError, match="Invalid recipient format"):
+                await connector.execute(
+                    "send_message",
+                    {"to": recipient, "message": "Hi"},
+                )
+
+    @pytest.mark.asyncio
+    async def test_send_message_escapes_quotes(self, connector, mock_event_bus):
+        """Double quotes in message body should be escaped."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            await connector.execute(
+                "send_message",
+                {"to": "+15559876543", "message": 'He said "hello" to me'},
+            )
+
+        # Verify the AppleScript has escaped quotes
+        script_arg = mock_exec.call_args[0][2]
+        assert '\\"' in script_arg
+
+    @pytest.mark.asyncio
+    async def test_send_message_escapes_backslashes(self, connector, mock_event_bus):
+        """Backslashes in message body should be escaped."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            await connector.execute(
+                "send_message",
+                {"to": "+15559876543", "message": "Path: C:\\Users\\Test"},
+            )
+
+        script_arg = mock_exec.call_args[0][2]
+        assert "\\\\" in script_arg
+
+    @pytest.mark.asyncio
+    async def test_send_message_escapes_newlines(self, connector, mock_event_bus):
+        """Newlines in message body should be escaped."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+            await connector.execute(
+                "send_message",
+                {"to": "+15559876543", "message": "Line 1\nLine 2\rLine 3"},
+            )
+
+        script_arg = mock_exec.call_args[0][2]
+        assert "\\n" in script_arg
+        assert "\\r" in script_arg
+
+    @pytest.mark.asyncio
+    async def test_send_message_generates_unique_message_id(self, connector, mock_event_bus):
+        """Each sent message should have a unique message_id."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+        mock_proc.returncode = 0
+
+        message_ids = set()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            for _ in range(5):
+                await connector.execute(
+                    "send_message",
+                    {"to": "+15559876543", "message": "Test"},
+                )
+                # Extract message_id from publish call
+                payload = mock_event_bus.publish.call_args[0][1]
+                message_ids.add(payload["message_id"])
+
+        # All message IDs should be unique
+        assert len(message_ids) == 5
+
+
+# ---------------------------------------------------------------------------
+# TestSyncEdgeCases
+# ---------------------------------------------------------------------------
+
+class TestSyncEdgeCases:
+    """Additional edge cases for sync() method."""
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_none_timestamps(self, connector, fake_chat_db, mock_event_bus):
+        """Messages with NULL timestamps should default to epoch."""
+        conn = sqlite3.connect(fake_chat_db)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            ("+15559876543", "iMessage"),
+        )
+        handle_rowid = cur.lastrowid
+
+        cur.execute(
+            """INSERT INTO message (guid, text, handle_id, date, is_from_me, service)
+               VALUES (?, ?, ?, NULL, 0, 'iMessage')""",
+            ("test-guid-123", "Message with null date", handle_rowid),
+        )
+        conn.commit()
+        conn.close()
+
+        count = await connector.sync()
+        assert count == 1
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        # Should have a valid timestamp (epoch time)
+        parsed = datetime.fromisoformat(payload["timestamp"])
+        assert parsed.year >= 2001  # Apple epoch starts in 2001
+
+    @pytest.mark.asyncio
+    async def test_sync_handles_missing_handle(self, connector, fake_chat_db, mock_event_bus):
+        """Messages without a handle_id should still process."""
+        conn = sqlite3.connect(fake_chat_db)
+        conn.execute(
+            """INSERT INTO message (guid, text, handle_id, date, is_from_me, service)
+               VALUES (?, ?, NULL, 0, 0, 'iMessage')""",
+            ("system-msg-123", "System message"),
+        )
+        conn.commit()
+        conn.close()
+
+        count = await connector.sync()
+        assert count == 1
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["from_address"] == ""
+
+    @pytest.mark.asyncio
+    async def test_sync_limits_batch_size(self, connector, fake_chat_db, mock_event_bus):
+        """Sync should process at most 500 messages per batch."""
+        conn = sqlite3.connect(fake_chat_db)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            ("+15559876543", "iMessage"),
+        )
+        handle_rowid = cur.lastrowid
+
+        # Insert 600 messages
+        for i in range(600):
+            cur.execute(
+                """INSERT INTO message (guid, text, handle_id, date, is_from_me, service)
+                   VALUES (?, ?, ?, 0, 0, 'iMessage')""",
+                (f"msg-{i}", f"Message {i}", handle_rowid),
+            )
+        conn.commit()
+        conn.close()
+
+        count = await connector.sync()
+        # Should process exactly 500 (LIMIT in SQL query)
+        assert count == 500
+
+    @pytest.mark.asyncio
+    async def test_sync_preserves_cursor_on_empty_batch(self, connector, fake_chat_db):
+        """If sync finds no messages, cursor should remain unchanged."""
+        cursor_before = connector.get_sync_cursor()
+        count = await connector.sync()
+        cursor_after = connector.get_sync_cursor()
+
+        assert count == 0
+        assert cursor_before == cursor_after
+
+    @pytest.mark.asyncio
+    async def test_sync_metadata_includes_related_contacts(self, connector, fake_chat_db, mock_event_bus):
+        """Event metadata should include sender in related_contacts."""
+        _insert_message(fake_chat_db, "Hello", sender_id="+15559876543")
+        await connector.sync()
+
+        metadata = mock_event_bus.publish.call_args[1]["metadata"]
+        assert metadata["related_contacts"] == ["+15559876543"]
+
+    @pytest.mark.asyncio
+    async def test_sync_metadata_empty_for_system_messages(self, connector, fake_chat_db, mock_event_bus):
+        """System messages without sender should have empty related_contacts."""
+        conn = sqlite3.connect(fake_chat_db)
+        conn.execute(
+            """INSERT INTO message (guid, text, handle_id, date, is_from_me, service)
+               VALUES (?, ?, NULL, 0, 0, 'iMessage')""",
+            ("system-123", "System notification"),
+        )
+        conn.commit()
+        conn.close()
+
+        await connector.sync()
+
+        metadata = mock_event_bus.publish.call_args[1]["metadata"]
+        assert metadata["related_contacts"] == []
+
+
+# ---------------------------------------------------------------------------
+# TestConcurrency
+# ---------------------------------------------------------------------------
+
+class TestConcurrency:
+    """Test concurrent operations and race conditions."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_syncs_dont_duplicate(self, connector, fake_chat_db, mock_event_bus):
+        """Multiple concurrent syncs should not process the same message twice."""
+        _insert_message(fake_chat_db, "Test message", sender_id="+15559876543")
+
+        # Run two syncs concurrently
+        results = await asyncio.gather(
+            connector.sync(),
+            connector.sync(),
+        )
+
+        total_count = sum(results)
+        # Should process message exactly once total
+        assert total_count <= 1
+
+    @pytest.mark.asyncio
+    async def test_sync_during_contact_sync(self, connector, fake_chat_db, mock_event_bus):
+        """Message sync should work even while contact sync is running."""
+        _insert_message(fake_chat_db, "Test", sender_id="+15559876543")
+
+        # Start connector (begins contact sync loop)
+        await connector.start()
+
+        # Sync messages while contact sync is running
+        count = await connector.sync()
+
+        await connector.stop()
+
+        assert count == 1
