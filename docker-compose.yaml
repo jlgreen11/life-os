@@ -1,0 +1,132 @@
+# ===========================================================================
+# Life OS — Docker Compose
+# Single command to launch the entire system:  docker compose up -d
+# ===========================================================================
+
+services:
+
+  # -------------------------------------------------------------------------
+  # NATS — Event Bus (the nervous system)
+  # -------------------------------------------------------------------------
+  nats:
+    image: nats:2.10-alpine
+    container_name: lifeos-nats
+    command: >
+      -js
+      --store_dir /data
+      -m 8222
+    ports:
+      - "4222:4222"     # Client connections
+      - "8222:8222"     # Monitoring dashboard
+    volumes:
+      - nats_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # -------------------------------------------------------------------------
+  # Ollama — Local LLM (the brain)
+  # -------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lifeos-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # For Apple Silicon Macs, Ollama uses Metal acceleration natively.
+    # For NVIDIA GPUs, uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -------------------------------------------------------------------------
+  # Life OS — Core Application
+  # -------------------------------------------------------------------------
+  lifeos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lifeos-core
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data                   # Persistent data
+      - ./config:/app/config               # Configuration
+    environment:
+      - NATS_URL=nats://nats:4222
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      nats:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -------------------------------------------------------------------------
+  # Proton Bridge (optional — uncomment to use)
+  # -------------------------------------------------------------------------
+  # proton-bridge:
+  #   image: shenxn/protonmail-bridge:latest
+  #   container_name: lifeos-proton-bridge
+  #   ports:
+  #     - "1143:1143"    # IMAP
+  #     - "1025:1025"    # SMTP
+  #   volumes:
+  #     - proton_bridge_data:/root/.config/protonmail/bridge-v3
+  #   restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Signal CLI (optional — uncomment to use)
+  # -------------------------------------------------------------------------
+  # signal-cli:
+  #   image: bbernhard/signal-cli-rest-api:latest
+  #   container_name: lifeos-signal
+  #   environment:
+  #     - MODE=json-rpc
+  #   ports:
+  #     - "8210:8080"
+  #   volumes:
+  #     - signal_data:/home/.local/share/signal-cli
+  #   restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Home Assistant (optional — if not running separately)
+  # -------------------------------------------------------------------------
+  # homeassistant:
+  #   image: ghcr.io/home-assistant/home-assistant:stable
+  #   container_name: lifeos-homeassistant
+  #   network_mode: host
+  #   volumes:
+  #     - ha_data:/config
+  #   restart: unless-stopped
+
+volumes:
+  nats_data:
+    driver: local
+  ollama_data:
+    driver: local
+  # proton_bridge_data:
+  #   driver: local
+  # signal_data:
+  #   driver: local
+  # ha_data:
+  #   driver: local

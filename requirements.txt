@@ -1,0 +1,48 @@
+# ===========================================================================
+# Life OS — Python Dependencies
+# ===========================================================================
+
+# Core framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Event bus
+nats-py>=2.6.0
+
+# Configuration
+pyyaml>=6.0
+
+# HTTP client (for Ollama, Home Assistant, cloud APIs)
+httpx>=0.25.0
+
+# Database
+# SQLite is built-in; these are for enhanced functionality
+
+# Vector store
+lancedb>=0.3.0
+pyarrow>=14.0.0
+
+# Embeddings
+sentence-transformers>=2.2.0
+numpy>=1.24.0
+
+# Calendar (CalDAV)
+caldav>=1.3.0
+
+# Finance (Plaid)
+plaid-python>=16.0.0
+
+# Browser automation (stealth fallback)
+playwright>=1.40.0
+pyotp>=2.9.0               # For TOTP 2FA codes
+
+# Email parsing
+# (email, imaplib, smtplib are all stdlib)
+
+# Utilities
+python-multipart>=0.0.6
+
+# Optional: for better text processing
+# beautifulsoup4>=4.12.0
+# html2text>=2024.2.26

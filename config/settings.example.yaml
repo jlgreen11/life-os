@@ -1,0 +1,173 @@
+# ===========================================================================
+# Life OS — Configuration
+# Copy this to settings.yaml and fill in your credentials
+# ===========================================================================
+
+# Storage
+data_dir: "./data"
+
+# NATS event bus
+nats_url: "nats://localhost:4222"
+
+# Web server
+web_host: "0.0.0.0"
+web_port: 8080
+
+# Embedding model (for vector search)
+# Options: "all-MiniLM-L6-v2" (fast, 384 dims) or "nomic-embed-text" (via Ollama)
+embedding_model: "all-MiniLM-L6-v2"
+
+# ---------------------------------------------------------------------------
+# AI Engine
+# ---------------------------------------------------------------------------
+ai:
+  # Local model via Ollama (handles 90% of tasks privately)
+  ollama_url: "http://localhost:11434"
+  ollama_model: "mistral"          # Good balance of speed and quality
+  # ollama_model: "llama3:13b"     # Better quality, needs more RAM
+  # ollama_model: "phi3:14b"       # Great for task extraction
+
+  # Cloud model (optional — for complex reasoning with PII stripping)
+  use_cloud: false
+  cloud_api_key: ""                # Anthropic API key
+  cloud_model: "claude-sonnet-4-5-20250514"
+
+# ---------------------------------------------------------------------------
+# Connectors — Enable the ones you want
+# ---------------------------------------------------------------------------
+connectors:
+
+  # --- Proton Mail (via Proton Bridge) ---
+  # Requires: Proton Bridge running locally
+  # proton_mail:
+  #   imap_host: "127.0.0.1"
+  #   imap_port: 1143
+  #   smtp_host: "127.0.0.1"
+  #   smtp_port: 1025
+  #   username: "your@proton.me"
+  #   password: "bridge-password-here"
+  #   sync_interval: 30
+  #   folders:
+  #     - "INBOX"
+  #     - "Sent"
+
+  # --- Signal Messenger ---
+  # Requires: signal-cli installed and running in daemon mode
+  # signal:
+  #   socket_path: "/tmp/signal-cli.sock"
+  #   phone_number: "+1XXXXXXXXXX"
+  #   sync_interval: 5
+
+  # --- Calendar (CalDAV) ---
+  # Works with: Proton Calendar, Nextcloud, iCloud, any CalDAV server
+  # caldav:
+  #   url: "https://calendar.proton.me/api/calendars"
+  #   username: "your@proton.me"
+  #   password: "bridge-password"
+  #   sync_interval: 60
+  #   calendars:
+  #     - "Personal"
+  #     - "Work"
+
+  # --- Finance (Plaid) ---
+  # Requires: Plaid developer account (free for personal use)
+  # finance:
+  #   provider: "plaid"
+  #   client_id: "your-client-id"
+  #   secret: "your-secret"
+  #   access_tokens:
+  #     - "access-token-1"
+  #   sync_interval: 3600
+  #   large_transaction_threshold: 500
+
+  # --- Home Assistant ---
+  # Requires: Home Assistant instance with long-lived access token
+  # home_assistant:
+  #   url: "http://homeassistant.local:8123"
+  #   token: "your-long-lived-access-token"
+  #   sync_interval: 30
+  #   watched_entities:
+  #     - "person.jay"
+  #     - "sensor.living_room_temperature"
+  #     - "binary_sensor.front_door"
+
+# ---------------------------------------------------------------------------
+# Browser Automation Layer (Stealth Fallback)
+# ---------------------------------------------------------------------------
+# When APIs fail, get rate-limited, or don't exist, the browser layer
+# scrapes your data through the same UI you'd use manually.
+# Your browser, your hardware, your accounts.
+browser:
+  enabled: false                     # Set to true to enable
+  headless: true                     # false = see the browser (debugging)
+  data_dir: "./data/browser"
+  human_speed_factor: 1.0            # 1.0 = normal human speed
+  global_rate_limit: 2.0             # Min seconds between page loads
+  max_concurrent_contexts: 3
+
+  # Credentials from Proton Pass
+  credential_source: "proton_pass"   # or "manual"
+  proton_pass_export: "./data/credentials/proton_pass_export.json"
+  manual_vault: "./data/credentials/manual_vault.json"
+
+  connectors:
+    # --- WhatsApp (browser only — no personal API) ---
+    # First run: scan QR code when prompted
+    # whatsapp:
+    #   sync_interval: 10
+    #   priority_contacts: ["Mom", "Partner"]
+    #   max_conversations_per_sync: 10
+
+    # --- YouTube (browser — avoids API quota hell) ---
+    # youtube:
+    #   sync_interval: 900
+    #   max_videos_per_sync: 30
+
+    # --- Reddit (browser — their API is $$$) ---
+    # reddit:
+    #   sync_interval: 600
+    #   use_old_reddit: true
+    #   priority_subreddits: ["homelab", "selfhosted", "privacy"]
+    #   max_posts_per_sync: 25
+
+    # --- Generic sources (any website via CSS selectors) ---
+    # generic_sources:
+    #   - site_id: "hackernews"
+    #     name: "Hacker News"
+    #     feed_url: "https://news.ycombinator.com/"
+    #     sync_interval: 1800
+    #     selectors:
+    #       item: ".athing"
+    #       title: ".titleline > a"
+    #       url: ".titleline > a@href"
+    #     event_type: "content.feed.new_item"
+    #     max_items: 30
+    #
+    #   - site_id: "linkedin"
+    #     name: "LinkedIn"
+    #     login_url: "https://www.linkedin.com/login"
+    #     feed_url: "https://www.linkedin.com/feed/"
+    #     sync_interval: 3600
+    #     login_selectors:
+    #       username: "#username"
+    #       password: "#password"
+    #       submit: "button[type='submit']"
+    #     selectors:
+    #       item: ".feed-shared-update-v2"
+    #       title: ".feed-shared-text span"
+    #       author: ".feed-shared-actor__name"
+    #     event_type: "content.feed.new_item"
+
+# ---------------------------------------------------------------------------
+# User Preferences (override from onboarding)
+# ---------------------------------------------------------------------------
+defaults:
+  verbosity: "balanced"            # minimal, balanced, detailed
+  tone: "casual"                   # warm, casual, professional
+  proactivity: "moderate"          # low, moderate, high
+  autonomy: "moderate"             # supervised, moderate, high
+  notification_mode: "batched"     # minimal, batched, frequent
+  quiet_hours:
+    - start: "22:00"
+      end: "07:00"
+      days: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]

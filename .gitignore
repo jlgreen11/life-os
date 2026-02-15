@@ -1,0 +1,36 @@
+# Data (never commit user data)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Config with secrets
+config/settings.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vector store
+*.lance/
+
+# Logs
+*.log
