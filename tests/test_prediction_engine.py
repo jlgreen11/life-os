@@ -147,3 +147,25 @@ async def test_follow_up_keeps_real_emails(db, event_store, user_model_store):
     predictions = await engine._check_follow_up_needs({})
     assert len(predictions) >= 1
     assert predictions[0].relevant_contacts == ["boss@company.com"]
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_predictions_not_surfaced(db, event_store, user_model_store):
+    """Predictions below 0.6 confidence should not be surfaced."""
+    engine = PredictionEngine(db, user_model_store)
+    # Force the engine to think there are new events
+    engine._last_event_cursor = 0
+
+    predictions = await engine.generate_predictions({})
+    for pred in predictions:
+        assert pred.confidence >= 0.6, f"Prediction surfaced with confidence {pred.confidence} < 0.6"
+
+
+@pytest.mark.asyncio
+async def test_max_five_predictions_per_cycle(db, event_store, user_model_store):
+    """At most 5 predictions should be surfaced per cycle."""
+    engine = PredictionEngine(db, user_model_store)
+    engine._last_event_cursor = 0
+
+    predictions = await engine.generate_predictions({})
+    assert len(predictions) <= 5, f"Expected at most 5 predictions, got {len(predictions)}"

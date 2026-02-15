@@ -110,6 +110,13 @@ class PredictionEngine:
         for pred in predictions:
             self.ums.store_prediction(pred.model_dump())
 
+        # Confidence floor — don't surface anything below 0.6
+        filtered = [p for p in filtered if p.confidence >= 0.6]
+
+        # Cap at 5 surfaced predictions per cycle, prioritized by confidence
+        filtered.sort(key=lambda p: p.confidence, reverse=True)
+        filtered = filtered[:5]
+
         return filtered
 
     # -------------------------------------------------------------------
