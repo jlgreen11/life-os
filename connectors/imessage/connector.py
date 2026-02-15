@@ -374,10 +374,13 @@ class iMessageConnector(BaseConnector):
                     )
                 else:
                     contact_id = str(uuid.uuid4())
+                    # iMessage contacts are almost always people — phones and
+                    # messaging channels are strong person signals.
                     econn.execute(
                         """INSERT INTO contacts
-                            (id, name, phones, channels, domains, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
+                            (id, name, phones, channels, domains, contact_type,
+                             created_at, updated_at)
+                           VALUES (?, ?, ?, ?, '["personal"]', 'person', ?, ?)""",
                         (
                             contact_id,
                             f"Unknown ({identifier})",

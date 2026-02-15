@@ -241,7 +241,7 @@ class EventMetadata(BaseModel):
 # ---------------------------------------------------------------------------
 
 class Contact(BaseModel):
-    """A person in the user's life."""
+    """A person or business in the user's life."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     aliases: list[str] = Field(default_factory=list)         # Nicknames, variations
@@ -249,6 +249,7 @@ class Contact(BaseModel):
     phones: list[str] = Field(default_factory=list)
     channels: dict[str, str] = Field(default_factory=dict)   # {"signal": "+1...", "slack": "U123"}
 
+    contact_type: Optional[str] = None                        # "person", "business", or None (unknown)
     relationship: Optional[str] = None                        # "spouse", "boss", "friend"
     domains: list[str] = Field(default_factory=list)          # ["work", "personal"]
     is_priority: bool = False

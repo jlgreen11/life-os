@@ -31,6 +31,7 @@ from typing import Any, Optional
 
 from models.core import ConfidenceGate, Priority
 from models.user_model import MoodState, Prediction, ReactionPrediction
+from services.contact_classifier import classify_contact_type
 from services.email_classifier import is_marketing_email
 from storage.database import DatabaseManager, UserModelStore
 
@@ -279,6 +280,17 @@ class PredictionEngine:
             if hours_ago < 3:
                 continue
 
+            # --- Contact type classification ---
+            # Look up the contact type from the entities DB. Business contacts
+            # (info@, support@, automated senders) get deprioritized so human
+            # relationships surface first.
+            contact_type = self._get_contact_type(from_addr)
+
+            # Skip business contacts entirely for follow-up predictions —
+            # users rarely need reminders to reply to businesses.
+            if contact_type == "business":
+                continue
+
             # --- Confidence scoring for follow-up predictions ---
             # Base confidence is low (0.4) to avoid false positives.
             # Boosted by: priority contact (+0.3), age > 24h (+0.2),
@@ -379,6 +391,12 @@ class PredictionEngine:
             # Skip contacts with too little history — we need at least 5
             # interactions to establish a reliable frequency baseline.
             if not last or count < 5:
+                continue
+
+            # Skip business contacts — relationship maintenance reminders
+            # should focus on people, not businesses or automated senders.
+            contact_type = self._get_contact_type(addr)
+            if contact_type == "business":
                 continue
 
             try:
@@ -661,6 +679,57 @@ class PredictionEngine:
         the pipeline (early suppression, prediction filtering, rules engine).
         """
         return is_marketing_email(from_addr, payload)
+
+    def _get_contact_type(self, address: str) -> Optional[str]:
+        """Look up the contact_type for an email/phone address.
+
+        Checks the entities DB first (persisted classification). If no
+        contact record exists or contact_type is NULL, falls back to
+        the heuristic classifier based on the address alone.
+
+        Returns "person", "business", or None if truly unknown.
+        """
+        if not address:
+            return None
+
+        try:
+            with self.db.get_connection("entities") as conn:
+                # Look up via the contact_identifiers reverse index
+                row = conn.execute(
+                    """SELECT c.contact_type, c.is_priority, c.relationship,
+                              c.phones, c.channels
+                       FROM contact_identifiers ci
+                       JOIN contacts c ON ci.contact_id = c.id
+                       WHERE ci.identifier = ?
+                       LIMIT 1""",
+                    (address,),
+                ).fetchone()
+
+                if row:
+                    # If already classified, use the stored value
+                    if row["contact_type"]:
+                        return row["contact_type"]
+
+                    # Priority contacts are always people
+                    if row["is_priority"]:
+                        return "person"
+
+                    # Fall back to heuristic classification
+                    import json
+                    phones = json.loads(row["phones"]) if row["phones"] else []
+                    channels = json.loads(row["channels"]) if row["channels"] else {}
+                    return classify_contact_type(
+                        email_address=address,
+                        relationship=row["relationship"],
+                        phones=phones,
+                        channels=channels,
+                        is_priority=bool(row["is_priority"]),
+                    )
+        except Exception:
+            pass
+
+        # No contact record — classify from address alone
+        return classify_contact_type(email_address=address)
 
     @staticmethod
     def _gate_from_confidence(confidence: float) -> ConfidenceGate:

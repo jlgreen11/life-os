@@ -154,12 +154,14 @@ class SignalConnector(BaseConnector):
                             (json.dumps([number]), number, now, contact_id),
                         )
                     else:
-                        # Create new contact
+                        # Create new contact — Signal contacts are people
+                        # (phone-based messaging apps are strong person signals)
                         contact_id = str(uuid.uuid4())
                         conn.execute(
                             """INSERT INTO contacts
-                                (id, name, phones, channels, domains, created_at, updated_at)
-                               VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
+                                (id, name, phones, channels, domains, contact_type,
+                                 created_at, updated_at)
+                               VALUES (?, ?, ?, ?, '["personal"]', 'person', ?, ?)""",
                             (
                                 contact_id, name,
                                 json.dumps([number]),
