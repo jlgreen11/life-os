@@ -119,6 +119,7 @@ class SourceType(str, Enum):
     PROTON_DRIVE = "proton_drive"
     SIGNAL = "signal"
     WHATSAPP = "whatsapp"
+    IMESSAGE = "imessage"
     SLACK = "slack"
     DISCORD = "discord"
     SMS = "sms"
