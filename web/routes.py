@@ -1067,8 +1067,36 @@ def register_routes(app: FastAPI, life_os) -> None:
                 try:
                     msg = json.loads(data)
                     if msg.get("type") == "command":
-                        pass  # Placeholder for future client-to-server commands.
+                        # Handle client-to-server commands from the UI
+                        cmd = msg.get("command")
+
+                        # Notification action commands: dismiss, act_on
+                        if cmd == "dismiss_notification":
+                            notif_id = msg.get("notification_id")
+                            if notif_id:
+                                await life_os.notification_manager.dismiss(notif_id)
+
+                        elif cmd == "act_on_notification":
+                            notif_id = msg.get("notification_id")
+                            if notif_id:
+                                await life_os.notification_manager.mark_acted_on(notif_id)
+
+                        # Prediction feedback commands: for direct prediction
+                        # resolution with custom user response
+                        elif cmd == "resolve_prediction":
+                            prediction_id = msg.get("prediction_id")
+                            was_accurate = msg.get("was_accurate", False)
+                            user_response = msg.get("user_response")
+                            if prediction_id is not None:
+                                life_os.user_model_store.resolve_prediction(
+                                    prediction_id=prediction_id,
+                                    was_accurate=was_accurate,
+                                    user_response=user_response
+                                )
+
                 except json.JSONDecodeError:
+                    # Silently ignore malformed JSON messages — fail-open keeps
+                    # the connection alive even if the client sends bad data
                     pass
         except WebSocketDisconnect:
             # Client closed the connection — clean up the active connections list.
