@@ -21,23 +21,24 @@ def analyze(data_dir: str = "./data") -> dict:
     # --- Event volume ---
     events_db = str(data_path / "events.db")
     try:
-        conn = sqlite3.connect(events_db)
-        conn.row_factory = sqlite3.Row
+        events_conn = sqlite3.connect(events_db)
+        events_conn.row_factory = sqlite3.Row
+        try:
+            total = events_conn.execute("SELECT COUNT(*) as c FROM events").fetchone()["c"]
+            by_type = events_conn.execute(
+                "SELECT type, COUNT(*) as c FROM events GROUP BY type ORDER BY c DESC LIMIT 20"
+            ).fetchall()
+            last_24h = events_conn.execute(
+                "SELECT COUNT(*) as c FROM events WHERE timestamp > datetime('now', '-1 day')"
+            ).fetchone()["c"]
 
-        total = conn.execute("SELECT COUNT(*) as c FROM events").fetchone()["c"]
-        by_type = conn.execute(
-            "SELECT type, COUNT(*) as c FROM events GROUP BY type ORDER BY c DESC LIMIT 20"
-        ).fetchall()
-        last_24h = conn.execute(
-            "SELECT COUNT(*) as c FROM events WHERE timestamp > datetime('now', '-1 day')"
-        ).fetchone()["c"]
-
-        report["sections"]["events"] = {
-            "total": total,
-            "last_24h": last_24h,
-            "top_types": {r["type"]: r["c"] for r in by_type},
-        }
-        conn.close()
+            report["sections"]["events"] = {
+                "total": total,
+                "last_24h": last_24h,
+                "top_types": {r["type"]: r["c"] for r in by_type},
+            }
+        finally:
+            events_conn.close()
     except Exception as e:
         report["sections"]["events"] = {"error": str(e)}
 
@@ -48,97 +49,99 @@ def analyze(data_dir: str = "./data") -> dict:
         um_conn.row_factory = sqlite3.Row
     except Exception as e:
         um_conn = None
-        report["sections"]["prediction_accuracy"] = {"error": str(e)}
-        report["sections"]["signal_profiles"] = {"error": str(e)}
-        report["sections"]["insight_feedback"] = {"error": str(e)}
+        err = f"connection failed: {e}"
+        report["sections"]["prediction_accuracy"] = {"error": err}
+        report["sections"]["signal_profiles"] = {"error": err}
+        report["sections"]["insight_feedback"] = {"error": err}
 
     if um_conn:
         try:
-            pred_stats = um_conn.execute(
-                """SELECT prediction_type,
-                    COUNT(*) as total,
-                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate,
-                    SUM(CASE WHEN was_accurate = 0 THEN 1 ELSE 0 END) as inaccurate,
-                    SUM(CASE WHEN was_accurate IS NULL THEN 1 ELSE 0 END) as unresolved
-                   FROM predictions
-                   WHERE was_surfaced = 1
-                   GROUP BY prediction_type"""
-            ).fetchall()
+            try:
+                pred_stats = um_conn.execute(
+                    """SELECT prediction_type,
+                        COUNT(*) as total,
+                        SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate,
+                        SUM(CASE WHEN was_accurate = 0 THEN 1 ELSE 0 END) as inaccurate,
+                        SUM(CASE WHEN was_accurate IS NULL THEN 1 ELSE 0 END) as unresolved
+                       FROM predictions
+                       WHERE was_surfaced = 1
+                       GROUP BY prediction_type"""
+                ).fetchall()
 
-            report["sections"]["prediction_accuracy"] = {
-                r["prediction_type"]: {
-                    "total": r["total"],
-                    "accurate": r["accurate"],
-                    "inaccurate": r["inaccurate"],
-                    "unresolved": r["unresolved"],
-                    "accuracy_rate": r["accurate"] / max(r["total"] - r["unresolved"], 1),
+                report["sections"]["prediction_accuracy"] = {
+                    r["prediction_type"]: {
+                        "total": r["total"],
+                        "accurate": r["accurate"],
+                        "inaccurate": r["inaccurate"],
+                        "unresolved": r["unresolved"],
+                        "accuracy_rate": r["accurate"] / max(r["total"] - r["unresolved"], 1),
+                    }
+                    for r in pred_stats
                 }
-                for r in pred_stats
-            }
-        except Exception as e:
-            report["sections"]["prediction_accuracy"] = {"error": str(e)}
+            except Exception as e:
+                report["sections"]["prediction_accuracy"] = {"error": str(e)}
 
-        # Signal profiles freshness
-        try:
-            profiles = um_conn.execute(
-                "SELECT profile_type, samples_count, updated_at FROM signal_profiles"
-            ).fetchall()
-            report["sections"]["signal_profiles"] = {
-                r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]}
-                for r in profiles
-            }
-        except Exception as e:
-            report["sections"]["signal_profiles"] = {"error": str(e)}
+            # Signal profiles freshness
+            try:
+                profiles = um_conn.execute(
+                    "SELECT profile_type, samples_count, updated_at FROM signal_profiles"
+                ).fetchall()
+                report["sections"]["signal_profiles"] = {
+                    r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]}
+                    for r in profiles
+                }
+            except Exception as e:
+                report["sections"]["signal_profiles"] = {"error": str(e)}
 
-        # Insight feedback
-        try:
-            insight_stats = um_conn.execute(
-                """SELECT type, feedback, COUNT(*) as c
-                   FROM insights
-                   GROUP BY type, feedback"""
-            ).fetchall()
-            report["sections"]["insight_feedback"] = [
-                {"type": r["type"], "feedback": r["feedback"], "count": r["c"]}
-                for r in insight_stats
-            ]
-        except Exception as e:
-            report["sections"]["insight_feedback"] = {"error": str(e)}
-
-        um_conn.close()
+            # Insight feedback
+            try:
+                insight_stats = um_conn.execute(
+                    """SELECT type, feedback, COUNT(*) as c
+                       FROM insights
+                       GROUP BY type, feedback"""
+                ).fetchall()
+                report["sections"]["insight_feedback"] = [
+                    {"type": r["type"], "feedback": r["feedback"], "count": r["c"]}
+                    for r in insight_stats
+                ]
+            except Exception as e:
+                report["sections"]["insight_feedback"] = {"error": str(e)}
+        finally:
+            um_conn.close()
 
     # --- Notification dismissal rate ---
     state_db = str(data_path / "state.db")
     try:
-        conn = sqlite3.connect(state_db)
-        conn.row_factory = sqlite3.Row
-
-        notif_stats = conn.execute(
-            """SELECT status, COUNT(*) as c FROM notifications GROUP BY status"""
-        ).fetchall()
-        report["sections"]["notifications"] = {r["status"]: r["c"] for r in notif_stats}
-
-        conn.close()
+        state_conn = sqlite3.connect(state_db)
+        state_conn.row_factory = sqlite3.Row
+        try:
+            notif_stats = state_conn.execute(
+                """SELECT status, COUNT(*) as c FROM notifications GROUP BY status"""
+            ).fetchall()
+            report["sections"]["notifications"] = {r["status"]: r["c"] for r in notif_stats}
+        finally:
+            state_conn.close()
     except Exception as e:
         report["sections"]["notifications"] = {"error": str(e)}
 
     # --- Feedback log ---
     pref_db = str(data_path / "preferences.db")
     try:
-        conn = sqlite3.connect(pref_db)
-        conn.row_factory = sqlite3.Row
-
-        feedback = conn.execute(
-            """SELECT action_type, feedback_type, COUNT(*) as c
-               FROM feedback_log
-               GROUP BY action_type, feedback_type
-               ORDER BY c DESC"""
-        ).fetchall()
-        report["sections"]["feedback"] = [
-            {"action_type": r["action_type"], "feedback_type": r["feedback_type"], "count": r["c"]}
-            for r in feedback
-        ]
-
-        conn.close()
+        pref_conn = sqlite3.connect(pref_db)
+        pref_conn.row_factory = sqlite3.Row
+        try:
+            feedback = pref_conn.execute(
+                """SELECT action_type, feedback_type, COUNT(*) as c
+                   FROM feedback_log
+                   GROUP BY action_type, feedback_type
+                   ORDER BY c DESC"""
+            ).fetchall()
+            report["sections"]["feedback"] = [
+                {"action_type": r["action_type"], "feedback_type": r["feedback_type"], "count": r["c"]}
+                for r in feedback
+            ]
+        finally:
+            pref_conn.close()
     except Exception as e:
         report["sections"]["feedback"] = {"error": str(e)}
 
