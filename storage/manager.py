@@ -606,4 +606,36 @@ class DatabaseManager:
                     excluded_from   TEXT DEFAULT '["search", "briefing", "unified_inbox"]',
                     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
+
+                -- Source weights: user + AI dual-weight system for tuning
+                -- how much influence each data source has on insights,
+                -- predictions, and signal extraction.
+                --
+                -- Design:
+                --   user_weight  — explicit user preference (0.0 = ignore, 1.0 = max)
+                --   ai_drift     — AI-computed adjustment that shifts over time
+                --                   based on engagement/dismissal patterns
+                --   effective_weight = clamp(user_weight + ai_drift, 0.0, 1.0)
+                --
+                -- The AI drift is bounded to [-0.3, +0.3] so the user always
+                -- retains primary control.  Drift decays toward zero over time
+                -- when no feedback is received.
+                CREATE TABLE IF NOT EXISTS source_weights (
+                    source_key      TEXT PRIMARY KEY,
+                    category        TEXT NOT NULL,
+                    label           TEXT NOT NULL,
+                    description     TEXT DEFAULT '',
+                    user_weight     REAL NOT NULL DEFAULT 0.5,
+                    ai_drift        REAL NOT NULL DEFAULT 0.0,
+                    drift_reason    TEXT DEFAULT '',
+                    drift_history   TEXT DEFAULT '[]',
+                    user_set_at     TEXT,
+                    ai_updated_at   TEXT,
+                    interactions    INTEGER DEFAULT 0,
+                    engagements     INTEGER DEFAULT 0,
+                    dismissals      INTEGER DEFAULT 0,
+                    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_sw_category ON source_weights(category);
             """)

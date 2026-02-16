@@ -16,6 +16,7 @@ class Insight(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     category: str = ""
     entity: Optional[str] = None
+    source_key: str = ""  # Source weight key for feedback routing (e.g. "email.marketing")
     staleness_ttl_hours: int = 168  # 7 days
     dedup_key: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

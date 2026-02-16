@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from services.insight_engine.models import Insight
+from services.insight_engine.source_weights import SourceWeightManager
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
 
@@ -34,9 +35,11 @@ logger = logging.getLogger(__name__)
 class InsightEngine:
     """Cross-correlates signal profiles to produce human-readable insights."""
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore):
+    def __init__(self, db: DatabaseManager, ums: UserModelStore,
+                 source_weight_manager: Optional[SourceWeightManager] = None):
         self.db = db
         self.ums = ums
+        self.swm = source_weight_manager
 
     # ------------------------------------------------------------------
     # Public API
@@ -73,6 +76,11 @@ class InsightEngine:
             if not insight.dedup_key:
                 insight.compute_dedup_key()
 
+        # Apply source weights: modulate each insight's confidence by the
+        # effective weight for its source category.  This is how user tuning
+        # and AI drift influence which insights are surfaced.
+        raw = self._apply_source_weights(raw)
+
         # Remove insights that are still within their staleness window
         fresh = self._deduplicate(raw)
 
@@ -81,6 +89,47 @@ class InsightEngine:
             self._store_insight(insight)
 
         return fresh
+
+    # ------------------------------------------------------------------
+    # Source Weight Application
+    # ------------------------------------------------------------------
+
+    def _apply_source_weights(self, insights: list[Insight]) -> list[Insight]:
+        """Modulate insight confidence by the effective source weight.
+
+        Each insight's category maps to a source_key used to look up the
+        user+AI effective weight.  The insight's confidence is multiplied
+        by this weight, so low-weight sources produce lower-confidence
+        insights that are less likely to be surfaced.
+
+        Insights whose weighted confidence drops below 0.1 are filtered out
+        entirely — no point surfacing something the user has deprioritized.
+        """
+        if not self.swm:
+            return insights
+
+        # Map insight categories to source weight keys
+        category_to_source = {
+            "place": "location.visits",
+            "contact_gap": "messaging.direct",
+            "email_volume": "email.work",
+            "communication_style": "messaging.direct",
+        }
+
+        weighted: list[Insight] = []
+        for insight in insights:
+            source_key = category_to_source.get(insight.category)
+            if source_key:
+                weight = self.swm.get_effective_weight(source_key)
+                # Store original confidence for transparency
+                insight.evidence.append(f"source_weight={weight:.2f}")
+                insight.confidence = insight.confidence * weight
+
+            # Filter out insights that have been effectively silenced
+            if insight.confidence >= 0.1:
+                weighted.append(insight)
+
+        return weighted
 
     # ------------------------------------------------------------------
     # Correlator: Place Frequency
