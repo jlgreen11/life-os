@@ -147,12 +147,7 @@ class DatabaseManager:
                     payload         TEXT NOT NULL DEFAULT '{}',
                     metadata        TEXT NOT NULL DEFAULT '{}',
                     embedding_id    TEXT,
-                    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                    -- Denormalized columns for fast workflow detection (v2+)
-                    email_from      TEXT,
-                    email_to        TEXT,
-                    task_id         TEXT,
-                    calendar_event_id TEXT
+                    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
@@ -166,12 +161,6 @@ class DatabaseManager:
                 -- then scan a timestamp range. This composite index makes those queries
                 -- 1000x faster by avoiding full table scans on 77K+ events.
                 CREATE INDEX IF NOT EXISTS idx_events_type_timestamp ON events(type, timestamp);
-
-                -- Denormalized column indexes for workflow detection (v2+)
-                -- These replace expensive json_extract() calls with direct column lookups
-                CREATE INDEX IF NOT EXISTS idx_events_email_from ON events(email_from) WHERE email_from IS NOT NULL;
-                CREATE INDEX IF NOT EXISTS idx_events_email_to ON events(email_to) WHERE email_to IS NOT NULL;
-                CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id) WHERE task_id IS NOT NULL;
 
                 -- Processed events tracking (which services have seen this event)
                 CREATE TABLE IF NOT EXISTS event_processing_log (
@@ -200,52 +189,6 @@ class DatabaseManager:
                 -- SQLite 3.38+ (bundled with Python 3.12).
                 CREATE INDEX IF NOT EXISTS idx_events_payload_message_id
                     ON events(json_extract(payload, '$.message_id'));
-            """)
-
-            # Create triggers to auto-populate denormalized columns on INSERT (v2+)
-            # These extract commonly-queried payload fields into indexed columns
-            # so workflow detection can use WHERE email_from = ? instead of
-            # WHERE json_extract(payload, '$.from_address') = ? (30s → <1s)
-            conn.executescript("""
-                -- Extract email from_address for email.received/email.sent events
-                CREATE TRIGGER IF NOT EXISTS trg_events_email_from
-                AFTER INSERT ON events
-                WHEN NEW.type IN ('email.received', 'email.sent')
-                BEGIN
-                    UPDATE events
-                    SET email_from = LOWER(json_extract(NEW.payload, '$.from_address'))
-                    WHERE id = NEW.id AND email_from IS NULL;
-                END;
-
-                -- Extract email to_addresses (first recipient) for email.sent events
-                CREATE TRIGGER IF NOT EXISTS trg_events_email_to
-                AFTER INSERT ON events
-                WHEN NEW.type = 'email.sent'
-                BEGIN
-                    UPDATE events
-                    SET email_to = LOWER(json_extract(NEW.payload, '$.to_addresses'))
-                    WHERE id = NEW.id AND email_to IS NULL;
-                END;
-
-                -- Extract task_id for task.* events
-                CREATE TRIGGER IF NOT EXISTS trg_events_task_id
-                AFTER INSERT ON events
-                WHEN NEW.type LIKE 'task.%'
-                BEGIN
-                    UPDATE events
-                    SET task_id = json_extract(NEW.payload, '$.task_id')
-                    WHERE id = NEW.id AND task_id IS NULL;
-                END;
-
-                -- Extract event_id for calendar.event.* events
-                CREATE TRIGGER IF NOT EXISTS trg_events_calendar_id
-                AFTER INSERT ON events
-                WHEN NEW.type LIKE 'calendar.event.%'
-                BEGIN
-                    UPDATE events
-                    SET calendar_event_id = json_extract(NEW.payload, '$.event_id')
-                    WHERE id = NEW.id AND calendar_event_id IS NULL;
-                END;
             """)
 
             # Run migrations after schema is created
@@ -814,6 +757,61 @@ class DatabaseManager:
                   AND json_extract(payload, '$.event_id') IS NOT NULL
             """)
             logger.info(f"Backfilled calendar_event_id for {conn.total_changes} calendar events")
+
+            # Create indexes on the new denormalized columns
+            conn.executescript("""
+                CREATE INDEX IF NOT EXISTS idx_events_email_from ON events(email_from) WHERE email_from IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_events_email_to ON events(email_to) WHERE email_to IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id) WHERE task_id IS NOT NULL;
+            """)
+            logger.info("Created indexes on denormalized columns")
+
+            # Create triggers to auto-populate denormalized columns on INSERT
+            # These extract commonly-queried payload fields into indexed columns
+            # so workflow detection can use WHERE email_from = ? instead of
+            # WHERE json_extract(payload, '$.from_address') = ? (30s → <1s)
+            conn.executescript("""
+                -- Extract email from_address for email.received/email.sent events
+                CREATE TRIGGER IF NOT EXISTS trg_events_email_from
+                AFTER INSERT ON events
+                WHEN NEW.type IN ('email.received', 'email.sent')
+                BEGIN
+                    UPDATE events
+                    SET email_from = LOWER(json_extract(NEW.payload, '$.from_address'))
+                    WHERE id = NEW.id AND email_from IS NULL;
+                END;
+
+                -- Extract email to_addresses (first recipient) for email.sent events
+                CREATE TRIGGER IF NOT EXISTS trg_events_email_to
+                AFTER INSERT ON events
+                WHEN NEW.type = 'email.sent'
+                BEGIN
+                    UPDATE events
+                    SET email_to = LOWER(json_extract(NEW.payload, '$.to_addresses'))
+                    WHERE id = NEW.id AND email_to IS NULL;
+                END;
+
+                -- Extract task_id for task.* events
+                CREATE TRIGGER IF NOT EXISTS trg_events_task_id
+                AFTER INSERT ON events
+                WHEN NEW.type LIKE 'task.%'
+                BEGIN
+                    UPDATE events
+                    SET task_id = json_extract(NEW.payload, '$.task_id')
+                    WHERE id = NEW.id AND task_id IS NULL;
+                END;
+
+                -- Extract event_id for calendar.event.* events
+                CREATE TRIGGER IF NOT EXISTS trg_events_calendar_id
+                AFTER INSERT ON events
+                WHEN NEW.type LIKE 'calendar.event.%'
+                BEGIN
+                    UPDATE events
+                    SET calendar_event_id = json_extract(NEW.payload, '$.event_id')
+                    WHERE id = NEW.id AND calendar_event_id IS NULL;
+                END;
+            """)
+            logger.info("Created triggers for denormalized columns")
 
             logger.info("Events.db migration to v2 complete")
 
