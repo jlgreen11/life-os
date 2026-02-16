@@ -734,8 +734,9 @@ class PredictionEngine:
 
         Filters out:
         - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
-        - Bulk/marketing email patterns (newsletter@, reply@, email@, etc.)
+        - Bulk/marketing email patterns (newsletter@, reply@, email@, service@, etc.)
         - Marketing domain patterns (news-*.com, email.*.com, etc.)
+        - Embedded notification patterns (HOA-Notifications@, engage.ticketmaster.com)
         - Emails containing unsubscribe links
 
         This prevents low-quality prediction spam and protects the accuracy
@@ -762,8 +763,22 @@ class PredictionEngine:
             "mailer@", "bulk@", "promo@", "marketing@",
             "reply@", "email@", "news@", "offers@", "deals@",
             "hello@", "info@", "support@", "help@",
+            "service@",     # PayPal, Stripe, etc. - mostly transactional but repetitive
+            "discover@",    # Common marketing pattern (Airbnb, etc.)
+            "alert@", "alerts@", "notification@",
         )
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
+            return True
+
+        # Embedded notification patterns (middle of local-part)
+        # Catches: HOA-Notifications@, user-notifications@, system-alerts@
+        embedded_notification_patterns = (
+            "-notification", "-notifications", "-alert", "-alerts",
+            "-update", "-updates", "-digest",
+        )
+        # Extract local-part (everything before @)
+        local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
+        if any(pattern in local_part for pattern in embedded_notification_patterns):
             return True
 
         # Marketing domain patterns (the part after @)
@@ -772,6 +787,7 @@ class PredictionEngine:
             "@news-", "@email.", "@reply.", "@mailing.",
             "@newsletters.", "@promo.", "@marketing.",
             "@em.", "@mg.", "@mail.",  # Common email service provider patterns
+            "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
             return True
