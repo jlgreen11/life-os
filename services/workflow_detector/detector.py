@@ -123,12 +123,12 @@ class WorkflowDetector:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
-                    json_extract(payload, '$.sender') as sender_category,
+                    json_extract(payload, '$.from_address') as sender_category,
                     COUNT(*) as receive_count
                 FROM events
                 WHERE type = 'email.received'
                   AND timestamp > ?
-                  AND json_extract(payload, '$.sender') IS NOT NULL
+                  AND json_extract(payload, '$.from_address') IS NOT NULL
                 GROUP BY sender_category
                 HAVING receive_count >= ?
                 ORDER BY receive_count DESC
@@ -157,7 +157,7 @@ class WorkflowDetector:
                         AND e2.type != e1.type
                     WHERE e1.type = 'email.received'
                       AND e1.timestamp > ?
-                      AND json_extract(e1.payload, '$.sender') = ?
+                      AND json_extract(e1.payload, '$.from_address') = ?
                       AND e2.type IN ('email.sent', 'task.created', 'calendar.event.created',
                                       'browser.session.started', 'message.sent')
                     GROUP BY e2.type
