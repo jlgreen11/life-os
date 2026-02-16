@@ -420,7 +420,7 @@ class UserModelStore:
         with self.db.get_connection("user_model") as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO routines
-                   (name, trigger, steps, typical_duration, consistency_score,
+                   (name, trigger_condition, steps, typical_duration, consistency_score,
                     times_observed, variations, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?,
                            strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
@@ -457,16 +457,16 @@ class UserModelStore:
         with self.db.get_connection("user_model") as conn:
             if trigger:
                 cursor = conn.execute(
-                    """SELECT name, trigger, steps, typical_duration,
+                    """SELECT name, trigger_condition, steps, typical_duration,
                               consistency_score, times_observed, variations, updated_at
                        FROM routines
-                       WHERE trigger = ?
+                       WHERE trigger_condition = ?
                        ORDER BY consistency_score DESC, times_observed DESC""",
                     (trigger,)
                 )
             else:
                 cursor = conn.execute(
-                    """SELECT name, trigger, steps, typical_duration,
+                    """SELECT name, trigger_condition, steps, typical_duration,
                               consistency_score, times_observed, variations, updated_at
                        FROM routines
                        ORDER BY consistency_score DESC, times_observed DESC"""
@@ -486,3 +486,101 @@ class UserModelStore:
                 })
 
             return routines
+
+    def store_workflow(self, workflow: dict):
+        """Store or update a detected workflow (Layer 3: Procedural Memory).
+
+        Workflows are multi-step processes for accomplishing specific types of
+        tasks. Unlike routines (time/location triggered), workflows are goal-driven
+        and can be initiated in various contexts.
+
+        Examples:
+        - "responding_to_boss": read email → draft response → check tone → send
+        - "planning_trip": search flights → book hotel → add to calendar → notify
+        - "weekly_review": check completed tasks → review calendar → plan next week
+
+        Uses INSERT OR REPLACE keyed on workflow name. If a workflow with the
+        same name already exists, this overwrites it with updated statistics
+        (success_rate, times_observed, typical_duration). The steps list and
+        tools_used list are completely replaced on each update.
+
+        Args:
+            workflow: Dictionary with keys:
+                - name (str): Human-readable workflow name
+                - trigger_conditions (list[str]): Conditions that initiate this workflow
+                - steps (list[str]): Ordered list of actions
+                - typical_duration_minutes (float, optional): Normal total duration
+                - tools_used (list[str]): Tools/apps involved in workflow
+                - success_rate (float): 0-1, how often workflow completes successfully
+                - times_observed (int): Number of instances detected
+        """
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO workflows
+                   (name, trigger_conditions, steps, typical_duration, tools_used,
+                    success_rate, times_observed, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?,
+                           strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
+                (
+                    workflow["name"],
+                    json.dumps(workflow.get("trigger_conditions", [])),
+                    json.dumps(workflow.get("steps", [])),
+                    workflow.get("typical_duration_minutes"),
+                    json.dumps(workflow.get("tools_used", [])),
+                    workflow.get("success_rate", 0.5),
+                    workflow.get("times_observed", 0),
+                ),
+            )
+
+        self._emit_telemetry("usermodel.workflow.updated", {
+            "workflow_name": workflow["name"],
+            "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
+            "steps_count": len(workflow.get("steps", [])),
+            "tools_count": len(workflow.get("tools_used", [])),
+            "success_rate": workflow.get("success_rate", 0.5),
+            "times_observed": workflow.get("times_observed", 0),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def get_workflows(self, name_filter: Optional[str] = None) -> list[dict]:
+        """Retrieve stored workflows, optionally filtered by name pattern.
+
+        Args:
+            name_filter: Optional name filter (SQL LIKE pattern, e.g., "%email%").
+                        If None, returns all workflows.
+
+        Returns:
+            List of workflow dictionaries with arrays deserialized from JSON
+        """
+        with self.db.get_connection("user_model") as conn:
+            if name_filter:
+                cursor = conn.execute(
+                    """SELECT name, trigger_conditions, steps, typical_duration,
+                              tools_used, success_rate, times_observed, updated_at
+                       FROM workflows
+                       WHERE name LIKE ?
+                       ORDER BY success_rate DESC, times_observed DESC""",
+                    (name_filter,)
+                )
+            else:
+                cursor = conn.execute(
+                    """SELECT name, trigger_conditions, steps, typical_duration,
+                              tools_used, success_rate, times_observed, updated_at
+                       FROM workflows
+                       ORDER BY success_rate DESC, times_observed DESC"""
+                )
+
+            workflows = []
+            for row in cursor.fetchall():
+                workflows.append({
+                    "name": row[0],
+                    "trigger_conditions": json.loads(row[1]) if row[1] else [],
+                    "steps": json.loads(row[2]) if row[2] else [],
+                    "typical_duration_minutes": row[3],
+                    "tools_used": json.loads(row[4]) if row[4] else [],
+                    "success_rate": row[5],
+                    "times_observed": row[6],
+                    "updated_at": row[7],
+                })
+
+            return workflows

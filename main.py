@@ -42,6 +42,7 @@ from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
 from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 from services.routine_detector.detector import RoutineDetector
+from services.workflow_detector.detector import WorkflowDetector
 from services.insight_engine.source_weights import SourceWeightManager
 from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
 
@@ -110,6 +111,8 @@ class LifeOS:
         self.semantic_fact_inferrer = SemanticFactInferrer(self.user_model_store)
         # RoutineDetector analyzes episodic memory to find recurring behavioral patterns
         self.routine_detector = RoutineDetector(self.db, self.user_model_store)
+        # WorkflowDetector analyzes event sequences to find goal-driven multi-step processes
+        self.workflow_detector = WorkflowDetector(self.db, self.user_model_store)
         # BehavioralAccuracyTracker infers prediction accuracy from user behavior
         self.behavioral_tracker = BehavioralAccuracyTracker(self.db)
         # NotificationManager needs the event_bus so it can publish notification events
@@ -788,10 +791,18 @@ class LifeOS:
                 stored_count = self.routine_detector.store_routines(routines)
 
                 print(f"  RoutineDetector: detected {len(routines)} routines, stored {stored_count}")
-            except Exception as e:
-                print(f"Routine detector error: {e}")
 
-            # 43200 seconds = 12 hours. Routines are stable patterns, so this
+                # Detect workflows from last 30 days of event sequences
+                workflows = self.workflow_detector.detect_workflows(lookback_days=30)
+
+                # Store detected workflows to database
+                workflow_stored = self.workflow_detector.store_workflows(workflows)
+
+                print(f"  WorkflowDetector: detected {len(workflows)} workflows, stored {workflow_stored}")
+            except Exception as e:
+                print(f"Routine/workflow detector error: {e}")
+
+            # 43200 seconds = 12 hours. Routines and workflows are stable patterns, so this
             # interval provides good coverage (runs twice daily) without excessive
             # compute on slowly-changing behavioral data.
             await asyncio.sleep(43200)  # 12 hours

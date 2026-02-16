@@ -448,6 +448,17 @@ class DatabaseManager:
                     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
 
+                CREATE TABLE IF NOT EXISTS workflows (
+                    name                TEXT PRIMARY KEY,
+                    trigger_conditions  TEXT NOT NULL DEFAULT '[]',
+                    steps               TEXT NOT NULL DEFAULT '[]',
+                    typical_duration    REAL,
+                    tools_used          TEXT DEFAULT '[]',
+                    success_rate        REAL DEFAULT 0.5,
+                    times_observed      INTEGER DEFAULT 0,
+                    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                );
+
                 CREATE TABLE IF NOT EXISTS communication_templates (
                     id                  TEXT PRIMARY KEY,
                     context             TEXT NOT NULL,
