@@ -363,7 +363,7 @@ class UserModelStore:
         resolved_at and user_response='filtered' to prevent database bloat.
 
         DEDUPLICATION: Before storing a new prediction, check if an identical
-        unresolved prediction already exists (same type + same description).
+        recent prediction already exists (same type + same description).
         If a duplicate exists, skip storage to prevent:
         - Database bloat (340K+ duplicate predictions)
         - Event bus spam (redundant telemetry)
@@ -372,19 +372,33 @@ class UserModelStore:
         This is critical because the prediction engine runs every 15 minutes
         and would otherwise recreate ALL predictions (even unresolved ones)
         on every cycle, causing exponential growth.
+
+        The deduplication window is 24 hours because:
+        - Unresolved (surfaced) predictions: User hasn't interacted yet, don't duplicate
+        - Filtered predictions: Same conditions likely still apply (confidence/reaction
+          gates), don't regenerate within 24h
+        - After 24h: Conditions may have changed (relationship gaps widening, events
+          approaching, stress levels shifting), allow regeneration
         """
         with self.db.get_connection("user_model") as conn:
-            # Check for existing unresolved prediction with same type + description
+            # Check for existing prediction with same type + description within 24h
+            # This catches both:
+            # 1. Unresolved predictions (resolved_at IS NULL) that user hasn't acted on
+            # 2. Recently filtered predictions (resolved_at within 24h) that failed gates
+            #
+            # CRITICAL: Use datetime(resolved_at) to parse ISO timestamps correctly.
+            # Direct string comparison fails because ISO format ('2026-02-15T16:00:00+00:00')
+            # sorts differently than SQLite format ('2026-02-15 18:00:00').
             existing = conn.execute(
                 """SELECT id FROM predictions
                    WHERE prediction_type = ?
                    AND description = ?
-                   AND resolved_at IS NULL
+                   AND (resolved_at IS NULL OR datetime(resolved_at) > datetime('now', '-24 hours'))
                    LIMIT 1""",
                 (prediction["prediction_type"], prediction["description"]),
             ).fetchone()
 
-            # If duplicate exists and is unresolved, skip storage
+            # If duplicate exists (either unresolved or recently filtered), skip storage
             if existing:
                 # Telemetry for observability: track that deduplication occurred
                 self._emit_telemetry("usermodel.prediction.deduplicated", {

@@ -17,7 +17,7 @@ generate). This tests deduplication at the STORAGE layer (inside store_predictio
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -69,8 +69,17 @@ class TestPredictionStorageDeduplication:
             assert stored["id"] == "pred-1", "Original prediction should be kept"
 
     def test_resolved_predictions_can_be_regenerated(self, user_model_store, db):
-        """If a prediction is resolved, the same prediction can be generated again."""
+        """
+        If a prediction is resolved > 24h ago, the same prediction can be generated again.
+
+        UPDATED: Iteration 149 added 24h deduplication window for filtered predictions.
+        This prevents the same "confidence:0.25" prediction from being stored 42 times
+        in 2 hours (the bug that this iteration fixes).
+        """
         ums = user_model_store
+
+        # Resolved prediction from 25+ hours ago (outside deduplication window)
+        old_resolved_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
 
         prediction1 = {
             "id": "pred-1",
@@ -82,7 +91,7 @@ class TestPredictionStorageDeduplication:
             "supporting_signals": {"contact_id": "bob"},
             "was_surfaced": True,
             "user_response": "dismissed",
-            "resolved_at": datetime.now(timezone.utc).isoformat(),  # RESOLVED
+            "resolved_at": old_resolved_time,  # RESOLVED 25h ago
         }
 
         prediction2 = {
@@ -97,16 +106,16 @@ class TestPredictionStorageDeduplication:
             "resolved_at": None,  # Unresolved
         }
 
-        # Store resolved prediction
+        # Store old resolved prediction
         ums.store_prediction(prediction1)
 
-        # Store new prediction with same description (should succeed)
+        # Store new prediction with same description (should succeed - outside 24h window)
         ums.store_prediction(prediction2)
 
         # Verify: both predictions stored
         with ums.db.get_connection("user_model") as conn:
             count = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
-            assert count == 2, "Resolved predictions should allow regeneration"
+            assert count == 2, "Resolved predictions > 24h old should allow regeneration"
 
     def test_different_types_are_not_duplicates(self, user_model_store, db):
         """Same description but different type → both stored."""
@@ -203,8 +212,18 @@ class TestPredictionStorageDeduplication:
             assert stored["id"] == "pred-0", "First prediction should be kept"
 
     def test_deduplication_with_filtered_predictions(self, user_model_store, db):
-        """Filtered predictions (resolved_at set, user_response='filtered') allow regeneration."""
+        """
+        Filtered predictions within 24h are deduplicated, but allow regeneration after 24h.
+
+        UPDATED: Iteration 149 fixes the bug where filtered predictions (resolved_at set)
+        were not being deduplicated, causing 42 duplicates of the same "confidence:0.25"
+        prediction to be stored in 2 hours. The 24h window prevents this spam while still
+        allowing regeneration when conditions truly change (after 24h).
+        """
         ums = user_model_store
+
+        # Filtered prediction from 25+ hours ago (outside deduplication window)
+        old_filtered_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
 
         prediction1 = {
             "id": "pred-1",
@@ -217,7 +236,7 @@ class TestPredictionStorageDeduplication:
             "was_surfaced": False,
             "user_response": "filtered",
             "filter_reason": "confidence:0.25 (threshold:0.3)",
-            "resolved_at": datetime.now(timezone.utc).isoformat(),  # Filtered = resolved
+            "resolved_at": old_filtered_time,  # Filtered 25h ago
         }
 
         prediction2 = {
@@ -232,15 +251,15 @@ class TestPredictionStorageDeduplication:
             "resolved_at": None,  # New unresolved prediction
         }
 
-        # Store filtered prediction
+        # Store old filtered prediction
         ums.store_prediction(prediction1)
 
-        # Attempt to store new prediction with same description (should succeed because first is resolved)
+        # Attempt to store new prediction (should succeed - outside 24h window)
         ums.store_prediction(prediction2)
 
         with ums.db.get_connection("user_model") as conn:
             count = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
-            assert count == 2, "Resolved filtered predictions should allow regeneration"
+            assert count == 2, "Filtered predictions > 24h old should allow regeneration"
 
     def test_deduplication_production_scenario(self, user_model_store, db):
         """Simulate production: 340K reminders for same emails generated over time."""
