@@ -191,20 +191,37 @@ PROMPT_EOF
     # 6.5. Restart Life OS if code was updated
     # ------------------------------------------------------------------
     # After pulling latest code, check if the codebase changed. If so,
-    # restart the main.py process to ensure fixes actually deploy.
+    # restart the Life OS service to ensure fixes actually deploy.
     # This is critical for the improvement loop — without restart, all
     # merged PRs update the codebase but the running process never picks
     # up the changes, rendering all improvements inert.
+    #
+    # Supports two deployment modes:
+    #   1. Docker Compose (recommended) — restarts via `docker compose restart`
+    #   2. Local Python process — kills and restarts main.py directly
     NEW_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
     if [[ "$OLD_HEAD" != "$NEW_HEAD" && "$OLD_HEAD" != "unknown" ]]; then
         log "Code updated ($OLD_HEAD -> $NEW_HEAD). Restarting Life OS..."
 
-        # Find the running main.py process
-        LIFEOS_PID=$(pgrep -f "python.*main.py" | head -1)
+        # Check if running via Docker Compose
+        if docker compose ps lifeos 2>/dev/null | grep -q "lifeos"; then
+            log "Detected Docker Compose deployment. Restarting container..."
+            docker compose restart lifeos >> "$ITER_LOG" 2>&1
 
-        if [[ -n "$LIFEOS_PID" ]]; then
-            log "Found Life OS process (PID $LIFEOS_PID). Sending SIGTERM..."
+            # Wait for container to be healthy
+            sleep 5
+
+            # Verify container is running
+            if docker compose ps lifeos 2>/dev/null | grep -q "Up"; then
+                log "Life OS container restarted successfully."
+            else
+                log "ERROR: Life OS container failed to restart. Check: docker compose logs lifeos"
+            fi
+
+        # Check if running as local Python process
+        elif LIFEOS_PID=$(pgrep -f "python.*main.py" | head -1); then
+            log "Detected local Python deployment. Restarting process (PID $LIFEOS_PID)..."
             kill "$LIFEOS_PID" >> "$ITER_LOG" 2>&1 || true
 
             # Wait up to 10 seconds for graceful shutdown
@@ -222,30 +239,34 @@ PROMPT_EOF
                 kill -9 "$LIFEOS_PID" >> "$ITER_LOG" 2>&1 || true
                 sleep 2
             fi
-        else
-            log "WARNING: No running Life OS process found (expected main.py)."
-        fi
 
-        # Start Life OS in the background
-        log "Starting Life OS with updated code..."
-        cd "$PROJECT_DIR"
-        if [[ -f "$VENV" ]]; then
-            source "$VENV"
-            nohup python main.py >> "$LOG_DIR/lifeos.log" 2>&1 &
-            NEW_PID=$!
-            log "Life OS started (PID $NEW_PID)."
+            # Start Life OS in the background
+            log "Starting Life OS with updated code..."
+            cd "$PROJECT_DIR"
+            if [[ -f "$VENV" ]]; then
+                source "$VENV"
+                nohup python main.py >> "$LOG_DIR/lifeos.log" 2>&1 &
+                NEW_PID=$!
+                log "Life OS started (PID $NEW_PID)."
 
-            # Give it 3 seconds to initialize
-            sleep 3
+                # Give it 3 seconds to initialize
+                sleep 3
 
-            # Verify it's still running
-            if kill -0 "$NEW_PID" 2>/dev/null; then
-                log "Life OS is running successfully."
+                # Verify it's still running
+                if kill -0 "$NEW_PID" 2>/dev/null; then
+                    log "Life OS is running successfully."
+                else
+                    log "ERROR: Life OS failed to start. Check $LOG_DIR/lifeos.log"
+                fi
             else
-                log "ERROR: Life OS failed to start. Check $LOG_DIR/lifeos.log"
+                log "ERROR: Cannot start Life OS — venv not found at $VENV"
             fi
+
         else
-            log "ERROR: Cannot start Life OS — venv not found at $VENV"
+            log "WARNING: No running Life OS instance found (expected Docker container or main.py process)."
+            log "To start Life OS manually:"
+            log "  Docker: docker compose up -d lifeos"
+            log "  Local:  source $VENV && python main.py"
         fi
     else
         log "No code changes detected. Skipping restart."
