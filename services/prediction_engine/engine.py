@@ -104,8 +104,11 @@ class PredictionEngine:
             if reaction.predicted_reaction in ("helpful", "neutral"):
                 filtered.append(pred)
 
-        # Confidence floor — don't surface anything below 0.6
-        filtered = [p for p in filtered if p.confidence >= 0.6]
+        # Confidence floor — don't surface anything below SUGGEST threshold (0.3).
+        # This enables relationship maintenance, preparation, and other valuable
+        # predictions that should be shown as suggestions ("Would you like...?")
+        # even if confidence isn't high enough for autonomous action.
+        filtered = [p for p in filtered if p.confidence >= 0.3]
 
         # Cap at 5 surfaced predictions per cycle, prioritized by confidence
         filtered.sort(key=lambda p: p.confidence, reverse=True)

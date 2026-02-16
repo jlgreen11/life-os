@@ -144,6 +144,13 @@ def user_model_store(db, event_bus):
 
 
 @pytest.fixture()
+def prediction_engine(db, user_model_store):
+    """A PredictionEngine wired to the temporary DatabaseManager and UserModelStore."""
+    from services.prediction_engine.engine import PredictionEngine
+    return PredictionEngine(db, user_model_store)
+
+
+@pytest.fixture()
 def notification_manager(db, event_bus):
     """A NotificationManager wired to the temporary DatabaseManager and mock event bus."""
     from services.notification_manager.manager import NotificationManager
