@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from storage.manager import DatabaseManager
+from storage.event_store import EventStore
 from services.task_manager.manager import TaskManager
 from services.ai_engine.engine import AIEngine
 from storage.user_model_store import UserModelStore
@@ -46,6 +47,11 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
 
     Processes events in parallel batches to dramatically improve throughput.
     With batch_size=50, processing 70K emails drops from ~60 hours to ~2-3 hours.
+
+    IMPORTANT: Since this script runs without an event bus connection, we must
+    manually publish task.created events to the events database after extraction.
+    This ensures downstream systems (workflow detection, episodic memory) can
+    see task creation patterns.
 
     Args:
         db: Database manager for event queries
@@ -109,7 +115,8 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
         Process a single event and return success/failure status.
 
         Wraps task_manager.process_event with error handling so one failure
-        doesn't crash the entire batch.
+        doesn't crash the entire batch. Since we're running without an event bus,
+        we must manually publish task.created events to events.db after extraction.
         """
         try:
             # Reconstruct the event dict from the database row.
@@ -134,8 +141,61 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
                 "metadata": metadata,
             }
 
+            # Count tasks before extraction
+            tasks_before_count = _count_tasks(db)
+
             # Call the task manager's extraction logic (same code path as live pipeline)
             await task_manager.process_event(event)
+
+            # Count tasks after extraction to detect new tasks
+            tasks_after_count = _count_tasks(db)
+            new_tasks_count = tasks_after_count - tasks_before_count
+
+            # If tasks were created, publish task.created events to events.db
+            # This is necessary because the backfill runs without an event bus,
+            # so TaskManager._publish_telemetry() is a no-op. We need these events
+            # for workflow detection and episodic memory.
+            if new_tasks_count > 0:
+                # Fetch the newly created tasks
+                with db.get_connection("state") as conn:
+                    new_tasks = conn.execute(
+                        """SELECT id, title, source, source_event_id, domain, priority, created_at
+                           FROM tasks
+                           ORDER BY created_at DESC
+                           LIMIT ?""",
+                        (new_tasks_count,)
+                    ).fetchall()
+
+                # Publish a task.created event for each new task
+                # Use EventStore.store_event() with full event structure
+                event_store = EventStore(db)
+                import uuid
+
+                for task_row in new_tasks:
+                    # Build the event payload with task metadata
+                    task_created_payload = {
+                        "task_id": task_row["id"],
+                        "title": task_row["title"],
+                        "source": task_row["source"],
+                        "source_event_id": task_row["source_event_id"],
+                        "domain": task_row["domain"],
+                        "priority": task_row["priority"],
+                        "created_at": task_row["created_at"],
+                    }
+
+                    # Build the full event structure for store_event()
+                    task_created_event = {
+                        "id": str(uuid.uuid4()),
+                        "type": "task.created",
+                        "source": "task_manager_backfill",
+                        "timestamp": task_row["created_at"],
+                        "priority": "normal",
+                        "payload": task_created_payload,
+                        "metadata": {},
+                    }
+
+                    event_store.store_event(task_created_event)
+
             return True  # Success
         except Exception as e:
             # Fail-open: log the error but continue processing remaining events.
