@@ -443,7 +443,7 @@ class DatabaseManager:
         added.
         """
         # Current schema version (increment when making schema changes)
-        CURRENT_VERSION = 2
+        CURRENT_VERSION = 3
 
         with self.get_connection("user_model") as conn:
             # Create schema_version table if it doesn't exist
@@ -586,6 +586,7 @@ class DatabaseManager:
                     was_surfaced        INTEGER DEFAULT 0,
                     user_response       TEXT,
                     was_accurate        INTEGER,
+                    filter_reason       TEXT,
                     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                     resolved_at         TEXT
                 );
@@ -685,6 +686,24 @@ class DatabaseManager:
                     f"bidirectional user_to_contact/contact_to_user context)"
                 )
                 conn.execute("DELETE FROM communication_templates WHERE context = 'general'")
+
+        if from_version == 2 and to_version >= 3:
+            # Migration 2 → 3: Add filter_reason column to predictions table
+            # This enables observability into WHY predictions are filtered, which
+            # is critical for debugging and optimizing the reaction prediction logic.
+            # Before this change, 99.9% of predictions were filtered but we had no
+            # visibility into the reasons, making it impossible to improve the system.
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # Check if column already exists (migration may have been run partially)
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()]
+            if "filter_reason" not in columns:
+                logger.info(
+                    "Migration 2→3: Adding filter_reason column to predictions table "
+                    "for observability into prediction filtering logic"
+                )
+                conn.execute("ALTER TABLE predictions ADD COLUMN filter_reason TEXT")
 
     def _migrate_events_db(self, conn: sqlite3.Connection, from_version: int, to_version: int):
         """Apply schema migrations to events.db.

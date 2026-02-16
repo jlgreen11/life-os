@@ -121,27 +121,46 @@ class PredictionEngine:
         # Before surfacing any prediction, ask: "Will the user find this
         # helpful or annoying right now?" This prevents piling on during
         # stressful moments or when the user has been dismissing alerts.
+        #
+        # Track reaction predictions for each prediction so we can log filter reasons
+        reaction_map = {}
         filtered = []
         for pred in predictions:
             reaction = await self.predict_reaction(pred, current_context)
+            reaction_map[pred.id] = reaction
             if reaction.predicted_reaction in ("helpful", "neutral"):
                 filtered.append(pred)
+            else:
+                # Mark why this prediction was filtered (annoying reaction)
+                pred.filter_reason = f"reaction:{reaction.predicted_reaction} ({reaction.reasoning})"
 
         # Confidence floor — don't surface anything below SUGGEST threshold (0.3).
         # This enables relationship maintenance, preparation, and other valuable
         # predictions that should be shown as suggestions ("Would you like...?")
         # even if confidence isn't high enough for autonomous action.
-        filtered = [p for p in filtered if p.confidence >= 0.3]
+        filtered_after_confidence = []
+        for p in filtered:
+            if p.confidence >= 0.3:
+                filtered_after_confidence.append(p)
+            else:
+                # Mark why this prediction was filtered (low confidence)
+                p.filter_reason = f"confidence:{p.confidence:.3f} (threshold:0.3)"
+        filtered = filtered_after_confidence
 
         # Cap at 5 surfaced predictions per cycle, prioritized by confidence
         filtered.sort(key=lambda p: p.confidence, reverse=True)
+        if len(filtered) > 5:
+            # Mark predictions filtered due to ranking
+            for p in filtered[5:]:
+                p.filter_reason = f"ranking:position_{filtered.index(p)+1} (top_5_cutoff, confidence:{p.confidence:.3f})"
         filtered = filtered[:5]
 
         # Log filtering results for observability
-        filtered_by_reaction = len(predictions) - len([p for p in predictions if p in filtered or p.confidence < 0.3])
-        filtered_by_confidence = len([p for p in predictions if p.confidence < 0.3 and p not in filtered])
+        filtered_by_reaction = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("reaction:")])
+        filtered_by_confidence = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("confidence:")])
+        filtered_by_ranking = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("ranking:")])
         print(f"[prediction_engine] Filtering: {len(predictions)} raw → {len(filtered)} surfaced "
-              f"(filtered: {filtered_by_reaction} by reaction, {filtered_by_confidence} by confidence)")
+              f"(filtered: {filtered_by_reaction} by reaction, {filtered_by_confidence} by confidence, {filtered_by_ranking} by ranking)")
 
         # Store ALL predictions (including filtered-out ones) for accuracy
         # tracking. Mark which ones were actually surfaced so the feedback
@@ -164,6 +183,9 @@ class PredictionEngine:
             if not pred.was_surfaced:
                 pred.resolved_at = now
                 pred.user_response = 'filtered'
+                # Ensure filter_reason is set (if not already set by filtering logic above)
+                if not pred.filter_reason:
+                    pred.filter_reason = "unknown (should not happen)"
 
             self.ums.store_prediction(pred.model_dump())
 
