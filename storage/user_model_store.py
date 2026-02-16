@@ -361,8 +361,41 @@ class UserModelStore:
 
         Predictions that are immediately filtered (not surfaced) are stored with
         resolved_at and user_response='filtered' to prevent database bloat.
+
+        DEDUPLICATION: Before storing a new prediction, check if an identical
+        unresolved prediction already exists (same type + same description).
+        If a duplicate exists, skip storage to prevent:
+        - Database bloat (340K+ duplicate predictions)
+        - Event bus spam (redundant telemetry)
+        - Processing waste (regenerating same predictions every 15 min)
+
+        This is critical because the prediction engine runs every 15 minutes
+        and would otherwise recreate ALL predictions (even unresolved ones)
+        on every cycle, causing exponential growth.
         """
         with self.db.get_connection("user_model") as conn:
+            # Check for existing unresolved prediction with same type + description
+            existing = conn.execute(
+                """SELECT id FROM predictions
+                   WHERE prediction_type = ?
+                   AND description = ?
+                   AND resolved_at IS NULL
+                   LIMIT 1""",
+                (prediction["prediction_type"], prediction["description"]),
+            ).fetchone()
+
+            # If duplicate exists and is unresolved, skip storage
+            if existing:
+                # Telemetry for observability: track that deduplication occurred
+                self._emit_telemetry("usermodel.prediction.deduplicated", {
+                    "existing_prediction_id": existing["id"],
+                    "attempted_prediction_type": prediction["prediction_type"],
+                    "attempted_description": prediction["description"][:100],  # Truncate for telemetry
+                    "deduplicated_at": datetime.now(timezone.utc).isoformat(),
+                })
+                return  # Skip storage
+
+            # No duplicate found, store the prediction
             conn.execute(
                 """INSERT INTO predictions
                    (id, prediction_type, description, confidence, confidence_gate,
@@ -385,6 +418,7 @@ class UserModelStore:
                 ),
             )
 
+        # Emit telemetry for successfully stored (non-duplicate) prediction
         self._emit_telemetry("usermodel.prediction.generated", {
             "prediction_id": prediction["id"],
             "prediction_type": prediction["prediction_type"],
