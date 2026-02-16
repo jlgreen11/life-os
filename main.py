@@ -87,7 +87,11 @@ class LifeOS:
         # making unit-testing straightforward via mock injection.
         # All services are wired to the event bus for data creation telemetry.
         self.signal_extractor = SignalExtractorPipeline(self.db, self.user_model_store)
-        self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}))
+        # AIEngine receives the vector_store for semantic search capabilities.
+        # The vector store enables intelligent search queries like "What did Mike
+        # say about the Denver project?" via embedding-based similarity matching.
+        self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}),
+                                  vector_store=self.vector_store)
         self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
         self.feedback_collector = FeedbackCollector(self.db, self.user_model_store, event_bus=self.event_bus)
         self.prediction_engine = PredictionEngine(
