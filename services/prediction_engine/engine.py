@@ -208,20 +208,24 @@ class PredictionEngine:
                 p.filter_reason = f"confidence:{p.confidence:.3f} (threshold:0.3)"
         filtered = filtered_after_confidence
 
-        # Cap at 5 surfaced predictions per cycle, prioritized by confidence
+        # Sort by confidence to prioritize delivery order (notification manager uses this).
+        # We no longer cap the number of surfaced predictions - if a prediction passes
+        # both reaction gating and confidence threshold, it should surface. The
+        # notification manager handles batching/digest grouping to prevent spam.
+        #
+        # Previously, a hard-coded top-5 limit caused 6.6% of legitimate DEFAULT-gate
+        # predictions (confidence 0.6-0.8) to be silently discarded purely due to
+        # ranking position. This defeated the purpose of confidence gates.
+        #
+        # Ranking now serves its proper purpose: determining priority order for
+        # delivery, not existence.
         filtered.sort(key=lambda p: p.confidence, reverse=True)
-        if len(filtered) > 5:
-            # Mark predictions filtered due to ranking
-            for p in filtered[5:]:
-                p.filter_reason = f"ranking:position_{filtered.index(p)+1} (top_5_cutoff, confidence:{p.confidence:.3f})"
-        filtered = filtered[:5]
 
         # Log filtering results for observability
         filtered_by_reaction = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("reaction:")])
         filtered_by_confidence = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("confidence:")])
-        filtered_by_ranking = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("ranking:")])
         print(f"[prediction_engine] Filtering: {len(predictions)} raw → {len(filtered)} surfaced "
-              f"(filtered: {filtered_by_reaction} by reaction, {filtered_by_confidence} by confidence, {filtered_by_ranking} by ranking)")
+              f"(filtered: {filtered_by_reaction} by reaction, {filtered_by_confidence} by confidence)")
 
         # Store ALL predictions (including filtered-out ones) for accuracy
         # tracking. Mark which ones were actually surfaced so the feedback
