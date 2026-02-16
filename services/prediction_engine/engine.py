@@ -1293,10 +1293,15 @@ class PredictionEngine:
         # Production data showed addresses like callofduty@comms.activision.com and
         # similar patterns slipping through, creating 820 "contacts" when only ~20
         # are actual human relationships.
+        #
+        # IMPORTANT: Patterns must not match legitimate personal email providers.
+        # The @mail. pattern was removed in iteration 160 because it incorrectly
+        # blocked @gmail.com, @hotmail.com, @protonmail.com, etc., completely
+        # breaking relationship maintenance predictions for all Gmail users.
         marketing_domain_patterns = (
             "@news-", "@email.", "@reply.", "@mailing.",
             "@newsletters.", "@promo.", "@marketing.",
-            "@em.", "@mg.", "@mail.",  # Common email service provider patterns
+            "@em.", "@mg.",  # Common email service provider patterns (mail. removed - too broad)
             "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
             "@comms.", "@communications.",  # Corporate communications (e.g., comms.activision.com)
             "@attn.",  # Attention/notification platforms (e.g., attn.us.lg.com)
