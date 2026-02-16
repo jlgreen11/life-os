@@ -8,11 +8,14 @@ Called by the app factory to register routes on the FastAPI instance.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+
+logger = logging.getLogger(__name__)
 
 from web.schemas import (
     CommandRequest,
@@ -67,23 +70,32 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def health():
         """Aggregate health check — polls every connector and returns a
         unified status payload used by the dashboard status bar."""
-        connectors = []
-        for c in life_os.connectors:
+        import asyncio
+
+        async def _check(c):
             try:
-                status = await c.health_check()
-                connectors.append(status)
+                return await asyncio.wait_for(c.health_check(), timeout=5.0)
+            except asyncio.TimeoutError:
+                return {"connector": c.CONNECTOR_ID, "status": "error", "details": "timeout"}
             except Exception as e:
-                # Individual connector failures should not break the overall
-                # health endpoint; report the error inline instead.
-                connectors.append({"connector": c.CONNECTOR_ID, "status": "error", "details": str(e)})
+                return {"connector": c.CONNECTOR_ID, "status": "error", "details": str(e)}
+
+        # Run all connector health checks concurrently instead of sequentially
+        connectors = await asyncio.gather(*[_check(c) for c in life_os.connectors])
+
+        # Offload synchronous SQLite calls to threads
+        events_stored, vector_stats = await asyncio.gather(
+            asyncio.to_thread(life_os.event_store.get_event_count),
+            asyncio.to_thread(life_os.vector_store.get_stats),
+        )
 
         return {
             "status": "ok",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_bus": life_os.event_bus.is_connected,
-            "events_stored": life_os.event_store.get_event_count(),
-            "vector_store": life_os.vector_store.get_stats(),
-            "connectors": connectors,
+            "events_stored": events_stored,
+            "vector_store": vector_stats,
+            "connectors": list(connectors),
         }
 
     @app.get("/api/status")
@@ -549,6 +561,60 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "confidence": mood.confidence,
                 "trend": mood.trend,
             }
+        }
+
+    @app.get("/api/user-model/workflows")
+    async def get_workflows(min_success_rate: float = 0.0, min_observations: int = 0):
+        """Return detected workflows from Layer 3 (procedural memory).
+
+        Workflows are multi-step task-completion patterns learned from event
+        sequences. Unlike routines (time/location-triggered), workflows are
+        goal-driven processes that span multiple tools and interaction types.
+
+        Examples:
+        - "Responding to boss emails" (read → research → draft → send)
+        - "Task completion workflow" (created → worked → completed)
+        - "Calendar event workflow" (prep → attend → follow-up)
+
+        Query params:
+            min_success_rate: Filter workflows by minimum success rate (0.0-1.0)
+            min_observations: Filter workflows by minimum times observed
+
+        Returns:
+            List of workflows with their steps, tools, success rates, and
+            typical durations. Empty list if no workflows have been detected yet.
+        """
+        workflows = []
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT name, trigger_conditions, steps, typical_duration,
+                              tools_used, success_rate, times_observed, updated_at
+                       FROM workflows
+                       WHERE success_rate >= ? AND times_observed >= ?
+                       ORDER BY times_observed DESC, success_rate DESC""",
+                    (min_success_rate, min_observations),
+                ).fetchall()
+
+                for row in rows:
+                    workflow = dict(row)
+                    # Parse JSON fields
+                    for field in ("trigger_conditions", "steps", "tools_used"):
+                        if isinstance(workflow.get(field), str):
+                            try:
+                                workflow[field] = json.loads(workflow[field])
+                            except (json.JSONDecodeError, TypeError):
+                                workflow[field] = []
+                    workflows.append(workflow)
+        except Exception as e:
+            # Gracefully handle if workflows table doesn't exist yet or query fails
+            logger.warning(f"Failed to fetch workflows: {e}")
+            workflows = []
+
+        return {
+            "workflows": workflows,
+            "count": len(workflows),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
     # -------------------------------------------------------------------
