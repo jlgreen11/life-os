@@ -218,10 +218,18 @@ class BehavioralAccuracyTracker:
             try:
                 payload = json.loads(event["payload"])
                 # Check if recipient matches (handle both email addresses and names)
-                to = payload.get("to", "")
-                if contact_email and contact_email.lower() in to.lower():
+                # Email events use 'to_addresses' (list), message events use 'to' (string)
+                to_field = payload.get("to_addresses") or payload.get("to", "")
+
+                # Convert list to string for matching
+                if isinstance(to_field, list):
+                    to_str = ", ".join(to_field).lower()
+                else:
+                    to_str = to_field.lower()
+
+                if contact_email and contact_email.lower() in to_str:
                     return True  # User DID follow up — prediction was accurate
-                if contact_name and contact_name.lower() in to.lower():
+                if contact_name and contact_name.lower() in to_str:
                     return True
             except (json.JSONDecodeError, TypeError):
                 continue
