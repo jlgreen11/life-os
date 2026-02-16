@@ -103,8 +103,15 @@ class TaskManager:
 
         Actionable event types:
             - email.received: Incoming emails may contain requests
+            - email.sent: Outgoing emails may report completed tasks
             - message.received: Direct messages may contain action items
+            - message.sent: Outgoing messages may report completed tasks
             - calendar.event.created: Calendar descriptions may list TODOs
+
+        Sent events are processed to detect already-completed tasks. For example,
+        "I sent the report yesterday" in an outgoing email should create a task
+        marked as completed, not pending. This enables immediate workflow detection
+        from historical data instead of waiting 7+ days for task aging.
 
         Args:
             event: Event dict with type, payload, and metadata
@@ -120,18 +127,25 @@ class TaskManager:
         # --- Filter: Only process actionable event types ---
         # System events, predictions, and notifications are not actionable.
         # Only process events that contain user-generated text content.
-        if event_type not in ["email.received", "message.received", "calendar.event.created"]:
+        # We now include sent events to detect completion signals.
+        if event_type not in [
+            "email.received",
+            "email.sent",
+            "message.received",
+            "message.sent",
+            "calendar.event.created",
+        ]:
             return
 
         # --- Extract text content from the event payload ---
         # Different event types store text in different fields. We extract
         # the most relevant text for LLM analysis.
         text = None
-        if event_type == "email.received":
-            # For emails, prioritize body > snippet > subject
+        if event_type in ("email.received", "email.sent"):
+            # For emails (both received and sent), prioritize body > snippet > subject
             text = payload.get("body") or payload.get("snippet") or payload.get("subject", "")
-        elif event_type == "message.received":
-            # For messages, use the message body
+        elif event_type in ("message.received", "message.sent"):
+            # For messages (both received and sent), use the message body
             text = payload.get("body", "")
         elif event_type == "calendar.event.created":
             # For calendar events, check the description field for action items
@@ -436,16 +450,33 @@ class TaskManager:
         by Friday?"). Each extracted task is linked back to its source
         event via source_event_id so the user can see the original message.
 
-        Each task dict should have: title, due_hint (optional), priority.
+        Each task dict should have:
+            - title: Task description
+            - due_hint (optional): Deadline mentioned in the message
+            - priority: high/normal/low
+            - completed (optional): true if the task is already done, false otherwise
+
+        When a task is extracted with completed=true (e.g., "I sent the report yesterday"),
+        it's immediately marked as completed. This generates task.completed events that
+        enable workflow detection from historical data instead of waiting days for aging.
         """
         for task_data in tasks:
-            await self.create_task(
+            # Check if the AI detected this task as already completed
+            is_completed = task_data.get("completed", False)
+
+            # Create the task (always starts as pending initially)
+            task_id = await self.create_task(
                 title=task_data.get("title", "Untitled task"),
                 source="ai_extracted",           # Marks provenance as AI-extracted
                 source_event_id=source_event_id,   # Links back to the originating message
                 priority=task_data.get("priority", "normal"),
                 due_date=task_data.get("due_hint"),  # AI's best guess at the deadline
             )
+
+            # If the task is already completed, immediately mark it complete.
+            # This generates a task.completed event for workflow detection.
+            if is_completed:
+                await self.complete_task(task_id)
 
     def get_task_stats(self) -> dict:
         """
