@@ -658,6 +658,14 @@ class PredictionEngine:
             if not last or count < 5:
                 continue
 
+            # Skip marketing/automated senders — relationship maintenance is
+            # for human connections, not bulk email subscriptions. Without
+            # this filter, the system would generate "reach out" suggestions
+            # for addresses like callofduty@comms.activision.com which are
+            # marketing automations, not relationships to maintain.
+            if self._is_marketing_or_noreply(addr, {}):
+                continue
+
             try:
                 last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
                 days_since = (now - last_dt).days
