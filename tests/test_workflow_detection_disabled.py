@@ -125,8 +125,8 @@ def test_workflow_detection_logging(db, user_model_store, caplog):
     detector = WorkflowDetector(db, user_model_store)
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Should log that detection is skipped
-    assert any("skipped" in record.message.lower() for record in caplog.records), \
-        "Should log that workflow detection is skipped"
-    assert any("performance" in record.message.lower() for record in caplog.records), \
-        "Should mention performance as the reason"
+    # Should log that detection is disabled
+    assert any("disabled" in record.message.lower() for record in caplog.records), \
+        "Should log that workflow detection is disabled"
+    assert any("redesign" in record.message.lower() for record in caplog.records), \
+        "Should mention algorithmic redesign as the reason"

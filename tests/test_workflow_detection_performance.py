@@ -5,6 +5,9 @@ This test verifies that the workflow detector uses the optimized O(n+m)
 algorithm instead of the O(n×m) nested loop approach. With 77K received emails
 and 285 sent emails, the nested loop would require 22M iterations and timeout.
 The optimized index-based approach reduces this to 77K iterations.
+
+NOTE: These tests are skipped because workflow detection is currently disabled
+pending algorithmic redesign. See services/workflow_detector/detector.py for details.
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ import pytest
 
 from models.core import EventType
 from services.workflow_detector.detector import WorkflowDetector
+
+pytestmark = pytest.mark.skip(reason="Workflow detection disabled pending algorithmic redesign")
 
 
 def test_workflow_detection_scales_linearly(db, user_model_store, event_store):

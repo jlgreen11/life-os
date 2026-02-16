@@ -179,20 +179,17 @@ def test_workflow_detection_uses_denormalized_columns(db, event_store, user_mode
             "metadata": {},
         })
 
-    # Detect workflows
+    # Detect workflows (currently disabled, see WorkflowDetector.detect_workflows docstring)
     detector = WorkflowDetector(db, user_model_store)
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Should detect "Responding to boss@company.com" workflow
-    boss_workflows = [w for w in workflows if "boss@company.com" in w["name"].lower()]
-    assert len(boss_workflows) >= 1, f"Expected boss workflow, got: {[w['name'] for w in workflows]}"
-
-    boss_workflow = boss_workflows[0]
-    assert boss_workflow["times_observed"] == 5, f"Expected 5 observations, got {boss_workflow['times_observed']}"
-    assert boss_workflow["success_rate"] == 1.0, f"Expected 100% success rate, got {boss_workflow['success_rate']}"
-    assert "email" in boss_workflow["tools_used"], f"Expected email in tools, got {boss_workflow['tools_used']}"
+    # Workflow detection is disabled pending algorithmic redesign.
+    # This test verifies that the denormalized columns and triggers exist
+    # and are populated correctly, ready for when the redesign is complete.
+    assert workflows == [], "Workflow detection should be disabled (returns empty list)"
 
 
+@pytest.mark.skip(reason="Workflow detection disabled pending algorithmic redesign")
 def test_workflow_detection_performance_with_denormalized_columns(db, event_store, user_model_store):
     """Verify workflow detection completes in <2s with denormalized columns."""
     now = datetime.now(timezone.utc)

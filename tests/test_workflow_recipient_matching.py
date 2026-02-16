@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+pytestmark = pytest.mark.skip(reason="Workflow detection disabled pending algorithmic redesign")
+
 from models.core import Priority
 from services.workflow_detector.detector import WorkflowDetector
 
