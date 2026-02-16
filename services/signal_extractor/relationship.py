@@ -107,6 +107,13 @@ class RelationshipExtractor(BaseExtractor):
           - interaction_timestamps:
                 A ring buffer (last 100) used to compute interaction frequency,
                 detect dormant relationships, and spot contact-frequency changes.
+          - response_times_seconds:
+                A ring buffer (last 50) tracking how long the user took to reply
+                to this contact's messages. Used to compute avg_response_time_seconds.
+          - avg_response_time_seconds:
+                Running average of user's response time to this contact. Used by
+                the semantic fact inferrer to identify high-priority relationships
+                (fast responses = high priority).
         """
         existing = self.ums.get_signal_profile("relationships")
         data = existing["data"] if existing else {"contacts": {}}
@@ -122,7 +129,10 @@ class RelationshipExtractor(BaseExtractor):
                     "channels_used": [],
                     "avg_message_length": 0,
                     "last_interaction": None,
+                    "last_inbound_timestamp": None,
                     "interaction_timestamps": [],
+                    "response_times_seconds": [],
+                    "avg_response_time_seconds": None,
                 }
 
             profile = data["contacts"][addr]
@@ -130,8 +140,37 @@ class RelationshipExtractor(BaseExtractor):
             # Track direction so we can compute reciprocity ratios later.
             if signal["direction"] == "inbound":
                 profile["inbound_count"] += 1
+                # Store the timestamp of the last inbound message so we can
+                # calculate response time when the user replies
+                profile["last_inbound_timestamp"] = signal["timestamp"]
             else:
                 profile["outbound_count"] += 1
+
+                # Calculate response time if this is a reply to a recent inbound
+                if profile.get("last_inbound_timestamp") and signal.get("is_reply"):
+                    try:
+                        from datetime import datetime
+                        inbound_time = datetime.fromisoformat(profile["last_inbound_timestamp"].replace('Z', '+00:00'))
+                        outbound_time = datetime.fromisoformat(signal["timestamp"].replace('Z', '+00:00'))
+                        response_seconds = (outbound_time - inbound_time).total_seconds()
+
+                        # Only track positive response times (sanity check)
+                        if response_seconds > 0:
+                            if "response_times_seconds" not in profile:
+                                profile["response_times_seconds"] = []
+                            profile["response_times_seconds"].append(response_seconds)
+
+                            # Cap response time history at 50 entries
+                            if len(profile["response_times_seconds"]) > 50:
+                                profile["response_times_seconds"] = profile["response_times_seconds"][-50:]
+
+                            # Recompute average response time from the ring buffer
+                            if profile["response_times_seconds"]:
+                                profile["avg_response_time_seconds"] = (
+                                    sum(profile["response_times_seconds"]) / len(profile["response_times_seconds"])
+                                )
+                    except Exception:
+                        pass  # Gracefully skip if timestamp parsing fails
 
             # Record new channels — deduplicated to keep the list compact.
             if signal["channel"] not in profile["channels_used"]:

@@ -96,7 +96,7 @@ class TestSemanticFactInferrer:
         profile_data = {
             "contacts": {
                 "alice@example.com": {
-                    "message_count": 10,
+                    "interaction_count": 10,
                     "avg_response_time_seconds": 1800,  # 30 minutes
                 }
             }
@@ -117,7 +117,7 @@ class TestSemanticFactInferrer:
         profile_data = {
             "contacts": {
                 "bob@example.com": {
-                    "message_count": 8,
+                    "interaction_count": 8,
                     "avg_response_time_seconds": 172800,  # 48 hours
                 }
             }
@@ -213,7 +213,7 @@ class TestSemanticFactInferrer:
         _set_samples(user_model_store, "linguistic", 25)
 
         user_model_store.update_signal_profile("relationships", {
-            "contacts": {"alice@example.com": {"message_count": 10, "avg_response_time_seconds": 1800}}
+            "contacts": {"alice@example.com": {"interaction_count": 10, "avg_response_time_seconds": 1800}}
         })
         _set_samples(user_model_store, "relationships", 15)
 

@@ -217,7 +217,7 @@ class TestSemanticInferenceLoop:
         profile_data = {
             "contacts": {
                 "boss@company.com": {
-                    "message_count": 10,
+                    "interaction_count": 10,
                     "avg_response_time_seconds": 1800,  # 30 minutes (< 1 hour)
                     "last_contact": datetime.now(timezone.utc).isoformat(),
                 }
