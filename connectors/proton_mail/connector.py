@@ -263,11 +263,15 @@ class ProtonMailConnector(BaseConnector):
             "in_reply_to": in_reply_to,
             "folder": folder,
             # CRITICAL: Include the email's actual Date header timestamp so downstream
-            # systems (episodic memory, routine detection, temporal analysis) can use
-            # the true interaction time instead of the sync timestamp. Without this,
-            # all episodes collapse to a single day (the sync date), breaking routine
-            # detection which requires temporal patterns across multiple days.
-            "date": dt.isoformat(),
+            # systems (episodic memory, routine detection, temporal analysis, and
+            # relationship frequency analysis) can use the true interaction time
+            # instead of the sync timestamp. Without this, all episodes collapse to
+            # a single day (the sync date), breaking routine detection and causing
+            # relationship maintenance predictions to fail (avg gap = 0 days).
+            #
+            # Field name MUST be "email_date" to match the field name expected by
+            # RelationshipExtractor (services/signal_extractor/relationship.py:62-67).
+            "email_date": dt.isoformat(),
         }
 
         # ---- Related Contacts Metadata ----
