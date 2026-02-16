@@ -233,28 +233,28 @@ class PredictionEngine:
                     continue  # Skip events without time bounds
 
                 # Parse ISO timestamps. Handle both 'Z' suffix and '+00:00' format.
-                # Some calendar events use date-only format (all-day events).
+                # CRITICAL FIX (iteration 128): fromisoformat() parses date-only
+                # strings like "2026-02-14" successfully but creates timezone-NAIVE
+                # datetimes. This caused all calendar predictions to fail when
+                # comparing naive vs aware datetimes. Now we explicitly check and
+                # add UTC timezone to any naive datetime.
                 try:
                     start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    # If timezone-naive (all-day events), make it UTC-aware
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=timezone.utc)
                 except ValueError:
-                    # All-day events may be YYYY-MM-DD format without time
-                    # Convert to datetime at midnight UTC for comparison
-                    from datetime import date
-                    try:
-                        date_obj = date.fromisoformat(start_str)
-                        start_dt = datetime.combine(date_obj, datetime.min.time(), tzinfo=timezone.utc)
-                    except ValueError:
-                        continue  # Skip unparseable dates
+                    # Completely unparseable — skip this event
+                    continue
 
                 try:
                     end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                    # If timezone-naive (all-day events), make it UTC-aware
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=timezone.utc)
                 except ValueError:
-                    # All-day event end date
-                    try:
-                        date_obj = date.fromisoformat(end_str)
-                        end_dt = datetime.combine(date_obj, datetime.min.time(), tzinfo=timezone.utc)
-                    except ValueError:
-                        continue
+                    # Completely unparseable — skip this event
+                    continue
 
                 # Skip all-day events — they don't cause scheduling conflicts
                 # in the traditional sense (you can have multiple all-day markers).
@@ -769,7 +769,11 @@ class PredictionEngine:
                     continue
 
                 # Parse the start time and check if it's in our preparation window
+                # CRITICAL FIX (iteration 128): Same timezone-naive bug as calendar
+                # conflicts — date-only strings parse but create naive datetimes.
                 start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
 
                 if window_start <= start_time <= window_end:
                     parsed_events.append({
