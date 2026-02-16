@@ -242,6 +242,7 @@ class LifeOS:
         asyncio.create_task(self._routine_detection_loop())
         asyncio.create_task(self._behavioral_accuracy_loop())
         asyncio.create_task(self._task_completion_loop())
+        asyncio.create_task(self._digest_delivery_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
@@ -1367,6 +1368,59 @@ class LifeOS:
             # minutes (unlike prediction validation), so we can run less frequently
             # while still maintaining responsive workflow detection.
             await asyncio.sleep(1800)  # 30 minutes
+
+    async def _digest_delivery_loop(self):
+        """Deliver batched notifications on a scheduled cadence.
+
+        The notification manager accumulates low-priority notifications in an
+        in-memory batch when the user is in "batched" mode. Without scheduled
+        delivery, these notifications remain stuck in pending state forever.
+
+        This loop delivers the digest at three scheduled times each day:
+          - 09:00 (morning briefing)
+          - 13:00 (midday update)
+          - 18:00 (evening wrap-up)
+
+        Each digest delivery:
+          1. Calls notification_manager.get_digest() which returns all batched items
+          2. Marks each notification as "delivered" in the database
+          3. Marks any associated predictions as "surfaced"
+          4. Clears the in-memory batch queue for the next cycle
+
+        If a scheduled time is missed (e.g., system was off), the loop checks
+        again on the next iteration. Notifications don't expire — they'll be
+        delivered at the next available digest window.
+        """
+        # Scheduled delivery times (24-hour format, local time)
+        digest_hours = [9, 13, 18]
+        last_delivered_hour = None
+
+        while not self.shutdown_event.is_set():
+            try:
+                now = datetime.now()
+                current_hour = now.hour
+
+                # Check if we've reached a digest hour and haven't delivered yet this hour
+                if current_hour in digest_hours and current_hour != last_delivered_hour:
+                    # Deliver the batched digest
+                    digest = await self.notification_manager.get_digest()
+                    if digest:
+                        print(f"  DigestDelivery: delivered {len(digest)} batched notifications")
+
+                    # Track that we've delivered for this hour to prevent duplicate deliveries
+                    last_delivered_hour = current_hour
+
+                # Reset tracking when we move to a different hour (digest or non-digest)
+                # This allows the next digest hour to trigger delivery
+                elif current_hour != last_delivered_hour and last_delivered_hour is not None:
+                    last_delivered_hour = None
+
+            except Exception as e:
+                print(f"Digest delivery error: {e}")
+                # Continue running even if delivery fails — we'll try again next cycle
+
+            # Check every 5 minutes for the next digest window
+            await asyncio.sleep(300)
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
