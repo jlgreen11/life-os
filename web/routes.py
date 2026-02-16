@@ -1451,6 +1451,42 @@ def register_routes(app: FastAPI, life_os) -> None:
             }
 
     # -------------------------------------------------------------------
+    # Semantic Fact Inference
+    # -------------------------------------------------------------------
+
+    @app.post("/api/admin/semantic-facts/infer")
+    async def trigger_semantic_fact_inference():
+        """
+        Trigger semantic fact inference across all signal profiles.
+
+        Analyzes accumulated signal profiles (linguistic, relationship, topic,
+        cadence, mood) and derives high-level semantic facts about the user's
+        preferences, expertise, values, and patterns.
+
+        This endpoint is useful for:
+          - Manual testing during development
+          - On-demand inference after bulk data ingestion
+          - Admin troubleshooting
+
+        In production, inference runs automatically every 6 hours via background task.
+        """
+        life_os.semantic_fact_inferrer.run_all_inference()
+
+        # Return count of facts after inference
+        facts = life_os.user_model_store.get_semantic_facts()
+        facts_by_category = {}
+        for fact in facts:
+            category = fact.get("category", "unknown")
+            facts_by_category[category] = facts_by_category.get(category, 0) + 1
+
+        return {
+            "status": "success",
+            "message": "Semantic fact inference completed",
+            "total_facts": len(facts),
+            "facts_by_category": facts_by_category,
+        }
+
+    # -------------------------------------------------------------------
     # Setup / Onboarding
     # -------------------------------------------------------------------
 

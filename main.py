@@ -40,6 +40,7 @@ from connectors.registry import CONNECTOR_REGISTRY, get_connector_class
 from connectors.crypto import ConfigEncryptor
 from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
+from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 
 
 class LifeOS:
@@ -98,6 +99,8 @@ class LifeOS:
             self.db, self.user_model_store
         )
         self.insight_engine = InsightEngine(self.db, self.user_model_store)
+        # SemanticFactInferrer derives high-level facts from signal profiles
+        self.semantic_fact_inferrer = SemanticFactInferrer(self.user_model_store)
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
