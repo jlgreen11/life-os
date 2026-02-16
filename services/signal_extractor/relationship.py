@@ -82,10 +82,11 @@ class RelationshipExtractor(BaseExtractor):
         # Merge these interaction signals into persisted per-contact profiles.
         self._update_contact_profiles(signals)
 
-        # Extract communication templates from outbound messages only.
-        # Templates capture the user's writing style per contact/channel.
-        if "sent" in event_type.lower():
-            self._extract_communication_templates(event, addresses)
+        # Extract communication templates from ALL messages (both directions).
+        # Outbound templates capture the user's writing style per contact/channel.
+        # Inbound templates capture how each contact writes to the user.
+        is_outbound = "sent" in event_type.lower()
+        self._extract_communication_templates(event, addresses, is_outbound)
 
         return signals
 
@@ -194,10 +195,10 @@ class RelationshipExtractor(BaseExtractor):
 
         self.ums.update_signal_profile("relationships", data)
 
-    def _extract_communication_templates(self, event: dict, addresses: list[str]):
-        """Extract communication style templates from outbound messages.
+    def _extract_communication_templates(self, event: dict, addresses: list[str], is_outbound: bool):
+        """Extract communication style templates from messages (both directions).
 
-        Analyzes user's sent messages to learn writing patterns per contact/channel:
+        Analyzes messages to learn writing patterns per contact/channel:
         - Greeting and closing phrases (e.g., "Hey" vs "Dear" vs none)
         - Formality level (0.0 = casual, 1.0 = formal)
         - Typical message length
@@ -205,13 +206,23 @@ class RelationshipExtractor(BaseExtractor):
         - Common phrases and words
         - Tone indicators
 
+        Templates are stored separately for each direction:
+        - Outbound (user_to_contact): How the user writes TO contacts
+        - Inbound (contact_to_user): How contacts write TO the user
+
+        This enables:
+        1. Style-matching when drafting replies (mirror the contact's style)
+        2. Detecting formality mismatches (contact writes casually, user responds formally)
+        3. Learning relationship-specific communication patterns
+        4. Better prediction of incoming message characteristics
+
         Templates are updated incrementally as more samples accumulate. Each
-        contact-channel pair gets its own template ID, enabling the AI to draft
-        messages matching the user's established style for that relationship.
+        contact-channel-direction tuple gets its own template ID.
 
         Args:
-            event: The outbound message event
-            addresses: List of recipient addresses from the message
+            event: The message event (sent or received)
+            addresses: List of contact addresses (recipients for outbound, sender for inbound)
+            is_outbound: True if user sent this message, False if user received it
         """
         payload = event.get("payload", {})
         channel = payload.get("channel", event.get("source", "email"))
@@ -225,9 +236,12 @@ class RelationshipExtractor(BaseExtractor):
             if not address:
                 continue
 
-            # Generate deterministic template ID from contact + channel
+            # Generate deterministic template ID from contact + channel + direction
+            # Direction is part of the ID so we store separate templates for
+            # how the user writes TO a contact vs how the contact writes TO the user
+            direction_suffix = "out" if is_outbound else "in"
             template_id = hashlib.sha256(
-                f"{address}:{channel}".encode()
+                f"{address}:{channel}:{direction_suffix}".encode()
             ).hexdigest()[:16]
 
             # Load existing template or bootstrap a new one
@@ -239,16 +253,28 @@ class RelationshipExtractor(BaseExtractor):
             closing = self._extract_closing(body)
             formality = self._calculate_formality(body)
             message_length = len(body)
-            uses_emoji = bool(re.search(r'[\U0001F600-\U0001F64F]', body))
+            # Broad emoji detection covering emoticons, symbols, pictographs, etc.
+            uses_emoji = bool(re.search(
+                r'[\U0001F600-\U0001F64F'  # Emoticons
+                r'\U0001F300-\U0001F5FF'    # Symbols & pictographs
+                r'\U0001F680-\U0001F6FF'    # Transport & map symbols
+                r'\U0001F1E0-\U0001F1FF'    # Flags
+                r'\U00002702-\U000027B0'    # Dingbats
+                r'\U000024C2-\U0001F251]',  # Enclosed characters
+                body
+            ))
             words = self._extract_words(body)
 
             # Incremental update: blend new sample with existing template
             # using exponential moving average (weight recent samples more)
             alpha = 0.3  # Learning rate — higher = adapt faster to style changes
 
+            # Set context based on direction for downstream filtering
+            context = "user_to_contact" if is_outbound else "contact_to_user"
+
             template = {
                 "id": template_id,
-                "context": "general",  # Could be enhanced to detect context (work, personal, etc.)
+                "context": context,
                 "contact_id": address,
                 "channel": channel,
                 "greeting": greeting if greeting else existing.get("greeting"),
@@ -280,6 +306,7 @@ class RelationshipExtractor(BaseExtractor):
             }
 
             # Persist the updated template
+            # (Telemetry is published by the UserModelStore itself)
             self.ums.store_communication_template(template)
 
     def _get_existing_template(self, template_id: str) -> dict:

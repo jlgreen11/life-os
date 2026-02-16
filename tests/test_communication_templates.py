@@ -419,7 +419,7 @@ def test_template_skips_short_messages(db, user_model_store):
 
 
 def test_template_no_extraction_for_inbound(db, user_model_store):
-    """Test that inbound messages don't create templates (only outbound do)."""
+    """Test that inbound messages create contact_to_user templates."""
     extractor = RelationshipExtractor(db=db, user_model_store=user_model_store)
 
     # Inbound message
@@ -437,14 +437,18 @@ def test_template_no_extraction_for_inbound(db, user_model_store):
 
     extractor.extract(event)
 
-    # Should not have created a template (only outbound messages create templates)
+    # Should have created a template for inbound messages (contact_to_user direction)
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
-            "SELECT * FROM communication_templates WHERE contact_id = ?",
-            ("sender@example.com",)
+            "SELECT * FROM communication_templates WHERE contact_id = ? AND context = ?",
+            ("sender@example.com", "contact_to_user")
         ).fetchall()
 
-    assert len(templates) == 0
+    # Verify inbound template was created
+    assert len(templates) == 1
+    template = dict(templates[0])
+    assert template["context"] == "contact_to_user"
+    assert template["channel"] == "email"
 
 
 def test_template_example_message_ids(db, user_model_store):

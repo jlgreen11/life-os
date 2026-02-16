@@ -361,8 +361,8 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        # Verify template was created
-        template_id = hashlib.sha256(b"alice@example.com:email").hexdigest()[:16]
+        # Verify template was created (outbound direction)
+        template_id = hashlib.sha256(b"alice@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT greeting FROM communication_templates WHERE id = ?",
@@ -388,7 +388,7 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        template_id = hashlib.sha256(b"bob@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"bob@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT greeting FROM communication_templates WHERE id = ?",
@@ -413,7 +413,7 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        template_id = hashlib.sha256(b"charlie@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"charlie@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT closing FROM communication_templates WHERE id = ?",
@@ -437,7 +437,7 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        template_id = hashlib.sha256(b"dave@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"dave@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT closing FROM communication_templates WHERE id = ?",
@@ -468,7 +468,7 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        template_id = hashlib.sha256(b"formal@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"formal@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT formality FROM communication_templates WHERE id = ?",
@@ -498,7 +498,7 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        template_id = hashlib.sha256(b"casual@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"casual@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT formality FROM communication_templates WHERE id = ?",
@@ -523,7 +523,7 @@ class TestRelationshipExtractor:
 
         extractor.extract(event)
 
-        template_id = hashlib.sha256(b"emoji@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"emoji@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT uses_emoji FROM communication_templates WHERE id = ?",
@@ -552,7 +552,7 @@ class TestRelationshipExtractor:
         }
         extractor.extract(event1)
 
-        template_id = hashlib.sha256(b"evolving@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"evolving@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row1 = conn.execute(
                 "SELECT formality, samples_analyzed FROM communication_templates WHERE id = ?",
@@ -613,7 +613,7 @@ class TestRelationshipExtractor:
         }
         extractor.extract(event2)
 
-        template_id = hashlib.sha256(b"phrases@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"phrases@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT common_phrases FROM communication_templates WHERE id = ?",
@@ -643,7 +643,7 @@ class TestRelationshipExtractor:
         extractor.extract(event)
 
         # Verify no template was created
-        template_id = hashlib.sha256(b"short@example.com:email").hexdigest()[:16]
+        template_id = hashlib.sha256(b"short@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
                 "SELECT id FROM communication_templates WHERE id = ?",
@@ -668,7 +668,7 @@ class TestRelationshipExtractor:
         }
         extractor.extract(event1)
 
-        template_id1 = hashlib.sha256(b"fallback1@example.com:email").hexdigest()[:16]
+        template_id1 = hashlib.sha256(b"fallback1@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row1 = conn.execute(
                 "SELECT greeting FROM communication_templates WHERE id = ?",
@@ -691,7 +691,7 @@ class TestRelationshipExtractor:
         }
         extractor.extract(event2)
 
-        template_id2 = hashlib.sha256(b"fallback2@example.com:email").hexdigest()[:16]
+        template_id2 = hashlib.sha256(b"fallback2@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row2 = conn.execute(
                 "SELECT greeting FROM communication_templates WHERE id = ?",
@@ -729,8 +729,8 @@ class TestRelationshipExtractor:
         extractor.extract(event2)
 
         # Verify two separate templates were created
-        template_id_email = hashlib.sha256(b"multi@example.com:email").hexdigest()[:16]
-        template_id_slack = hashlib.sha256(b"multi@example.com:slack").hexdigest()[:16]
+        template_id_email = hashlib.sha256(b"multi@example.com:email:out").hexdigest()[:16]
+        template_id_slack = hashlib.sha256(b"multi@example.com:slack:out").hexdigest()[:16]
 
         with extractor.db.get_connection("user_model") as conn:
             count = conn.execute(
