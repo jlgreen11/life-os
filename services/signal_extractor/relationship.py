@@ -580,7 +580,7 @@ class RelationshipExtractor(BaseExtractor):
             "newsletter@", "notifications@", "notification@",  # Both singular and plural
             "updates@", "update@", "digest@",
             "mailer@", "bulk@", "promo@", "marketing@",
-            "reply@", "email@", "news@", "offers@", "offer@", "deals@",
+            "reply@", "email@", "emails@", "news@", "offers@", "offer@", "deals@",
             "hello@", "info@", "support@", "help@",
             "service@", "services@",  # PayPal, Stripe, etc. - mostly transactional but repetitive
             "discover@",    # Common marketing pattern (Airbnb, etc.)
@@ -596,7 +596,18 @@ class RelationshipExtractor(BaseExtractor):
             # Organizational bulk senders
             "communications@", "development@", "fundraising@",
             # Loyalty/rewards programs (always automated)
-            "rewards@", "loyalty@",
+            "rewards@", "loyalty@", "acerewards@",  # Ace Hardware, etc.
+            # E-commerce/sales patterns (always marketing)
+            "sales@", "sale@", "shop@", "store@", "merchant@",
+            "concierge@",  # E-commerce customer service (TommyJohn, etc.)
+            "flyers@", "flyer@",  # Marketing flyers/circulars
+            "partners@", "partner@",  # Partnership/affiliate marketing
+            "team@",  # Generic team addresses (usually automated, e.g., team@kickstarter)
+            "ens@",  # Emergency Notification System (e.g., ens@usgs.gov)
+            "ouch@",  # Marketing (e.g., ouch@mymedic.com)
+            "events@", "event@",  # Event marketing/ticketing (SeatGeek, etc.)
+            "uber@", "lyft@", "doordash@", "grubhub@",  # Ride-share/delivery transactional
+            "spices@",  # Product marketing (e.g., spices@thespicehouse.com)
         )
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True
@@ -641,6 +652,11 @@ class RelationshipExtractor(BaseExtractor):
             "@care.",  # Customer care (e.g., care.kansashealthsystem.com)
             "@mcmap.",  # Marketing campaign manager (e.g., mcmap.chase.com)
             "@soslprospect.",  # Sales/prospect management (e.g., soslprospect.salliemae.com)
+            "@ecomm.", "@shop.", "@store.",  # E-commerce subdomains (e.g., ecomm.lenovo.com)
+            "@iemail.",  # Internal email/marketing (e.g., partners@iemail.moneylion.com)
+            "@webstaurant",  # WebstaurantStore marketing
+            "@e1.",  # E-commerce platform pattern (e.g., e1.acehardware.com)
+            "@connect.",  # Connection/notification platforms (e.g., connect.razer.com)
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
             return True
@@ -672,9 +688,27 @@ class RelationshipExtractor(BaseExtractor):
             ".customer.io",       # Customer.io
             ".iterable.com",      # Iterable
             ".klaviyo.com",       # Klaviyo e-commerce marketing
+            ".substack.com",      # Substack newsletters (e.g., bytebytego@substack.com)
+            ".beehiiv.com",       # Beehiiv newsletter platform
+            ".ghost.io",          # Ghost newsletter platform
+            ".convertkit.com",    # ConvertKit creator marketing
+            ".buttondown.email",  # Buttondown newsletters
         )
-        if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
+        # Check both domain.endswith(pattern) and domain == pattern[1:] to catch both
+        # subdomains (e.g., newsletter@lists.substack.com) and apex domains (e.g., bytebytego@substack.com)
+        if any(domain.endswith(pattern) or domain == pattern[1:] for pattern in marketing_service_patterns):
             return True
+
+        # Brand self-mailer pattern: company@company.com
+        # When the local-part matches the domain name, it's almost always marketing
+        # Examples: cutleryandmore@cutleryandmore.com, briggsriley@briggs-riley.com
+        # Normalize by removing hyphens, dots, and underscores for comparison
+        if "@" in addr_lower and "." in domain:
+            local_normalized = local_part.replace("-", "").replace("_", "").replace(".", "")
+            domain_base = domain.split(".")[0].replace("-", "").replace("_", "")
+            if local_normalized == domain_base and len(local_normalized) > 3:
+                # Length check avoids false positives like me@me.com (personal domain)
+                return True
 
         # Check body and snippet for unsubscribe indicators
         # Marketing emails are legally required to include unsubscribe links
