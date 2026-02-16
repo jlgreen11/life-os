@@ -179,7 +179,6 @@ class LifeOS:
         # 1.5 — Seed default source weights (no-op if already populated)
         self.source_weight_manager.seed_defaults()
 
-<<<<<<< HEAD
         # 1.6 — Backfill episode classification if needed
         # This ensures routine and workflow detection have the granular
         # interaction types they need. Without this, all old episodes would
@@ -196,8 +195,6 @@ class LifeOS:
         # task data but no completion events.
         await self._backfill_task_completion_if_needed()
 
-=======
->>>>>>> 0a28968 (feat: add tunable source weight system for insight engine)
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -1052,7 +1049,9 @@ class LifeOS:
                 # Predictions with was_surfaced=0 were filtered by confidence gates
                 # or reaction prediction and never shown to the user. After 1 hour,
                 # these are no longer relevant and should be cleaned up.
-                filtered_resolved = self.notification_manager.auto_resolve_filtered_predictions(timeout_hours=1)
+                filtered_resolved = await asyncio.to_thread(
+                    self.notification_manager.auto_resolve_filtered_predictions, 1
+                )
                 if filtered_resolved > 0:
                     print(f"  Auto-resolved {filtered_resolved} filtered prediction(s)")
 
@@ -1081,7 +1080,7 @@ class LifeOS:
 
             # Recalculate AI drift based on engagement ratios
             try:
-                self.source_weight_manager.bulk_recalculate_drift()
+                await asyncio.to_thread(self.source_weight_manager.bulk_recalculate_drift)
             except Exception as e:
                 print(f"Source weight drift recalc error: {e}")
 
@@ -1111,8 +1110,10 @@ class LifeOS:
         """
         while not self.shutdown_event.is_set():
             try:
-                # Run inference across all signal profiles to extract semantic facts
-                self.semantic_fact_inferrer.run_all_inference()
+                # Run inference across all signal profiles to extract semantic facts.
+                # Offloaded to a thread to avoid blocking the async event loop —
+                # run_all_inference is fully synchronous (SQLite queries + computation).
+                await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
                 print("  SemanticFactInferrer: completed inference cycle")
             except Exception as e:
                 print(f"Semantic fact inferrer error: {e}")
@@ -1163,19 +1164,20 @@ class LifeOS:
 
         while not self.shutdown_event.is_set():
             try:
-                # Detect routines from last 30 days of episodic memory
-                routines = self.routine_detector.detect_routines(lookback_days=30)
+                # Detect routines from last 30 days of episodic memory.
+                # Offloaded to threads — these are synchronous SQLite + computation.
+                routines = await asyncio.to_thread(self.routine_detector.detect_routines, 30)
 
                 # Store detected routines to database
-                stored_count = self.routine_detector.store_routines(routines)
+                stored_count = await asyncio.to_thread(self.routine_detector.store_routines, routines)
 
                 print(f"  RoutineDetector: detected {len(routines)} routines, stored {stored_count}")
 
                 # Detect workflows from last 30 days of event sequences
-                workflows = self.workflow_detector.detect_workflows(lookback_days=30)
+                workflows = await asyncio.to_thread(self.workflow_detector.detect_workflows, 30)
 
                 # Store detected workflows to database
-                workflow_stored = self.workflow_detector.store_workflows(workflows)
+                workflow_stored = await asyncio.to_thread(self.workflow_detector.store_workflows, workflows)
 
                 print(f"  WorkflowDetector: detected {len(workflows)} workflows, stored {workflow_stored}")
 

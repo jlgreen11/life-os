@@ -188,62 +188,75 @@ PROMPT_EOF
     git pull --ff-only >> "$ITER_LOG" 2>&1 || true
 
     # ------------------------------------------------------------------
-    # 6.5. Restart Life OS if code was updated
+    # 6.5. Ensure Life OS is running (restart if code updated)
     # ------------------------------------------------------------------
-    # After pulling latest code, check if the codebase changed. If so,
-    # restart the Life OS service to ensure fixes actually deploy.
-    # This is critical for the improvement loop — without restart, all
-    # merged PRs update the codebase but the running process never picks
-    # up the changes, rendering all improvements inert.
+    # Check if Life OS is running on EVERY iteration (not just when code changes).
+    # This ensures the service stays up even if it crashes, is stopped manually,
+    # or fails to start after a previous PR merge.
+    #
+    # Critical for the improvement loop: without this check, all merged PRs would
+    # update the codebase but the running process would never pick up the changes
+    # if Life OS isn't running, rendering all improvements inert.
     #
     # Supports two deployment modes:
     #   1. Docker Compose (recommended) — restarts via `docker compose restart`
     #   2. Local Python process — kills and restarts main.py directly
     NEW_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    CODE_UPDATED=false
 
     if [[ "$OLD_HEAD" != "$NEW_HEAD" && "$OLD_HEAD" != "unknown" ]]; then
-        log "Code updated ($OLD_HEAD -> $NEW_HEAD). Ensuring Life OS is running with latest code..."
+        CODE_UPDATED=true
+        log "Code updated ($OLD_HEAD -> $NEW_HEAD). Will restart Life OS with new code..."
+    fi
 
-        # Detect deployment mode and ensure Life OS is running.
-        # Priority order:
-        #   1. Docker Compose (if docker-compose.yml exists)
-        #   2. Local Python process
-        #
-        # If Life OS is running, restart it. If offline, start it.
-        # This ensures improvements actually deploy rather than sitting
-        # merged in git but never running.
+    # Detect deployment mode and ensure Life OS is running.
+    # Priority order:
+    #   1. Docker Compose (if docker-compose.yml exists)
+    #   2. Local Python process
 
-        # Check if docker-compose.yml exists (Docker deployment configured)
-        if [[ -f "$PROJECT_DIR/docker-compose.yml" ]]; then
-            log "Detected Docker Compose configuration. Managing Life OS container..."
-
-            # Check if container is currently running
-            if docker compose ps lifeos 2>/dev/null | grep -q "Up"; then
+    # Check if docker-compose.yml exists (Docker deployment configured)
+    if [[ -f "$PROJECT_DIR/docker-compose.yml" ]]; then
+        # Check if container is currently running
+        if docker compose ps lifeos 2>/dev/null | grep -q "Up"; then
+            if [[ "$CODE_UPDATED" == "true" ]]; then
                 log "Life OS container is running. Restarting with new code..."
                 docker compose restart lifeos >> "$ITER_LOG" 2>&1
+
+                # Wait for container to initialize
+                sleep 5
+
+                # Verify container is running
+                if docker compose ps lifeos 2>/dev/null | grep -q "Up"; then
+                    log "Life OS container restarted successfully."
+                else
+                    log "ERROR: Life OS container failed to restart. Check logs:"
+                    log "  docker compose logs lifeos"
+                fi
             else
-                log "Life OS container is offline. Starting it..."
-                docker compose up -d lifeos >> "$ITER_LOG" 2>&1
+                log "Life OS container is running (no code changes, skipping restart)."
             fi
+        else
+            log "Life OS container is offline. Starting it..."
+            docker compose up -d lifeos >> "$ITER_LOG" 2>&1
 
             # Wait for container to initialize
             sleep 5
 
             # Verify container is running
             if docker compose ps lifeos 2>/dev/null | grep -q "Up"; then
-                log "Life OS container is running successfully."
+                log "Life OS container started successfully."
             else
                 log "ERROR: Life OS container failed to start. Check logs:"
                 log "  docker compose logs lifeos"
             fi
+        fi
 
-        # No Docker Compose config — use local Python deployment
-        else
-            log "No Docker Compose config detected. Managing local Python process..."
-
-            # Check if Life OS is currently running
-            if LIFEOS_PID=$(pgrep -f "python.*main.py" | head -1); then
-                log "Life OS process found (PID $LIFEOS_PID). Restarting..."
+    # No Docker Compose config — use local Python deployment
+    else
+        # Check if Life OS is currently running
+        if LIFEOS_PID=$(pgrep -f "python.*main.py" | head -1); then
+            if [[ "$CODE_UPDATED" == "true" ]]; then
+                log "Life OS process found (PID $LIFEOS_PID). Restarting with new code..."
                 kill "$LIFEOS_PID" >> "$ITER_LOG" 2>&1 || true
 
                 # Wait up to 10 seconds for graceful shutdown
@@ -261,12 +274,34 @@ PROMPT_EOF
                     kill -9 "$LIFEOS_PID" >> "$ITER_LOG" 2>&1 || true
                     sleep 2
                 fi
-            else
-                log "Life OS process not found. Starting it..."
-            fi
 
-            # Start Life OS in the background (whether it was running or not)
-            log "Starting Life OS with updated code..."
+                # Start Life OS in the background
+                log "Starting Life OS with updated code..."
+                cd "$PROJECT_DIR"
+                if [[ -f "$VENV" ]]; then
+                    source "$VENV"
+                    nohup python main.py >> "$LOG_DIR/lifeos.log" 2>&1 &
+                    NEW_PID=$!
+                    log "Life OS restarted (PID $NEW_PID)."
+
+                    # Give it 3 seconds to initialize
+                    sleep 3
+
+                    # Verify it's still running
+                    if kill -0 "$NEW_PID" 2>/dev/null; then
+                        log "Life OS is running successfully."
+                    else
+                        log "ERROR: Life OS failed to start. Check logs:"
+                        log "  tail -100 $LOG_DIR/lifeos.log"
+                    fi
+                else
+                    log "ERROR: Cannot start Life OS — venv not found at $VENV"
+                fi
+            else
+                log "Life OS process is running (PID $LIFEOS_PID, no code changes)."
+            fi
+        else
+            log "Life OS process not found. Starting it..."
             cd "$PROJECT_DIR"
             if [[ -f "$VENV" ]]; then
                 source "$VENV"
@@ -288,8 +323,6 @@ PROMPT_EOF
                 log "ERROR: Cannot start Life OS — venv not found at $VENV"
             fi
         fi
-    else
-        log "No code changes detected. Skipping restart."
     fi
 
     # ------------------------------------------------------------------
