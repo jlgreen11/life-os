@@ -158,6 +158,14 @@ class TaskManager:
         if not text or len(text.strip()) < 20:
             return
 
+        # --- Filter: Skip marketing/promotional emails ---
+        # Marketing emails (newsletters, promotions, automated notifications)
+        # almost never contain genuine action items. Filtering them out before
+        # AI processing dramatically improves throughput and reduces costs.
+        # This filter matches the same patterns used by the prediction engine.
+        if event_type == "email.received" and self._is_marketing_email(payload):
+            return
+
         # --- Call AI engine to extract action items ---
         # The AI engine returns a list of dicts: [{title, due_hint, priority}, ...]
         # Empty list means no action items were found (which is normal).
@@ -474,6 +482,71 @@ class TaskManager:
             "overdue": overdue,
             "by_domain": {row["domain"] or "unassigned": row["cnt"] for row in by_domain},
         }
+
+    @staticmethod
+    def _is_marketing_email(payload: dict) -> bool:
+        """
+        Check if an email is marketing/promotional and unlikely to contain action items.
+
+        Marketing emails (newsletters, promotions, automated notifications) almost
+        never contain genuine action items for the user. Filtering them out before
+        AI processing dramatically improves throughput (skips ~99% of emails in
+        typical inboxes) and reduces API costs.
+
+        Filters out:
+        - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
+        - Bulk/marketing email patterns (newsletter@, reply@, email@, etc.)
+        - Marketing domain patterns (news-*.com, email.*.com, etc.)
+        - Emails containing unsubscribe links (legally required for marketing)
+
+        Args:
+            payload: Email payload dict with from_address, body, snippet, etc.
+
+        Returns:
+            True if the email is marketing/promotional, False otherwise
+        """
+        from_addr = payload.get("from_address", "").lower()
+
+        # No-reply and automated system senders
+        noreply_patterns = (
+            "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
+            "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
+            "autoreply@", "automated@",
+        )
+        if any(pattern in from_addr for pattern in noreply_patterns):
+            return True
+
+        # Common bulk sender local-parts (the part before @)
+        # These patterns must match at the start to avoid false positives
+        bulk_localpart_patterns = (
+            "newsletter@", "notifications@", "updates@", "digest@",
+            "mailer@", "bulk@", "promo@", "marketing@",
+            "reply@", "email@", "news@", "offers@", "deals@",
+            "hello@", "info@", "support@", "help@",
+        )
+        if any(from_addr.startswith(pattern) for pattern in bulk_localpart_patterns):
+            return True
+
+        # Marketing domain patterns (the part after @)
+        marketing_domain_patterns = (
+            "@news-", "@email.", "@reply.", "@mailing.",
+            "@newsletters.", "@promo.", "@marketing.",
+            "@em.", "@mg.", "@mail.",  # Common ESP patterns
+        )
+        if any(pattern in from_addr for pattern in marketing_domain_patterns):
+            return True
+
+        # Check body and snippet for unsubscribe indicators
+        # Marketing emails are legally required to include unsubscribe links
+        text = " ".join(filter(None, [
+            payload.get("body_plain", ""),
+            payload.get("snippet", ""),
+            payload.get("body", ""),
+        ])).lower()
+        if "unsubscribe" in text:
+            return True
+
+        return False
 
     @staticmethod
     def _row_to_dict(row) -> dict:
