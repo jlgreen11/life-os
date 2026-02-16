@@ -897,9 +897,25 @@ class LifeOS:
         active_domain = event.get("metadata", {}).get("domain", "personal")
 
         # Build the episode dict matching the schema in user_model.db.
+        #
+        # CRITICAL FIX: Use the event's actual interaction timestamp (from payload.date
+        # for emails, or event.timestamp as fallback) instead of always using sync time.
+        # This enables proper temporal analysis — without it, all episodes collapse to
+        # the sync date, breaking routine detection (requires multi-day patterns),
+        # workflow analysis (needs correct sequencing), and temporal profile extraction.
+        #
+        # For emails: payload.date is the RFC 2822 Date header (actual send/receive time)
+        # For calendar: payload.start_time is the event start (actual meeting time)
+        # For other events: fallback to event.timestamp (sync time)
+        actual_timestamp = (
+            payload.get("date")  # Email: actual send/receive timestamp
+            or payload.get("start_time")  # Calendar: actual event start
+            or event.get("timestamp")  # Fallback: sync timestamp
+        )
+
         episode = {
             "id": str(uuid.uuid4()),
-            "timestamp": event.get("timestamp"),
+            "timestamp": actual_timestamp,
             "event_id": event["id"],
             "location": payload.get("location"),
             "inferred_mood": inferred_mood,
