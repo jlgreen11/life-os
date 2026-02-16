@@ -186,6 +186,15 @@ class LifeOS:
         # would have no signal to work with.
         await self._backfill_episode_classification_if_needed()
 
+        # 1.7 — Backfill task completion if needed
+        # This marks historical tasks as completed based on behavioral signals
+        # (sent emails/messages that reference the task). Without this, workflow
+        # detection cannot operate because it needs task.completed events to
+        # identify multi-step task-completion patterns. The backfill is critical
+        # for bootstrapping Layer 3 procedural memory on systems with historical
+        # task data but no completion events.
+        await self._backfill_task_completion_if_needed()
+
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -308,6 +317,208 @@ class LifeOS:
         except Exception as e:
             # Backfill errors should not crash startup
             print(f"       ⚠ Episode classification backfill failed: {e}")
+
+    async def _backfill_task_completion_if_needed(self):
+        """Mark historical tasks as completed based on behavioral signals.
+
+        Searches for pending tasks that should already be marked complete
+        based on sent emails/messages that reference the task + contain
+        completion keywords (done, finished, sent, etc.).
+
+        This is critical for bootstrapping workflow detection (Layer 3
+        procedural memory) on systems with historical task data. Without
+        task.completed events, the workflow detector cannot identify
+        multi-step task-completion patterns like:
+          - Receive request → research → draft → send confirmation
+          - Get assignment → complete work → submit deliverable → follow up
+
+        The backfill runs automatically on startup and is idempotent (safe
+        to run multiple times). It only marks tasks complete if there's
+        strong evidence (keyword overlap >= 2.0 + completion keywords).
+
+        This migration is self-healing: if new tasks are extracted from
+        historical emails via backfill_task_extraction.py, this will
+        automatically detect which ones were already completed before the
+        extraction happened.
+        """
+        try:
+            # Count pending tasks that might need completion detection
+            with self.db.get_connection("state") as conn:
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM tasks
+                    WHERE status = 'pending'
+                """)
+                pending_count = cursor.fetchone()[0]
+
+            # If there are no pending tasks, skip the backfill
+            if pending_count == 0:
+                return
+
+            # Only run backfill if we have a significant number of pending tasks
+            # (10+). This avoids unnecessary work on fresh systems and focuses on
+            # systems where historical data needs cleanup.
+            if pending_count < 10:
+                return
+
+            print(f"       → Backfilling task completion for {pending_count} pending tasks...")
+
+            # Import the backfill script inline to avoid circular dependencies
+            # and keep the main.py imports clean
+            import re
+            from datetime import datetime, timezone
+
+            # Completion signal keywords to look for in sent email/message content
+            completion_keywords = {
+                'done', 'finished', 'completed', 'sent', 'submitted',
+                'delivered', 'shipped', 'resolved', 'closed', 'fixed',
+                'merged', 'deployed', 'published', 'launched', 'ready'
+            }
+
+            # Stop words to filter out when extracting task keywords
+            stop_words = {
+                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+                'with', 'from', 'about', 'into', 'through', 'during', 'before',
+                'after', 'above', 'below', 'between', 'under', 'again', 'further',
+                'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
+                'all', 'each', 'other', 'some', 'such', 'only', 'own', 'same',
+                'than', 'too', 'very', 'just', 'should', 'would', 'could', 'will'
+            }
+
+            # Get all pending tasks
+            with self.db.get_connection("state") as state_conn:
+                cursor = state_conn.execute("""
+                    SELECT id, title, description, created_at, source
+                    FROM tasks
+                    WHERE status = 'pending'
+                    ORDER BY created_at ASC
+                """)
+                pending_tasks = [dict(row) for row in cursor.fetchall()]
+
+            completed_count = 0
+
+            # Check each task for completion signals
+            for task in pending_tasks:
+                task_id = task['id']
+                task_title = task['title'].lower() if task['title'] else ''
+                task_desc = task['description'].lower() if task['description'] else ''
+                created_at = task['created_at']
+
+                # Extract meaningful keywords from task title for matching
+                title_words = {
+                    word for word in re.findall(r'\w+', task_title)
+                    if len(word) > 3 and word not in stop_words
+                }
+                title_stems = {word[:4] for word in title_words if len(word) >= 4}
+
+                if not title_words and not title_stems:
+                    # No meaningful keywords to match against
+                    continue
+
+                # Search for sent emails/messages after task creation
+                with self.db.get_connection("events") as events_conn:
+                    cursor = events_conn.execute("""
+                        SELECT id, type, payload, timestamp
+                        FROM events
+                        WHERE type IN ('email.sent', 'message.sent')
+                          AND timestamp >= ?
+                        ORDER BY timestamp ASC
+                        LIMIT 100
+                    """, (created_at,))
+                    sent_events = cursor.fetchall()
+
+                # Check each sent event for task reference + completion keywords
+                task_completed = False
+                for event_row in sent_events:
+                    event_id, event_type, payload_json, timestamp = event_row
+
+                    try:
+                        payload = json.loads(payload_json)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    # Extract text content from the payload
+                    text_parts = []
+                    if payload.get('subject'):
+                        text_parts.append(payload['subject'])
+                    if payload.get('body_plain'):
+                        text_parts.append(payload['body_plain'])
+                    if payload.get('snippet'):
+                        text_parts.append(payload['snippet'])
+
+                    text_content = ' '.join(text_parts).lower()
+
+                    if not text_content:
+                        continue
+
+                    # Count keyword matches
+                    text_words = set(re.findall(r'\w+', text_content))
+                    text_stems = {word[:4] for word in text_words if len(word) >= 4}
+
+                    exact_matches = len(title_words & text_words)
+                    stem_matches = len(title_stems & text_stems)
+                    keyword_overlap = exact_matches + (stem_matches * 0.5)
+
+                    # Check for completion signal keywords
+                    has_completion_keyword = any(
+                        keyword in text_content for keyword in completion_keywords
+                    )
+
+                    # If we have both keyword overlap AND completion signals, mark complete
+                    if keyword_overlap >= 2.0 and has_completion_keyword:
+                        # Update task status to completed
+                        with self.db.get_connection("state") as state_conn:
+                            state_conn.execute("""
+                                UPDATE tasks
+                                SET status = 'completed',
+                                    completed_at = ?
+                                WHERE id = ?
+                            """, (datetime.now(timezone.utc).isoformat(), task_id))
+
+                        # Publish task.completed event for workflow detection
+                        event = {
+                            'id': f"{task_id}-completion",
+                            'type': 'task.completed',
+                            'source': 'backfill.task_completion',
+                            'timestamp': datetime.now(timezone.utc).isoformat(),
+                            'priority': 'normal',
+                            'payload': {
+                                'task_id': task_id,
+                                'title': task['title'],
+                                'source': task.get('source', 'unknown'),
+                                'backfill': True
+                            },
+                            'metadata': {
+                                'backfill_run': True,
+                                'detection_method': 'behavioral_signal'
+                            }
+                        }
+
+                        # Store the event
+                        with self.db.get_connection("events") as events_conn:
+                            events_conn.execute("""
+                                INSERT OR IGNORE INTO events
+                                (id, type, source, timestamp, priority, payload, metadata)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                event['id'],
+                                event['type'],
+                                event['source'],
+                                event['timestamp'],
+                                event['priority'],
+                                json.dumps(event['payload']),
+                                json.dumps(event['metadata'])
+                            ))
+
+                        completed_count += 1
+                        task_completed = True
+                        break  # Found completion signal, no need to check more events
+
+            if completed_count > 0:
+                print(f"       → Marked {completed_count} tasks as completed")
+
+        except Exception as e:
+            # Backfill errors should not crash startup
+            print(f"       ⚠ Task completion backfill failed: {e}")
 
     async def _register_event_handlers(self):
         """Wire up the core event processing pipeline."""
