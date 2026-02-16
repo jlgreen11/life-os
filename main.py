@@ -856,19 +856,24 @@ class LifeOS:
         # Retrieve current mood from the user model if available — this
         # provides emotional context that helps the system understand why
         # the user made certain decisions at certain times.
+        #
+        # CRITICAL FIX (iteration 131):
+        # Previously this code looked for mood_profile["data"]["samples"],
+        # but the MoodInferenceEngine stores raw signals in "recent_signals"
+        # and never populates a "samples" array. The correct approach is to
+        # call compute_current_mood() which aggregates recent_signals into
+        # a MoodState with energy_level, stress_level, and emotional_valence.
         inferred_mood = None
         try:
-            mood_profile = self.user_model_store.get_signal_profile("mood_signals")
-            if mood_profile and mood_profile.get("data"):
-                # Use the most recent mood reading as the inferred state.
-                recent_moods = mood_profile["data"].get("samples", [])
-                if recent_moods:
-                    latest_mood = recent_moods[-1]
-                    inferred_mood = {
-                        "energy_level": latest_mood.get("energy_level", 0.5),
-                        "stress_level": latest_mood.get("stress_level", 0.3),
-                        "emotional_valence": latest_mood.get("emotional_valence", 0.5),
-                    }
+            mood_state = self.signal_extractor.get_current_mood()
+            # Only include mood if we have enough signals for confidence > 0
+            # (MoodState.confidence scales with signal count, 0 means no data)
+            if mood_state and mood_state.confidence > 0:
+                inferred_mood = {
+                    "energy_level": mood_state.energy_level,
+                    "stress_level": mood_state.stress_level,
+                    "emotional_valence": mood_state.emotional_valence,
+                }
         except Exception:
             pass  # Mood inference is optional — episode creation should not fail
 
