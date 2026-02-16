@@ -1288,11 +1288,23 @@ class PredictionEngine:
 
         # Marketing domain patterns (the part after @)
         # These catch domains like news-us.hugoboss.com, email.d23.com, reply.*.com
+        # CRITICAL: This list must be comprehensive as it's the last line of defense
+        # against marketing emails polluting relationship tracking and predictions.
+        # Production data showed addresses like callofduty@comms.activision.com and
+        # similar patterns slipping through, creating 820 "contacts" when only ~20
+        # are actual human relationships.
         marketing_domain_patterns = (
             "@news-", "@email.", "@reply.", "@mailing.",
             "@newsletters.", "@promo.", "@marketing.",
             "@em.", "@mg.", "@mail.",  # Common email service provider patterns
             "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
+            "@comms.", "@communications.",  # Corporate communications (e.g., comms.activision.com)
+            "@attn.",  # Attention/notification platforms (e.g., attn.us.lg.com)
+            "@txn.", "@transactional.",  # Transaction notifications
+            "@deals.", "@offers.", "@promo-",  # Promotional campaigns
+            "@campaigns.", "@campaign.",  # Campaign management platforms
+            "@blast.", "@bulk.",  # Bulk sender platforms
+            "@lists.", "@list.",  # Mailing list managers
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
             return True
@@ -1310,6 +1322,19 @@ class PredictionEngine:
             ".marketo.com",   # Marketo
             ".pardot.com",    # Salesforce Pardot
             ".eloqua.com",    # Oracle Eloqua
+            ".sailthru.com",  # Sailthru email platform
+            ".responsys.net", # Oracle Responsys
+            ".exacttarget.com",  # Salesforce Marketing Cloud
+            ".smtp2go.com",   # SMTP2GO transactional email
+            ".postmarkapp.com",  # Postmark transactional
+            ".mandrillapp.com",  # Mandrill by Mailchimp
+            ".amazonses.com",    # Amazon SES
+            ".sparkpostmail.com", # SparkPost
+            ".sendinblue.com",   # Sendinblue/Brevo
+            ".intercom-mail.com", # Intercom notifications
+            ".customer.io",       # Customer.io
+            ".iterable.com",      # Iterable
+            ".klaviyo.com",       # Klaviyo e-commerce marketing
         )
         if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
             return True
