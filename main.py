@@ -867,6 +867,12 @@ class LifeOS:
         # and never populates a "samples" array. The correct approach is to
         # call compute_current_mood() which aggregates recent_signals into
         # a MoodState with energy_level, stress_level, and emotional_valence.
+        #
+        # CRITICAL FIX (iteration 134):
+        # The bare except was swallowing exceptions silently, causing ALL
+        # episodes to be created with mood=null despite 27K+ mood signals
+        # being available. Now we log the exception so we can diagnose and
+        # fix the root cause instead of silently degrading.
         inferred_mood = None
         try:
             mood_state = self.signal_extractor.get_current_mood()
@@ -878,8 +884,13 @@ class LifeOS:
                     "stress_level": mood_state.stress_level,
                     "emotional_valence": mood_state.emotional_valence,
                 }
-        except Exception:
-            pass  # Mood inference is optional — episode creation should not fail
+        except Exception as e:
+            # Log the exception so we can diagnose mood retrieval failures.
+            # Mood inference is optional (episodes should still be created),
+            # but complete silence on failures prevents us from fixing bugs.
+            print(f"WARNING: Mood retrieval failed in episode creation: {e}")
+            import traceback
+            traceback.print_exc()
 
         # Determine the active domain (work, personal, health, finance) from
         # event metadata if available. This helps segment episodes by life area.
