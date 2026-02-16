@@ -102,21 +102,23 @@ def is_marketing_or_noreply(from_addr: str) -> bool:
     return False
 
 
-def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False) -> dict:
+def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False, verbose: bool = True) -> dict:
     """
     Remove marketing contacts from the relationships signal profile.
 
     Args:
         db: Database manager instance
         dry_run: If True, report what would be removed but don't modify the database
+        verbose: If True, print detailed progress output. Set to False for quiet startup.
 
     Returns:
         dict with statistics about the cleanup (total, removed, remaining)
     """
-    print("=" * 80)
-    print("RELATIONSHIP PROFILE CLEANUP")
-    print("=" * 80)
-    print()
+    if verbose:
+        print("=" * 80)
+        print("RELATIONSHIP PROFILE CLEANUP")
+        print("=" * 80)
+        print()
 
     # Load the current relationships profile
     with db.get_connection("user_model") as conn:
@@ -127,24 +129,27 @@ def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False) -> di
         ).fetchone()
 
     if not row:
-        print("✗ No relationships profile found")
+        if verbose:
+            print("✗ No relationships profile found")
         return {"total": 0, "removed": 0, "remaining": 0}
 
     # Parse the profile data
     try:
         data = json.loads(row["data"])
     except (json.JSONDecodeError, TypeError):
-        print("✗ Failed to parse relationships profile data")
+        if verbose:
+            print("✗ Failed to parse relationships profile data")
         return {"total": 0, "removed": 0, "remaining": 0}
 
     contacts = data.get("contacts", {})
     total_contacts = len(contacts)
 
-    print(f"Current profile state:")
-    print(f"  Total contacts: {total_contacts}")
-    print(f"  Samples count: {row['samples_count']}")
-    print(f"  Last updated: {row['updated_at']}")
-    print()
+    if verbose:
+        print(f"Current profile state:")
+        print(f"  Total contacts: {total_contacts}")
+        print(f"  Samples count: {row['samples_count']}")
+        print(f"  Last updated: {row['updated_at']}")
+        print()
 
     # Identify marketing contacts
     marketing_contacts = []
@@ -156,23 +161,25 @@ def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False) -> di
         else:
             human_contacts.append(addr)
 
-    print(f"Analysis:")
-    print(f"  Marketing/automated contacts: {len(marketing_contacts)}")
-    print(f"  Human contacts: {len(human_contacts)}")
-    print()
-
-    if len(marketing_contacts) > 0:
-        print(f"Sample marketing contacts to remove (showing first 10):")
-        for addr in marketing_contacts[:10]:
-            count = contacts[addr].get("interaction_count", 0)
-            print(f"  - {addr} ({count} interactions)")
-        if len(marketing_contacts) > 10:
-            print(f"  ... and {len(marketing_contacts) - 10} more")
+    if verbose:
+        print(f"Analysis:")
+        print(f"  Marketing/automated contacts: {len(marketing_contacts)}")
+        print(f"  Human contacts: {len(human_contacts)}")
         print()
 
+        if len(marketing_contacts) > 0:
+            print(f"Sample marketing contacts to remove (showing first 10):")
+            for addr in marketing_contacts[:10]:
+                count = contacts[addr].get("interaction_count", 0)
+                print(f"  - {addr} ({count} interactions)")
+            if len(marketing_contacts) > 10:
+                print(f"  ... and {len(marketing_contacts) - 10} more")
+            print()
+
     if dry_run:
-        print("DRY RUN: No changes made to database")
-        print(f"Would remove {len(marketing_contacts)} marketing contacts")
+        if verbose:
+            print("DRY RUN: No changes made to database")
+            print(f"Would remove {len(marketing_contacts)} marketing contacts")
         return {
             "total": total_contacts,
             "removed": len(marketing_contacts),
@@ -196,10 +203,11 @@ def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False) -> di
             (cleaned_json, datetime.now(timezone.utc).isoformat()),
         )
 
-    print("✓ Relationships profile cleaned successfully")
-    print(f"  Removed: {len(marketing_contacts)} marketing contacts")
-    print(f"  Remaining: {len(human_contacts)} human contacts")
-    print()
+    if verbose:
+        print("✓ Relationships profile cleaned successfully")
+        print(f"  Removed: {len(marketing_contacts)} marketing contacts")
+        print(f"  Remaining: {len(human_contacts)} human contacts")
+        print()
 
     return {
         "total": total_contacts,
