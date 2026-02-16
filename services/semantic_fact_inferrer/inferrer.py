@@ -254,6 +254,12 @@ class SemanticFactInferrer:
         data = profile["data"]
         topic_frequencies = data.get("topic_frequencies", {})
 
+        # Get recent communication episodes to link as source evidence for
+        # topic-based facts. This creates an audit trail from facts back to
+        # raw observations and enables the confidence growth loop.
+        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
         # --- Infer expertise from topic frequency ---
         # A topic becomes an expertise area if it appears in >10% of messages
         # and has been mentioned at least 10 times.
@@ -269,6 +275,7 @@ class SemanticFactInferrer:
                     category="expertise",
                     value=topic,
                     confidence=min(0.95, 0.5 + frequency_ratio * 2),  # Higher freq = higher confidence
+                    episode_id=episode_id,
                 )
             elif count >= 5 and frequency_ratio > 0.05:
                 # Moderately discussed topic — area of interest
@@ -277,6 +284,7 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value=topic,
                     confidence=min(0.8, 0.4 + frequency_ratio * 3),
+                    episode_id=episode_id,
                 )
 
         logger.info(f"Inferred semantic facts from topic profile (samples={profile.get('samples_count')})")
@@ -301,6 +309,12 @@ class SemanticFactInferrer:
         data = profile["data"]
         hourly_distribution = data.get("hourly_distribution", {})
 
+        # Get recent communication episodes to link as source evidence for
+        # cadence-based facts. This creates an audit trail from facts back to
+        # raw observations and enables the confidence growth loop.
+        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
         # --- Infer work-life boundaries from hourly distribution ---
         # If 90%+ of messages are sent during business hours (9-17),
         # infer a preference for work-life separation.
@@ -321,6 +335,7 @@ class SemanticFactInferrer:
                 category="values",
                 value="strict_boundaries",
                 confidence=min(0.95, 0.5 + (business_hours_ratio - 0.9) * 5),
+                episode_id=episode_id,
             )
         elif business_hours_ratio < 0.3:
             # Messages at all hours — flexible schedule or always-on work style
@@ -329,6 +344,7 @@ class SemanticFactInferrer:
                 category="values",
                 value="flexible_boundaries",
                 confidence=min(0.85, 0.5 + (0.3 - business_hours_ratio) * 2),
+                episode_id=episode_id,
             )
 
         # --- Infer peak communication hours ---
@@ -345,6 +361,7 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value=int(peak_hour),
                     confidence=min(0.9, 0.5 + peak_ratio * 2),
+                    episode_id=episode_id,
                 )
 
         logger.info(f"Inferred semantic facts from cadence profile (samples={profile.get('samples_count')})")
@@ -374,6 +391,12 @@ class SemanticFactInferrer:
         data = profile["data"]
         avg_sentiment = data.get("avg_sentiment")
 
+        # Get recent communication episodes to link as source evidence for
+        # mood-based facts. This creates an audit trail from facts back to
+        # raw observations and enables the confidence growth loop.
+        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
         # --- Infer baseline emotional tone ---
         # Sentiment ranges from -1 (very negative) to +1 (very positive).
         # We infer baseline disposition from long-term average.
@@ -385,6 +408,7 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value="optimistic",
                     confidence=min(0.8, 0.5 + (avg_sentiment - 0.3) * 2),
+                    episode_id=episode_id,
                 )
             elif avg_sentiment < -0.2:
                 # Consistently negative tone — may indicate chronic stress
@@ -394,6 +418,7 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value="stressed",
                     confidence=min(0.75, 0.5 + abs(avg_sentiment + 0.2) * 2),
+                    episode_id=episode_id,
                 )
 
         logger.info(f"Inferred semantic facts from mood profile (samples={profile.get('samples_count')})")
