@@ -179,6 +179,7 @@ class LifeOS:
         # 1.5 — Seed default source weights (no-op if already populated)
         self.source_weight_manager.seed_defaults()
 
+<<<<<<< HEAD
         # 1.6 — Backfill episode classification if needed
         # This ensures routine and workflow detection have the granular
         # interaction types they need. Without this, all old episodes would
@@ -195,6 +196,8 @@ class LifeOS:
         # task data but no completion events.
         await self._backfill_task_completion_if_needed()
 
+=======
+>>>>>>> 0a28968 (feat: add tunable source weight system for insight engine)
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
         self.vector_store.initialize()
