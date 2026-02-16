@@ -47,6 +47,7 @@ class PredictionEngine:
         self.db = db   # Database access for events, user_model, and preferences tables
         self.ums = ums  # User-model store for signal profiles and semantic memory
         self._last_event_cursor: int = 0  # rowid of last processed event
+        self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
 
     def _has_new_events(self) -> bool:
         """Check if any new events have arrived since last prediction run."""
@@ -62,13 +63,56 @@ class PredictionEngine:
         self._last_event_cursor = current_max
         return True
 
+    def _should_run_time_based_predictions(self) -> bool:
+        """
+        Check if time-based predictions should run.
+
+        Time-based predictions check temporal conditions (time passing, approaching events,
+        missed routines) rather than reacting to new events. They should run periodically
+        even when no new events have arrived.
+
+        Examples of time-based predictions:
+        - Relationship maintenance (days since last contact increasing)
+        - Routine deviations (expected routine didn't occur)
+        - Preparation needs (event approaching in time)
+        - Calendar conflicts (future events coming into 48h window)
+
+        These run every 15 minutes to detect changes in temporal state.
+        """
+        now = datetime.now(timezone.utc)
+
+        # First run always executes
+        if self._last_time_based_run is None:
+            self._last_time_based_run = now
+            return True
+
+        # Run if 15+ minutes have passed since last time-based check
+        time_since_last = (now - self._last_time_based_run).total_seconds() / 60
+        if time_since_last >= 15:
+            self._last_time_based_run = now
+            return True
+
+        return False
+
     async def generate_predictions(self, current_context: dict) -> list[Prediction]:
         """
         Main prediction loop. Called periodically (every 15 min)
         and on significant context changes (location, calendar event start, etc.)
+
+        Runs prediction generation when EITHER:
+        1. New events have arrived (event-based predictions like follow-up needs)
+        2. 15+ minutes have passed (time-based predictions like relationship maintenance)
+
+        This dual-trigger approach ensures both reactive predictions (responding to
+        new events) and proactive predictions (detecting temporal conditions) work
+        correctly.
         """
-        # Skip if no new events since last run
-        if not self._has_new_events():
+        # Determine which trigger conditions are met
+        has_new_events = self._has_new_events()
+        time_based_due = self._should_run_time_based_predictions()
+
+        # Skip entirely if neither trigger is active
+        if not has_new_events and not time_based_due:
             return []
 
         predictions = []
@@ -82,31 +126,48 @@ class PredictionEngine:
         # Track prediction generation for observability
         generation_stats = {}
 
-        calendar_preds = await self._check_calendar_conflicts(current_context)
-        generation_stats['calendar_conflicts'] = len(calendar_preds)
-        predictions.extend(calendar_preds)
+        # TIME-BASED predictions: Run when time passes (even without new events)
+        # These check temporal conditions like approaching events, missed routines,
+        # and relationship gaps growing wider.
+        if time_based_due:
+            calendar_preds = await self._check_calendar_conflicts(current_context)
+            generation_stats['calendar_conflicts'] = len(calendar_preds)
+            predictions.extend(calendar_preds)
 
-        followup_preds = await self._check_follow_up_needs(current_context)
-        generation_stats['follow_up_needs'] = len(followup_preds)
-        predictions.extend(followup_preds)
+            routine_preds = await self._check_routine_deviations(current_context)
+            generation_stats['routine_deviations'] = len(routine_preds)
+            predictions.extend(routine_preds)
 
-        routine_preds = await self._check_routine_deviations(current_context)
-        generation_stats['routine_deviations'] = len(routine_preds)
-        predictions.extend(routine_preds)
+            relationship_preds = await self._check_relationship_maintenance(current_context)
+            generation_stats['relationship_maintenance'] = len(relationship_preds)
+            predictions.extend(relationship_preds)
 
-        relationship_preds = await self._check_relationship_maintenance(current_context)
-        generation_stats['relationship_maintenance'] = len(relationship_preds)
-        predictions.extend(relationship_preds)
+            prep_preds = await self._check_preparation_needs(current_context)
+            generation_stats['preparation_needs'] = len(prep_preds)
+            predictions.extend(prep_preds)
+        else:
+            # Skip time-based predictions, mark as not run
+            generation_stats['calendar_conflicts'] = '(skipped: no time trigger)'
+            generation_stats['routine_deviations'] = '(skipped: no time trigger)'
+            generation_stats['relationship_maintenance'] = '(skipped: no time trigger)'
+            generation_stats['preparation_needs'] = '(skipped: no time trigger)'
 
-        prep_preds = await self._check_preparation_needs(current_context)
-        generation_stats['preparation_needs'] = len(prep_preds)
-        predictions.extend(prep_preds)
+        # EVENT-BASED predictions: Run when new events arrive
+        # These react to specific events like incoming emails or spending activity.
+        if has_new_events:
+            followup_preds = await self._check_follow_up_needs(current_context)
+            generation_stats['follow_up_needs'] = len(followup_preds)
+            predictions.extend(followup_preds)
 
-        spending_preds = await self._check_spending_patterns(current_context)
-        generation_stats['spending_patterns'] = len(spending_preds)
-        predictions.extend(spending_preds)
+            spending_preds = await self._check_spending_patterns(current_context)
+            generation_stats['spending_patterns'] = len(spending_preds)
+            predictions.extend(spending_preds)
+        else:
+            # Skip event-based predictions, mark as not run
+            generation_stats['follow_up_needs'] = '(skipped: no new events)'
+            generation_stats['spending_patterns'] = '(skipped: no new events)'
 
-        print(f"[prediction_engine] Generated predictions by type: {generation_stats} (total={len(predictions)})")
+        print(f"[prediction_engine] Generated predictions by type: {generation_stats} (total={len(predictions)}) [triggers: events={has_new_events}, time={time_based_due}]")
 
         # --- Accuracy-based confidence decay/boost ---
         # Adjust confidence based on historical accuracy for each prediction type.
