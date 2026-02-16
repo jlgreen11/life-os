@@ -443,7 +443,7 @@ class DatabaseManager:
         added.
         """
         # Current schema version (increment when making schema changes)
-        CURRENT_VERSION = 1
+        CURRENT_VERSION = 2
 
         with self.get_connection("user_model") as conn:
             # Create schema_version table if it doesn't exist
@@ -655,6 +655,36 @@ class DatabaseManager:
 
             # The tables will be recreated by the main schema creation code
             # that follows this migration
+
+        if from_version == 1 and to_version >= 2:
+            # Migration 1 → 2: Delete orphaned communication templates with old context
+            # PR #130 changed the template ID format and context field:
+            # - Old: ID = sha256(contact:channel), context = "general"
+            # - New: ID = sha256(contact:channel:direction), context = "user_to_contact" | "contact_to_user"
+            #
+            # The 11 existing templates used the old format and will never be updated
+            # by the new extraction code. Rather than attempting to infer direction
+            # from heuristics, we delete them and let the system regenerate them with
+            # the correct bidirectional format from ongoing message processing.
+            #
+            # Data loss is acceptable here:
+            # - Only 11 templates exist (max 27 samples each)
+            # - Templates regenerate automatically from new message events
+            # - New format provides better relationship insights (separates in/out styles)
+            import logging
+            logger = logging.getLogger(__name__)
+
+            orphaned_count = conn.execute(
+                "SELECT COUNT(*) FROM communication_templates WHERE context = 'general'"
+            ).fetchone()[0]
+
+            if orphaned_count > 0:
+                logger.info(
+                    f"Migration 1→2: Deleting {orphaned_count} orphaned communication "
+                    f"templates with old 'general' context (will regenerate with "
+                    f"bidirectional user_to_contact/contact_to_user context)"
+                )
+                conn.execute("DELETE FROM communication_templates WHERE context = 'general'")
 
     def _migrate_events_db(self, conn: sqlite3.Connection, from_version: int, to_version: int):
         """Apply schema migrations to events.db.
