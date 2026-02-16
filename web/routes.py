@@ -20,6 +20,7 @@ from web.schemas import (
     ContextBatchRequest,
     ContextEventRequest,
     DraftRequest,
+    FactCorrectionRequest,
     FeedbackRequest,
     PreferenceUpdate,
     RuleCreateRequest,
@@ -423,6 +424,109 @@ def register_routes(app: FastAPI, life_os) -> None:
         with life_os.db.get_connection("user_model") as conn:
             conn.execute("DELETE FROM semantic_facts WHERE key = ?", (key,))
         return {"status": "deleted"}
+
+    @app.patch("/api/user-model/facts/{key}")
+    async def correct_fact(key: str, request: FactCorrectionRequest):
+        """Correct a semantic fact by marking it as user-corrected and reducing confidence.
+
+        When the user identifies an incorrect fact, this endpoint:
+        1. Marks is_user_corrected = 1 to flag it in the learning loop
+        2. Reduces confidence by 0.30 (significant penalty for being wrong)
+        3. Optionally updates the value if a corrected value is provided
+        4. Records the correction reason for audit trails
+
+        This closes the feedback loop: the system can now learn from both
+        positive signals (confirmations, times_confirmed++) and negative
+        signals (corrections, confidence--).
+
+        Args:
+            key: The semantic fact key to correct
+            request: Contains optional corrected_value and reason
+
+        Returns:
+            Updated fact with new confidence and correction status
+        """
+        import json
+        from datetime import datetime, timezone
+
+        with life_os.db.get_connection("user_model") as conn:
+            # Retrieve the existing fact to compute new confidence
+            existing = conn.execute(
+                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+            ).fetchone()
+
+            if not existing:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
+
+            # Compute new confidence: reduce by 0.30 (significant penalty),
+            # but never go below 0.0. This ensures corrected facts are
+            # de-prioritized but remain visible for audit purposes.
+            # Round to 2 decimal places to avoid floating point precision issues.
+            new_confidence = round(max(0.0, existing["confidence"] - 0.30), 2)
+
+            # Update the fact with correction metadata
+            update_params = {
+                "is_user_corrected": 1,
+                "confidence": new_confidence,
+                "last_confirmed": datetime.now(timezone.utc).isoformat(),
+            }
+
+            # If the user provided a corrected value, replace the existing one
+            if request.corrected_value is not None:
+                update_params["value"] = json.dumps(request.corrected_value)
+
+            # Build the UPDATE query dynamically based on provided fields
+            set_clause = ", ".join([f"{k} = ?" for k in update_params.keys()])
+            values = list(update_params.values()) + [key]
+
+            conn.execute(
+                f"UPDATE semantic_facts SET {set_clause} WHERE key = ?",
+                values,
+            )
+
+            # Retrieve the updated fact to return to the client
+            updated = conn.execute(
+                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+            ).fetchone()
+
+        # Log the correction to the feedback collector for analytics
+        if life_os.feedback_collector:
+            await life_os.feedback_collector._store_feedback({
+                "action_id": f"fact_correction_{key}",
+                "action_type": "semantic_fact",
+                "feedback_type": "corrected",
+                "response_latency_seconds": 0,
+                "context": {
+                    "fact_key": key,
+                    "old_confidence": existing["confidence"],
+                    "new_confidence": new_confidence,
+                    "corrected_value_provided": request.corrected_value is not None,
+                    "reason": request.reason,
+                },
+                "notes": request.reason,
+            })
+
+        # Publish a telemetry event for the correction
+        if life_os.event_bus and life_os.event_bus.is_connected:
+            await life_os.event_bus.publish(
+                "usermodel.fact.corrected",
+                {
+                    "key": key,
+                    "old_confidence": existing["confidence"],
+                    "new_confidence": new_confidence,
+                    "category": updated["category"],
+                    "corrected_at": datetime.now(timezone.utc).isoformat(),
+                },
+                source="web_api",
+            )
+
+        return {
+            "status": "corrected",
+            "fact": dict(updated),
+            "old_confidence": existing["confidence"],
+            "new_confidence": new_confidence,
+        }
 
     @app.get("/api/user-model/mood")
     async def get_mood():
