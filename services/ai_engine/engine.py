@@ -119,13 +119,43 @@ Do NOT add anything they wouldn't say. Output ONLY the message text."""
             return await self._query_local(system_prompt, context)
 
     async def extract_action_items(self, text: str, source: str) -> list[dict]:
-        """Extract action items from a message or email."""
+        """Extract action items from a message or email.
+
+        Returns:
+            List of action items with keys:
+                - title: Task description
+                - due_hint: Any mentioned deadline (optional)
+                - priority: high/normal/low
+                - completed: true if the task is already done, false otherwise
+
+        The AI analyzes whether each action is a future task, a completed action,
+        or a notification about someone else's work. This enables immediate workflow
+        detection from historical data instead of waiting days for task aging.
+
+        Examples:
+            "Please send the report by Friday" → completed: false
+            "I sent the report yesterday" → completed: true
+            "The report was sent by the team" → completed: true (or skip entirely)
+        """
         # The LLM is instructed to return structured JSON. The prompt constrains
-        # the output schema to an array of {title, due_hint, priority} objects.
+        # the output schema to an array of {title, due_hint, priority, completed} objects.
+        # The "completed" field is critical for workflow detection — it lets us generate
+        # task.completed events immediately from historical emails instead of waiting
+        # 7+ days for inactivity detection.
         system_prompt = """Extract any action items or tasks from the following text.
-Return a JSON array of objects with keys: "title", "due_hint" (if any date is
-mentioned), "priority" (high/normal/low). If there are no action items, return [].
-Return ONLY valid JSON, no other text."""
+For each task, determine if it is:
+- A future action that needs to be done (completed: false)
+- An already-completed action being reported (completed: true)
+- A notification about someone else's work (completed: true, or skip if not user's task)
+
+Return a JSON array of objects with keys: "title", "due_hint" (if any date is mentioned),
+"priority" (high/normal/low), "completed" (true/false). If there are no action items, return [].
+Return ONLY valid JSON, no other text.
+
+Examples:
+- "Please review the proposal by EOD" → {"title": "Review proposal", "priority": "high", "completed": false}
+- "I finished the proposal yesterday" → {"title": "Finish proposal", "priority": "normal", "completed": true}
+- "The team deployed the update" → skip or {"completed": true} if it was user's responsibility"""
 
         # Always uses the local model -- action extraction is fast, private,
         # and does not require cloud-level reasoning.
