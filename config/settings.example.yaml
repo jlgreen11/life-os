@@ -13,6 +13,22 @@ nats_url: "nats://localhost:4222"
 web_host: "0.0.0.0"
 web_port: 8080
 
+# CORS (Cross-Origin Resource Sharing) security
+# Controls which domains can make requests to your Life OS API.
+# For production, lock down to specific origins only.
+cors:
+  # Allowed origins (exact match required)
+  # Examples:
+  #   - "http://localhost:3000"           # Local dev frontend
+  #   - "https://myapp.example.com"       # Production frontend
+  # Special values:
+  #   - "*" allows all origins (INSECURE — dev only!)
+  allowed_origins:
+    - "http://localhost:8080"             # Web UI served by Life OS
+    - "http://localhost:3000"             # Common dev port for frontends
+    - "http://127.0.0.1:8080"
+    - "http://127.0.0.1:3000"
+
 # Embedding model (for vector search)
 # Options: "all-MiniLM-L6-v2" (fast, 384 dims) or "nomic-embed-text" (via Ollama)
 embedding_model: "all-MiniLM-L6-v2"

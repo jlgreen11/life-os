@@ -20,6 +20,39 @@ def create_web_app(life_os) -> FastAPI:
     fresh FastAPI instance each time it is called.  This makes testing easier
     (each test can create its own app with a mock ``life_os``) and keeps
     module-level side effects to zero.
+
+    CORS Security
+    -------------
+    The allowed origins are read from ``life_os.config["cors"]["allowed_origins"]``.
+    If the config is missing or malformed, the application defaults to a secure
+    localhost-only policy (http://localhost:8080, http://127.0.0.1:8080).
+
+    **Never use the wildcard origin "*" in production.** It allows any website
+    to make authenticated requests to your Life OS API, which can leak sensitive
+    personal data (emails, calendar, messages, transactions, etc.) to malicious
+    third-party sites.
+
+    Examples of secure CORS configurations in ``settings.yaml``:
+
+    .. code-block:: yaml
+
+        # Local development
+        cors:
+          allowed_origins:
+            - "http://localhost:8080"
+            - "http://localhost:3000"
+
+        # Production deployment
+        cors:
+          allowed_origins:
+            - "https://mylifeos.example.com"
+
+    Args:
+        life_os: The LifeOS orchestrator instance containing all services and
+            configuration.
+
+    Returns:
+        Configured FastAPI application instance.
     """
 
     app = FastAPI(
@@ -29,13 +62,36 @@ def create_web_app(life_os) -> FastAPI:
     )
 
     # --- CORS Middleware ---
-    # Currently configured with wildcard origins ("*"), which allows requests
-    # from any domain.  This is acceptable during local development but MUST
-    # be restricted to the actual frontend origin(s) before any production or
-    # public deployment to prevent cross-site request forgery.
+    # Read allowed origins from config. If missing, default to localhost-only
+    # (secure by default). The user must explicitly configure broader access.
+    cors_config = life_os.config.get("cors", {})
+    allowed_origins = cors_config.get("allowed_origins")
+
+    # Validate and sanitize the allowed_origins list
+    if allowed_origins is None or not isinstance(allowed_origins, list):
+        # No config or invalid config → default to secure localhost-only policy
+        allowed_origins = [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+        ]
+    else:
+        # Filter out empty strings and non-string values
+        allowed_origins = [
+            origin.strip()
+            for origin in allowed_origins
+            if isinstance(origin, str) and origin.strip()
+        ]
+
+        # If the list is now empty after filtering, fall back to secure defaults
+        if not allowed_origins:
+            allowed_origins = [
+                "http://localhost:8080",
+                "http://127.0.0.1:8080",
+            ]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # TODO [FLAGGED]: Lock down to specific origins in production
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
