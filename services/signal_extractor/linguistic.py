@@ -1,9 +1,13 @@
 """
 Life OS — Linguistic Signal Extractor
 
-Builds the LinguisticProfile from outbound messages and voice commands.
+Builds linguistic profiles from both outbound and inbound messages.
 
-Watches for: messages sent, emails sent, voice commands, draft edits.
+Outbound analysis (user's own writing) feeds the user's linguistic fingerprint.
+Inbound analysis (contacts' writing) builds per-contact incoming style profiles,
+enabling tone-shift detection and formality-mismatch awareness.
+
+Watches for: messages sent/received, emails sent/received, voice commands.
 Extracts: vocabulary complexity, formality, common patterns, per-contact style.
 """
 
@@ -20,7 +24,12 @@ from services.signal_extractor.base import BaseExtractor
 
 class LinguisticExtractor(BaseExtractor):
     """
-    Builds the LinguisticProfile from outbound messages and voice commands.
+    Builds linguistic profiles from both outbound and inbound messages.
+
+    Outbound messages update the user's own linguistic fingerprint (``linguistic``
+    profile).  Inbound messages update per-contact incoming style profiles
+    (``linguistic_inbound`` profile) so the system can detect tone shifts,
+    formality mismatches, and unusual communication patterns from contacts.
     """
 
     # --- Regex pattern banks for linguistic feature detection ---
@@ -64,18 +73,22 @@ class LinguisticExtractor(BaseExtractor):
     )
 
     def can_process(self, event: dict) -> bool:
-        # Only analyse text the *user* authored (outbound messages, voice
-        # commands).  Inbound messages are someone else's writing style.
+        # Analyse both directions.  Outbound messages feed the user's own
+        # linguistic fingerprint; inbound messages build per-contact incoming
+        # style profiles for tone-shift and formality-mismatch detection.
         return event.get("type") in [
             EventType.EMAIL_SENT.value,
             EventType.MESSAGE_SENT.value,
+            EventType.EMAIL_RECEIVED.value,
+            EventType.MESSAGE_RECEIVED.value,
             "system.user.command",
         ]
 
     def extract(self, event: dict) -> list[dict]:
-        """Analyse a single outbound message and return a linguistic signal.
+        """Analyse a message and return a linguistic signal.
 
-        The analysis pipeline within this method follows a fixed sequence:
+        Works for both outbound (user's writing) and inbound (contact's writing).
+        The analysis pipeline follows a fixed sequence:
           1. Tokenise into sentences and words.
           2. Compute structural metrics (sentence length, vocabulary richness).
           3. Estimate formality from marker-word ratios.
@@ -83,8 +96,13 @@ class LinguisticExtractor(BaseExtractor):
           5. Extract emoji usage.
           6. Detect greeting / closing conventions.
           7. Package everything into a single signal dict and persist it.
+
+        Outbound signals are stored in the ``linguistic`` profile (user fingerprint).
+        Inbound signals are stored in the ``linguistic_inbound`` profile (per-contact
+        incoming style) so the two never conflate.
         """
         payload = event.get("payload", {})
+        event_type = event.get("type", "")
         # Prefer the rich "body" field; fall back to plain-text if absent.
         text = payload.get("body", "") or payload.get("body_plain", "") or ""
         # Skip very short texts — they lack enough signal to be useful and
@@ -93,9 +111,21 @@ class LinguisticExtractor(BaseExtractor):
             return []
 
         signals = []
-        # Identify the recipient so we can build per-contact style profiles
-        # (the user may write differently to their boss vs. a friend).
-        contact_id = payload.get("to_addresses", [None])[0] if payload.get("to_addresses") else None
+
+        # Determine message direction.  Inbound messages come from a contact;
+        # outbound messages are authored by the user.
+        is_inbound = event_type in [
+            EventType.EMAIL_RECEIVED.value,
+            EventType.MESSAGE_RECEIVED.value,
+        ]
+
+        # Resolve the relevant contact:
+        #   outbound → first recipient (to_addresses)
+        #   inbound  → sender (from_address)
+        if is_inbound:
+            contact_id = payload.get("from_address")
+        else:
+            contact_id = payload.get("to_addresses", [None])[0] if payload.get("to_addresses") else None
         channel = payload.get("channel", event.get("source", "unknown"))
 
         # --- Sentence analysis ---
@@ -165,11 +195,13 @@ class LinguisticExtractor(BaseExtractor):
         # --- Build the signal ---
         # All rates are normalised per sentence so the profile stays comparable
         # regardless of message length.
+        direction = "inbound" if is_inbound else "outbound"
         signal = {
             "type": "linguistic",
             "timestamp": event.get("timestamp"),
             "contact_id": contact_id,
             "channel": channel,
+            "direction": direction,
             "metrics": {
                 "word_count": word_count,
                 "avg_sentence_length": round(avg_sentence_length, 1),
@@ -190,8 +222,13 @@ class LinguisticExtractor(BaseExtractor):
 
         signals.append(signal)
 
-        # Persist the new sample into the running linguistic profile.
-        self._update_profile(signal)
+        # Persist into the appropriate profile based on direction.
+        # Outbound → "linguistic" (user's own fingerprint, unchanged).
+        # Inbound  → "linguistic_inbound" (per-contact incoming style).
+        if is_inbound:
+            self._update_inbound_profile(signal)
+        else:
+            self._update_profile(signal)
 
         return signals
 
@@ -291,3 +328,48 @@ class LinguisticExtractor(BaseExtractor):
         data["common_closings"] = [c for c, _ in Counter(all_closings).most_common(3)]
 
         self.ums.update_signal_profile("linguistic", data)
+
+    def _update_inbound_profile(self, signal: dict):
+        """Incrementally update the inbound linguistic profile.
+
+        Stores per-contact incoming style data in a separate ``linguistic_inbound``
+        profile so it never pollutes the user's own linguistic fingerprint.
+
+        The profile tracks:
+          - ``per_contact``: per-sender ring buffer (capped at 100) of metric
+            snapshots for style-shift detection ("Bob's tone changed this week").
+          - ``per_contact_averages``: running averages per contact for quick
+            comparison ("Alice writes formally, Carol writes casually").
+        """
+        existing = self.ums.get_signal_profile("linguistic_inbound")
+        if existing:
+            data = existing["data"]
+        else:
+            data = {"per_contact": {}, "per_contact_averages": {}}
+
+        contact = signal.get("contact_id")
+        if not contact:
+            return
+
+        # Append the latest metrics snapshot to this contact's ring buffer.
+        if contact not in data["per_contact"]:
+            data["per_contact"][contact] = []
+        data["per_contact"][contact].append(signal["metrics"])
+        if len(data["per_contact"][contact]) > 100:
+            data["per_contact"][contact] = data["per_contact"][contact][-100:]
+
+        # Recompute running averages for this contact so downstream consumers
+        # can quickly characterise a contact's communication style without
+        # iterating the raw samples.
+        samples = data["per_contact"][contact]
+        data["per_contact_averages"][contact] = {
+            "avg_sentence_length": statistics.mean(s["avg_sentence_length"] for s in samples),
+            "formality": statistics.mean(s["formality"] for s in samples),
+            "hedge_rate": statistics.mean(s["hedge_rate"] for s in samples),
+            "assertion_rate": statistics.mean(s["assertion_rate"] for s in samples),
+            "exclamation_rate": statistics.mean(s["exclamation_rate"] for s in samples),
+            "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
+            "samples_count": len(samples),
+        }
+
+        self.ums.update_signal_profile("linguistic_inbound", data)

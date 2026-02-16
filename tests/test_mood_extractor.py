@@ -70,10 +70,10 @@ class TestMoodInferenceEngine:
         event = {"type": "system.user.command"}
         assert engine.can_process(event) is True
 
-    def test_can_process_rejects_email_received(self, engine):
-        """MoodInferenceEngine should reject email.received (inbound) events."""
+    def test_can_process_accepts_email_received(self, engine):
+        """MoodInferenceEngine should accept email.received for incoming-stress detection."""
         event = {"type": EventType.EMAIL_RECEIVED.value}
-        assert engine.can_process(event) is False
+        assert engine.can_process(event) is True
 
     def test_can_process_rejects_unrelated_events(self, engine):
         """MoodInferenceEngine should reject unrelated event types."""
@@ -625,3 +625,129 @@ class TestMoodInferenceEngine:
         assert mood.stress_level == 0.3  # Default when no stress signals
         # Confidence should be low with only 2 signals
         assert mood.confidence == 0.2
+
+    # --- Inbound Communication Signal Tests ---
+
+    def test_can_process_accepts_message_received(self, engine):
+        """MoodInferenceEngine should accept message.received for incoming-stress detection."""
+        event = {"type": EventType.MESSAGE_RECEIVED.value}
+        assert engine.can_process(event) is True
+
+    def test_inbound_negative_language_creates_signal(self, engine):
+        """Inbound messages with negative words should produce incoming_negative_language signal."""
+        event = {
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "proton_mail",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": "I'm frustrated with this problem. This is unacceptable and disappointing.",
+            },
+        }
+
+        signals = engine.extract(event)
+        mood_signals = signals[0]["signals"]
+        neg_signal = next(s for s in mood_signals if s["signal_type"] == "incoming_negative_language")
+
+        assert neg_signal["weight"] == 0.4  # Lower than outbound (0.6)
+        assert neg_signal["value"] > 0
+        assert neg_signal["source"] == "proton_mail"
+
+    def test_inbound_negative_language_lower_weight_than_outbound(self, engine):
+        """Inbound negative language should carry lower weight (0.4) than outbound (0.6)."""
+        inbound_event = {
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "proton_mail",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"body": "This is a frustrated and difficult situation for everyone."},
+        }
+        outbound_event = {
+            "type": EventType.EMAIL_SENT.value,
+            "source": "proton_mail",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"body": "This is a frustrated and difficult situation for everyone."},
+        }
+
+        in_signals = engine.extract(inbound_event)[0]["signals"]
+        out_signals = engine.extract(outbound_event)[0]["signals"]
+
+        in_neg = next(s for s in in_signals if "negative" in s["signal_type"])
+        out_neg = next(s for s in out_signals if "negative" in s["signal_type"])
+
+        assert in_neg["weight"] < out_neg["weight"]
+
+    def test_inbound_pressure_from_caps_and_exclamations(self, engine):
+        """Messages with ALL-CAPS and exclamation density should produce incoming_pressure signal."""
+        event = {
+            "type": EventType.MESSAGE_RECEIVED.value,
+            "source": "signal",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": "WE NEED THIS DONE NOW!!! The deadline was YESTERDAY!",
+            },
+        }
+
+        signals = engine.extract(event)
+        mood_signals = signals[0]["signals"]
+        pressure_signal = next(
+            (s for s in mood_signals if s["signal_type"] == "incoming_pressure"),
+            None,
+        )
+
+        assert pressure_signal is not None
+        assert pressure_signal["weight"] == 0.3
+
+    def test_inbound_no_signal_for_neutral_message(self, engine):
+        """Neutral inbound messages should produce no mood signals."""
+        event = {
+            "type": EventType.MESSAGE_RECEIVED.value,
+            "source": "signal",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": "Hey, do you want to grab coffee tomorrow afternoon?",
+            },
+        }
+
+        signals = engine.extract(event)
+        assert signals == []  # No mood signals from a neutral inbound message
+
+    def test_inbound_signals_feed_stress_in_compute_mood(self, engine, user_model_store):
+        """incoming_negative_language and incoming_pressure should increase stress_level."""
+        signals = [
+            {
+                "signal_type": "incoming_negative_language",
+                "value": 0.3,
+                "delta_from_baseline": 0.3,
+                "weight": 0.4,
+                "source": "proton_mail",
+            },
+            {
+                "signal_type": "incoming_pressure",
+                "value": 3.0,
+                "delta_from_baseline": 0.3,
+                "weight": 0.3,
+                "source": "signal",
+            },
+        ]
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": signals})
+
+        mood = engine.compute_current_mood()
+
+        # Both signals are stress signals, so stress should be elevated
+        assert mood.stress_level > 0.0
+        # Cognitive load: 2 stress signals * 0.15 = 0.3
+        assert mood.cognitive_load == pytest.approx(0.3, abs=0.01)
+
+    def test_inbound_outbound_no_message_length_for_inbound(self, engine):
+        """Inbound messages should NOT produce message_length signals (only outbound does)."""
+        event = {
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "proton_mail",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": "This is a perfectly normal message with no negative words at all today.",
+            },
+        }
+
+        signals = engine.extract(event)
+        # No negative words → no signals at all for a neutral inbound
+        assert signals == []

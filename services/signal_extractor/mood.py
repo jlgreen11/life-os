@@ -33,15 +33,28 @@ class MoodInferenceEngine(BaseExtractor):
         "emoji_rate": 0.05,
     }
 
+    # Negative-valence words used to score both outbound (the user's own
+    # language) and inbound (stress-inducing content arriving at the user).
+    NEGATIVE_WORDS = {
+        "frustrated", "annoyed", "tired", "exhausted", "stressed",
+        "worried", "overwhelmed", "confused", "angry", "upset",
+        "sorry", "unfortunately", "problem", "issue", "difficult",
+        "urgent", "critical", "emergency", "immediately", "asap",
+        "disappointing", "concerned", "unacceptable", "overdue",
+        "escalate", "failed", "failure", "broken", "blocked",
+    }
+
     def can_process(self, event: dict) -> bool:
         # The mood engine casts a wide net: it ingests communication events
-        # (language sentiment), health data (sleep quality/duration), calendar
-        # density (busyness/stress), financial transactions (spending spikes),
-        # and location changes.  Each event type contributes a different facet
-        # to the multi-dimensional mood estimate.
+        # in BOTH directions (outbound for self-expression analysis, inbound
+        # for incoming-stress detection), health data (sleep quality/duration),
+        # calendar density (busyness/stress), financial transactions (spending
+        # spikes), and location changes.
         return event.get("type") in [
             EventType.EMAIL_SENT.value,
             EventType.MESSAGE_SENT.value,
+            EventType.EMAIL_RECEIVED.value,
+            EventType.MESSAGE_RECEIVED.value,
             EventType.HEALTH_METRIC_UPDATED.value,
             EventType.SLEEP_RECORDED.value,
             EventType.CALENDAR_EVENT_CREATED.value,
@@ -69,11 +82,19 @@ class MoodInferenceEngine(BaseExtractor):
         event_type = event.get("type", "")
         payload = event.get("payload", {})
 
-        # --- Communication signals ---
-        # Message length relative to baseline: unusually short messages may
-        # indicate terse/stressed communication; long ones may indicate
-        # engagement or venting.
-        if event_type in [EventType.EMAIL_SENT.value, EventType.MESSAGE_SENT.value]:
+        # --- Outbound communication signals ---
+        # The user's own writing: message length relative to baseline reveals
+        # terse/stressed vs. engaged communication.  Negative-valence words in
+        # outbound text are a strong mood indicator (weight=0.6) because the
+        # user chose those words deliberately.
+        is_outbound = event_type in [
+            EventType.EMAIL_SENT.value, EventType.MESSAGE_SENT.value,
+        ]
+        is_inbound = event_type in [
+            EventType.EMAIL_RECEIVED.value, EventType.MESSAGE_RECEIVED.value,
+        ]
+
+        if is_outbound:
             text = payload.get("body", "") or payload.get("body_plain", "")
             if text:
                 word_count = len(text.split())
@@ -88,20 +109,56 @@ class MoodInferenceEngine(BaseExtractor):
                     "source": event.get("source", "unknown"),
                 })
 
-                # Scan for negative-valence words.  The density of negative
-                # language is a strong (weight=0.6) mood indicator because
-                # it is more deliberate than structural features.
-                negative_words = sum(1 for w in text.lower().split() if w in [
-                    "frustrated", "annoyed", "tired", "exhausted", "stressed",
-                    "worried", "overwhelmed", "confused", "angry", "upset",
-                    "sorry", "unfortunately", "problem", "issue", "difficult",
-                ])
-                if negative_words > 0:
+                negative_count = sum(
+                    1 for w in text.lower().split() if w in self.NEGATIVE_WORDS
+                )
+                if negative_count > 0:
                     mood_signals.append({
                         "signal_type": "negative_language",
-                        "value": negative_words / max(word_count, 1),
-                        "delta_from_baseline": negative_words / max(word_count, 1),
+                        "value": negative_count / max(word_count, 1),
+                        "delta_from_baseline": negative_count / max(word_count, 1),
                         "weight": 0.6,
+                        "source": event.get("source", "unknown"),
+                    })
+
+        # --- Inbound communication signals ---
+        # Content arriving at the user directly affects mood.  An angry email
+        # from a boss or a tense message from a partner is stress-inducing
+        # regardless of whether the user has replied yet.  Inbound signals
+        # carry lower weight than outbound (0.4 vs 0.6) because someone else's
+        # words are a weaker indicator than the user's own expression, but they
+        # are still significant — and they arrive *immediately*, not after the
+        # user composes a reply.
+        if is_inbound:
+            text = payload.get("body", "") or payload.get("body_plain", "")
+            if text:
+                word_count = len(text.split())
+                negative_count = sum(
+                    1 for w in text.lower().split() if w in self.NEGATIVE_WORDS
+                )
+                if negative_count > 0:
+                    mood_signals.append({
+                        "signal_type": "incoming_negative_language",
+                        "value": negative_count / max(word_count, 1),
+                        "delta_from_baseline": negative_count / max(word_count, 1),
+                        "weight": 0.4,
+                        "source": event.get("source", "unknown"),
+                    })
+
+                # Incoming urgency pressure: messages with high exclamation
+                # density or ALL-CAPS words create pressure on the user even
+                # before they open the message.
+                caps_words = sum(
+                    1 for w in text.split()
+                    if w.isupper() and len(w) > 1
+                )
+                exclamation_density = text.count("!") / max(word_count, 1)
+                if caps_words >= 2 or exclamation_density > 0.1:
+                    mood_signals.append({
+                        "signal_type": "incoming_pressure",
+                        "value": caps_words + exclamation_density,
+                        "delta_from_baseline": 0.3,
+                        "weight": 0.3,
                         "source": event.get("source", "unknown"),
                     })
 
@@ -190,15 +247,20 @@ class MoodInferenceEngine(BaseExtractor):
 
         # Partition signals into the mood dimensions they inform.
         # A single signal type may contribute to multiple dimensions (e.g.,
-        # "negative_language" feeds both stress and valence).
+        # "negative_language" feeds both stress and valence).  Inbound signal
+        # types (incoming_negative_language, incoming_pressure) feed stress
+        # and valence so that stress-inducing content arriving at the user
+        # is reflected immediately rather than only after the user replies.
         energy_signals = [s for s in recent_signals if s["signal_type"] in [
             "sleep_quality", "sleep_duration", "activity_level"
         ]]
         stress_signals = [s for s in recent_signals if s["signal_type"] in [
-            "calendar_density", "negative_language", "spending_spike", "response_latency"
+            "calendar_density", "negative_language", "spending_spike",
+            "response_latency", "incoming_negative_language", "incoming_pressure",
         ]]
         valence_signals = [s for s in recent_signals if s["signal_type"] in [
-            "negative_language", "emoji_usage", "message_length"
+            "negative_language", "emoji_usage", "message_length",
+            "incoming_negative_language",
         ]]
 
         mood = MoodState(
