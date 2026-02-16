@@ -704,6 +704,7 @@ class LifeOS:
                 stats = clean_relationship_profile(
                     db=self.db,
                     dry_run=False,  # Actually modify the database
+                    verbose=False,  # Suppress output to prevent asyncio.to_thread() hangs
                 )
                 return stats
 
