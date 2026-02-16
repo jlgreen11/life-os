@@ -78,12 +78,35 @@ class PredictionEngine:
         # category of predictable user need. They run independently and
         # return zero or more Prediction objects. The full set of prediction
         # types covers the most common "blown away" moments:
-        predictions.extend(await self._check_calendar_conflicts(current_context))    # Scheduling overlaps & tight transitions
-        predictions.extend(await self._check_follow_up_needs(current_context))       # Unreplied messages from important people
-        predictions.extend(await self._check_routine_deviations(current_context))    # Missed habits or routines
-        predictions.extend(await self._check_relationship_maintenance(current_context))  # Contacts going cold
-        predictions.extend(await self._check_preparation_needs(current_context))     # Upcoming events needing prep
-        predictions.extend(await self._check_spending_patterns(current_context))     # Spending anomalies
+
+        # Track prediction generation for observability
+        generation_stats = {}
+
+        calendar_preds = await self._check_calendar_conflicts(current_context)
+        generation_stats['calendar_conflicts'] = len(calendar_preds)
+        predictions.extend(calendar_preds)
+
+        followup_preds = await self._check_follow_up_needs(current_context)
+        generation_stats['follow_up_needs'] = len(followup_preds)
+        predictions.extend(followup_preds)
+
+        routine_preds = await self._check_routine_deviations(current_context)
+        generation_stats['routine_deviations'] = len(routine_preds)
+        predictions.extend(routine_preds)
+
+        relationship_preds = await self._check_relationship_maintenance(current_context)
+        generation_stats['relationship_maintenance'] = len(relationship_preds)
+        predictions.extend(relationship_preds)
+
+        prep_preds = await self._check_preparation_needs(current_context)
+        generation_stats['preparation_needs'] = len(prep_preds)
+        predictions.extend(prep_preds)
+
+        spending_preds = await self._check_spending_patterns(current_context)
+        generation_stats['spending_patterns'] = len(spending_preds)
+        predictions.extend(spending_preds)
+
+        print(f"[prediction_engine] Generated predictions by type: {generation_stats} (total={len(predictions)})")
 
         # --- Accuracy-based confidence decay/boost ---
         # Adjust confidence based on historical accuracy for each prediction type.
@@ -113,6 +136,12 @@ class PredictionEngine:
         # Cap at 5 surfaced predictions per cycle, prioritized by confidence
         filtered.sort(key=lambda p: p.confidence, reverse=True)
         filtered = filtered[:5]
+
+        # Log filtering results for observability
+        filtered_by_reaction = len(predictions) - len([p for p in predictions if p in filtered or p.confidence < 0.3])
+        filtered_by_confidence = len([p for p in predictions if p.confidence < 0.3 and p not in filtered])
+        print(f"[prediction_engine] Filtering: {len(predictions)} raw → {len(filtered)} surfaced "
+              f"(filtered: {filtered_by_reaction} by reaction, {filtered_by_confidence} by confidence)")
 
         # Store ALL predictions (including filtered-out ones) for accuracy
         # tracking. Mark which ones were actually surfaced so the feedback
