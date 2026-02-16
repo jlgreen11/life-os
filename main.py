@@ -1248,6 +1248,24 @@ class LifeOS:
 
                 print(f"  RoutineDetector: detected {len(routines)} routines, stored {stored_count}")
 
+                # Publish routine detection events from async context (not from thread).
+                # UserModelStore._emit_telemetry() fails silently when called from threads
+                # because there's no running event loop, so we publish here instead.
+                if self.event_bus and self.event_bus.is_connected:
+                    for routine in routines:
+                        await self.event_bus.publish(
+                            "usermodel.routine.updated",
+                            {
+                                "routine_name": routine["name"],
+                                "trigger": routine["trigger"],
+                                "steps_count": len(routine.get("steps", [])),
+                                "consistency_score": routine.get("consistency_score", 0.5),
+                                "times_observed": routine.get("times_observed", 0),
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                            source="routine_detector",
+                        )
+
                 # Detect workflows from last 30 days of event sequences
                 workflows = await asyncio.to_thread(self.workflow_detector.detect_workflows, 30)
 
@@ -1255,6 +1273,25 @@ class LifeOS:
                 workflow_stored = await asyncio.to_thread(self.workflow_detector.store_workflows, workflows)
 
                 print(f"  WorkflowDetector: detected {len(workflows)} workflows, stored {workflow_stored}")
+
+                # Publish workflow detection events from async context (not from thread).
+                # UserModelStore._emit_telemetry() fails silently when called from threads
+                # because there's no running event loop, so we publish here instead.
+                if self.event_bus and self.event_bus.is_connected:
+                    for workflow in workflows:
+                        await self.event_bus.publish(
+                            "usermodel.workflow.updated",
+                            {
+                                "workflow_name": workflow["name"],
+                                "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
+                                "steps_count": len(workflow.get("steps", [])),
+                                "tools_count": len(workflow.get("tools_used", [])),
+                                "success_rate": workflow.get("success_rate", 0.5),
+                                "times_observed": workflow.get("times_observed", 0),
+                                "updated_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                            source="workflow_detector",
+                        )
 
                 # Adaptive retry interval based on detection success:
                 # - 0 patterns: retry in 1 hour (cold start, connectors may be syncing)
