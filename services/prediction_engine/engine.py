@@ -846,6 +846,17 @@ class PredictionEngine:
 
             # Estimate typical contact frequency from the last 10 timestamps.
             # We compute the average gap in days between consecutive interactions.
+            #
+            # CRITICAL FIX (iteration 166): Use fractional days instead of integer days.
+            # The original implementation used .days which returns integers, causing all
+            # gaps < 24 hours to become 0. For contacts with frequent interactions (daily
+            # or multiple times per day), this produced avg_gap=0, threshold=0, making it
+            # impossible for ANY contact to trigger a prediction (days_since > 0 is never
+            # greater than threshold 0 * 1.5 = 0).
+            #
+            # This caused 316 eligible contacts (5+ interactions) to generate ZERO
+            # relationship maintenance predictions. Switching to fractional days via
+            # .total_seconds() / 86400 fixes this for all contact frequencies.
             timestamps = data.get("interaction_timestamps", [])
             if len(timestamps) >= 3:
                 try:
@@ -853,7 +864,8 @@ class PredictionEngine:
                         datetime.fromisoformat(t.replace("Z", "+00:00"))
                         for t in timestamps[-10:]
                     ])
-                    gaps = [(dts[i + 1] - dts[i]).days for i in range(len(dts) - 1)]
+                    # Use fractional days for accurate gap calculation
+                    gaps = [(dts[i + 1] - dts[i]).total_seconds() / 86400 for i in range(len(dts) - 1)]
                     avg_gap = sum(gaps) / len(gaps) if gaps else 30
                 except (ValueError, TypeError):
                     avg_gap = 30
