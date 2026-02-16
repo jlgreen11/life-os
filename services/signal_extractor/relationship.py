@@ -44,7 +44,27 @@ class RelationshipExtractor(BaseExtractor):
         """
         payload = event.get("payload", {})
         event_type = event.get("type", "")
-        timestamp = event.get("timestamp", "")
+
+        # CRITICAL: Use the actual message timestamp (from email Date header or
+        # message sent_at field) rather than the event sync timestamp. This is
+        # essential for accurate relationship frequency analysis.
+        #
+        # Without this fix, all interactions appear to happen at database sync
+        # time, causing gaps between interactions to collapse to ~0 days. This
+        # breaks relationship maintenance predictions which depend on measuring
+        # the real time between communications (e.g., "you usually email Alice
+        # every 14 days, but it's been 30 days").
+        #
+        # Priority order:
+        # 1. payload.email_date (Gmail connector, actual Date header)
+        # 2. payload.sent_at / received_at (other connectors)
+        # 3. event.timestamp (fallback to sync time if no actual date available)
+        actual_timestamp = (
+            payload.get("email_date") or
+            payload.get("sent_at") or
+            payload.get("received_at") or
+            event.get("timestamp", "")
+        )
 
         signals = []
 
@@ -73,7 +93,7 @@ class RelationshipExtractor(BaseExtractor):
             # statistics per contact.
             signal = {
                 "type": "relationship_interaction",
-                "timestamp": timestamp,
+                "timestamp": actual_timestamp,
                 "contact_address": address,
                 "direction": "outbound" if "sent" in event_type.lower() else "inbound",
                 "channel": payload.get("channel", event.get("source", "unknown")),

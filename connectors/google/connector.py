@@ -291,6 +291,12 @@ class GoogleConnector(BaseConnector):
             "is_reply": bool(in_reply_to),
             "in_reply_to": in_reply_to,
             "folder": ", ".join(msg.get("labelIds", [])),
+            # CRITICAL: Include actual email timestamp from Date header (not sync time).
+            # This enables accurate relationship frequency analysis and routine detection.
+            # Without this, all interactions appear to happen at sync time, breaking
+            # relationship maintenance predictions which depend on measuring real gaps
+            # between communications.
+            "email_date": dt.isoformat(),
         }
 
         # Metadata
