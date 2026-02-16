@@ -1256,20 +1256,31 @@ class LifeOS:
                 # Publish routine detection events from async context (not from thread).
                 # UserModelStore._emit_telemetry() fails silently when called from threads
                 # because there's no running event loop, so we publish here instead.
+                #
+                # CRITICAL: We must publish events for EVERY stored routine, not just new ones.
+                # Routines use UPSERT logic (INSERT OR REPLACE), so every detection cycle
+                # updates existing routines and creates events for observability/auditing.
                 if self.event_bus and self.event_bus.is_connected:
                     for routine in routines:
-                        await self.event_bus.publish(
-                            "usermodel.routine.updated",
-                            {
-                                "routine_name": routine["name"],
-                                "trigger": routine["trigger"],
-                                "steps_count": len(routine.get("steps", [])),
-                                "consistency_score": routine.get("consistency_score", 0.5),
-                                "times_observed": routine.get("times_observed", 0),
-                                "updated_at": datetime.now(timezone.utc).isoformat(),
-                            },
-                            source="routine_detector",
-                        )
+                        try:
+                            await self.event_bus.publish(
+                                "usermodel.routine.updated",
+                                {
+                                    "routine_name": routine["name"],
+                                    "trigger": routine["trigger"],
+                                    "steps_count": len(routine.get("steps", [])),
+                                    "consistency_score": routine.get("consistency_score", 0.5),
+                                    "times_observed": routine.get("times_observed", 0),
+                                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                                },
+                                source="routine_detector",
+                            )
+                        except Exception as e:
+                            print(f"  ⚠ Failed to publish routine event for '{routine.get('name')}': {e}")
+                else:
+                    # Event bus not connected — log the skip for visibility
+                    if routines:
+                        print(f"  ⚠ Skipping {len(routines)} routine event publications (event bus not connected)")
 
                 # Detect workflows from last 30 days of event sequences
                 workflows = await asyncio.to_thread(self.workflow_detector.detect_workflows, 30)
@@ -1282,12 +1293,17 @@ class LifeOS:
                 # Publish workflow detection events from async context (not from thread).
                 # UserModelStore._emit_telemetry() fails silently when called from threads
                 # because there's no running event loop, so we publish here instead.
+                #
+                # CRITICAL: We must publish events for EVERY stored workflow, not just new ones.
+                # Workflows use UPSERT logic (INSERT OR REPLACE), so every detection cycle
+                # updates existing workflows and creates events for observability/auditing.
                 if self.event_bus and self.event_bus.is_connected:
                     for workflow in workflows:
-                        await self.event_bus.publish(
-                            "usermodel.workflow.updated",
-                            {
-                                "workflow_name": workflow["name"],
+                        try:
+                            await self.event_bus.publish(
+                                "usermodel.workflow.updated",
+                                {
+                                    "workflow_name": workflow["name"],
                                 "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
                                 "steps_count": len(workflow.get("steps", [])),
                                 "tools_count": len(workflow.get("tools_used", [])),
@@ -1297,6 +1313,12 @@ class LifeOS:
                             },
                             source="workflow_detector",
                         )
+                        except Exception as e:
+                            print(f"  ⚠ Failed to publish workflow event for '{workflow.get('name')}': {e}")
+                else:
+                    # Event bus not connected — log the skip for visibility
+                    if workflows:
+                        print(f"  ⚠ Skipping {len(workflows)} workflow event publications (event bus not connected)")
 
                 # Adaptive retry interval based on detection success:
                 # - 0 patterns: retry in 1 hour (cold start, connectors may be syncing)
