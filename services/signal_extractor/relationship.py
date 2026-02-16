@@ -60,6 +60,14 @@ class RelationshipExtractor(BaseExtractor):
             if not address:
                 continue
 
+            # Filter out marketing emails, no-reply addresses, and automated senders.
+            # These pollute the relationship graph with non-human "relationships" that
+            # should never generate relationship maintenance predictions. Without this
+            # filter, the system tracks marketing senders like callofduty@comms.activision.com
+            # as legitimate contacts, wasting storage and breaking relationship predictions.
+            if self._is_marketing_or_noreply(address, payload):
+                continue
+
             # Each signal captures a single interaction data point.  Downstream
             # aggregation in _update_contact_profiles turns these into running
             # statistics per contact.
@@ -234,6 +242,11 @@ class RelationshipExtractor(BaseExtractor):
 
         for address in addresses:
             if not address:
+                continue
+
+            # Filter out marketing emails — don't learn communication templates
+            # from bulk senders. Templates are only useful for human contacts.
+            if self._is_marketing_or_noreply(address, payload):
                 continue
 
             # Generate deterministic template ID from contact + channel + direction
@@ -494,3 +507,118 @@ class RelationshipExtractor(BaseExtractor):
 
         # Return top N most common
         return [word for word, _ in word_counts.most_common(max_phrases)]
+
+    @staticmethod
+    def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
+        """Check if an email is marketing/automated and shouldn't be tracked as a relationship.
+
+        Filters out:
+        - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
+        - Bulk/marketing email patterns (newsletter@, reply@, email@, service@, etc.)
+        - Transactional/automated senders (orders@, auto-confirm@, shipment-tracking@, etc.)
+        - Organizational bulk senders (communications@, development@, fundraising@)
+        - Loyalty/rewards programs (rewards@, loyalty@, etc.)
+        - Marketing domain patterns (news-*.com, email.*.com, etc.)
+        - Marketing service providers (@*.e2ma.net, @*.sendgrid.net, etc.)
+        - Embedded notification patterns (HOA-Notifications@, engage.ticketmaster.com)
+        - Emails containing unsubscribe links
+
+        This prevents the relationship graph from being polluted with non-human "contacts"
+        that should never generate relationship maintenance predictions. Without this filter,
+        the system would track thousands of marketing senders as legitimate relationships,
+        wasting storage space and breaking relationship maintenance prediction accuracy.
+
+        Args:
+            from_addr: Email address to check
+            payload: Message payload (checked for unsubscribe links)
+
+        Returns:
+            True if this is a marketing/automated email, False if it's a human contact
+        """
+        addr_lower = from_addr.lower()
+
+        # No-reply and automated system senders
+        # Includes variations like noreply@, no-reply@, mailer-daemon@, postmaster@
+        noreply_patterns = (
+            "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
+            "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
+            "autoreply@", "automated@",
+        )
+        if any(pattern in addr_lower for pattern in noreply_patterns):
+            return True
+
+        # Common bulk sender local-parts (the part before @)
+        # These patterns must match at the start of the email address to avoid
+        # false positives like john.email@company.com or sarah.reply@startup.io
+        bulk_localpart_patterns = (
+            "newsletter@", "notifications@", "updates@", "digest@",
+            "mailer@", "bulk@", "promo@", "marketing@",
+            "reply@", "email@", "news@", "offers@", "deals@",
+            "hello@", "info@", "support@", "help@",
+            "service@",     # PayPal, Stripe, etc. - mostly transactional but repetitive
+            "discover@",    # Common marketing pattern (Airbnb, etc.)
+            "alert@", "alerts@", "notification@",
+            # Transactional/automated senders
+            "orders@", "order@", "receipts@", "receipt@",
+            "auto-confirm@", "autoconfirm@", "confirmation@",
+            "shipment-tracking@", "shipping@", "delivery@",
+            "accountservice@", "account-service@",
+            # Organizational bulk senders
+            "communications@", "development@", "fundraising@",
+            # Loyalty/rewards programs (always automated)
+            "rewards@", "loyalty@",
+        )
+        if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
+            return True
+
+        # Embedded notification patterns (middle of local-part)
+        # Catches: HOA-Notifications@, user-notifications@, system-alerts@
+        embedded_notification_patterns = (
+            "-notification", "-notifications", "-alert", "-alerts",
+            "-update", "-updates", "-digest",
+        )
+        # Extract local-part (everything before @)
+        local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
+        if any(pattern in local_part for pattern in embedded_notification_patterns):
+            return True
+
+        # Marketing domain patterns (the part after @)
+        # These catch domains like news-us.hugoboss.com, email.d23.com, reply.*.com
+        marketing_domain_patterns = (
+            "@news-", "@email.", "@reply.", "@mailing.",
+            "@newsletters.", "@promo.", "@marketing.",
+            "@em.", "@mg.", "@mail.",  # Common email service provider patterns
+            "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
+            "@comms.",  # Communications platforms (e.g., callofduty@comms.activision.com)
+        )
+        if any(pattern in addr_lower for pattern in marketing_domain_patterns):
+            return True
+
+        # Marketing service provider subdomains
+        # These are third-party email marketing platforms (e.g., @*.e2ma.net, @*.sendgrid.net)
+        # Check if domain ends with these patterns
+        domain = addr_lower.split("@")[1] if "@" in addr_lower else ""
+        marketing_service_patterns = (
+            ".e2ma.net",      # Emma email marketing
+            ".sendgrid.net",  # SendGrid
+            ".mailchimp.com", # Mailchimp
+            ".constantcontact.com",  # Constant Contact
+            ".hubspot.com",   # HubSpot
+            ".marketo.com",   # Marketo
+            ".pardot.com",    # Salesforce Pardot
+            ".eloqua.com",    # Oracle Eloqua
+        )
+        if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
+            return True
+
+        # Check body and snippet for unsubscribe indicators
+        # Marketing emails are legally required to include unsubscribe links
+        text = " ".join(filter(None, [
+            payload.get("body_plain", ""),
+            payload.get("snippet", ""),
+            payload.get("body", ""),
+        ])).lower()
+        if "unsubscribe" in text:
+            return True
+
+        return False
