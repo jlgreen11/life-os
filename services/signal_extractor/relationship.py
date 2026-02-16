@@ -558,11 +558,16 @@ class RelationshipExtractor(BaseExtractor):
         addr_lower = from_addr.lower()
 
         # No-reply and automated system senders
-        # Includes variations like noreply@, no-reply@, mailer-daemon@, postmaster@
+        # Includes variations like noreply@, no-reply@, no_reply@, mailer-daemon@, postmaster@
+        # CRITICAL: Must catch all common separators (-, _, none) and handle + modifiers
+        # Examples: no-reply@, noreply@, no_reply@, no-reply+ID@
         noreply_patterns = (
-            "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
-            "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
-            "autoreply@", "automated@",
+            "no-reply@", "no_reply@", "noreply@",
+            "do-not-reply@", "do_not_reply@", "donotreply@",
+            "no-reply+", "no_reply+", "noreply+",  # Catches no-reply+ID@domain.com
+            "mailer-daemon@", "postmaster@", "daemon@",
+            "auto-reply@", "auto_reply@", "autoreply@",
+            "automated@", "automation@",
         )
         if any(pattern in addr_lower for pattern in noreply_patterns):
             return True
@@ -570,19 +575,24 @@ class RelationshipExtractor(BaseExtractor):
         # Common bulk sender local-parts (the part before @)
         # These patterns must match at the start of the email address to avoid
         # false positives like john.email@company.com or sarah.reply@startup.io
+        # CRITICAL: Include both singular and plural forms (notification/notifications)
         bulk_localpart_patterns = (
-            "newsletter@", "notifications@", "updates@", "digest@",
+            "newsletter@", "notifications@", "notification@",  # Both singular and plural
+            "updates@", "update@", "digest@",
             "mailer@", "bulk@", "promo@", "marketing@",
-            "reply@", "email@", "news@", "offers@", "deals@",
+            "reply@", "email@", "news@", "offers@", "offer@", "deals@",
             "hello@", "info@", "support@", "help@",
-            "service@",     # PayPal, Stripe, etc. - mostly transactional but repetitive
+            "service@", "services@",  # PayPal, Stripe, etc. - mostly transactional but repetitive
             "discover@",    # Common marketing pattern (Airbnb, etc.)
-            "alert@", "alerts@", "notification@",
+            "alert@", "alerts@",
+            "contactus@",  # Contact forms (usually automated) - NOTE: not "contact@" or "team@" to avoid false positives
             # Transactional/automated senders
             "orders@", "order@", "receipts@", "receipt@",
-            "auto-confirm@", "autoconfirm@", "confirmation@",
+            "auto-confirm@", "autoconfirm@", "confirmation@", "confirm@",
             "shipment-tracking@", "shipping@", "delivery@",
-            "accountservice@", "account-service@",
+            "accountservice@", "account-service@", "account@",
+            "yourhealth@", "youraccount@",  # Personalized automated senders
+            "smartoption@", "quickalert@",  # Financial/loan automated systems
             # Organizational bulk senders
             "communications@", "development@", "fundraising@",
             # Loyalty/rewards programs (always automated)
@@ -591,11 +601,13 @@ class RelationshipExtractor(BaseExtractor):
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True
 
-        # Embedded notification patterns (middle of local-part)
-        # Catches: HOA-Notifications@, user-notifications@, system-alerts@
+        # Embedded notification patterns (middle or end of local-part)
+        # Catches: HOA-Notifications@, user-notifications@, system-alerts@, lafconews@
+        # Uses "in" check (not startswith) to catch patterns anywhere in local-part
         embedded_notification_patterns = (
             "-notification", "-notifications", "-alert", "-alerts",
             "-update", "-updates", "-digest",
+            "news",  # Catches lafconews@, morningnews@, dailynews@, etc.
         )
         # Extract local-part (everything before @)
         local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
@@ -604,12 +616,31 @@ class RelationshipExtractor(BaseExtractor):
 
         # Marketing domain patterns (the part after @)
         # These catch domains like news-us.hugoboss.com, email.d23.com, reply.*.com
+        # EXPANDED (iteration 152): Added @m., @notification., @marketing. patterns
+        # to catch starbucks@m.starbucks.com, capitalone@notification.capitalone.com, etc.
+        #
+        # NOTE: Keeping @mail. for RelationshipExtractor (stricter than PredictionEngine)
+        # to prevent marketing pollution. PredictionEngine removed it in iteration 160 to
+        # allow Gmail/Hotmail/Protonmail, but RelationshipExtractor should be more aggressive
+        # since we're building long-term contact profiles.
         marketing_domain_patterns = (
             "@news-", "@email.", "@reply.", "@mailing.",
             "@newsletters.", "@promo.", "@marketing.",
             "@em.", "@mg.", "@mail.",  # Common email service provider patterns
+            "@m.",  # Mobile/marketing subdomain (e.g., @m.starbucks.com, @m.facebook.com)
             "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
-            "@comms.",  # Communications platforms (e.g., callofduty@comms.activision.com)
+            "@comms.", "@communications.",  # Communications platforms (e.g., callofduty@comms.activision.com)
+            "@attn.",  # Attention/notification platforms
+            "@notification.", "@notifications.",  # Notification subdomains (e.g., notification.capitalone.com)
+            "@txn.", "@transactional.",  # Transaction notifications
+            "@deals.", "@offers.", "@promo-",  # Promotional campaigns
+            "@campaigns.", "@campaign.",  # Campaign management platforms
+            "@blast.", "@bulk.",  # Bulk sender platforms
+            "@lists.", "@list.",  # Mailing list managers
+            "@messages.", "@message.",  # Message notification platforms
+            "@care.",  # Customer care (e.g., care.kansashealthsystem.com)
+            "@mcmap.",  # Marketing campaign manager (e.g., mcmap.chase.com)
+            "@soslprospect.",  # Sales/prospect management (e.g., soslprospect.salliemae.com)
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
             return True
@@ -617,6 +648,7 @@ class RelationshipExtractor(BaseExtractor):
         # Marketing service provider subdomains
         # These are third-party email marketing platforms (e.g., @*.e2ma.net, @*.sendgrid.net)
         # Check if domain ends with these patterns
+        # EXPANDED (iteration 152): Added more common transactional/marketing email platforms
         domain = addr_lower.split("@")[1] if "@" in addr_lower else ""
         marketing_service_patterns = (
             ".e2ma.net",      # Emma email marketing
@@ -627,6 +659,19 @@ class RelationshipExtractor(BaseExtractor):
             ".marketo.com",   # Marketo
             ".pardot.com",    # Salesforce Pardot
             ".eloqua.com",    # Oracle Eloqua
+            ".sailthru.com",  # Sailthru email platform
+            ".responsys.net", # Oracle Responsys
+            ".exacttarget.com",  # Salesforce Marketing Cloud
+            ".smtp2go.com",   # SMTP2GO transactional email
+            ".postmarkapp.com",  # Postmark transactional
+            ".mandrillapp.com",  # Mandrill by Mailchimp
+            ".amazonses.com",    # Amazon SES
+            ".sparkpostmail.com", # SparkPost
+            ".sendinblue.com",   # Sendinblue/Brevo
+            ".intercom-mail.com", # Intercom notifications
+            ".customer.io",       # Customer.io
+            ".iterable.com",      # Iterable
+            ".klaviyo.com",       # Klaviyo e-commerce marketing
         )
         if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
             return True
