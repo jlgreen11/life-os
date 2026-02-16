@@ -9,9 +9,78 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from html import unescape
+from html.parser import HTMLParser
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
+
+
+class HTMLStripper(HTMLParser):
+    """
+    Strips HTML tags and extracts plain text from HTML content.
+
+    This parser is used to clean email bodies that contain HTML markup,
+    preventing HTML/CSS tokens (like 'nbsp', 'padding', 'tbody') from being
+    extracted as topics and polluting the semantic memory layer.
+
+    Example:
+        >>> stripper = HTMLStripper()
+        >>> stripper.feed('<p>Hello <b>world</b>!</p>')
+        >>> stripper.get_text()
+        'Hello world!'
+    """
+
+    # Block-level HTML elements that should have space inserted after them
+    # to prevent word concatenation (e.g., </p><p> should insert space between)
+    BLOCK_ELEMENTS = {
+        'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'td', 'th',
+        'br', 'hr', 'blockquote', 'pre', 'section', 'article', 'header', 'footer'
+    }
+
+    def __init__(self):
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = True
+        self.text_parts = []
+        self._in_style = False  # Track if we're inside a <style> tag
+        self._in_script = False  # Track if we're inside a <script> tag
+
+    def handle_starttag(self, tag, attrs):
+        """Track when entering <style> or <script> tags to skip their content."""
+        if tag == 'style':
+            self._in_style = True
+        elif tag == 'script':
+            self._in_script = True
+
+    def handle_endtag(self, tag):
+        """Track when exiting <style> or <script> tags, add spacing for block elements."""
+        if tag == 'style':
+            self._in_style = False
+        elif tag == 'script':
+            self._in_script = False
+        # Add space after block-level elements to preserve word boundaries
+        elif tag in self.BLOCK_ELEMENTS:
+            self.text_parts.append(' ')
+
+    def handle_data(self, data: str):
+        """Collect visible text content from HTML elements, excluding style/script."""
+        # Skip CSS rules inside <style> tags and JavaScript inside <script> tags
+        if not self._in_style and not self._in_script:
+            self.text_parts.append(data)
+
+    def get_text(self) -> str:
+        """
+        Return the extracted plain text.
+
+        Joins all text parts, then normalizes whitespace to collapse
+        multiple spaces/newlines to single space.
+        """
+        # Join with empty string to preserve natural word boundaries
+        text = ''.join(self.text_parts)
+        # Normalize whitespace: collapse runs of spaces/tabs/newlines to single space
+        return re.sub(r'\s+', ' ', text).strip()
 
 
 class TopicExtractor(BaseExtractor):
@@ -41,10 +110,23 @@ class TopicExtractor(BaseExtractor):
         that subject-only emails (e.g., calendar forwards) still yield
         topics.  Messages shorter than 20 characters are skipped because
         they rarely contain meaningful topical content.
+
+        HTML content is automatically stripped to prevent HTML/CSS tokens
+        (like 'nbsp', 'padding', 'tbody', 'border') from being extracted as
+        topics and polluting the semantic memory layer with garbage expertise.
         """
         payload = event.get("payload", {})
         text = payload.get("body", "") or payload.get("body_plain", "") or ""
         subject = payload.get("subject", "")
+
+        # Strip HTML from email bodies to extract only meaningful text content.
+        # Many emails contain HTML markup, and without stripping, HTML/CSS tokens
+        # get extracted as "topics" and flow into semantic facts as fake "expertise".
+        # This caused 18/18 expertise facts to be HTML garbage (nbsp, padding, etc.)
+        # with 0.95 confidence, completely breaking Layer 2 semantic memory.
+        if self._is_html(text):
+            text = self._strip_html(text)
+
         # Combine subject and body so topics present only in the subject line
         # are still captured.
         combined = f"{subject} {text}"
@@ -72,6 +154,62 @@ class TopicExtractor(BaseExtractor):
             return [signal]
 
         return []
+
+    def _is_html(self, text: str) -> bool:
+        """
+        Detect if text contains HTML markup.
+
+        Uses a simple heuristic: if the text contains HTML tags (angle brackets
+        with tag names), it's considered HTML. This catches the vast majority of
+        HTML emails without requiring full HTML parsing.
+
+        Excludes email addresses like <user@example.com> which use angle brackets
+        but aren't HTML tags.
+
+        Args:
+            text: The text to check
+
+        Returns:
+            True if the text appears to contain HTML markup
+        """
+        # Match opening tags like <p>, <table>, <div>, etc.
+        # This regex looks for < followed by a letter, then either > or space/attribute
+        # This avoids matching email addresses like <user@example.com>
+        return bool(re.search(r'<[a-zA-Z]+[\s>]', text))
+
+    def _strip_html(self, html_text: str) -> str:
+        """
+        Strip HTML tags and extract plain text content.
+
+        Processes HTML email bodies to remove all markup, leaving only the
+        visible text content. This prevents HTML/CSS tokens from polluting
+        the topic extraction and semantic memory layers.
+
+        Args:
+            html_text: HTML content to strip
+
+        Returns:
+            Plain text with HTML removed and entities decoded
+
+        Example:
+            >>> self._strip_html('<p>Order total: <b>$50</b>&nbsp;USD</p>')
+            'Order total: $50 USD'
+        """
+        # Use HTMLStripper to extract text content
+        stripper = HTMLStripper()
+        try:
+            stripper.feed(html_text)
+            text = stripper.get_text()
+        except Exception:
+            # If HTML parsing fails (malformed HTML), fall back to regex strip
+            # This is a safety net for edge cases where HTMLParser chokes
+            text = re.sub(r'<[^>]+>', ' ', html_text)
+            text = re.sub(r'\s+', ' ', text).strip()
+
+        # Decode HTML entities (e.g., &nbsp; → space, &amp; → &)
+        text = unescape(text)
+
+        return text
 
     def _extract_keywords(self, text: str) -> list[str]:
         """
