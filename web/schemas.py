@@ -78,6 +78,15 @@ class FeedbackRequest(BaseModel):
     message: str
 
 
+# --- PATCH /api/user-model/facts/{key} ---
+# Correct a semantic fact.  When the user identifies an incorrect fact, this
+# endpoint marks it as corrected and reduces its confidence to discourage
+# future use.  Optionally provides a corrected value.
+class FactCorrectionRequest(BaseModel):
+    corrected_value: Optional[Any] = None
+    reason: Optional[str] = None
+
+
 # --- PUT /api/preferences ---
 # Update a single user preference (key-value pair).  ``value`` is typed as
 # ``Any`` to support strings, numbers, booleans, and nested objects.
