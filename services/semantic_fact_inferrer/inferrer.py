@@ -203,10 +203,10 @@ class SemanticFactInferrer:
         # --- Infer high-priority contacts ---
         # A contact is high-priority if:
         #   - Average response time < 1 hour (3600 seconds)
-        #   - Message count > 5 (enough data to be confident)
+        #   - Interaction count > 5 (enough data to be confident)
         for contact_id, contact_data in contacts.items():
-            message_count = contact_data.get("message_count", 0)
-            if message_count < 5:
+            interaction_count = contact_data.get("interaction_count", 0)
+            if interaction_count < 5:
                 continue  # Not enough data
 
             avg_response_time = contact_data.get("avg_response_time_seconds")
