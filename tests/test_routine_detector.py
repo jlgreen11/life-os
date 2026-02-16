@@ -1,0 +1,538 @@
+"""
+Tests for the RoutineDetector service.
+
+Validates that Layer 3 (Procedural Memory) is correctly populated by detecting
+recurring behavioral patterns from episodic memory.
+"""
+
+import pytest
+from datetime import datetime, timedelta, timezone
+import uuid
+
+from services.routine_detector.detector import RoutineDetector
+
+
+class TestRoutineDetector:
+    """Test suite for routine detection from episodic memory."""
+
+    def test_detector_initialization(self, db, user_model_store):
+        """Detector should initialize with database and store dependencies."""
+        detector = RoutineDetector(db, user_model_store)
+        assert detector.db is db
+        assert detector.user_model_store is user_model_store
+        assert detector.min_occurrences == 3
+        assert detector.time_window_hours == 2
+        assert detector.consistency_threshold == 0.6
+
+    def test_no_routines_with_insufficient_data(self, db, user_model_store):
+        """Should not detect routines when episode count < min_occurrences."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create only 2 episodes (below min_occurrences of 3)
+        base_time = datetime.now(timezone.utc) - timedelta(days=7)
+        for i in range(2):
+            episode = {
+                "id": str(uuid.uuid4()),
+                "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "email",
+                "content_summary": "Check email",
+            }
+            user_model_store.store_episode(episode)
+
+        routines = detector.detect_routines(lookback_days=30)
+        assert len(routines) == 0
+
+    def test_temporal_routine_detection_morning(self, db, user_model_store):
+        """Should detect morning routines from repeated actions at similar times."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create a morning routine pattern over 10 days
+        # Each morning: check email (8am) → review calendar (8:15am) → coffee (8:30am)
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in range(10):
+            day_start = base_date.replace(hour=8, minute=0, second=0) + timedelta(days=day_offset)
+
+            # Step 1: Check email
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "check_email", "content_summary": "Check Email",
+            })
+
+            # Step 2: Review calendar
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (day_start + timedelta(minutes=15)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "review_calendar", "content_summary": "Review Calendar",
+            })
+
+            # Step 3: Make coffee
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (day_start + timedelta(minutes=30)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "make_coffee", "content_summary": "Make Coffee",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # Should detect at least one morning routine
+        morning_routines = [r for r in routines if r["trigger"] == "morning"]
+        assert len(morning_routines) >= 1
+
+        # Validate structure
+        routine = morning_routines[0]
+        assert routine["name"] == "Morning routine"
+        assert routine["trigger"] == "morning"
+        assert len(routine["steps"]) >= 2  # At least 2 of the 3 actions
+        assert routine["consistency_score"] >= 0.6
+        assert routine["times_observed"] >= 3
+
+        # Validate steps have required fields
+        for step in routine["steps"]:
+            assert "order" in step
+            assert "action" in step
+            assert "typical_duration_minutes" in step
+            assert "skip_rate" in step
+
+    def test_temporal_routine_detection_evening(self, db, user_model_store):
+        """Should detect evening routines (5pm-11pm)."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create evening pattern: inbox zero (6pm) → update tasks (6:30pm)
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in range(10):
+            evening_start = base_date.replace(hour=18, minute=0, second=0) + timedelta(days=day_offset)
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": evening_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "inbox_zero", "content_summary": "Inbox Zero",
+            })
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (evening_start + timedelta(minutes=30)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "update_tasks", "content_summary": "Update Tasks",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        evening_routines = [r for r in routines if r["trigger"] == "evening"]
+        assert len(evening_routines) >= 1
+
+        routine = evening_routines[0]
+        assert "Evening routine" in routine["name"]
+        assert len(routine["steps"]) >= 2
+
+    def test_location_based_routine_detection(self, db, user_model_store):
+        """Should detect routines triggered by location arrival."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create "arrive home" routine pattern
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in range(10):
+            arrive_time = base_date + timedelta(days=day_offset, hours=17)
+
+            # Arrive home → turn on lights → check mail
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": arrive_time.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "location",
+                "location": "Home",
+            })
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (arrive_time + timedelta(minutes=5)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "smart_home",
+                "location": "Home",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        location_routines = [r for r in routines if "Home" in r["name"]]
+        assert len(location_routines) >= 1
+
+        routine = location_routines[0]
+        assert "Arrive at Home" in routine["name"]
+        assert "arrive_home" in routine["trigger"]
+        assert len(routine["steps"]) >= 2
+        assert routine["consistency_score"] >= 0.6
+
+    def test_location_routine_multiple_locations(self, db, user_model_store):
+        """Should detect separate routines for different locations."""
+        detector = RoutineDetector(db, user_model_store)
+
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        # Home routine
+        for day_offset in range(10):
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (base_date + timedelta(days=day_offset, hours=17)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "location",
+                "location": "Home",
+            })
+
+        # Work routine
+        for day_offset in range(10):
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (base_date + timedelta(days=day_offset, hours=9)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "location",
+                "location": "Office",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        home_routines = [r for r in routines if "Home" in r["name"]]
+        office_routines = [r for r in routines if "Office" in r["name"]]
+
+        assert len(home_routines) >= 1
+        assert len(office_routines) >= 1
+
+    def test_event_triggered_routine_detection(self, db, user_model_store):
+        """Should detect routines triggered by specific event types."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create post-meeting routine pattern
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in range(10):
+            meeting_end = base_date + timedelta(days=day_offset, hours=14)
+
+            # Meeting ends
+            meeting_event_id = str(uuid.uuid4())
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": meeting_end.isoformat(),
+                "event_id": meeting_event_id,
+                "interaction_type": "calendar",
+            })
+
+            # Actions that follow: update tasks → send follow-up
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (meeting_end + timedelta(minutes=5)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "update_tasks", "content_summary": "Update Tasks",
+            })
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (meeting_end + timedelta(minutes=15)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "send_followup", "content_summary": "Send Followup",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        event_routines = [r for r in routines if r["trigger"].startswith("after_")]
+        assert len(event_routines) >= 1
+
+        routine = event_routines[0]
+        assert "After" in routine["name"]
+        assert len(routine["steps"]) >= 2
+
+    def test_consistency_score_calculation(self, db, user_model_store):
+        """Consistency score should reflect pattern reliability."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create pattern with 8/10 consistency (skip 2 days)
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in range(10):
+            if day_offset in [3, 7]:  # Skip 2 days
+                continue
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "morning_check", "content_summary": "Morning Check",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # Should still detect the routine (80% > 60% threshold)
+        assert len(routines) >= 1
+        routine = routines[0]
+        assert 0.6 <= routine["consistency_score"] <= 1.0
+
+    def test_no_routine_below_consistency_threshold(self, db, user_model_store):
+        """Should not detect routines with consistency below threshold."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create inconsistent pattern (only 2/10 days)
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in [0, 5]:  # Only 2 occurrences over 10 days
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "rare_action", "content_summary": "Rare Action",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # Should not detect a routine (20% < 60% threshold)
+        # Note: might detect other routines from previous tests, so check specifically
+        rare_routines = [r for r in routines if any("rare_action" in step["action"] for step in r["steps"])]
+        assert len(rare_routines) == 0
+
+    def test_typical_duration_calculation(self, db, user_model_store):
+        """Should calculate accurate total duration for routines."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create routine with known durations
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        for day_offset in range(10):
+            day_start = base_date.replace(hour=9, minute=0) + timedelta(days=day_offset)
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "step1", "content_summary": "Step1",
+            })
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (day_start + timedelta(minutes=10)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "step2", "content_summary": "Step2",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        assert len(routines) >= 1
+        routine = routines[0]
+
+        # Total should be approximately 25 minutes (10 + 15)
+        assert 20.0 <= routine["typical_duration_minutes"] <= 30.0
+
+    def test_store_routines(self, db, user_model_store):
+        """Should persist detected routines to database."""
+        detector = RoutineDetector(db, user_model_store)
+
+        routine = {
+            "name": "Test Routine",
+            "trigger": "test_trigger",
+            "steps": [
+                {"order": 0, "action": "step1", "typical_duration_minutes": 5.0, "skip_rate": 0.0},
+                {"order": 1, "action": "step2", "typical_duration_minutes": 10.0, "skip_rate": 0.1},
+            ],
+            "typical_duration_minutes": 15.0,
+            "consistency_score": 0.85,
+            "times_observed": 10,
+            "variations": ["skips step2 on Mondays"],
+        }
+
+        stored_count = detector.store_routines([routine])
+        assert stored_count == 1
+
+        # Verify it was stored
+        stored_routines = user_model_store.get_routines()
+        assert len(stored_routines) >= 1
+
+        found = next((r for r in stored_routines if r["name"] == "Test Routine"), None)
+        assert found is not None
+        assert found["trigger"] == "test_trigger"
+        assert len(found["steps"]) == 2
+        assert found["consistency_score"] == 0.85
+        assert found["times_observed"] == 10
+
+    def test_store_routines_upsert_behavior(self, db, user_model_store):
+        """Should update existing routines when stored again."""
+        detector = RoutineDetector(db, user_model_store)
+
+        routine_v1 = {
+            "name": "Evolving Routine",
+            "trigger": "morning",
+            "steps": [{"order": 0, "action": "old_step", "typical_duration_minutes": 5.0, "skip_rate": 0.0}],
+            "typical_duration_minutes": 5.0,
+            "consistency_score": 0.7,
+            "times_observed": 5,
+            "variations": [],
+        }
+
+        detector.store_routines([routine_v1])
+
+        # Update with new data
+        routine_v2 = {
+            "name": "Evolving Routine",  # Same name triggers REPLACE
+            "trigger": "morning",
+            "steps": [
+                {"order": 0, "action": "old_step", "typical_duration_minutes": 5.0, "skip_rate": 0.0},
+                {"order": 1, "action": "new_step", "typical_duration_minutes": 10.0, "skip_rate": 0.0},
+            ],
+            "typical_duration_minutes": 15.0,
+            "consistency_score": 0.8,
+            "times_observed": 10,
+            "variations": ["variation1"],
+        }
+
+        detector.store_routines([routine_v2])
+
+        # Should have only one routine with updated values
+        routines = user_model_store.get_routines()
+        evolving = [r for r in routines if r["name"] == "Evolving Routine"]
+        assert len(evolving) == 1
+
+        routine = evolving[0]
+        assert len(routine["steps"]) == 2  # Updated from 1 to 2 steps
+        assert routine["consistency_score"] == 0.8  # Updated
+        assert routine["times_observed"] == 10  # Updated
+
+    def test_get_routines_by_trigger(self, db, user_model_store):
+        """Should filter routines by trigger."""
+        detector = RoutineDetector(db, user_model_store)
+
+        routines = [
+            {
+                "name": "Morning Routine",
+                "trigger": "morning",
+                "steps": [],
+                "typical_duration_minutes": 30.0,
+                "consistency_score": 0.9,
+                "times_observed": 10,
+                "variations": [],
+            },
+            {
+                "name": "Evening Routine",
+                "trigger": "evening",
+                "steps": [],
+                "typical_duration_minutes": 20.0,
+                "consistency_score": 0.8,
+                "times_observed": 8,
+                "variations": [],
+            },
+        ]
+
+        detector.store_routines(routines)
+
+        morning_routines = user_model_store.get_routines(trigger="morning")
+        assert len(morning_routines) >= 1
+        assert all(r["trigger"] == "morning" for r in morning_routines)
+
+    def test_lookback_period_filtering(self, db, user_model_store):
+        """Should only analyze episodes within lookback period."""
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create old episodes (outside lookback)
+        old_date = datetime.now(timezone.utc) - timedelta(days=40)
+        for i in range(5):
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (old_date + timedelta(days=i)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "old_action", "content_summary": "Old Action",
+            })
+
+        # Create recent episodes (within lookback)
+        recent_date = datetime.now(timezone.utc) - timedelta(days=7)
+        for i in range(5):
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (recent_date + timedelta(days=i, hours=9)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "recent_action", "content_summary": "Recent Action",
+            })
+
+        # Detect with 30-day lookback (should exclude old_action)
+        routines = detector.detect_routines(lookback_days=30)
+
+        # Check that only recent actions are in detected routines
+        old_actions = [r for r in routines if any("old_action" in step["action"] for step in r["steps"])]
+        assert len(old_actions) == 0
+
+    def test_error_handling_during_storage(self, db, user_model_store):
+        """Should gracefully handle storage errors and continue."""
+        detector = RoutineDetector(db, user_model_store)
+
+        routines = [
+            {
+                "name": "Valid Routine",
+                "trigger": "test",
+                "steps": [],
+                "typical_duration_minutes": 10.0,
+                "consistency_score": 0.8,
+                "times_observed": 5,
+                "variations": [],
+            },
+            {
+                # Invalid: missing required field 'name'
+                "trigger": "test",
+                "steps": [],
+            },
+        ]
+
+        # Should store the valid one and skip the invalid one
+        stored_count = detector.store_routines(routines)
+        assert stored_count == 1
+
+    def test_multiple_detection_strategies(self, db, user_model_store):
+        """Should run all three detection strategies and merge results."""
+        detector = RoutineDetector(db, user_model_store)
+
+        base_date = datetime.now(timezone.utc) - timedelta(days=10)
+
+        # Create data for all three strategies
+        for day_offset in range(10):
+            day = base_date + timedelta(days=day_offset)
+
+            # Temporal: morning actions
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day.replace(hour=8).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "morning_email", "content_summary": "Morning Email",
+            })
+
+            # Location: home actions
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day.replace(hour=18).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "location",
+                "location": "Home",
+            })
+
+            # Event-triggered: post-meeting actions
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day.replace(hour=10).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "calendar",
+            })
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day.replace(hour=10, minute=5).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "post_meeting_task", "content_summary": "Post Meeting Task",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # Should have routines from multiple strategies
+        assert len(routines) >= 2
+
+        # Check for variety in triggers
+        triggers = {r["trigger"] for r in routines}
+        assert len(triggers) >= 2  # At least 2 different trigger types

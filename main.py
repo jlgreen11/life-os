@@ -41,6 +41,7 @@ from connectors.crypto import ConfigEncryptor
 from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
 from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+from services.routine_detector.detector import RoutineDetector
 
 
 class LifeOS:
@@ -101,6 +102,8 @@ class LifeOS:
         self.insight_engine = InsightEngine(self.db, self.user_model_store)
         # SemanticFactInferrer derives high-level facts from signal profiles
         self.semantic_fact_inferrer = SemanticFactInferrer(self.user_model_store)
+        # RoutineDetector analyzes episodic memory to find recurring behavioral patterns
+        self.routine_detector = RoutineDetector(self.db, self.user_model_store)
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
@@ -192,6 +195,7 @@ class LifeOS:
         asyncio.create_task(self._prediction_loop())
         asyncio.create_task(self._insight_loop())
         asyncio.create_task(self._semantic_inference_loop())
+        asyncio.create_task(self._routine_detection_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
@@ -702,6 +706,48 @@ class LifeOS:
             # so this interval provides a good balance between staying current
             # and avoiding unnecessary compute on stable patterns.
             await asyncio.sleep(21600)  # 6 hours
+
+    async def _routine_detection_loop(self):
+        """Run routine detection every 12 hours.
+
+        The routine detector analyzes episodic memory to identify recurring
+        behavioral patterns (Layer 3: Procedural Memory). Examples:
+          - Morning routine: check email → review calendar → coffee
+          - Arrive at work: open IDE → check Slack → review tasks
+          - End of day: inbox zero → update task list → plan tomorrow
+
+        Routines are detected by finding sequences of actions that:
+          1. Occur at similar times (temporal routines)
+          2. Follow location changes (location-based routines)
+          3. Follow specific events (event-triggered routines)
+
+        These patterns power prediction features like:
+          - "You usually check your calendar now"
+          - "Time for your end-of-day review"
+          - "You typically update your task list after meetings"
+
+        Interval: 12 hours (43200 seconds)
+          - Routines are stable patterns that don't change rapidly
+          - 12-hour interval allows sufficient new episodes to accumulate
+          - Balances routine freshness against compute cost
+          - Running twice daily catches both morning and evening patterns
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                # Detect routines from last 30 days of episodic memory
+                routines = self.routine_detector.detect_routines(lookback_days=30)
+
+                # Store detected routines to database
+                stored_count = self.routine_detector.store_routines(routines)
+
+                print(f"  RoutineDetector: detected {len(routines)} routines, stored {stored_count}")
+            except Exception as e:
+                print(f"Routine detector error: {e}")
+
+            # 43200 seconds = 12 hours. Routines are stable patterns, so this
+            # interval provides good coverage (runs twice daily) without excessive
+            # compute on slowly-changing behavioral data.
+            await asyncio.sleep(43200)  # 12 hours
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
