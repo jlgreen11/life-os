@@ -114,9 +114,25 @@ class PredictionEngine:
         # Store ALL predictions (including filtered-out ones) for accuracy
         # tracking. Mark which ones were actually surfaced so the feedback
         # loop can distinguish them via was_surfaced=1 in queries.
+        #
+        # CRITICAL: Predictions that don't pass reaction prediction or
+        # confidence gates are immediately resolved as 'filtered'. This
+        # prevents database bloat from hundreds of thousands of unsurfaced
+        # predictions that will never be shown to the user.
         surfaced_ids = {p.id for p in filtered}
+        now = datetime.now(timezone.utc).isoformat()
+
         for pred in predictions:
             pred.was_surfaced = pred.id in surfaced_ids
+
+            # If this prediction was filtered out, mark it as resolved
+            # immediately with user_response='filtered'. This closes the
+            # lifecycle for predictions that never surface, preventing them
+            # from accumulating in the database indefinitely.
+            if not pred.was_surfaced:
+                pred.resolved_at = now
+                pred.user_response = 'filtered'
+
             self.ums.store_prediction(pred.model_dump())
 
         return filtered
