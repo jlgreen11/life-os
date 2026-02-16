@@ -23,15 +23,15 @@ async def test_backfill_finds_all_actionable_events(db, event_store):
     """
     Backfill should identify all email, message, and calendar events.
 
-    The script queries for three specific event types that can contain
-    action items. Other event types should be ignored.
+    The script queries for five specific event types that can contain
+    action items (both inbound and outbound). Other event types should be ignored.
     """
     # Create mix of actionable and non-actionable events
     now = datetime.now(timezone.utc).isoformat()
 
     # Actionable events (should be processed)
     event_store.store_event({
-        "id": "email-1",
+        "id": "email-recv",
         "type": "email.received",
         "source": "test",
         "timestamp": now,
@@ -40,12 +40,30 @@ async def test_backfill_finds_all_actionable_events(db, event_store):
         "metadata": {}
     })
     event_store.store_event({
-        "id": "msg-1",
+        "id": "email-sent",
+        "type": "email.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "I finished the analysis report yesterday."},
+        "metadata": {}
+    })
+    event_store.store_event({
+        "id": "msg-recv",
         "type": "message.received",
         "source": "test",
         "timestamp": now,
         "priority": "normal",
         "payload": {"body": "Don't forget to book the hotel for the conference."},
+        "metadata": {}
+    })
+    event_store.store_event({
+        "id": "msg-sent",
+        "type": "message.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "Booked the hotel and sent confirmation."},
         "metadata": {}
     })
     event_store.store_event({
@@ -90,8 +108,8 @@ async def test_backfill_finds_all_actionable_events(db, event_store):
     # Run backfill (dry run to count events)
     stats = await backfill_tasks(db, task_manager, dry_run=True)
 
-    # Should find exactly 3 actionable events (email, message, calendar)
-    assert stats["total_events"] == 3
+    # Should find exactly 5 actionable events (2 email + 2 message + 1 calendar)
+    assert stats["total_events"] == 5
 
 
 @pytest.mark.asyncio
@@ -584,3 +602,256 @@ async def test_count_tasks_helper(db):
             )
 
     assert _count_tasks(db) == 5
+
+
+@pytest.mark.asyncio
+async def test_backfill_processes_sent_events(db, event_store):
+    """
+    Backfill should process both received AND sent events.
+
+    INBOUND events (email.received, message.received) contain pending tasks.
+    OUTBOUND events (email.sent, message.sent) may contain completion reports
+    like "I finished the report" or "I sent the document yesterday".
+
+    This enables workflow detection from historical data by generating
+    task.completed events instead of waiting 7+ days for task aging.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Create both received and sent events
+    event_store.store_event({
+        "id": "email-received",
+        "type": "email.received",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "Can you please send the Q4 report by Friday?"},
+        "metadata": {}
+    })
+
+    event_store.store_event({
+        "id": "email-sent",
+        "type": "email.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "I finished the Q4 report and sent it yesterday."},
+        "metadata": {}
+    })
+
+    event_store.store_event({
+        "id": "message-sent",
+        "type": "message.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "Submitted the expense report this morning."},
+        "metadata": {}
+    })
+
+    class MockAIEngine:
+        async def extract_action_items(self, text, source):
+            # Simulate AI detecting tasks and their completion status
+            if "send the Q4 report" in text:
+                return [{"title": "Send Q4 report", "priority": "high", "completed": False}]
+            elif "finished the Q4 report" in text:
+                return [{"title": "Q4 report", "priority": "normal", "completed": True}]
+            elif "Submitted the expense report" in text:
+                return [{"title": "Submit expense report", "priority": "normal", "completed": True}]
+            return []
+
+    task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
+
+    stats = await backfill_tasks(db, task_manager)
+
+    # Should process all 3 events (1 received + 2 sent)
+    assert stats["total_events"] == 3
+    # Should extract 3 tasks total
+    assert stats["tasks_extracted"] == 3
+
+
+@pytest.mark.asyncio
+async def test_backfill_detects_completed_tasks(db, event_store):
+    """
+    Backfill should detect and mark tasks as completed when AI identifies them.
+
+    When the AI detects that a task was already completed (e.g., "I sent the
+    report yesterday"), the task should be created with status='completed'
+    and a task.completed event should be published for workflow detection.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Sent email reporting completion
+    event_store.store_event({
+        "id": "sent-completion",
+        "type": "email.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {
+            "body": "Hi team, I completed the security audit and sent the findings to IT."
+        },
+        "metadata": {}
+    })
+
+    class MockAIEngine:
+        async def extract_action_items(self, text, source):
+            # AI detects this is a completed task
+            if "completed the security audit" in text:
+                return [{
+                    "title": "Complete security audit",
+                    "priority": "high",
+                    "completed": True
+                }]
+            return []
+
+    task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
+
+    tasks_before = _count_tasks(db)
+    stats = await backfill_tasks(db, task_manager)
+    tasks_after = _count_tasks(db)
+
+    # Should create 1 task
+    assert stats["tasks_extracted"] == 1
+    assert tasks_after == tasks_before + 1
+
+    # Verify the task was marked as completed
+    with db.get_connection("state") as conn:
+        task = conn.execute(
+            "SELECT * FROM tasks WHERE source_event_id = ?",
+            ("sent-completion",)
+        ).fetchone()
+
+    assert task is not None
+    assert task["title"] == "Complete security audit"
+    assert task["status"] == "completed"
+    assert task["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_backfill_generates_completion_events(db, event_store):
+    """
+    Backfill should publish task.completed events for completed tasks.
+
+    When a task is detected as already completed, the backfill script
+    must publish a task.completed event to events.db. This enables the
+    workflow detector to learn multi-step patterns from historical data.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    event_store.store_event({
+        "id": "completed-task-source",
+        "type": "message.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "I deployed the hotfix to production this morning."},
+        "metadata": {}
+    })
+
+    class MockAIEngine:
+        async def extract_action_items(self, text, source):
+            if "deployed the hotfix" in text:
+                return [{
+                    "title": "Deploy hotfix to production",
+                    "priority": "critical",
+                    "completed": True
+                }]
+            return []
+
+    task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
+
+    # Count task.completed events before backfill
+    with db.get_connection("events") as conn:
+        before_count = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE type = 'task.completed'"
+        ).fetchone()[0]
+
+    await backfill_tasks(db, task_manager)
+
+    # Count task.completed events after backfill
+    with db.get_connection("events") as conn:
+        after_count = conn.execute(
+            "SELECT COUNT(*) FROM events WHERE type = 'task.completed'"
+        ).fetchone()[0]
+
+    # Should have published 1 task.completed event
+    assert after_count == before_count + 1
+
+    # Verify the event has correct payload
+    with db.get_connection("events") as conn:
+        completion_event = conn.execute(
+            "SELECT * FROM events WHERE type = 'task.completed' ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+
+    assert completion_event is not None
+    payload = json.loads(completion_event["payload"])
+    assert payload["title"] == "Deploy hotfix to production"
+    assert "task_id" in payload
+    assert "completed_at" in payload
+
+
+@pytest.mark.asyncio
+async def test_backfill_mixed_pending_and_completed_tasks(db, event_store):
+    """
+    Backfill should handle a mix of pending and completed tasks correctly.
+
+    Some events contain pending tasks ("please do X"), others contain
+    completion reports ("I did X"). The AI should detect the difference
+    and mark them appropriately.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Pending task (received email)
+    event_store.store_event({
+        "id": "pending-task",
+        "type": "email.received",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "Please review the pull request when you get a chance."},
+        "metadata": {}
+    })
+
+    # Completed task (sent email)
+    event_store.store_event({
+        "id": "completed-task",
+        "type": "email.sent",
+        "source": "test",
+        "timestamp": now,
+        "priority": "normal",
+        "payload": {"body": "I reviewed and approved the pull request."},
+        "metadata": {}
+    })
+
+    class MockAIEngine:
+        async def extract_action_items(self, text, source):
+            if "Please review the pull request" in text:
+                return [{"title": "Review pull request", "priority": "normal", "completed": False}]
+            elif "reviewed and approved the pull request" in text:
+                return [{"title": "Review pull request", "priority": "normal", "completed": True}]
+            return []
+
+    task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
+
+    await backfill_tasks(db, task_manager)
+
+    # Should extract 2 tasks total
+    assert _count_tasks(db) == 2
+
+    # Check statuses
+    with db.get_connection("state") as conn:
+        pending_task = conn.execute(
+            "SELECT * FROM tasks WHERE source_event_id = ?",
+            ("pending-task",)
+        ).fetchone()
+        completed_task = conn.execute(
+            "SELECT * FROM tasks WHERE source_event_id = ?",
+            ("completed-task",)
+        ).fetchone()
+
+    assert pending_task["status"] == "pending"
+    assert pending_task["completed_at"] is None
+
+    assert completed_task["status"] == "completed"
+    assert completed_task["completed_at"] is not None

@@ -6,13 +6,20 @@ Processes all historical emails, messages, and calendar events to extract
 action items using the AI engine. This script is needed because the task
 extraction feature was added after 69K+ emails were already in the database.
 
+The script processes both INBOUND and OUTBOUND events:
+- INBOUND (email.received, message.received): Extract pending tasks
+- OUTBOUND (email.sent, message.sent): Extract completed tasks (user reporting completion)
+- Calendar events: Extract tasks from meeting agendas/descriptions
+
 The script:
-1. Queries events.db for all email.received, message.received, and
-   calendar.event.created events
+1. Queries events.db for all email.received, email.sent, message.received,
+   message.sent, and calendar.event.created events
 2. For each event, calls TaskManager.process_event() to extract tasks
-3. Tracks progress and provides statistics
-4. Handles errors gracefully (one failure doesn't stop the entire backfill)
-5. Can be run multiple times safely (idempotent - won't duplicate tasks)
+3. AI detects if tasks are pending or already completed (e.g., "I sent the report")
+4. Completed tasks generate task.completed events for workflow detection
+5. Tracks progress and provides statistics
+6. Handles errors gracefully (one failure doesn't stop the entire backfill)
+7. Can be run multiple times safely (idempotent - won't duplicate tasks)
 
 Usage:
     python scripts/backfill_task_extraction.py [--limit N] [--dry-run]
@@ -65,13 +72,16 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
     """
     # --- Query all actionable events from the database ---
     # These are the event types that can contain action items.
+    # INBOUND events (received): Extract pending tasks
+    # OUTBOUND events (sent): Extract completed tasks (user reporting "I finished X")
     # We order by timestamp DESC so the most recent events (most likely
     # to contain still-relevant tasks) are processed first.
     with db.get_connection("events") as conn:
         query = """
             SELECT id, type, source, timestamp, priority, payload, metadata
             FROM events
-            WHERE type IN ('email.received', 'message.received', 'calendar.event.created')
+            WHERE type IN ('email.received', 'email.sent', 'message.received',
+                          'message.sent', 'calendar.event.created')
             ORDER BY timestamp DESC
         """
         if limit:
@@ -156,23 +166,24 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
             # so TaskManager._publish_telemetry() is a no-op. We need these events
             # for workflow detection and episodic memory.
             if new_tasks_count > 0:
-                # Fetch the newly created tasks
+                # Fetch the newly created tasks (include status and completed_at)
                 with db.get_connection("state") as conn:
                     new_tasks = conn.execute(
-                        """SELECT id, title, source, source_event_id, domain, priority, created_at
+                        """SELECT id, title, source, source_event_id, domain, priority,
+                                  status, created_at, completed_at
                            FROM tasks
                            ORDER BY created_at DESC
                            LIMIT ?""",
                         (new_tasks_count,)
                     ).fetchall()
 
-                # Publish a task.created event for each new task
+                # Publish events for each new task
                 # Use EventStore.store_event() with full event structure
                 event_store = EventStore(db)
                 import uuid
 
                 for task_row in new_tasks:
-                    # Build the event payload with task metadata
+                    # Always publish task.created event
                     task_created_payload = {
                         "task_id": task_row["id"],
                         "title": task_row["title"],
@@ -183,7 +194,6 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
                         "created_at": task_row["created_at"],
                     }
 
-                    # Build the full event structure for store_event()
                     task_created_event = {
                         "id": str(uuid.uuid4()),
                         "type": "task.created",
@@ -195,6 +205,32 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
                     }
 
                     event_store.store_event(task_created_event)
+
+                    # If task is already completed, also publish task.completed event
+                    # This enables workflow detection from historical data (e.g., learning
+                    # that "receive email from boss → send reply" is a common workflow)
+                    if task_row["status"] == "completed" and task_row["completed_at"]:
+                        task_completed_payload = {
+                            "task_id": task_row["id"],
+                            "title": task_row["title"],
+                            "source": task_row["source"],
+                            "domain": task_row["domain"],
+                            "priority": task_row["priority"],
+                            "created_at": task_row["created_at"],
+                            "completed_at": task_row["completed_at"],
+                        }
+
+                        task_completed_event = {
+                            "id": str(uuid.uuid4()),
+                            "type": "task.completed",
+                            "source": "task_manager_backfill",
+                            "timestamp": task_row["completed_at"],
+                            "priority": "normal",
+                            "payload": task_completed_payload,
+                            "metadata": {},
+                        }
+
+                        event_store.store_event(task_completed_event)
 
             return True  # Success
         except Exception as e:
