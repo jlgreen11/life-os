@@ -319,12 +319,44 @@ class SemanticFactInferrer:
         recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
+        # --- HTML/CSS token blocklist ---
+        # Historical topic profiles may contain HTML/CSS tokens from emails
+        # processed before HTML stripping was implemented. Filter these out
+        # to prevent semantic fact pollution (e.g., "expertise_nbsp", "expertise_padding").
+        # This blocklist covers common HTML entities, CSS properties, and HTML tags.
+        HTML_CSS_BLOCKLIST = {
+            # HTML entities
+            'nbsp', 'zwnj', 'zwj', 'lrm', 'rlm', 'mdash', 'ndash', 'hellip',
+            'quot', 'apos', 'amp', 'lt', 'gt', 'copy', 'reg', 'trade',
+            # Common CSS properties
+            'padding', 'margin', 'border', 'width', 'height', 'color', 'background',
+            'font', 'size', 'weight', 'style', 'family', 'align', 'text', 'display',
+            'position', 'top', 'left', 'right', 'bottom', 'flex', 'grid', 'float',
+            # HTML tags
+            'div', 'span', 'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
+            'img', 'href', 'src', 'alt', 'class', 'id', 'name', 'value', 'type',
+            'meta', 'link', 'script', 'noscript', 'iframe', 'embed', 'object',
+            # CSS/HTML keywords
+            'important', 'inherit', 'auto', 'none', 'block', 'inline', 'hidden',
+            'visible', 'absolute', 'relative', 'fixed', 'sticky', 'center',
+            # Protocol/URL fragments
+            'http', 'https', 'www', 'com', 'html', 'css', 'js', 'png', 'jpg', 'gif',
+            # Common email template artifacts
+            'unsubscribe', 'pixel', 'tracker', 'analytics', 'campaign', 'utm',
+        }
+
         # --- Infer expertise from topic frequency ---
         # A topic becomes an expertise area if it appears in >10% of messages
         # and has been mentioned at least 10 times.
         total_samples = profile.get("samples_count", 1)
+        filtered_count = 0
 
         for topic, count in topic_counts.items():
+            # Skip HTML/CSS garbage tokens
+            if topic.lower() in HTML_CSS_BLOCKLIST:
+                filtered_count += 1
+                continue
+
             frequency_ratio = count / total_samples
 
             if count >= 10 and frequency_ratio > 0.1:
@@ -346,6 +378,8 @@ class SemanticFactInferrer:
                     episode_id=episode_id,
                 )
 
+        if filtered_count > 0:
+            logger.info(f"Filtered {filtered_count} HTML/CSS tokens from topic-based fact inference")
         logger.info(f"Inferred semantic facts from topic profile (samples={profile.get('samples_count')})")
 
     def infer_from_cadence_profile(self):
