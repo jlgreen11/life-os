@@ -613,8 +613,13 @@ class PredictionEngine:
                 score -= 0.2
 
         # --- Classify the final score into a reaction label ---
-        # RECALIBRATED: helpful > 0.3, neutral > −0.1, else annoying
-        predicted = "helpful" if score > 0.3 else ("neutral" if score > -0.1 else "annoying")
+        # RECALIBRATED: helpful >= 0.2, neutral > −0.1, else annoying.
+        # The >= 0.2 threshold allows most "default" gate predictions (0.6-0.8
+        # confidence) to surface unless they accumulate multiple penalties.
+        # Round to 2 decimal places to avoid floating point precision issues
+        # (e.g., 0.3 - 0.1 = 0.19999999... in Python).
+        score = round(score, 2)
+        predicted = "helpful" if score >= 0.2 else ("neutral" if score > -0.1 else "annoying")
 
         return ReactionPrediction(
             proposed_action=prediction.description,
