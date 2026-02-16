@@ -1297,6 +1297,19 @@ class PredictionEngine:
             "communications@", "development@", "fundraising@",
             # Loyalty/rewards programs (always automated)
             "rewards@", "loyalty@",
+            # Financial/brokerage automated systems (iteration 171)
+            # These generate high-volume transactional emails (trade confirmations, statements,
+            # alerts) that should never trigger follow-up predictions. Without this filter,
+            # addresses like Fidelity.Investments@mail.fidelity.com generate prediction spam
+            # for automated notifications that require no response.
+            "fidelity.investments@", "fidelity@",
+            "schwab@", "vanguard@", "etrade@", "td.ameritrade@", "merrilledge@",
+            "robinhood@", "wealthfront@", "betterment@",
+            "chase.alerts@", "bankofamerica.alerts@", "citi.alerts@",
+            "wellsfargo.alerts@", "usbank.alerts@", "pnc.alerts@",
+            "paypal@", "venmo@", "stripe@", "square@",
+            "coinbase@", "binance@", "kraken@",
+            "experian@", "equifax@", "transunion@", "creditkarma@",
         )
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True
