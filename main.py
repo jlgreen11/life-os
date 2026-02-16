@@ -45,6 +45,7 @@ from services.routine_detector.detector import RoutineDetector
 from services.workflow_detector.detector import WorkflowDetector
 from services.insight_engine.source_weights import SourceWeightManager
 from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
+from services.task_completion_detector.detector import TaskCompletionDetector
 
 
 class LifeOS:
@@ -119,6 +120,11 @@ class LifeOS:
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         # TaskManager needs the ai_engine to extract action items from events
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus, ai_engine=self.ai_engine)
+        # TaskCompletionDetector infers task completion from behavioral signals
+        # (emails sent, inactivity, etc.) to enable workflow detection
+        self.task_completion_detector = TaskCompletionDetector(
+            self.db, self.task_manager, self.event_bus
+        )
 
         # --- Browser automation layer ---
         # Wraps Playwright and manages browser-based connectors separately
@@ -219,6 +225,7 @@ class LifeOS:
         asyncio.create_task(self._semantic_inference_loop())
         asyncio.create_task(self._routine_detection_loop())
         asyncio.create_task(self._behavioral_accuracy_loop())
+        asyncio.create_task(self._task_completion_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
@@ -1028,6 +1035,48 @@ class LifeOS:
             # 900 seconds = 15 minutes. Same interval as prediction engine to
             # ensure predictions are validated shortly after user behavior occurs.
             await asyncio.sleep(900)  # 15 minutes
+
+    async def _task_completion_loop(self):
+        """Run task completion detection every 30 minutes.
+
+        The task completion detector infers when tasks have been completed based
+        on behavioral signals, enabling workflow detection (Layer 3 procedural
+        memory). Without this loop, tasks remain in "pending" state forever because
+        users often complete work without explicitly marking tasks done in the UI.
+
+        Detection strategies:
+          1. Activity-based: User sends email/message referencing the task with
+             completion keywords ("done", "finished", "sent", "shipped")
+          2. Inactivity-based: Task has no related activity for 7+ days (likely
+             completed or abandoned)
+          3. Stale task cleanup: Tasks older than 30 days are auto-archived
+
+        Publishing task.completed events enables the workflow detector to learn
+        multi-step task completion patterns:
+          - Email received → research → execute → confirm completion
+          - Task assigned → clarify → work → report back
+          - Meeting scheduled → prepare → attend → follow up
+
+        Interval: 30 minutes (1800 seconds)
+          - Slower than prediction/behavioral loops (those need quick response)
+          - Task completion is inherently delayed (hours/days between create/complete)
+          - 30min ensures timely workflow detection without excessive compute
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                # Run detection cycle over all pending tasks
+                completed_count = await self.task_completion_detector.detect_completions()
+
+                if completed_count > 0:
+                    print(f"  TaskCompletionDetector: auto-completed {completed_count} tasks "
+                          f"from behavioral signals")
+            except Exception as e:
+                print(f"Task completion detector error: {e}")
+
+            # 1800 seconds = 30 minutes. Tasks aren't typically completed within
+            # minutes (unlike prediction validation), so we can run less frequently
+            # while still maintaining responsive workflow detection.
+            await asyncio.sleep(1800)  # 30 minutes
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
