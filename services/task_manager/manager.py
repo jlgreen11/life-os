@@ -13,13 +13,62 @@ documents, and any deadlines.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from typing import Any, Optional
 
 
 from models.core import Priority, Task
 from storage.database import DatabaseManager
+
+
+class HTMLStripper(HTMLParser):
+    """Strips HTML tags and extracts plain text content for LLM processing.
+
+    This parser removes all HTML markup while preserving the semantic structure
+    of the text. Block-level tags (p, div, br, etc.) are converted to newlines
+    to maintain paragraph breaks, while inline tags (span, b, i, etc.) are
+    simply removed.
+
+    Usage:
+        stripper = HTMLStripper()
+        stripper.feed(html_content)
+        plain_text = stripper.get_text()
+    """
+
+    def __init__(self):
+        """Initialize the HTML stripper with empty text buffer."""
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = True
+        self.text = []
+
+    def handle_data(self, data):
+        """Append text content to buffer (called for text between tags)."""
+        self.text.append(data)
+
+    def handle_endtag(self, tag):
+        """Add newlines after block-level tags to preserve structure."""
+        # Block-level tags that should create line breaks when closed
+        block_tags = {'p', 'div', 'br', 'tr', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
+        if tag in block_tags:
+            self.text.append('\n')
+
+    def get_text(self):
+        """Return the extracted plain text with normalized whitespace.
+
+        Collapses multiple consecutive newlines/spaces into single instances
+        to clean up the output while maintaining paragraph structure.
+        """
+        raw_text = ''.join(self.text)
+        # Collapse multiple newlines into double newlines (paragraph breaks)
+        text = re.sub(r'\n{3,}', '\n\n', raw_text)
+        # Collapse multiple spaces into single spaces
+        text = re.sub(r' {2,}', ' ', text)
+        return text.strip()
 
 
 class TaskManager:
@@ -87,6 +136,21 @@ class TaskManager:
         elif event_type == "calendar.event.created":
             # For calendar events, check the description field for action items
             text = payload.get("description", "")
+
+        # --- Strip HTML from email bodies ---
+        # Email connectors often store raw HTML. LLMs need plain text to
+        # extract action items effectively — feeding them HTML markup drowns
+        # the signal in formatting noise.
+        if text and text.strip().startswith('<'):
+            # Looks like HTML — strip all tags and normalize whitespace
+            stripper = HTMLStripper()
+            try:
+                stripper.feed(text)
+                text = stripper.get_text()
+            except Exception:
+                # If HTML parsing fails, fall back to the original text.
+                # The LLM will do its best even with malformed markup.
+                pass
 
         # --- Filter: Skip empty or trivial messages ---
         # Don't waste LLM cycles on short messages like "ok", "thanks", etc.
