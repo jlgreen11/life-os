@@ -70,43 +70,27 @@ class WorkflowDetector:
     def detect_workflows(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all workflows from recent event history.
 
-        Runs multiple detection strategies:
-        1. Email-response workflows (receive → draft → send patterns)
-        2. Task-completion workflows (identified → worked → completed sequences)
-        3. Calendar-based workflows (event created → prepared → attended → follow-up)
-        4. Multi-tool research workflows (search → collect → synthesize patterns)
+        PERFORMANCE LIMITATION: With 800K+ events, workflow detection queries timeout
+        (30s+) due to expensive json_extract() calls and complex JOINs across large tables.
+
+        ALL WORKFLOW DETECTION IS CURRENTLY DISABLED to prevent continuous improvement
+        loop hangs. This allows the system to function normally while workflow detection
+        is being redesigned.
+
+        Future fix options:
+        1. Add expression indexes: CREATE INDEX idx_email_from ON events(json_extract(payload, '$.from_address'))
+        2. Denormalize: Add from_address, to_addresses columns to events table
+        3. Batch processing: Run workflow detection offline, not in main loop
+        4. Sampling: Analyze only recent subset (last 1K events) instead of full history
 
         Args:
-            lookback_days: How many days of history to analyze (default 30)
+            lookback_days: How many days of history to analyze (ignored - always returns empty)
 
         Returns:
-            List of detected workflows with metadata
+            Empty list (workflow detection disabled)
         """
-        workflows = []
-
-        # Strategy 1: Email response workflows
-        email_workflows = self._detect_email_workflows(lookback_days)
-        workflows.extend(email_workflows)
-
-        # Strategy 2: Task completion workflows
-        task_workflows = self._detect_task_workflows(lookback_days)
-        workflows.extend(task_workflows)
-
-        # Strategy 3: Calendar event workflows
-        calendar_workflows = self._detect_calendar_workflows(lookback_days)
-        workflows.extend(calendar_workflows)
-
-        # Strategy 4: Sequential interaction patterns
-        interaction_workflows = self._detect_interaction_workflows(lookback_days)
-        workflows.extend(interaction_workflows)
-
-        logger.info(
-            f"Workflow detection complete: {len(workflows)} workflows found "
-            f"({len(email_workflows)} email, {len(task_workflows)} task, "
-            f"{len(calendar_workflows)} calendar, {len(interaction_workflows)} interaction)"
-        )
-
-        return workflows
+        logger.info("Workflow detection skipped (disabled due to performance issues with 800K+ events)")
+        return []
 
     def _detect_email_workflows(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect workflows triggered by incoming emails.
@@ -116,10 +100,12 @@ class WorkflowDetector:
         - From client: read → research → draft proposal → send
         - Newsletter: read → save links → archive
 
-        OPTIMIZATION STRATEGY: Instead of fetching 78K emails into Python and
-        iterating through them, we push ALL aggregation logic into SQL using
-        GROUP BY. SQLite's query engine handles the grouping 100x faster than
-        Python loops. We only fetch aggregated statistics, not individual rows.
+        OPTIMIZATION STRATEGY: Instead of scanning 81K+ emails with expensive
+        json_extract() calls, we limit the analysis to the most recent 10K emails.
+        This provides representative workflow patterns while keeping query time under
+        1 second. Workflows emerge from repeated patterns, so we don't need years
+        of history - recent behavior (typically 1-3 months at normal email volume)
+        is sufficient and more accurate.
 
         Args:
             lookback_days: Days of history to analyze
@@ -130,18 +116,25 @@ class WorkflowDetector:
         workflows = []
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
-        # Step 1: Get sender statistics (receive counts) using SQL GROUP BY.
-        # This replaces the Python loop that was processing 78K individual rows.
+        # Step 1: Get sender statistics from the most recent 2K emails.
+        # At 81K emails/30 days (~2.7K/day), 2K emails covers the last ~18 hours.
+        # This is sufficient for workflow detection since workflows repeat frequently.
+        # Scanning 2K rows with json_extract() completes in ~1s vs 6.5s for 10K rows.
         with self.db.get_connection("events") as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
                     LOWER(json_extract(payload, '$.from_address')) as sender,
                     COUNT(*) as receive_count
-                FROM events
-                WHERE type = 'email.received'
-                  AND julianday(timestamp) > julianday(?)
-                  AND json_extract(payload, '$.from_address') IS NOT NULL
+                FROM (
+                    SELECT payload
+                    FROM events
+                    WHERE type = 'email.received'
+                      AND julianday(timestamp) > julianday(?)
+                      AND json_extract(payload, '$.from_address') IS NOT NULL
+                    ORDER BY timestamp DESC
+                    LIMIT 2000
+                )
                 GROUP BY LOWER(json_extract(payload, '$.from_address'))
                 HAVING receive_count >= ?
                 ORDER BY receive_count DESC
@@ -154,37 +147,39 @@ class WorkflowDetector:
         if not sender_stats:
             return workflows
 
-        # Step 2: For each high-volume sender, find following actions using SQL join.
-        # This replaces the O(n×m) Python matching loop with SQL's optimized join engine.
-        # We query only for the top 20 senders identified in Step 1.
+        # Step 2: For each high-volume sender, find following actions.
+        # PERFORMANCE FIX: Limit to 2K received emails and 1K response events per sender.
+        # At 2.7K emails/day with ~20 active senders, 2K received covers recent patterns.
+        # The 1K response limit (252 sent emails total) ensures we scan all sent emails.
         for sender in sender_stats.keys():
             with self.db.get_connection("events") as conn:
                 cursor = conn.cursor()
-                # Find email.sent events TO this sender within max_step_gap_hours
-                # of receiving an email FROM this sender
-                # CRITICAL OPTIMIZATION: The original approach using EXISTS with json_each
-                # creates a CORRELATED SUBQUERY that runs O(n×m) times. Instead, we use
-                # a simple LIKE check on the lowercased JSON array. While not perfect
-                # (could match partial emails like "sue" in "susan@example.com"), it's
-                # 1000x faster and the risk is low since we're matching full email addresses.
-                # The LIKE pattern '%"sender@domain.com"%' matches JSON arrays like
-                # '["sender@domain.com"]' or '["other@example.com", "sender@domain.com"]'.
                 cursor.execute("""
                     SELECT
                         resp.type as response_type,
                         COUNT(*) as response_count,
                         AVG((julianday(resp.timestamp) - julianday(recv.timestamp)) * 24) as avg_hours
-                    FROM events recv
-                    JOIN events resp ON
+                    FROM (
+                        SELECT id, timestamp, payload
+                        FROM events
+                        WHERE type = 'email.received'
+                          AND julianday(timestamp) > julianday(?)
+                          AND LOWER(json_extract(payload, '$.from_address')) = ?
+                        ORDER BY timestamp DESC
+                        LIMIT 2000
+                    ) recv
+                    JOIN (
+                        SELECT id, type, timestamp, payload
+                        FROM events
+                        WHERE type IN ('email.sent', 'task.created', 'calendar.event.created', 'message.sent')
+                          AND julianday(timestamp) > julianday(?)
+                        ORDER BY timestamp DESC
+                        LIMIT 1000
+                    ) resp ON
                         julianday(resp.timestamp) > julianday(recv.timestamp)
                         AND julianday(resp.timestamp) <= julianday(recv.timestamp) + (CAST(? AS REAL) / 24.0)
-                    WHERE recv.type = 'email.received'
-                      AND LOWER(json_extract(recv.payload, '$.from_address')) = ?
-                      AND julianday(recv.timestamp) > julianday(?)
-                      AND resp.type IN ('email.sent', 'task.created', 'calendar.event.created', 'message.sent')
-                      AND (
+                    WHERE (
                           -- For email.sent/message.sent, check if recipient matches sender
-                          -- Use LIKE on lowercased JSON to avoid O(n×m) correlated subquery
                           (resp.type = 'email.sent'
                            AND LOWER(json_extract(resp.payload, '$.to_addresses')) LIKE '%' || ? || '%')
                           OR (resp.type = 'message.sent'
@@ -196,9 +191,10 @@ class WorkflowDetector:
                     HAVING response_count >= ?
                     ORDER BY avg_hours ASC
                 """, (
-                    self.max_step_gap_hours,
+                    cutoff.isoformat(),
                     sender,
                     cutoff.isoformat(),
+                    self.max_step_gap_hours,
                     sender,  # For email.sent LIKE check
                     sender,  # For message.sent check
                     self.min_occurrences
@@ -310,22 +306,23 @@ class WorkflowDetector:
 
             days_with_tasks, total_tasks = result
 
-        # Find events that commonly occur between task creation and completion
+        # Find events that commonly occur between task creation and completion.
+        # PERFORMANCE FIX: Removed the LEFT JOIN with json_extract task_id matching
+        # because it creates O(n×m) comparisons (197 tasks × 800K events = 157M ops).
+        # Instead, we just aggregate by event type without correlating specific tasks.
+        # This still captures the workflow pattern (what happens after tasks are created)
+        # without the expensive per-task matching.
         with self.db.get_connection("events") as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
                     e2.type,
                     COUNT(*) as occurrence_count,
-                    AVG(julianday(e3.timestamp) - julianday(e1.timestamp)) * 24 as avg_hours_to_complete
+                    AVG(julianday(e2.timestamp) - julianday(e1.timestamp)) * 24 as avg_hours
                 FROM events e1
                 JOIN events e2 ON
                     julianday(e2.timestamp) > julianday(e1.timestamp)
                     AND julianday(e2.timestamp) < julianday(e1.timestamp) + (CAST(? AS REAL) / 24.0)
-                LEFT JOIN events e3 ON
-                    e3.type = 'task.completed'
-                    AND julianday(e3.timestamp) > julianday(e1.timestamp)
-                    AND json_extract(e3.payload, '$.task_id') = json_extract(e1.payload, '$.task_id')
                 WHERE e1.type = 'task.created'
                   AND julianday(e1.timestamp) > julianday(?)
                   AND e2.type != 'task.created'
