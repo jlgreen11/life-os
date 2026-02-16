@@ -356,14 +356,42 @@ class PredictionEngine:
                     # Completely unparseable — skip this event
                     continue
 
-                # Only include events starting in the next 48 hours
-                if start_dt >= now and start_dt <= lookahead:
+                # Check if event falls within the 48-hour lookahead window.
+                # CRITICAL FIX (iteration 143): All-day events have date-only timestamps
+                # like "2026-02-16" which parse as midnight UTC. If it's currently 18:52 UTC,
+                # today's all-day events appear to have started 18+ hours ago and fail the
+                # `start_dt >= now` check. This caused 99.9% of calendar events to be excluded
+                # from conflict/preparation predictions (2,571 all-day vs 2 timed events).
+                #
+                # Solution: For all-day events, check if their DATE falls within the window
+                # (today through 2 days from now) rather than checking their midnight timestamp.
+                # For timed events, include events that are still ongoing OR will start within 48h.
+                is_all_day = payload.get("is_all_day", False)
+
+                in_window = False
+                if is_all_day:
+                    # For all-day events: check if date falls within [today, today+2 days]
+                    # This captures today's events (even if midnight has passed) and upcoming ones.
+                    event_date = start_dt.date()
+                    today = now.date()
+                    lookahead_date = (now + timedelta(days=2)).date()
+                    in_window = today <= event_date <= lookahead_date
+                else:
+                    # For timed events: include if EITHER:
+                    # 1. Event hasn't ended yet (ongoing), OR
+                    # 2. Event will start within the 48h window (upcoming)
+                    # This ensures we catch conflicts with events happening right now.
+                    event_ended = end_dt < now
+                    event_starts_soon = start_dt <= lookahead
+                    in_window = not event_ended and event_starts_soon
+
+                if in_window:
                     parsed_events.append({
                         "start_dt": start_dt,
                         "end_dt": end_dt,
                         "payload": payload,
                         "event_id": event["id"],
-                        "is_all_day": payload.get("is_all_day", False),
+                        "is_all_day": is_all_day,
                     })
 
             except Exception as e:
@@ -886,11 +914,29 @@ class PredictionEngine:
                 # Parse the start time and check if it's in our preparation window
                 # CRITICAL FIX (iteration 128): Same timezone-naive bug as calendar
                 # conflicts — date-only strings parse but create naive datetimes.
+                # CRITICAL FIX (iteration 143): All-day events with date-only timestamps
+                # like "2026-02-16" parse as midnight UTC and fail time window checks if
+                # it's already past midnight. Apply the same date-based window logic used
+                # in calendar conflict detection.
                 start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
                 if start_time.tzinfo is None:
                     start_time = start_time.replace(tzinfo=timezone.utc)
 
-                if window_start <= start_time <= window_end:
+                is_all_day = payload.get("is_all_day", False)
+                in_window = False
+
+                if is_all_day:
+                    # For all-day events: check if date falls within preparation window
+                    # (tomorrow through 2 days from now for 12-48h window)
+                    event_date = start_time.date()
+                    window_start_date = window_start.date()
+                    window_end_date = window_end.date()
+                    in_window = window_start_date <= event_date <= window_end_date
+                else:
+                    # For timed events: check if start time falls in 12-48h window
+                    in_window = window_start <= start_time <= window_end
+
+                if in_window:
                     parsed_events.append({
                         "start_time": start_time,
                         "payload": payload
