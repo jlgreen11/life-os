@@ -179,10 +179,27 @@ class PredictionEngine:
 
         Scans a 48-hour lookahead window and compares consecutive events
         pairwise. Flags two scenarios:
-            - Overlap (gap < 0 min)  -> CONFLICT at 0.95 confidence
-            - Tight transition (<15 min gap) -> RISK at 0.70 confidence
+            - Overlap (gap < 0 min)  -> CONFLICT at 0.95 confidence (0.8 for all-day)
+            - Tight transition (<15 min gap) -> RISK at 0.70 confidence (timed only)
 
-        CRITICAL FIX (iteration 107):
+        All-day event handling:
+            - All-day vs all-day: No conflict (multiple all-day markers are fine)
+            - All-day vs timed: Conflict detected (different locations/contexts)
+            - Timed vs timed: Full conflict detection with gap analysis
+
+        CRITICAL FIX (iteration 132):
+            The code was filtering out ALL all-day events (line 261-262), which
+            meant 99.9% of calendar events (2,571 of 2,573 in production) were
+            ignored. This completely broke calendar conflict detection, causing
+            0 predictions despite having thousands of events in the database.
+
+            Now we:
+            - Include all-day events in the conflict detection pipeline
+            - Skip all-day vs all-day comparisons (multiple markers are fine)
+            - Detect all-day vs timed conflicts (e.g., meeting during travel day)
+            - Enable downstream features that depend on all-day events
+
+        CRITICAL FIX (iteration 117):
             The original implementation queried by event.timestamp (when the
             event was synced to the database) instead of the actual event
             start_time in the payload. This caused ALL calendar conflict
@@ -256,11 +273,6 @@ class PredictionEngine:
                     # Completely unparseable — skip this event
                     continue
 
-                # Skip all-day events — they don't cause scheduling conflicts
-                # in the traditional sense (you can have multiple all-day markers).
-                if payload.get("is_all_day"):
-                    continue
-
                 # Only include events starting in the next 48 hours
                 if start_dt >= now and start_dt <= lookahead:
                     parsed_events.append({
@@ -268,6 +280,7 @@ class PredictionEngine:
                         "end_dt": end_dt,
                         "payload": payload,
                         "event_id": event["id"],
+                        "is_all_day": payload.get("is_all_day", False),
                     })
 
             except Exception as e:
@@ -281,29 +294,41 @@ class PredictionEngine:
         # Sort by actual event start time (not sync timestamp)
         parsed_events.sort(key=lambda e: e["start_dt"])
 
-        # Compare each consecutive pair of events for overlap or tight gaps
+        # Compare each consecutive pair of events for overlap or tight gaps.
+        # Skip all-day event pairs (multiple all-day markers are fine), but DO
+        # compare timed events with all-day events (e.g., a timed meeting during
+        # an all-day conference in a different location IS a conflict).
         for i in range(len(parsed_events) - 1):
             curr = parsed_events[i]
             next_evt = parsed_events[i + 1]
 
+            # Skip if both events are all-day (no conflict between all-day markers)
+            if curr.get("is_all_day") and next_evt.get("is_all_day"):
+                continue
+
             gap_minutes = (next_evt["start_dt"] - curr["end_dt"]).total_seconds() / 60
 
             if gap_minutes < 0:
-                # Negative gap = events overlap in time
+                # Negative gap = events overlap in time.
+                # For all-day events, only flag if one is timed (location conflict).
+                # For timed events, always flag.
+                is_all_day_conflict = curr.get("is_all_day") or next_evt.get("is_all_day")
+
                 predictions.append(Prediction(
                     prediction_type="conflict",
                     description=(
                         f"Calendar overlap: '{curr['payload'].get('title', 'Event')}' "
-                        f"and '{next_evt['payload'].get('title', 'Event')}' overlap by "
-                        f"{abs(int(gap_minutes))} minutes"
+                        f"and '{next_evt['payload'].get('title', 'Event')}' overlap"
+                        + ("" if is_all_day_conflict else f" by {abs(int(gap_minutes))} minutes")
                     ),
-                    confidence=0.95,
+                    confidence=0.8 if is_all_day_conflict else 0.95,
                     confidence_gate=ConfidenceGate.DEFAULT,
                     time_horizon="24_hours",
                     suggested_action="Reschedule one of the conflicting events",
                 ))
-            elif gap_minutes < 15:
-                # Very tight transition
+            elif gap_minutes < 15 and not (curr.get("is_all_day") or next_evt.get("is_all_day")):
+                # Very tight transition (only for timed events — all-day events
+                # don't have tight transitions by definition).
                 predictions.append(Prediction(
                     prediction_type="risk",
                     description=(
