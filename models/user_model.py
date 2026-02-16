@@ -407,7 +407,7 @@ class CommunicationTemplate(BaseModel):
 class Prediction(BaseModel):
     """A single prediction about what the user will need."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    prediction_type: str                          # "need", "conflict", "opportunity", "risk"
+    prediction_type: str                          # "need", "conflict", "opportunity", "risk", "reminder", "routine_deviation"
     description: str                              # Human-readable description
     confidence: float                             # 0-1
     confidence_gate: ConfidenceGate               # How the AI should act on this
