@@ -1351,6 +1351,300 @@ class PredictionEngine:
 
         return False
 
+    async def get_diagnostics(self) -> dict:
+        """
+        Comprehensive prediction engine diagnostics.
+
+        Returns a detailed analysis of why each prediction type is or isn't
+        generating predictions, including data availability, configuration gaps,
+        and actionable recommendations.
+
+        This is the single source of truth for understanding prediction engine
+        behavior and debugging issues.
+
+        Returns:
+            Dictionary with structure:
+            {
+                "prediction_types": {
+                    "reminder": {
+                        "status": "active" | "limited" | "blocked",
+                        "generated_last_7d": int,
+                        "data_available": {
+                            "unreplied_emails": int,
+                            "recent_messages": int,
+                            ...
+                        },
+                        "blockers": ["list", "of", "issues"],
+                        "recommendations": ["actionable", "steps"]
+                    },
+                    ...
+                },
+                "overall": {
+                    "total_predictions_7d": int,
+                    "active_types": int,
+                    "blocked_types": int,
+                    "health": "healthy" | "degraded" | "broken"
+                }
+            }
+        """
+        diagnostics = {"prediction_types": {}, "overall": {}}
+        now = datetime.now(timezone.utc)
+        week_ago = (now - timedelta(days=7)).isoformat()
+
+        # Get prediction counts for last 7 days
+        with self.db.get_connection("user_model") as conn:
+            pred_counts = conn.execute(
+                """SELECT prediction_type, COUNT(*) as count
+                   FROM predictions
+                   WHERE created_at > ?
+                   GROUP BY prediction_type""",
+                (week_ago,),
+            ).fetchall()
+
+        prediction_type_counts = {row["prediction_type"]: row["count"] for row in pred_counts}
+
+        # --- Follow-up needs (reminder) ---
+        with self.db.get_connection("events") as conn:
+            unreplied_count = conn.execute(
+                """SELECT COUNT(*) as count FROM events
+                   WHERE type = 'email.received'
+                   AND timestamp > ?""",
+                ((now - timedelta(hours=24)).isoformat(),),
+            ).fetchone()["count"]
+
+            replied_count = conn.execute(
+                """SELECT COUNT(*) as count FROM events
+                   WHERE type = 'email.sent'
+                   AND json_extract(payload, '$.in_reply_to') IS NOT NULL
+                   AND timestamp > ?""",
+                ((now - timedelta(hours=24)).isoformat(),),
+            ).fetchone()["count"]
+
+        actual_unreplied = unreplied_count - replied_count
+        reminder_status = "active" if prediction_type_counts.get("reminder", 0) > 0 else "limited"
+        reminder_blockers = []
+        reminder_recommendations = []
+
+        if actual_unreplied == 0:
+            reminder_status = "blocked"
+            reminder_blockers.append("No unreplied emails in last 24h")
+            reminder_recommendations.append("Check if email connector is syncing correctly")
+        elif prediction_type_counts.get("reminder", 0) == 0:
+            reminder_blockers.append("Unreplied emails exist but 0 predictions generated")
+            reminder_recommendations.append("Check marketing filter - may be filtering all emails")
+
+        diagnostics["prediction_types"]["reminder"] = {
+            "status": reminder_status,
+            "generated_last_7d": prediction_type_counts.get("reminder", 0),
+            "data_available": {
+                "unreplied_emails_24h": actual_unreplied,
+                "total_received_24h": unreplied_count,
+                "replies_sent_24h": replied_count,
+            },
+            "blockers": reminder_blockers,
+            "recommendations": reminder_recommendations,
+        }
+
+        # --- Calendar conflicts ---
+        with self.db.get_connection("events") as conn:
+            calendar_events = conn.execute(
+                "SELECT COUNT(*) as count FROM events WHERE type = 'calendar.event.created'"
+            ).fetchone()["count"]
+
+            # Count all-day vs timed events
+            all_events = conn.execute(
+                "SELECT payload FROM events WHERE type = 'calendar.event.created' LIMIT 1000"
+            ).fetchall()
+
+            all_day_count = 0
+            timed_count = 0
+            for row in all_events:
+                try:
+                    payload = json.loads(row["payload"])
+                    if payload.get("is_all_day"):
+                        all_day_count += 1
+                    else:
+                        timed_count += 1
+                except:
+                    pass
+
+        conflict_status = "active" if prediction_type_counts.get("conflict", 0) > 0 else "blocked"
+        conflict_blockers = []
+        conflict_recommendations = []
+
+        if calendar_events == 0:
+            conflict_blockers.append("No calendar events in database")
+            conflict_recommendations.append("Enable and configure CalDAV or Google Calendar connector")
+        elif timed_count == 0:
+            conflict_blockers.append("All calendar events are all-day (0 timed events for conflict detection)")
+            conflict_recommendations.append("Verify calendar connector is correctly parsing timed events")
+            conflict_recommendations.append("Check if calendar contains any actual appointments (not just birthdays/holidays)")
+
+        diagnostics["prediction_types"]["conflict"] = {
+            "status": conflict_status,
+            "generated_last_7d": prediction_type_counts.get("conflict", 0),
+            "data_available": {
+                "total_calendar_events": calendar_events,
+                "all_day_events": all_day_count,
+                "timed_events": timed_count,
+            },
+            "blockers": conflict_blockers,
+            "recommendations": conflict_recommendations,
+        }
+
+        # --- Relationship maintenance (opportunity) ---
+        rel_profile = self.ums.get_signal_profile("relationships")
+        if rel_profile:
+            contacts = rel_profile["data"].get("contacts", {})
+            eligible_contacts = sum(1 for data in contacts.values()
+                                   if data.get("interaction_count", 0) >= 5)
+            total_contacts = len(contacts)
+        else:
+            contacts = {}
+            eligible_contacts = 0
+            total_contacts = 0
+
+        opportunity_status = "active" if prediction_type_counts.get("opportunity", 0) > 0 else "blocked"
+        opportunity_blockers = []
+        opportunity_recommendations = []
+
+        if total_contacts == 0:
+            opportunity_blockers.append("No contacts tracked in relationships profile")
+            opportunity_recommendations.append("Ensure email connector is running and processing messages")
+        elif eligible_contacts == 0:
+            opportunity_blockers.append("No contacts with 5+ interactions (need history to detect maintenance needs)")
+            opportunity_recommendations.append("Wait for more email history to accumulate (need 5+ interactions per contact)")
+        else:
+            # Check if all contacts are marketing
+            marketing_count = sum(1 for addr in contacts.keys()
+                                 if self._is_marketing_or_noreply(addr, {}))
+            if marketing_count / total_contacts > 0.9:
+                opportunity_blockers.append(f"{marketing_count}/{total_contacts} contacts are marketing/automated (no human relationships)")
+                opportunity_recommendations.append("This inbox appears to contain primarily marketing emails")
+                opportunity_recommendations.append("Consider filtering marketing emails before they reach Life OS")
+
+        diagnostics["prediction_types"]["opportunity"] = {
+            "status": opportunity_status,
+            "generated_last_7d": prediction_type_counts.get("opportunity", 0),
+            "data_available": {
+                "total_contacts": total_contacts,
+                "eligible_contacts": eligible_contacts,
+                "marketing_filtered": sum(1 for addr in contacts.keys()
+                                         if self._is_marketing_or_noreply(addr, {}))
+                                     if contacts else 0,
+            },
+            "blockers": opportunity_blockers,
+            "recommendations": opportunity_recommendations,
+        }
+
+        # --- Preparation needs (need) ---
+        with self.db.get_connection("events") as conn:
+            upcoming_events = conn.execute(
+                """SELECT COUNT(*) as count FROM events
+                   WHERE type = 'calendar.event.created'"""
+            ).fetchone()["count"]
+
+        need_status = "active" if prediction_type_counts.get("need", 0) > 0 else "blocked"
+        need_blockers = []
+        need_recommendations = []
+
+        if upcoming_events == 0:
+            need_blockers.append("No calendar events available")
+            need_recommendations.append("Enable calendar connector to track upcoming events")
+        elif timed_count == 0:
+            need_blockers.append("All events are all-day (preparation needs require timed events)")
+            need_recommendations.append("Verify calendar contains actual appointments, not just reminders")
+
+        diagnostics["prediction_types"]["need"] = {
+            "status": need_status,
+            "generated_last_7d": prediction_type_counts.get("need", 0),
+            "data_available": {
+                "total_events": upcoming_events,
+                "timed_events": timed_count,
+            },
+            "blockers": need_blockers,
+            "recommendations": need_recommendations,
+        }
+
+        # --- Spending patterns (risk) ---
+        with self.db.get_connection("events") as conn:
+            transaction_count = conn.execute(
+                """SELECT COUNT(*) as count FROM events
+                   WHERE type = 'finance.transaction.new'
+                   AND timestamp > ?""",
+                ((now - timedelta(days=30)).isoformat(),),
+            ).fetchone()["count"]
+
+        risk_status = "active" if prediction_type_counts.get("risk", 0) > 0 else "blocked"
+        risk_blockers = []
+        risk_recommendations = []
+
+        if transaction_count == 0:
+            risk_blockers.append("No finance transactions in database")
+            risk_recommendations.append("Enable a finance connector (Plaid, Mint, or similar)")
+        elif transaction_count < 5:
+            risk_blockers.append(f"Only {transaction_count} transactions (need ≥5 for pattern detection)")
+            risk_recommendations.append("Wait for more transaction history to accumulate")
+
+        diagnostics["prediction_types"]["risk"] = {
+            "status": risk_status,
+            "generated_last_7d": prediction_type_counts.get("risk", 0),
+            "data_available": {
+                "transactions_30d": transaction_count,
+            },
+            "blockers": risk_blockers,
+            "recommendations": risk_recommendations,
+        }
+
+        # --- Routine deviations ---
+        with self.db.get_connection("user_model") as conn:
+            routine_count = conn.execute(
+                "SELECT COUNT(*) as count FROM routines WHERE consistency_score > 0.6"
+            ).fetchone()["count"]
+
+        routine_status = "active" if prediction_type_counts.get("routine_deviation", 0) > 0 else "blocked"
+        routine_blockers = []
+        routine_recommendations = []
+
+        if routine_count == 0:
+            routine_blockers.append("No routines with consistency_score > 0.6")
+            routine_recommendations.append("Routine detection requires consistent behavioral patterns over time")
+            routine_recommendations.append("Wait for routine detection loop to identify patterns (runs hourly)")
+
+        diagnostics["prediction_types"]["routine_deviation"] = {
+            "status": routine_status,
+            "generated_last_7d": prediction_type_counts.get("routine_deviation", 0),
+            "data_available": {
+                "established_routines": routine_count,
+            },
+            "blockers": routine_blockers,
+            "recommendations": routine_recommendations,
+        }
+
+        # --- Overall health ---
+        total_predictions_7d = sum(prediction_type_counts.values())
+        active_types = sum(1 for v in diagnostics["prediction_types"].values()
+                          if v["status"] == "active")
+        blocked_types = sum(1 for v in diagnostics["prediction_types"].values()
+                           if v["status"] == "blocked")
+
+        if active_types >= 3:
+            health = "healthy"
+        elif active_types >= 1:
+            health = "degraded"
+        else:
+            health = "broken"
+
+        diagnostics["overall"] = {
+            "total_predictions_7d": total_predictions_7d,
+            "active_types": active_types,
+            "blocked_types": blocked_types,
+            "total_types": len(diagnostics["prediction_types"]),
+            "health": health,
+        }
+
+        return diagnostics
+
     @staticmethod
     def _gate_from_confidence(confidence: float) -> ConfidenceGate:
         """
