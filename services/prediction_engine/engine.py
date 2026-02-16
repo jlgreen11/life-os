@@ -753,7 +753,11 @@ class PredictionEngine:
         Filters out:
         - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
         - Bulk/marketing email patterns (newsletter@, reply@, email@, service@, etc.)
+        - Transactional/automated senders (orders@, auto-confirm@, shipment-tracking@, etc.)
+        - Organizational bulk senders (communications@, development@, fundraising@)
+        - Loyalty/rewards programs (rewards@, loyalty@, etc.)
         - Marketing domain patterns (news-*.com, email.*.com, etc.)
+        - Marketing service providers (@*.e2ma.net, @*.sendgrid.net, etc.)
         - Embedded notification patterns (HOA-Notifications@, engage.ticketmaster.com)
         - Emails containing unsubscribe links
 
@@ -784,6 +788,15 @@ class PredictionEngine:
             "service@",     # PayPal, Stripe, etc. - mostly transactional but repetitive
             "discover@",    # Common marketing pattern (Airbnb, etc.)
             "alert@", "alerts@", "notification@",
+            # Transactional/automated senders
+            "orders@", "order@", "receipts@", "receipt@",
+            "auto-confirm@", "autoconfirm@", "confirmation@",
+            "shipment-tracking@", "shipping@", "delivery@",
+            "accountservice@", "account-service@",
+            # Organizational bulk senders
+            "communications@", "development@", "fundraising@",
+            # Loyalty/rewards programs (always automated)
+            "rewards@", "loyalty@",
         )
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True
@@ -808,6 +821,23 @@ class PredictionEngine:
             "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
+            return True
+
+        # Marketing service provider subdomains
+        # These are third-party email marketing platforms (e.g., @*.e2ma.net, @*.sendgrid.net)
+        # Check if domain ends with these patterns
+        domain = addr_lower.split("@")[1] if "@" in addr_lower else ""
+        marketing_service_patterns = (
+            ".e2ma.net",      # Emma email marketing
+            ".sendgrid.net",  # SendGrid
+            ".mailchimp.com", # Mailchimp
+            ".constantcontact.com",  # Constant Contact
+            ".hubspot.com",   # HubSpot
+            ".marketo.com",   # Marketo
+            ".pardot.com",    # Salesforce Pardot
+            ".eloqua.com",    # Oracle Eloqua
+        )
+        if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
             return True
 
         # Check body and snippet for unsubscribe indicators
