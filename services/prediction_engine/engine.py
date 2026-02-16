@@ -222,12 +222,24 @@ class PredictionEngine:
         hasn't responded to, especially from priority contacts.
 
         Strategy:
-            1. Fetch all inbound messages from the last 48 hours
-            2. Fetch all outbound messages in the same window
-            3. Build a set of thread IDs we've already replied to
-            4. Any inbound message not in that set and older than 3 hours
-               is flagged, with confidence boosted for priority contacts
-               and messages explicitly requiring a response.
+            1. Fetch all inbound messages from the last 48 hours that are:
+               a) Unreplied (not in replied_to_threads set)
+               b) Not marketing/automated (filtered by _is_marketing_or_noreply)
+               c) Older than 3 hours (grace period for user to respond)
+            2. Check if we've already created a prediction for this message
+            3. Create new predictions only for messages we haven't alerted about yet
+
+        CRITICAL FIX (iteration 62):
+            Previously, this method processed ALL emails from the last 48 hours on
+            EVERY prediction cycle (every 15 min). This caused:
+            - 9,086 duplicate predictions created in a single batch
+            - Overwhelming the database with redundant reminders
+            - Breaking the accuracy feedback loop with noise
+
+            Now we:
+            - Track which message IDs we've already created predictions for
+            - Only create ONE prediction per unreplied message, ever
+            - Prevent reprocessing the same emails repeatedly
         """
         predictions = []
 
@@ -251,6 +263,26 @@ class PredictionEngine:
                 (cutoff,),
             ).fetchall()
 
+        # Fetch all existing reminder predictions in the last 48 hours to avoid duplicates
+        with self.db.get_connection("user_model") as conn:
+            existing_predictions = conn.execute(
+                """SELECT supporting_signals FROM predictions
+                   WHERE prediction_type = 'reminder'
+                   AND created_at > ?""",
+                (cutoff,),
+            ).fetchall()
+
+        # Build a set of message IDs we've already created predictions for
+        already_predicted_messages = set()
+        for pred in existing_predictions:
+            try:
+                signals = json.loads(pred["supporting_signals"]) if pred["supporting_signals"] else {}
+                msg_id = signals.get("message_id")
+                if msg_id:
+                    already_predicted_messages.add(msg_id)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         # Build a set of thread/message IDs we've already replied to,
         # so we can exclude them from the "needs follow-up" list.
         replied_to_threads = set()
@@ -267,6 +299,11 @@ class PredictionEngine:
 
             # Skip if already replied
             if message_id in replied_to_threads:
+                continue
+
+            # Skip if we've already created a prediction for this message
+            # This is the critical fix to prevent duplicate predictions
+            if message_id in already_predicted_messages:
                 continue
 
             # Check if from a priority contact
