@@ -304,8 +304,8 @@ class UserModelStore:
                 """INSERT INTO predictions
                    (id, prediction_type, description, confidence, confidence_gate,
                     time_horizon, suggested_action, supporting_signals, was_surfaced,
-                    user_response, resolved_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    user_response, resolved_at, filter_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     prediction["id"],
                     prediction["prediction_type"],
@@ -318,6 +318,7 @@ class UserModelStore:
                     prediction.get("was_surfaced", False),
                     prediction.get("user_response"),
                     prediction.get("resolved_at"),
+                    prediction.get("filter_reason"),
                 ),
             )
 

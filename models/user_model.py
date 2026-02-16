@@ -426,6 +426,7 @@ class Prediction(BaseModel):
     was_surfaced: bool = False
     user_response: Optional[str] = None           # FeedbackType
     was_accurate: Optional[bool] = None
+    filter_reason: Optional[str] = None           # Why prediction was filtered (e.g., "reaction_score:-0.2", "confidence:0.15")
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     resolved_at: Optional[str] = None             # ISO timestamp when prediction was resolved
