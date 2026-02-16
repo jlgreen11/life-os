@@ -33,6 +33,44 @@ class NotificationManager:
         # called (typically on a schedule — e.g., 9 AM, 1 PM, 6 PM).
         self._pending_batch: list[dict] = []
 
+    def _log_automatic_feedback(self, action_id: str, action_type: str,
+                                 feedback_type: str, context: Optional[dict] = None):
+        """
+        Log automatic feedback to feedback_log without requiring user interaction.
+
+        This method enables the feedback loop to function in a passive observation
+        system where most predictions are never explicitly acted on or dismissed.
+        By automatically logging feedback when predictions are auto-resolved, we
+        ensure the reaction prediction system has data to learn from.
+
+        Args:
+            action_id: ID of the notification or prediction being resolved
+            action_type: Type of action (e.g., "notification", "prediction")
+            feedback_type: Type of feedback (e.g., "dismissed", "ignored", "engaged")
+            context: Optional context dict with metadata about the auto-resolution
+        """
+        import uuid
+        feedback_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self.db.get_connection("preferences") as conn:
+            conn.execute(
+                """INSERT INTO feedback_log
+                   (id, timestamp, action_id, action_type, feedback_type,
+                    response_latency_seconds, context, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    feedback_id,
+                    now,
+                    action_id,
+                    action_type,
+                    feedback_type,
+                    None,  # Auto-resolved feedback has no latency
+                    json.dumps(context or {}),
+                    "Automatic feedback from prediction auto-resolution",
+                ),
+            )
+
     async def create_notification(
         self,
         title: str,
@@ -363,6 +401,18 @@ class NotificationManager:
         """
         self._mark_status(notif_id, "acted_on")
         self._update_linked_prediction(notif_id, was_accurate=True)
+
+        # Log explicit user feedback directly to feedback_log. This ensures
+        # the feedback loop works even if the event bus handler fails or if
+        # events aren't being stored. Direct logging provides a reliable path
+        # for feedback data to reach the reaction prediction system.
+        self._log_automatic_feedback(
+            action_id=notif_id,
+            action_type="notification",
+            feedback_type="engaged",
+            context={"explicit_user_action": True, "action": "acted_on"}
+        )
+
         if self.bus and self.bus.is_connected:
             await self.bus.publish(
                 "notification.acted_on",
@@ -381,6 +431,18 @@ class NotificationManager:
         """
         self._mark_status(notif_id, "dismissed")
         self._update_linked_prediction(notif_id, was_accurate=False)
+
+        # Log explicit user dismissal directly to feedback_log. This ensures
+        # the feedback loop works even if the event bus handler fails or if
+        # events aren't being stored. Direct logging provides a reliable path
+        # for dismissal patterns to reach the reaction prediction system.
+        self._log_automatic_feedback(
+            action_id=notif_id,
+            action_type="notification",
+            feedback_type="dismissed",
+            context={"explicit_user_action": True, "action": "dismissed"}
+        )
+
         if self.bus and self.bus.is_connected:
             await self.bus.publish(
                 "notification.dismissed",
@@ -504,6 +566,19 @@ class NotificationManager:
                 )
                 if conn.total_changes > 0:
                     resolved_count += 1
+
+            # Log automatic feedback for the ignored prediction. This closes the
+            # feedback loop by recording implicit dismissals in feedback_log, which
+            # enables the reaction prediction system to learn from patterns even
+            # without explicit user clicks. Ignored predictions are treated as
+            # dismissed for feedback purposes since the user didn't find them
+            # compelling enough to act on.
+            self._log_automatic_feedback(
+                action_id=notif["id"],
+                action_type="notification",
+                feedback_type="dismissed",
+                context={"auto_resolved": True, "reason": "ignored", "timeout_hours": timeout_hours}
+            )
 
             # Mark the notification as expired so it doesn't clutter the UI.
             self._mark_status(notif["id"], "expired")
