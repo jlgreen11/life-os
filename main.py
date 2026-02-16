@@ -195,6 +195,13 @@ class LifeOS:
         # task data but no completion events.
         await self._backfill_task_completion_if_needed()
 
+        # 1.5. Backfill communication templates (Layer 3 procedural memory)
+        # Template extraction was added in PR #130 but only processes new events
+        # going forward. This backfill populates writing-style templates from all
+        # historical communication events so the system immediately has rich
+        # communication patterns for every contact.
+        await self._backfill_communication_templates_if_needed()
+
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -519,6 +526,73 @@ class LifeOS:
         except Exception as e:
             # Backfill errors should not crash startup
             print(f"       ⚠ Task completion backfill failed: {e}")
+
+    async def _backfill_communication_templates_if_needed(self):
+        """Extract communication templates from all historical communication events.
+
+        Communication template extraction was added in PR #130 but only processes
+        new events going forward. This backfill populates Layer 3 procedural memory
+        with writing-style templates learned from all historical emails and messages.
+
+        Templates capture per-contact, per-channel writing patterns:
+        - Greeting and closing phrases (e.g., "Hi" vs "Dear" vs none)
+        - Formality level (0.0 = casual, 1.0 = formal)
+        - Typical message length
+        - Emoji usage patterns
+        - Common phrases and tone indicators
+
+        This enables:
+        1. Style-matching when drafting AI-generated replies
+        2. Detecting formality mismatches in communication
+        3. Learning relationship-specific patterns
+        4. Better prediction of incoming message characteristics
+
+        The backfill is idempotent and safe to run multiple times. It processes
+        events in chronological order so templates evolve naturally as writing
+        style changes over time.
+        """
+        try:
+            # Check if we already have templates (skip if > 100)
+            with self.db.get_connection("user_model") as conn:
+                template_count = conn.execute(
+                    "SELECT COUNT(*) FROM communication_templates"
+                ).fetchone()[0]
+
+            # If we already have a significant number of templates, skip backfill
+            if template_count >= 100:
+                return
+
+            # Count communication events available for template extraction
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute("""
+                    SELECT COUNT(*) FROM events
+                    WHERE type IN ('email.sent', 'email.received', 'message.sent', 'message.received')
+                      AND (LENGTH(json_extract(payload, '$.body_plain')) > 10
+                           OR LENGTH(json_extract(payload, '$.body')) > 10)
+                """).fetchone()[0]
+
+            # Only run backfill if we have sufficient communication events (50+)
+            if event_count < 50:
+                return
+
+            print(f"       → Backfilling communication templates from {event_count:,} historical events...")
+
+            # Run the backfill in a thread to avoid blocking startup
+            def _run_backfill():
+                from scripts.backfill_communication_templates import backfill_communication_templates
+                stats = backfill_communication_templates(
+                    data_dir=self.db.data_dir,
+                    batch_size=5000,
+                )
+                return stats
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            print(f"       ✓ Created {stats['templates_created']:,} templates from {stats['events_processed']:,} events "
+                  f"({stats['elapsed_seconds']:.1f}s)")
+
+        except Exception as e:
+            print(f"       ⚠ Communication template backfill failed (non-fatal): {e}")
 
     async def _register_event_handlers(self):
         """Wire up the core event processing pipeline."""
