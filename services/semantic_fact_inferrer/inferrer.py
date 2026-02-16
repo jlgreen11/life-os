@@ -193,6 +193,12 @@ class SemanticFactInferrer:
 
         Confidence threshold: Require 10+ samples for a specific contact
         before inferring relationship priority.
+
+        Filtering:
+          - Skip contacts with zero outbound messages (one-way relationships)
+            to avoid treating marketing emails as "high priority" relationships
+          - Semantic facts should reflect the user's actual communication
+            patterns, not the volume of spam they receive
         """
         profile = self.ums.get_signal_profile("relationships")
         if not profile or profile.get("samples_count", 0) < 10:
@@ -208,15 +214,28 @@ class SemanticFactInferrer:
         if not contacts:
             return
 
-        # Calculate average interaction count across all contacts
-        interaction_counts = [c.get("interaction_count", 0) for c in contacts.values()]
+        # Filter out one-way relationships (zero outbound) to avoid polluting
+        # semantic facts with marketing email senders. Only consider contacts
+        # the user actually communicates with bidirectionally.
+        bidirectional_contacts = {
+            contact_id: contact_data
+            for contact_id, contact_data in contacts.items()
+            if contact_data.get("outbound_count", 0) > 0
+        }
+
+        if not bidirectional_contacts:
+            logger.debug("No bidirectional contacts found, skipping relationship inference")
+            return
+
+        # Calculate average interaction count across bidirectional contacts only
+        interaction_counts = [c.get("interaction_count", 0) for c in bidirectional_contacts.values()]
         if not interaction_counts:
             return
 
         avg_interactions = sum(interaction_counts) / len(interaction_counts)
         high_priority_threshold = avg_interactions * 2  # 2x average = high priority
 
-        for contact_id, contact_data in contacts.items():
+        for contact_id, contact_data in bidirectional_contacts.items():
             interaction_count = contact_data.get("interaction_count", 0)
             if interaction_count < 5:
                 continue  # Not enough data
