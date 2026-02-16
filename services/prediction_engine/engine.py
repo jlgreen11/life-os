@@ -547,9 +547,14 @@ class PredictionEngine:
         This is the reaction prediction gatekeeper. It scores each
         prediction on a -1.0 to +1.0 scale using multiple signals,
         then classifies the result:
-            score > 0.4  -> "helpful"  (surface it)
-            score > 0.1  -> "neutral"  (surface it, but lower priority)
-            score <= 0.1 -> "annoying" (suppress it)
+            score > 0.3  -> "helpful"  (surface it)
+            score > -0.1 -> "neutral"  (surface it, but lower priority)
+            score <= -0.1 -> "annoying" (suppress it)
+
+        CALIBRATION NOTE: The original thresholds (0.4 and 0.1) were too
+        conservative, suppressing 99.95% of predictions and completely
+        breaking the feedback loop. Recalibrated to allow more predictions
+        through while still filtering truly annoying interruptions.
         """
         # --- Gather context signals ---
         # Current mood from the mood_signals profile
@@ -568,21 +573,25 @@ class PredictionEngine:
             recent_dismissals = row["cnt"] if row else 0
 
         # --- Scoring logic ---
-        # Start at 0.5 (neutral) and adjust based on contextual signals.
-        score = 0.5
+        # Start at 0.3 (slightly positive) to bias toward surfacing by default.
+        # The original 0.5 start was too high given the penalty magnitudes.
+        score = 0.3
 
         # Stress detection: check the last 5 mood signals for negative
         # language or calendar overload. If stressed, reduce score to
         # avoid piling more onto an overwhelmed user.
+        # REDUCED from −0.2 to −0.1 to avoid over-penalizing.
         stress_signals = mood_data.get("recent_signals", [])
         stress_count = sum(1 for s in stress_signals[-5:]
                           if s.get("signal_type") in ["negative_language", "calendar_density"])
         if stress_count > 2:
-            score -= 0.2  # Don't pile on when they're stressed
+            score -= 0.1
 
-        # Dismissal fatigue: >3 dismissals in 2 hours = strong "go away" signal
-        if recent_dismissals > 3:
-            score -= 0.3
+        # Dismissal fatigue: >3 dismissals in 2 hours = strong "go away" signal.
+        # REDUCED from −0.3 to −0.2 and increased threshold from >3 to >5
+        # to avoid being too reactive to a few dismissals.
+        if recent_dismissals > 5:
+            score -= 0.2
 
         # High-confidence predictions are more likely to be genuinely helpful
         if prediction.confidence > 0.7:
@@ -593,17 +602,19 @@ class PredictionEngine:
         if prediction.prediction_type in ("conflict", "risk"):
             score += 0.2
         elif prediction.prediction_type == "opportunity":
-            score -= 0.1
+            score -= 0.05  # REDUCED from −0.1 to allow opportunities through
 
         # Time-of-day penalty: suppress non-urgent predictions during
         # early morning (before 7) and late night (after 22).
+        # REDUCED from −0.3 to −0.2 to be less aggressive.
         hour = datetime.now(timezone.utc).hour
         if hour < 7 or hour > 22:
             if prediction.prediction_type not in ("conflict", "risk"):
-                score -= 0.3
+                score -= 0.2
 
         # --- Classify the final score into a reaction label ---
-        predicted = "helpful" if score > 0.4 else ("neutral" if score > 0.1 else "annoying")
+        # RECALIBRATED: helpful > 0.3, neutral > −0.1, else annoying
+        predicted = "helpful" if score > 0.3 else ("neutral" if score > -0.1 else "annoying")
 
         return ReactionPrediction(
             proposed_action=prediction.description,
