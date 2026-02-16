@@ -579,27 +579,80 @@ class PredictionEngine:
         checks for keywords that signal preparation needs:
             - Travel keywords -> packing & reservation checks
             - Large meetings (>3 attendees) -> agenda review
+
+        CRITICAL FIX (iteration 122):
+            The original implementation queried by event.timestamp (when the
+            event was synced to the database) instead of the actual event
+            start_time in the payload. This caused ALL preparation need
+            predictions to be missed because synced events are timestamped
+            in the past, even if the actual event is in the future.
+
+            Now we:
+            - Fetch all recent calendar events (last 30 days of syncs)
+            - Parse start_time from each event's payload
+            - Filter to events starting in the 12-48 hour preparation window
+            - Generate predictions based on actual event timing
+
+            This is the same bug that was fixed for calendar conflicts in
+            iteration 117 (PR #131).
         """
         predictions = []
 
         with self.db.get_connection("events") as conn:
-            # Look 12-48 hours ahead — the sweet spot for preparation reminders
-            # (too early = noise, too late = not enough time to act).
-            now = datetime.now(timezone.utc)
-            window_start = now + timedelta(hours=12)
-            window_end = now + timedelta(hours=48)
+            # Fetch calendar events synced in the last 30 days.
+            # This captures all events the CalDAV connector has loaded,
+            # including future events that were synced recently.
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
-            upcoming = conn.execute(
-                """SELECT payload FROM events
+            events = conn.execute(
+                """SELECT * FROM events
                    WHERE type = 'calendar.event.created'
-                   AND timestamp BETWEEN ? AND ?""",
-                (window_start.isoformat(), window_end.isoformat()),
+                   AND timestamp > ?""",
+                (cutoff,),
             ).fetchall()
 
-        for event in upcoming:
-            payload = json.loads(event["payload"])
+        if not events:
+            return predictions
+
+        # Parse event payloads and extract actual start times.
+        # Filter to events that START in the 12-48 hour preparation window.
+        now = datetime.now(timezone.utc)
+        window_start = now + timedelta(hours=12)
+        window_end = now + timedelta(hours=48)
+
+        parsed_events = []
+        for event in events:
+            try:
+                payload = json.loads(event["payload"])
+                # Handle double-encoded JSON (rare but possible)
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+
+                start_time_str = payload.get("start_time")
+                if not start_time_str:
+                    continue
+
+                # Parse the start time and check if it's in our preparation window
+                start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+
+                if window_start <= start_time <= window_end:
+                    parsed_events.append({
+                        "start_time": start_time,
+                        "payload": payload
+                    })
+            except (json.JSONDecodeError, ValueError, TypeError, KeyError):
+                # Skip events with malformed payloads or missing start_time
+                continue
+
+        # Generate predictions for events in the preparation window
+        for event in parsed_events:
+            payload = event["payload"]
             title = payload.get("title", "").lower()
             location = payload.get("location", "")
+            start_time = event["start_time"]
+
+            # Calculate hours until event for more precise messaging
+            hours_until = (start_time - now).total_seconds() / 3600
 
             # --- Travel detection ---
             # Keyword-based check for travel-related events.
@@ -607,7 +660,7 @@ class PredictionEngine:
             if any(kw in title for kw in travel_keywords):
                 predictions.append(Prediction(
                     prediction_type="need",
-                    description=f"Upcoming travel: '{payload.get('title')}'. Time to prepare.",
+                    description=f"Upcoming travel in {int(hours_until)}h: '{payload.get('title')}'. Time to prepare.",
                     confidence=0.75,
                     confidence_gate=ConfidenceGate.DEFAULT,
                     time_horizon="24_hours",
@@ -620,7 +673,7 @@ class PredictionEngine:
             if len(attendees) > 3:
                 predictions.append(Prediction(
                     prediction_type="need",
-                    description=f"Large meeting: '{payload.get('title')}' with {len(attendees)} attendees",
+                    description=f"Large meeting in {int(hours_until)}h: '{payload.get('title')}' with {len(attendees)} attendees",
                     confidence=0.5,
                     confidence_gate=ConfidenceGate.SUGGEST,
                     time_horizon="24_hours",
