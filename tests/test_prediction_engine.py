@@ -354,7 +354,7 @@ async def test_routine_deviation_detects_missed_habits(db, user_model_store):
     predictions = await engine._check_routine_deviations({})
     assert len(predictions) >= 1
     routine_pred = predictions[0]
-    assert routine_pred.prediction_type == "opportunity"
+    assert routine_pred.prediction_type == "routine_deviation"
     assert "morning workout" in routine_pred.description.lower()
     assert routine_pred.confidence >= 0.4  # Routine deviations have lower confidence
 

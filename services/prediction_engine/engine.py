@@ -772,7 +772,7 @@ class PredictionEngine:
                     continue
 
                 predictions.append(Prediction(
-                    prediction_type="opportunity",
+                    prediction_type="routine_deviation",
                     description=f"You usually do your '{routine_name}' routine by now",
                     confidence=confidence,
                     confidence_gate=self._gate_from_confidence(confidence),
