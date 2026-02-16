@@ -384,3 +384,99 @@ class UserModelStore:
             "has_response": bool(user_response),
             "resolved_at": datetime.now(timezone.utc).isoformat(),
         })
+
+    def store_routine(self, routine: dict):
+        """Store or update a detected routine (Layer 3: Procedural Memory).
+
+        Routines are recurring behavioral patterns discovered by analyzing
+        episodic memory. Examples: morning routine (check email → review
+        calendar → coffee), arrive-at-work routine, post-meeting workflow.
+
+        Uses INSERT OR REPLACE keyed on routine name. If a routine with the
+        same name already exists, this overwrites it with updated statistics
+        (consistency_score, times_observed, typical_duration). The steps list
+        is completely replaced on each update.
+
+        Steps are stored as JSON to preserve order and all metadata (action,
+        duration, skip_rate). Variations list tracks known departures from
+        the canonical pattern (e.g., "skips coffee on Mondays").
+
+        Args:
+            routine: Dictionary with keys:
+                - name (str): Human-readable routine name
+                - trigger (str): What initiates this routine ("morning", "arrive_home")
+                - steps (list[dict]): Ordered list of actions with timing metadata
+                - typical_duration_minutes (float): Normal total duration
+                - consistency_score (float): 0-1, how reliably user follows pattern
+                - times_observed (int): Number of instances detected
+                - variations (list[str]): Known pattern deviations
+        """
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO routines
+                   (name, trigger, steps, typical_duration, consistency_score,
+                    times_observed, variations, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?,
+                           strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
+                (
+                    routine["name"],
+                    routine["trigger"],
+                    json.dumps(routine.get("steps", [])),
+                    routine.get("typical_duration_minutes", 30.0),
+                    routine.get("consistency_score", 0.5),
+                    routine.get("times_observed", 0),
+                    json.dumps(routine.get("variations", [])),
+                ),
+            )
+
+        self._emit_telemetry("usermodel.routine.updated", {
+            "routine_name": routine["name"],
+            "trigger": routine["trigger"],
+            "steps_count": len(routine.get("steps", [])),
+            "consistency_score": routine.get("consistency_score", 0.5),
+            "times_observed": routine.get("times_observed", 0),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def get_routines(self, trigger: Optional[str] = None) -> list[dict]:
+        """Retrieve stored routines, optionally filtered by trigger.
+
+        Args:
+            trigger: Optional trigger filter (e.g., "morning", "arrive_home").
+                    If None, returns all routines.
+
+        Returns:
+            List of routine dictionaries with steps deserialized from JSON
+        """
+        with self.db.get_connection("user_model") as conn:
+            if trigger:
+                cursor = conn.execute(
+                    """SELECT name, trigger, steps, typical_duration,
+                              consistency_score, times_observed, variations, updated_at
+                       FROM routines
+                       WHERE trigger = ?
+                       ORDER BY consistency_score DESC, times_observed DESC""",
+                    (trigger,)
+                )
+            else:
+                cursor = conn.execute(
+                    """SELECT name, trigger, steps, typical_duration,
+                              consistency_score, times_observed, variations, updated_at
+                       FROM routines
+                       ORDER BY consistency_score DESC, times_observed DESC"""
+                )
+
+            routines = []
+            for row in cursor.fetchall():
+                routines.append({
+                    "name": row[0],
+                    "trigger": row[1],
+                    "steps": json.loads(row[2]) if row[2] else [],
+                    "typical_duration_minutes": row[3],
+                    "consistency_score": row[4],
+                    "times_observed": row[5],
+                    "variations": json.loads(row[6]) if row[6] else [],
+                    "updated_at": row[7],
+                })
+
+            return routines
