@@ -152,70 +152,141 @@ class PredictionEngine:
         pairwise. Flags two scenarios:
             - Overlap (gap < 0 min)  -> CONFLICT at 0.95 confidence
             - Tight transition (<15 min gap) -> RISK at 0.70 confidence
+
+        CRITICAL FIX (iteration 107):
+            The original implementation queried by event.timestamp (when the
+            event was synced to the database) instead of the actual event
+            start_time in the payload. This caused ALL calendar conflict
+            predictions to be missed because synced events are timestamped
+            in the past, even if the actual event is in the future.
+
+            Now we:
+            - Fetch all recent calendar events (last 30 days of syncs)
+            - Parse start_time from each event's payload
+            - Filter to events starting in the next 48 hours
+            - Sort by actual start_time for accurate conflict detection
         """
         predictions = []
 
         with self.db.get_connection("events") as conn:
-            # Get upcoming calendar events in the next 48 hours
-            now = datetime.now(timezone.utc)
-            tomorrow = now + timedelta(hours=48)
+            # Fetch calendar events synced in the last 30 days.
+            # This captures all events the CalDAV connector has loaded,
+            # including future events that were synced recently.
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
             events = conn.execute(
-                """SELECT * FROM events 
-                   WHERE type = 'calendar.event.created' 
-                   AND timestamp > ? AND timestamp < ?
-                   ORDER BY timestamp""",
-                (now.isoformat(), tomorrow.isoformat()),
+                """SELECT * FROM events
+                   WHERE type = 'calendar.event.created'
+                   AND timestamp > ?""",
+                (cutoff,),
             ).fetchall()
 
         if len(events) < 2:
             return predictions  # Need at least two events to find conflicts
 
-        # Compare each consecutive pair of events for overlap or tight gaps
-        for i in range(len(events) - 1):
-            curr_payload = json.loads(events[i]["payload"])
-            next_payload = json.loads(events[i + 1]["payload"])
+        # Parse event payloads and extract actual start/end times.
+        # Filter to events that START in the next 48 hours.
+        now = datetime.now(timezone.utc)
+        lookahead = now + timedelta(hours=48)
 
-            curr_end = curr_payload.get("end_time", "")
-            next_start = next_payload.get("start_time", "")
+        parsed_events = []
+        for event in events:
+            try:
+                payload = json.loads(event["payload"])
+                # Handle double-encoded JSON (rare but possible)
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
 
-            if curr_end and next_start:
+                start_str = payload.get("start_time", "")
+                end_str = payload.get("end_time", "")
+
+                if not start_str or not end_str:
+                    continue  # Skip events without time bounds
+
+                # Parse ISO timestamps. Handle both 'Z' suffix and '+00:00' format.
+                # Some calendar events use date-only format (all-day events).
                 try:
-                    # Normalize Z-suffix timestamps to proper UTC offset format
-                    end_dt = datetime.fromisoformat(curr_end.replace("Z", "+00:00"))
-                    start_dt = datetime.fromisoformat(next_start.replace("Z", "+00:00"))
-                    gap_minutes = (start_dt - end_dt).total_seconds() / 60
+                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                except ValueError:
+                    # All-day events may be YYYY-MM-DD format without time
+                    # Convert to datetime at midnight UTC for comparison
+                    from datetime import date
+                    try:
+                        date_obj = date.fromisoformat(start_str)
+                        start_dt = datetime.combine(date_obj, datetime.min.time(), tzinfo=timezone.utc)
+                    except ValueError:
+                        continue  # Skip unparseable dates
 
-                    if gap_minutes < 0:
-                        # Negative gap = events overlap in time
-                        predictions.append(Prediction(
-                            prediction_type="conflict",
-                            description=(
-                                f"Calendar overlap: '{curr_payload.get('title', 'Event')}' "
-                                f"and '{next_payload.get('title', 'Event')}' overlap by "
-                                f"{abs(int(gap_minutes))} minutes"
-                            ),
-                            confidence=0.95,
-                            confidence_gate=ConfidenceGate.DEFAULT,
-                            time_horizon="24_hours",
-                            suggested_action="Reschedule one of the conflicting events",
-                        ))
-                    elif gap_minutes < 15:
-                        # Very tight transition
-                        predictions.append(Prediction(
-                            prediction_type="risk",
-                            description=(
-                                f"Only {int(gap_minutes)} minutes between "
-                                f"'{curr_payload.get('title', 'Event')}' and "
-                                f"'{next_payload.get('title', 'Event')}'"
-                            ),
-                            confidence=0.7,
-                            confidence_gate=ConfidenceGate.SUGGEST,
-                            time_horizon="24_hours",
-                            suggested_action="Consider adding buffer time",
-                        ))
-                except (ValueError, TypeError):
-                    pass
+                try:
+                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                except ValueError:
+                    # All-day event end date
+                    try:
+                        date_obj = date.fromisoformat(end_str)
+                        end_dt = datetime.combine(date_obj, datetime.min.time(), tzinfo=timezone.utc)
+                    except ValueError:
+                        continue
+
+                # Skip all-day events — they don't cause scheduling conflicts
+                # in the traditional sense (you can have multiple all-day markers).
+                if payload.get("is_all_day"):
+                    continue
+
+                # Only include events starting in the next 48 hours
+                if start_dt >= now and start_dt <= lookahead:
+                    parsed_events.append({
+                        "start_dt": start_dt,
+                        "end_dt": end_dt,
+                        "payload": payload,
+                        "event_id": event["id"],
+                    })
+
+            except Exception as e:
+                # Fail-open: skip individual parse errors without breaking
+                # conflict detection for other events.
+                continue
+
+        if len(parsed_events) < 2:
+            return predictions
+
+        # Sort by actual event start time (not sync timestamp)
+        parsed_events.sort(key=lambda e: e["start_dt"])
+
+        # Compare each consecutive pair of events for overlap or tight gaps
+        for i in range(len(parsed_events) - 1):
+            curr = parsed_events[i]
+            next_evt = parsed_events[i + 1]
+
+            gap_minutes = (next_evt["start_dt"] - curr["end_dt"]).total_seconds() / 60
+
+            if gap_minutes < 0:
+                # Negative gap = events overlap in time
+                predictions.append(Prediction(
+                    prediction_type="conflict",
+                    description=(
+                        f"Calendar overlap: '{curr['payload'].get('title', 'Event')}' "
+                        f"and '{next_evt['payload'].get('title', 'Event')}' overlap by "
+                        f"{abs(int(gap_minutes))} minutes"
+                    ),
+                    confidence=0.95,
+                    confidence_gate=ConfidenceGate.DEFAULT,
+                    time_horizon="24_hours",
+                    suggested_action="Reschedule one of the conflicting events",
+                ))
+            elif gap_minutes < 15:
+                # Very tight transition
+                predictions.append(Prediction(
+                    prediction_type="risk",
+                    description=(
+                        f"Only {int(gap_minutes)} minutes between "
+                        f"'{curr['payload'].get('title', 'Event')}' and "
+                        f"'{next_evt['payload'].get('title', 'Event')}'"
+                    ),
+                    confidence=0.7,
+                    confidence_gate=ConfidenceGate.SUGGEST,
+                    time_horizon="24_hours",
+                    suggested_action="Consider adding buffer time",
+                ))
 
         return predictions
 
