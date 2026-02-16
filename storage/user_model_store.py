@@ -269,13 +269,17 @@ class UserModelStore:
         Predictions are logged when generated and later resolved (was_accurate
         is updated) to create a feedback loop — the system can measure its own
         prediction quality over time and adjust confidence thresholds.
+
+        Predictions that are immediately filtered (not surfaced) are stored with
+        resolved_at and user_response='filtered' to prevent database bloat.
         """
         with self.db.get_connection("user_model") as conn:
             conn.execute(
                 """INSERT INTO predictions
                    (id, prediction_type, description, confidence, confidence_gate,
-                    time_horizon, suggested_action, supporting_signals, was_surfaced)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    time_horizon, suggested_action, supporting_signals, was_surfaced,
+                    user_response, resolved_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     prediction["id"],
                     prediction["prediction_type"],
@@ -286,6 +290,8 @@ class UserModelStore:
                     prediction.get("suggested_action"),
                     json.dumps(prediction.get("supporting_signals", {})),
                     prediction.get("was_surfaced", False),
+                    prediction.get("user_response"),
+                    prediction.get("resolved_at"),
                 ),
             )
 

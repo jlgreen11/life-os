@@ -428,6 +428,7 @@ class Prediction(BaseModel):
     was_accurate: Optional[bool] = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_at: Optional[str] = None             # ISO timestamp when prediction was resolved
 
 
 class ReactionPrediction(BaseModel):
