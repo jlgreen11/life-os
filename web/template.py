@@ -964,6 +964,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             html += '<button class="btn-primary" onclick="event.stopPropagation();draftReply(\'' + escAttr(id) + '\',\'' + escAttr(item.title) + '\')">Draft Reply</button>';
             html += '<button onclick="event.stopPropagation();createTaskFrom(\'' + escAttr(item.title) + '\')">Create Task</button>';
             if (item.kind === 'notification') {
+                // Prediction notifications get an "Act On" button to mark them as helpful
+                // (sets was_accurate=True in prediction feedback loop)
+                if (item.domain === 'prediction') {
+                    html += '<button class="btn-primary" onclick="event.stopPropagation();actOnNotification(\'' + escAttr(id) + '\')">Act On</button>';
+                }
                 html += '<button class="btn-danger" onclick="event.stopPropagation();dismissCard(\'' + escAttr(id) + '\',\'' + escAttr(item.kind) + '\')">Dismiss</button>';
             }
             html += '</div></div>';
@@ -978,6 +983,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             html += '<div class="card-actions">';
             html += '<button onclick="event.stopPropagation();createTaskFrom(\'' + escAttr(item.title) + '\')">Create Task</button>';
             if (item.kind === 'notification') {
+                // Prediction notifications get an "Act On" button to mark them as helpful
+                // (sets was_accurate=True in prediction feedback loop)
+                if (item.domain === 'prediction') {
+                    html += '<button class="btn-primary" onclick="event.stopPropagation();actOnNotification(\'' + escAttr(id) + '\')">Act On</button>';
+                }
                 html += '<button class="btn-danger" onclick="event.stopPropagation();dismissCard(\'' + escAttr(id) + '\',\'' + escAttr(item.kind) + '\')">Dismiss</button>';
             }
             html += '</div></div>';
@@ -1024,6 +1034,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             html += '<div>' + escHtml(item.body) + '</div>';
             if (item.kind === 'notification') {
                 html += '<div class="card-actions">';
+                // Prediction notifications get an "Act On" button to mark them as helpful
+                // (sets was_accurate=True in prediction feedback loop)
+                if (item.domain === 'prediction') {
+                    html += '<button class="btn-primary" onclick="event.stopPropagation();actOnNotification(\'' + escAttr(id) + '\')">Act On</button>';
+                }
                 html += '<button class="btn-danger" onclick="event.stopPropagation();dismissCard(\'' + escAttr(id) + '\',\'' + escAttr(item.kind) + '\')">Dismiss</button>';
                 html += '</div>';
             }
@@ -1166,6 +1181,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         fetch(API + '/api/tasks/' + encodeURIComponent(id) + '/complete', {method: 'POST'})
         .then(function() { loadFeed(); loadBadges(); })
         .catch(function(err) { console.error('Failed to complete task:', err); });
+    }
+
+    function actOnNotification(id) {
+        // Mark notification as acted on (positive feedback signal).
+        // For prediction notifications, this sets was_accurate=True
+        // in the prediction feedback loop, allowing the system to
+        // learn which predictions are helpful.
+        fetch(API + '/api/notifications/' + encodeURIComponent(id) + '/act', {method: 'POST'})
+        .then(function() { loadFeed(); loadBadges(); })
+        .catch(function(err) { console.error('Failed to act on notification:', err); });
     }
 
     function dismissCard(id, kind) {

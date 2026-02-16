@@ -211,6 +211,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                         "priority": n.get("priority", "normal"),
                         "timestamp": n.get("created_at", n.get("timestamp", "")),
                         "source": source_type,
+                        "domain": n.get("domain"),  # Include domain so UI can identify prediction notifications
                         "metadata": n.get("metadata", {}),
                     })
             except Exception:
