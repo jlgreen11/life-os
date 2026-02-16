@@ -6,6 +6,7 @@ Analyzes signal profiles to derive high-level semantic facts about the user.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -542,6 +543,360 @@ class SemanticFactInferrer:
 
         logger.info(f"Inferred semantic facts from mood profile (samples={profile.get('samples_count')})")
 
+    def infer_from_temporal_profile(self):
+        """
+        Derive semantic facts from temporal signal profile.
+
+        Analyzes time-based behavior patterns to infer:
+          - Chronotype (morning person vs. night owl)
+          - Peak productivity windows
+          - Work-life boundary preferences (strict vs. flexible)
+          - Weekly rhythm patterns (productive days vs. social/recharge days)
+
+        Confidence threshold: Require 50+ samples to establish reliable
+        temporal patterns across different times of day and days of week.
+
+        Semantic facts derived:
+          - chronotype: "morning_person" or "night_owl" based on activity peaks
+          - peak_productivity_hours: Time windows with highest activity
+          - temporal_work_boundaries: Work-only-during-business-hours indicator
+          - productive_day_preference: Which days show most work activity
+        """
+        profile = self.ums.get_signal_profile("temporal")
+        if not profile or profile.get("samples_count", 0) < 50:
+            logger.debug("Temporal profile has insufficient samples (<50), skipping inference")
+            return
+
+        data = profile["data"]
+        hourly_activity = data.get("hourly_activity", {})
+        weekly_activity = data.get("weekly_activity", {})
+
+        # Get recent episodes to link as source evidence for temporal facts
+        recent_episodes = self._get_recent_episodes(limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
+        # --- Infer chronotype from hourly activity distribution ---
+        # Morning person: >30% of activity before 11am
+        # Night owl: >30% of activity after 8pm
+        if hourly_activity:
+            total_activity = sum(hourly_activity.values())
+            if total_activity == 0:
+                return
+
+            morning_activity = sum(
+                count for hour, count in hourly_activity.items()
+                if 6 <= int(hour) <= 10
+            )
+            evening_activity = sum(
+                count for hour, count in hourly_activity.items()
+                if 20 <= int(hour) <= 23
+            )
+
+            morning_ratio = morning_activity / total_activity
+            evening_ratio = evening_activity / total_activity
+
+            if morning_ratio > 0.3 and morning_ratio > evening_ratio * 1.5:
+                # Strong morning person — most active 6-10am
+                self.ums.update_semantic_fact(
+                    key="chronotype",
+                    category="implicit_preference",
+                    value="morning_person",
+                    confidence=min(0.9, 0.6 + morning_ratio),
+                    episode_id=episode_id,
+                )
+            elif evening_ratio > 0.3 and evening_ratio > morning_ratio * 1.5:
+                # Strong night owl — most active 8pm-11pm
+                self.ums.update_semantic_fact(
+                    key="chronotype",
+                    category="implicit_preference",
+                    value="night_owl",
+                    confidence=min(0.9, 0.6 + evening_ratio),
+                    episode_id=episode_id,
+                )
+
+            # --- Infer peak productivity hours ---
+            # Find the 3-hour window with highest activity
+            if len(hourly_activity) >= 3:
+                peak_hour = max(hourly_activity, key=hourly_activity.get)
+                peak_count = hourly_activity[peak_hour]
+                peak_ratio = peak_count / total_activity
+
+                if peak_ratio > 0.15:  # Peak hour accounts for >15% of activity
+                    self.ums.update_semantic_fact(
+                        key="peak_productivity_hour",
+                        category="implicit_preference",
+                        value=int(peak_hour),
+                        confidence=min(0.85, 0.5 + peak_ratio * 2),
+                        episode_id=episode_id,
+                    )
+
+        # --- Infer weekly rhythm patterns ---
+        # Productive days: weekdays with high activity
+        # Social days: days with social events
+        # Recharge days: low-activity days (typically weekends)
+        if weekly_activity:
+            total_weekly = sum(weekly_activity.values())
+            if total_weekly == 0:
+                return
+
+            # Identify most productive day
+            most_productive_day = max(weekly_activity, key=weekly_activity.get)
+            productive_ratio = weekly_activity[most_productive_day] / total_weekly
+
+            if productive_ratio > 0.25:  # One day dominates (>25% of weekly activity)
+                self.ums.update_semantic_fact(
+                    key="most_productive_day",
+                    category="implicit_preference",
+                    value=most_productive_day,
+                    confidence=min(0.8, 0.5 + productive_ratio),
+                    episode_id=episode_id,
+                )
+
+            # Detect weekend vs. weekday preferences
+            weekend_activity = weekly_activity.get("saturday", 0) + weekly_activity.get("sunday", 0)
+            weekday_activity = total_weekly - weekend_activity
+            weekend_ratio = weekend_activity / total_weekly if total_weekly > 0 else 0
+
+            if weekend_ratio < 0.1:  # <10% weekend activity
+                # Strong weekday-only pattern — values work-life separation
+                self.ums.update_semantic_fact(
+                    key="temporal_work_boundaries",
+                    category="values",
+                    value="weekday_only_work",
+                    confidence=min(0.9, 0.6 + (0.1 - weekend_ratio) * 5),
+                    episode_id=episode_id,
+                )
+
+        logger.info(f"Inferred semantic facts from temporal profile (samples={profile.get('samples_count')})")
+
+    def infer_from_spatial_profile(self):
+        """
+        Derive semantic facts from spatial signal profile.
+
+        Analyzes location-based behavior patterns to infer:
+          - Primary work location (most frequent work-domain place)
+          - Home office preference vs. external workspace
+          - Travel frequency patterns
+          - Location-based domain switching (work/personal by place)
+
+        Confidence threshold: Require 10+ samples to avoid false positives
+        from one-time event locations.
+
+        Semantic facts derived:
+          - primary_work_location: Most frequent work-domain place
+          - work_location_type: "home_office" vs. "external_office" vs. "mobile_worker"
+          - frequent_location_{place}: High-visit-count places
+          - location_domain_{place}: Dominant domain (work/personal) per place
+        """
+        profile = self.ums.get_signal_profile("spatial")
+        if not profile or profile.get("samples_count", 0) < 10:
+            logger.debug("Spatial profile has insufficient samples (<10), skipping inference")
+            return
+
+        data = profile["data"]
+        # The spatial extractor stores data as JSON-encoded "place_behaviors"
+        place_behaviors_json = data.get("place_behaviors", "{}")
+
+        # Parse JSON if it's a string, otherwise use directly
+        if isinstance(place_behaviors_json, str):
+            try:
+                place_behaviors = json.loads(place_behaviors_json)
+            except Exception as e:
+                logger.warning(f"Failed to parse place_behaviors JSON: {e}")
+                return
+        else:
+            place_behaviors = place_behaviors_json
+
+        if not place_behaviors:
+            logger.debug("Spatial profile has no place behaviors, skipping inference")
+            return
+
+        # Get recent episodes to link as source evidence for spatial facts
+        recent_episodes = self._get_recent_episodes(limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
+        # --- Identify primary work location ---
+        # Find the place with highest work-domain visit count
+        work_places = {
+            place_id: data
+            for place_id, data in place_behaviors.items()
+            if data.get("dominant_domain") == "work"
+        }
+
+        if work_places:
+            primary_work_place = max(
+                work_places.items(),
+                key=lambda x: x[1].get("visit_count", 0)
+            )
+            place_id, place_data = primary_work_place
+            visit_count = place_data.get("visit_count", 0)
+
+            if visit_count >= 5:  # Require 5+ visits to establish as primary
+                self.ums.update_semantic_fact(
+                    key="primary_work_location",
+                    category="implicit_preference",
+                    value=place_id,
+                    confidence=min(0.9, 0.5 + min(0.4, visit_count / 100)),
+                    episode_id=episode_id,
+                )
+
+                # Infer work location type from place name patterns
+                place_name_lower = place_id.lower()
+                if any(keyword in place_name_lower for keyword in ["home", "residence", "apartment", "house"]):
+                    # Work location is home-based
+                    self.ums.update_semantic_fact(
+                        key="work_location_type",
+                        category="implicit_preference",
+                        value="home_office",
+                        confidence=min(0.85, 0.6 + min(0.25, visit_count / 200)),
+                        episode_id=episode_id,
+                    )
+                elif any(keyword in place_name_lower for keyword in ["office", "building", "campus", "headquarters"]):
+                    # Work location is external office
+                    self.ums.update_semantic_fact(
+                        key="work_location_type",
+                        category="implicit_preference",
+                        value="external_office",
+                        confidence=min(0.85, 0.6 + min(0.25, visit_count / 200)),
+                        episode_id=episode_id,
+                    )
+
+        # --- Identify frequent locations (any domain) ---
+        # Places visited 10+ times are "frequent" and worth remembering
+        total_visits = sum(p.get("visit_count", 0) for p in place_behaviors.values())
+
+        for place_id, place_data in place_behaviors.items():
+            visit_count = place_data.get("visit_count", 0)
+
+            if visit_count >= 10:
+                visit_ratio = visit_count / total_visits if total_visits > 0 else 0
+
+                self.ums.update_semantic_fact(
+                    key=f"frequent_location_{place_id}",
+                    category="implicit_preference",
+                    value=place_id,
+                    confidence=min(0.9, 0.5 + visit_ratio * 3),
+                    episode_id=episode_id,
+                )
+
+                # Also record dominant domain for this location
+                dominant_domain = place_data.get("dominant_domain", "personal")
+                if dominant_domain:
+                    self.ums.update_semantic_fact(
+                        key=f"location_domain_{place_id}",
+                        category="implicit_preference",
+                        value=dominant_domain,
+                        confidence=min(0.85, 0.6 + visit_ratio * 2),
+                        episode_id=episode_id,
+                    )
+
+        logger.info(f"Inferred semantic facts from spatial profile (samples={profile.get('samples_count')})")
+
+    def infer_from_decision_profile(self):
+        """
+        Derive semantic facts from decision signal profile.
+
+        Analyzes decision-making patterns to infer:
+          - Risk tolerance by domain (conservative vs. aggressive)
+          - Decision speed preferences (deliberate vs. quick)
+          - Research depth patterns (gut feel vs. exhaustive research)
+          - Delegation preferences (who the user defers to)
+
+        Confidence threshold: Require 20+ samples to establish reliable
+        decision patterns across different contexts.
+
+        Semantic facts derived:
+          - decision_speed_{domain}: How quickly user decides in different areas
+          - risk_tolerance_{domain}: Conservative vs. aggressive by domain
+          - research_preference: Gut-feel vs. data-driven decision maker
+          - delegation_preference_{person}: Who user defers to for decisions
+        """
+        profile = self.ums.get_signal_profile("decision")
+        if not profile or profile.get("samples_count", 0) < 20:
+            logger.debug("Decision profile has insufficient samples (<20), skipping inference")
+            return
+
+        data = profile["data"]
+        decision_speeds = data.get("decision_speed_by_domain", {})
+        research_depths = data.get("research_depth_by_domain", {})
+
+        # Get recent episodes to link as source evidence for decision facts
+        recent_episodes = self._get_recent_episodes(limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
+        # --- Infer decision speed preference by domain ---
+        # Fast decisions: <60 seconds
+        # Deliberate decisions: >1 day (86400 seconds)
+        for domain, avg_seconds in decision_speeds.items():
+            if avg_seconds < 60:
+                # Very fast decision maker in this domain
+                self.ums.update_semantic_fact(
+                    key=f"decision_speed_{domain}",
+                    category="implicit_preference",
+                    value="quick_decision",
+                    confidence=min(0.85, 0.6 + (60 - avg_seconds) / 100),
+                    episode_id=episode_id,
+                )
+            elif avg_seconds > 86400:  # >1 day
+                # Deliberate, slow decision maker in this domain
+                self.ums.update_semantic_fact(
+                    key=f"decision_speed_{domain}",
+                    category="implicit_preference",
+                    value="deliberate_decision",
+                    confidence=min(0.85, 0.5 + min(0.35, avg_seconds / 604800)),  # Cap at 1 week
+                    episode_id=episode_id,
+                )
+
+        # --- Infer research depth preference ---
+        # Research depth: 0=gut feel, 1=exhaustive research
+        for domain, depth_score in research_depths.items():
+            if depth_score > 0.7:
+                # Data-driven, exhaustive researcher in this domain
+                self.ums.update_semantic_fact(
+                    key=f"research_preference_{domain}",
+                    category="implicit_preference",
+                    value="data_driven",
+                    confidence=min(0.9, 0.5 + depth_score / 2),
+                    episode_id=episode_id,
+                )
+            elif depth_score < 0.3:
+                # Gut-feel decision maker in this domain
+                self.ums.update_semantic_fact(
+                    key=f"research_preference_{domain}",
+                    category="implicit_preference",
+                    value="gut_feel",
+                    confidence=min(0.85, 0.5 + (0.3 - depth_score)),
+                    episode_id=episode_id,
+                )
+
+        # --- Infer overall risk tolerance ---
+        # If user makes quick decisions with low research across multiple domains,
+        # infer high risk tolerance
+        if decision_speeds and research_depths:
+            avg_decision_speed = sum(decision_speeds.values()) / len(decision_speeds)
+            avg_research_depth = sum(research_depths.values()) / len(research_depths)
+
+            # High risk: fast decisions + low research
+            if avg_decision_speed < 300 and avg_research_depth < 0.3:  # <5 min + low research
+                self.ums.update_semantic_fact(
+                    key="risk_tolerance",
+                    category="values",
+                    value="high_risk_tolerance",
+                    confidence=min(0.8, 0.5 + (0.3 - avg_research_depth) + (300 - avg_decision_speed) / 600),
+                    episode_id=episode_id,
+                )
+            # Low risk: slow decisions + high research
+            elif avg_decision_speed > 3600 and avg_research_depth > 0.7:  # >1 hour + high research
+                self.ums.update_semantic_fact(
+                    key="risk_tolerance",
+                    category="values",
+                    value="risk_averse",
+                    confidence=min(0.8, 0.5 + avg_research_depth / 2),
+                    episode_id=episode_id,
+                )
+
+        logger.info(f"Inferred semantic facts from decision profile (samples={profile.get('samples_count')})")
+
     def run_all_inference(self):
         """
         Run inference across all signal profiles.
@@ -562,5 +917,8 @@ class SemanticFactInferrer:
         self.infer_from_topic_profile()
         self.infer_from_cadence_profile()
         self.infer_from_mood_profile()
+        self.infer_from_temporal_profile()
+        self.infer_from_spatial_profile()
+        self.infer_from_decision_profile()
 
         logger.info("Completed semantic fact inference")
