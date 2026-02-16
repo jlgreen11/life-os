@@ -115,11 +115,28 @@ class UserModelStore:
 
         Multi-value fields (contacts_involved, topics, entities) and structured
         fields (inferred_mood) are serialized to JSON for storage.
+
+        CRITICAL FIX (iteration 150):
+        Fixed inferred_mood serialization bug where dict.get("inferred_mood", {})
+        would return None instead of {} when the key exists with None value,
+        causing json.dumps(None) to store the string "null" instead of null.
+        This broke ALL episode mood tracking (31K+ episodes with null mood
+        despite 29K+ mood signals available). Now explicitly checks for None
+        and uses {} as fallback, ensuring proper JSON serialization.
         """
         with self.db.get_connection("user_model") as conn:
             # INSERT OR REPLACE: if a row with the same PRIMARY KEY (id) already
             # exists, SQLite deletes it and inserts the new row.  This is the
             # idempotent upsert strategy used throughout the episodic layer.
+
+            # CRITICAL: Handle None values explicitly for JSON serialization.
+            # dict.get(key, default) returns the actual value (even if None)
+            # when the key exists, NOT the default. So we must check explicitly.
+            inferred_mood = episode.get("inferred_mood") or {}
+            contacts_involved = episode.get("contacts_involved") or []
+            topics = episode.get("topics") or []
+            entities = episode.get("entities") or []
+
             conn.execute(
                 """INSERT OR REPLACE INTO episodes
                    (id, timestamp, event_id, location, inferred_mood, active_domain,
@@ -131,15 +148,15 @@ class UserModelStore:
                     episode["timestamp"],
                     episode["event_id"],
                     episode.get("location"),
-                    json.dumps(episode.get("inferred_mood", {})),
+                    json.dumps(inferred_mood),
                     episode.get("active_domain"),
                     episode.get("energy_level"),
-                    episode["interaction_type"],
-                    episode["content_summary"],
+                    episode.get("interaction_type", "unknown"),
+                    episode.get("content_summary", ""),
                     episode.get("content_full"),
-                    json.dumps(episode.get("contacts_involved", [])),
-                    json.dumps(episode.get("topics", [])),
-                    json.dumps(episode.get("entities", [])),
+                    json.dumps(contacts_involved),
+                    json.dumps(topics),
+                    json.dumps(entities),
                     episode.get("outcome"),
                     episode.get("user_satisfaction"),
                     episode.get("embedding_id"),
@@ -149,10 +166,12 @@ class UserModelStore:
         self._emit_telemetry("usermodel.episode.stored", {
             "episode_id": episode["id"],
             "event_id": episode["event_id"],
-            "interaction_type": episode["interaction_type"],
+            "interaction_type": episode.get("interaction_type", "unknown"),
             "active_domain": episode.get("active_domain"),
-            "contacts_count": len(episode.get("contacts_involved", [])),
-            "topics_count": len(episode.get("topics", [])),
+            # Use the normalized list values (not raw episode dict) to avoid
+            # len(None) error when contacts/topics are None
+            "contacts_count": len(contacts_involved),
+            "topics_count": len(topics),
             "stored_at": episode["timestamp"],
         })
 
