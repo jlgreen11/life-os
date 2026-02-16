@@ -151,6 +151,32 @@ class UserModelStore:
             "learned_at": datetime.now(timezone.utc).isoformat(),
         })
 
+    def get_semantic_fact(self, key: str) -> Optional[dict]:
+        """
+        Retrieve a single semantic memory fact by key.
+
+        Returns the fact dict with deserialized value and source_episodes,
+        or None if the fact does not exist.
+
+        Args:
+            key: Unique identifier for the semantic fact
+
+        Returns:
+            Fact dictionary or None if not found
+        """
+        with self.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+            ).fetchone()
+
+            if row:
+                fact = dict(row)
+                # Deserialize JSON fields
+                fact["value"] = json.loads(fact["value"])
+                fact["source_episodes"] = json.loads(fact["source_episodes"])
+                return fact
+            return None
+
     def get_semantic_facts(self, category: Optional[str] = None,
                           min_confidence: float = 0.0) -> list[dict]:
         """Retrieve semantic memory facts.
