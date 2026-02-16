@@ -45,6 +45,43 @@ class SemanticFactInferrer:
         """
         self.ums = user_model_store
 
+    def _get_recent_episodes(self, interaction_type: Optional[str] = None,
+                            contact: Optional[str] = None,
+                            limit: int = 10) -> list[str]:
+        """
+        Query recent episode IDs to link as evidence for inferred facts.
+
+        While the inferrer works with aggregate statistics, linking facts to
+        their source episodes provides an audit trail and enables the confidence
+        growth loop (facts re-confirmed by new episodes get +0.05 confidence).
+
+        Args:
+            interaction_type: Filter by interaction type (e.g., "communication")
+            contact: Filter by contact email/address
+            limit: Maximum number of episode IDs to return (default 10)
+
+        Returns:
+            List of episode IDs (most recent first)
+        """
+        query = "SELECT id FROM episodes WHERE 1=1"
+        params = []
+
+        if interaction_type:
+            query += " AND interaction_type = ?"
+            params.append(interaction_type)
+
+        if contact:
+            # Search JSON array for contact
+            query += " AND json_extract(contacts_involved, '$') LIKE ?"
+            params.append(f'%"{contact}"%')
+
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        with self.ums.db.get_connection("user_model") as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [row["id"] for row in rows]
+
     def infer_from_linguistic_profile(self):
         """
         Derive semantic facts from linguistic signal profile.
@@ -65,6 +102,12 @@ class SemanticFactInferrer:
         data = profile["data"]
         averages = data.get("averages", {})
 
+        # Get recent communication episodes to link as source evidence for
+        # linguistic facts. This creates an audit trail from facts back to
+        # raw observations and enables the confidence growth loop.
+        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
         # --- Implicit preference: communication formality ---
         # Formality ranges from 0 (very casual) to 1 (very formal).
         # We infer a preference if the user's average is significantly
@@ -78,6 +121,7 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value="casual",
                     confidence=min(0.95, 0.5 + (0.3 - formality)),  # Higher confidence the more casual
+                    episode_id=episode_id,
                 )
             elif formality > 0.7:
                 # Very formal writer — prefers professional tone
@@ -86,6 +130,7 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value="formal",
                     confidence=min(0.95, 0.5 + (formality - 0.7)),  # Higher confidence the more formal
+                    episode_id=episode_id,
                 )
 
         # --- Implicit preference: emoji usage ---
@@ -97,6 +142,7 @@ class SemanticFactInferrer:
                 category="implicit_preference",
                 value="expressive_with_emojis",
                 confidence=min(0.9, 0.4 + emoji_rate * 5),  # Confidence grows with emoji density
+                episode_id=episode_id,
             )
 
         # --- Implicit preference: exclamation usage ---
@@ -108,6 +154,7 @@ class SemanticFactInferrer:
                 category="implicit_preference",
                 value="enthusiastic",
                 confidence=min(0.85, 0.5 + exclamation_rate),
+                episode_id=episode_id,
             )
 
         # --- Implicit preference: hedge words (tentativeness) ---
@@ -119,6 +166,7 @@ class SemanticFactInferrer:
                 category="implicit_preference",
                 value="tentative",
                 confidence=min(0.8, 0.4 + hedge_rate * 2),
+                episode_id=episode_id,
             )
         elif hedge_rate is not None and hedge_rate < 0.05:
             # Very low hedge rate indicates direct, assertive communication
@@ -127,6 +175,7 @@ class SemanticFactInferrer:
                 category="implicit_preference",
                 value="direct",
                 confidence=min(0.8, 0.5 + (0.05 - hedge_rate) * 5),
+                episode_id=episode_id,
             )
 
         logger.info(f"Inferred semantic facts from linguistic profile (samples={profile.get('samples_count')})")
@@ -163,19 +212,24 @@ class SemanticFactInferrer:
             avg_response_time = contact_data.get("avg_response_time_seconds")
             if avg_response_time is not None and avg_response_time < 3600:  # <1 hour
                 # Fast responder — high priority relationship
+                # Link to recent episodes with this contact as source evidence
+                contact_episodes = self._get_recent_episodes(contact=contact_id, limit=3)
                 self.ums.update_semantic_fact(
                     key=f"relationship_priority_{contact_id}",
                     category="implicit_preference",
                     value="high_priority",
                     confidence=min(0.9, 0.6 + (3600 - avg_response_time) / 7200),  # Faster = higher confidence
+                    episode_id=contact_episodes[0] if contact_episodes else None,
                 )
             elif avg_response_time is not None and avg_response_time > 86400:  # >24 hours
                 # Slow responder — low priority relationship
+                contact_episodes = self._get_recent_episodes(contact=contact_id, limit=3)
                 self.ums.update_semantic_fact(
                     key=f"relationship_priority_{contact_id}",
                     category="implicit_preference",
                     value="low_priority",
                     confidence=min(0.8, 0.5 + (avg_response_time - 86400) / 172800),  # Slower = higher confidence
+                    episode_id=contact_episodes[0] if contact_episodes else None,
                 )
 
         logger.info(f"Inferred semantic facts from relationship profile (samples={profile.get('samples_count')})")
