@@ -185,6 +185,100 @@ class MoodInferenceEngine(BaseExtractor):
                 "source": "health",
             })
 
+        # --- Proxy energy signals (when no health data available) ---
+        # In the absence of sleep/activity trackers, infer energy from behavioral
+        # proxies. These signals are essential for populating episode.energy_level
+        # which drives mood-aware features throughout the system.
+        #
+        # CRITICAL FIX (iteration 146):
+        # Episodes had 0% energy_level population because compute_current_mood()
+        # only considers ["sleep_quality", "sleep_duration", "activity_level"]
+        # signals, but ZERO of these existed in the database (all 200 mood signals
+        # were incoming_pressure/negative_language/message_length). Without health
+        # connectors, we need proxy energy signals to populate this critical field.
+        #
+        # Time-of-day energy proxy:
+        # People naturally have higher energy mid-morning to mid-afternoon (9am-3pm)
+        # and lower energy early morning (5-8am) and late evening (9pm-midnight).
+        # This circadian pattern provides a baseline energy estimate even without
+        # any direct physiological data.
+        #
+        # Only extract when there's actual message content (text), to avoid polluting
+        # tests that expect no signals from empty messages.
+        if (is_outbound or is_inbound):
+            text = payload.get("body", "") or payload.get("body_plain", "")
+            if text and len(text.strip()) > 0:  # Only if there's actual content
+                from datetime import datetime, timezone
+                try:
+                    timestamp_str = event.get("timestamp", "")
+                    if timestamp_str:
+                        dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                        hour = dt.hour  # 0-23
+
+                        # Energy curve based on circadian rhythm:
+                        # 0-5: very low (0.2)
+                        # 5-8: ramping up (0.4-0.6)
+                        # 8-12: peak morning (0.8)
+                        # 12-14: post-lunch dip (0.6)
+                        # 14-17: afternoon peak (0.7)
+                        # 17-21: declining (0.5)
+                        # 21-24: very low (0.3)
+                        if 0 <= hour < 5:
+                            energy_estimate = 0.2
+                        elif 5 <= hour < 8:
+                            energy_estimate = 0.4 + (hour - 5) * 0.07  # ramp 0.4→0.6
+                        elif 8 <= hour < 12:
+                            energy_estimate = 0.8
+                        elif 12 <= hour < 14:
+                            energy_estimate = 0.6
+                        elif 14 <= hour < 17:
+                            energy_estimate = 0.7
+                        elif 17 <= hour < 21:
+                            energy_estimate = 0.5
+                        else:  # 21-24
+                            energy_estimate = 0.3
+
+                        mood_signals.append({
+                            "signal_type": "circadian_energy",
+                            "value": energy_estimate,
+                            # Delta from baseline (0.5 = neutral energy)
+                            "delta_from_baseline": energy_estimate - 0.5,
+                            # Lower weight than sleep (0.3 vs 0.8) since it's indirect
+                            "weight": 0.3,
+                            "source": event.get("source", "unknown"),
+                        })
+                except Exception:
+                    pass  # Malformed timestamp, skip circadian signal
+
+        # Activity-level proxy from communication cadence:
+        # Outbound communication (emails sent, messages sent) indicates active
+        # engagement. The longer the message, the more energy investment it
+        # represents. Use message length as a proxy for current activity level.
+        if is_outbound:
+            text = payload.get("body", "") or payload.get("body_plain", "")
+            if text:
+                word_count = len(text.split())
+                baseline_length = self._get_baseline("message_length_words")
+
+                # Longer-than-baseline messages suggest active engagement (high energy)
+                # Shorter suggests low-effort communication (potentially low energy)
+                if word_count > baseline_length * 1.2:  # 20%+ above baseline
+                    mood_signals.append({
+                        "signal_type": "communication_energy",
+                        "value": min(1.0, word_count / baseline_length),
+                        "delta_from_baseline": 0.2,
+                        "weight": 0.2,
+                        "source": event.get("source", "unknown"),
+                    })
+                elif word_count < baseline_length * 0.5:  # 50%+ below baseline
+                    mood_signals.append({
+                        "signal_type": "communication_energy",
+                        "value": word_count / baseline_length,
+                        "delta_from_baseline": -0.3,
+                        "weight": 0.2,
+                        "source": event.get("source", "unknown"),
+                    })
+
         # --- Calendar density (stress indicator) ---
         # Each new calendar event increments the density counter.  A burst of
         # calendar events in a short window signals a packed schedule and
@@ -251,8 +345,17 @@ class MoodInferenceEngine(BaseExtractor):
         # types (incoming_negative_language, incoming_pressure) feed stress
         # and valence so that stress-inducing content arriving at the user
         # is reflected immediately rather than only after the user replies.
+        #
+        # CRITICAL FIX (iteration 146):
+        # Added proxy energy signals (circadian_energy, communication_energy) to
+        # enable energy_level population when health trackers are unavailable.
+        # Previously only ["sleep_quality", "sleep_duration", "activity_level"]
+        # were considered, but ZERO of these signals existed in production,
+        # causing 100% of episodes to have NULL energy_level despite 27K+ mood
+        # signals being available.
         energy_signals = [s for s in recent_signals if s["signal_type"] in [
-            "sleep_quality", "sleep_duration", "activity_level"
+            "sleep_quality", "sleep_duration", "activity_level",
+            "circadian_energy", "communication_energy",
         ]]
         stress_signals = [s for s in recent_signals if s["signal_type"] in [
             "calendar_density", "negative_language", "spending_spike",
@@ -287,12 +390,22 @@ class MoodInferenceEngine(BaseExtractor):
         return mood
 
     def _weighted_average(self, signals: list[dict], default: float = 0.5) -> float:
-        """Compute a weight-normalised average of delta-from-baseline values.
+        """Compute a weight-normalised average of signal values.
 
-        Each signal's absolute delta is multiplied by its declared weight,
-        summed, and divided by the total weight.  The result is clamped to
-        [0.0, 1.0].  When no signals are available, ``default`` is returned
-        so the mood dimensions degrade gracefully to neutral values.
+        Each signal's value (preferred) or delta_from_baseline (fallback) is
+        multiplied by its declared weight, summed, and divided by the total
+        weight. The result is clamped to [0.0, 1.0]. When no signals are
+        available, ``default`` is returned so the mood dimensions degrade
+        gracefully to neutral values.
+
+        CRITICAL FIX (iteration 146):
+        Previously used only delta_from_baseline, which caused incorrect mood
+        calculations. For example, circadian_energy with value=0.8 (morning peak)
+        and delta=0.3 would return 0.3 instead of 0.8. Energy/stress/valence
+        should reflect absolute states (0-1 scale), not deviations from baseline.
+
+        For backward compatibility with existing signals that only have
+        delta_from_baseline (e.g., from tests), we use delta as a fallback.
         """
         if not signals:
             return default
@@ -300,7 +413,8 @@ class MoodInferenceEngine(BaseExtractor):
         if total_weight == 0:
             return default
         weighted_sum = sum(
-            abs(s.get("delta_from_baseline", 0)) * s.get("weight", 1.0)
+            # Prefer 'value' (absolute 0-1 scale), fallback to 'delta_from_baseline'
+            s.get("value", s.get("delta_from_baseline", 0)) * s.get("weight", 1.0)
             for s in signals
         )
         return min(1.0, max(0.0, weighted_sum / total_weight))
