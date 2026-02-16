@@ -310,7 +310,9 @@ class PredictionEngine:
                 (cutoff,),
             ).fetchall()
 
+        # Diagnostic logging for observability
         if len(events) < 2:
+            print(f"[prediction_engine.calendar_conflicts] No conflicts possible: {len(events)} calendar events found (need ≥2)")
             return predictions  # Need at least two events to find conflicts
 
         # Parse event payloads and extract actual start/end times.
@@ -399,7 +401,12 @@ class PredictionEngine:
                 # conflict detection for other events.
                 continue
 
+        # Count event types for diagnostics
+        all_day_count = sum(1 for e in parsed_events if e.get("is_all_day"))
+        timed_count = len(parsed_events) - all_day_count
+
         if len(parsed_events) < 2:
+            print(f"[prediction_engine.calendar_conflicts] No conflicts possible: {len(parsed_events)} events in 48h window (all_day={all_day_count}, timed={timed_count}, total_synced={len(events)})")
             return predictions
 
         # Sort by actual event start time (not sync timestamp)
@@ -409,13 +416,18 @@ class PredictionEngine:
         # Skip all-day event pairs (multiple all-day markers are fine), but DO
         # compare timed events with all-day events (e.g., a timed meeting during
         # an all-day conference in a different location IS a conflict).
+        comparisons_made = 0
+        skipped_all_day_pairs = 0
         for i in range(len(parsed_events) - 1):
             curr = parsed_events[i]
             next_evt = parsed_events[i + 1]
 
             # Skip if both events are all-day (no conflict between all-day markers)
             if curr.get("is_all_day") and next_evt.get("is_all_day"):
+                skipped_all_day_pairs += 1
                 continue
+
+            comparisons_made += 1
 
             gap_minutes = (next_evt["start_dt"] - curr["end_dt"]).total_seconds() / 60
 
@@ -452,6 +464,12 @@ class PredictionEngine:
                     time_horizon="24_hours",
                     suggested_action="Consider adding buffer time",
                 ))
+
+        # Diagnostic summary
+        print(f"[prediction_engine.calendar_conflicts] Analyzed {len(events)} synced events "
+              f"→ {len(parsed_events)} in 48h window (all_day={all_day_count}, timed={timed_count}) "
+              f"→ {comparisons_made} comparisons (skipped {skipped_all_day_pairs} all-day pairs) "
+              f"→ {len(predictions)} predictions")
 
         return predictions
 
@@ -660,6 +678,7 @@ class PredictionEngine:
             ).fetchall()
 
         if not routines:
+            print(f"[prediction_engine.routine_deviations] No predictions: 0 routines with consistency_score > 0.6")
             return predictions
 
         now = datetime.now(timezone.utc)
@@ -770,6 +789,11 @@ class PredictionEngine:
                 # Fail-open: skip routines with malformed data
                 continue
 
+        # Diagnostic summary
+        print(f"[prediction_engine.routine_deviations] Analyzed {len(routines)} routines "
+              f"(already_predicted_today={len(already_predicted_routines)}) "
+              f"→ {len(predictions)} predictions")
+
         return predictions
 
     async def _check_relationship_maintenance(self, ctx: dict) -> list[Prediction]:
@@ -787,6 +811,7 @@ class PredictionEngine:
         # Load the relationships signal profile from the user model
         rel_profile = self.ums.get_signal_profile("relationships")
         if not rel_profile:
+            print(f"[prediction_engine.relationship_maintenance] No predictions: relationships profile not found")
             return predictions
 
         contacts = rel_profile["data"].get("contacts", {})
@@ -847,6 +872,14 @@ class PredictionEngine:
                         relevant_contacts=[addr],
                     ))
 
+        # Diagnostic summary
+        total_contacts = len(contacts)
+        eligible = sum(1 for data in contacts.values() if data.get("interaction_count", 0) >= 5)
+        marketing_filtered = sum(1 for addr in contacts.keys() if self._is_marketing_or_noreply(addr, {}))
+        print(f"[prediction_engine.relationship_maintenance] Analyzed {total_contacts} contacts "
+              f"(eligible={eligible}, marketing_filtered={marketing_filtered}) "
+              f"→ {len(predictions)} predictions")
+
         return predictions
 
     async def _check_preparation_needs(self, ctx: dict) -> list[Prediction]:
@@ -891,6 +924,7 @@ class PredictionEngine:
             ).fetchall()
 
         if not events:
+            print(f"[prediction_engine.preparation_needs] No predictions: 0 calendar events found")
             return predictions
 
         # Parse event payloads and extract actual start times.
@@ -981,6 +1015,14 @@ class PredictionEngine:
                     suggested_action="Review agenda and prepare talking points",
                 ))
 
+        # Diagnostic summary
+        travel_events = sum(1 for e in parsed_events if any(kw in e["payload"].get("title", "").lower() for kw in ["flight", "airport", "hotel", "travel", "trip"]))
+        large_meetings = sum(1 for e in parsed_events if len(e["payload"].get("attendees", [])) > 3)
+        print(f"[prediction_engine.preparation_needs] Analyzed {len(events)} synced events "
+              f"→ {len(parsed_events)} in 12-48h window "
+              f"(travel={travel_events}, large_meetings={large_meetings}) "
+              f"→ {len(predictions)} predictions")
+
         return predictions
 
     async def _check_spending_patterns(self, ctx: dict) -> list[Prediction]:
@@ -1006,6 +1048,7 @@ class PredictionEngine:
             ).fetchall()
 
         if len(transactions) < 5:
+            print(f"[prediction_engine.spending_patterns] No predictions: {len(transactions)} transactions found (need ≥5)")
             return predictions  # Not enough data for meaningful patterns
 
         # Aggregate spending by category from transaction payloads
@@ -1035,6 +1078,12 @@ class PredictionEngine:
                     time_horizon="this_week",
                     suggested_action=f"Review {cat} spending",
                 ))
+
+        # Diagnostic summary
+        high_spend_categories = sum(1 for cat, amt in by_category.items() if amt / total > 0.25 and amt > 200)
+        print(f"[prediction_engine.spending_patterns] Analyzed {len(transactions)} transactions "
+              f"(total=${total:.0f}, categories={len(by_category)}, high_spend={high_spend_categories}) "
+              f"→ {len(predictions)} predictions")
 
         return predictions
 
