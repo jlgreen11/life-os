@@ -452,21 +452,12 @@ class LifeOS:
             return  # Skip non-episodic events
 
         # Determine interaction type — maps fine-grained event types to
-        # coarse episodic categories for easier querying.
-        if "email" in event_type or "message" in event_type or "call" in event_type:
-            interaction_type = "communication"
-        elif "calendar" in event_type:
-            interaction_type = "calendar"
-        elif "finance" in event_type:
-            interaction_type = "financial"
-        elif "task" in event_type:
-            interaction_type = "task"
-        elif "location" in event_type or "context" in event_type:
-            interaction_type = "context"
-        elif event_type == "system.user.command":
-            interaction_type = "command"
-        else:
-            interaction_type = "other"
+        # granular action categories that enable routine detection.
+        # The routine detector needs specific action types (e.g., "email_received"
+        # vs "email_sent") to identify recurring behavioral patterns. Using
+        # coarse categories like "communication" provides no signal for pattern
+        # detection because all emails/messages collapse into the same type.
+        interaction_type = self._classify_interaction_type(event_type, payload)
 
         # Extract contacts involved from the event payload.
         # For inbound communication, the contact is the sender.
@@ -535,6 +526,92 @@ class LifeOS:
 
         # Persist to the episodes table via UserModelStore.
         self.user_model_store.store_episode(episode)
+
+    def _classify_interaction_type(self, event_type: str, payload: dict) -> str:
+        """Classify event into a granular interaction type for routine detection.
+
+        The routine detector relies on seeing specific, granular action types to
+        identify recurring behavioral patterns. For example:
+        - "email_received" vs "email_sent" reveals inbox-checking vs correspondence routines
+        - "meeting_attended" vs "calendar_reviewed" distinguishes participation from planning
+        - "task_created" vs "task_completed" shows work initiation vs completion patterns
+
+        If all events collapse into "communication", the detector has no signal to work with.
+
+        Args:
+            event_type: The fine-grained event type (e.g., "email.received")
+            payload: Event payload containing additional context
+
+        Returns:
+            Granular interaction type suitable for routine detection (15+ distinct types)
+        """
+        # Email interactions — distinguish inbound (inbox checking) from outbound (correspondence)
+        if event_type == "email.received":
+            return "email_received"
+        elif event_type == "email.sent":
+            return "email_sent"
+
+        # Messaging interactions — distinguish chat/IM from email
+        elif event_type == "message.received":
+            return "message_received"
+        elif event_type == "message.sent":
+            return "message_sent"
+
+        # Call interactions — distinguish answered, missed, initiated
+        elif event_type == "call.received":
+            return "call_answered"
+        elif event_type == "call.missed":
+            return "call_missed"
+
+        # Calendar interactions — distinguish meeting participation from calendar management
+        elif event_type == "calendar.event.created":
+            # If the event has participants, it's a meeting; otherwise it's a personal event
+            if payload.get("participants") or payload.get("attendees"):
+                return "meeting_scheduled"
+            else:
+                return "calendar_blocked"
+        elif event_type == "calendar.event.updated":
+            return "calendar_reviewed"
+
+        # Financial interactions — distinguish spending from income/transfers
+        elif event_type == "finance.transaction.new":
+            amount = payload.get("amount", 0)
+            if amount < 0:
+                return "spending"
+            else:
+                return "income"
+
+        # Task interactions — distinguish creation (work planning) from completion (execution)
+        elif event_type == "task.created":
+            return "task_created"
+        elif event_type == "task.completed":
+            return "task_completed"
+
+        # Location interactions — distinguish arrivals (entering contexts) from departures
+        elif event_type == "location.arrived":
+            return "location_arrived"
+        elif event_type == "location.departed":
+            return "location_departed"
+        elif event_type == "location.changed":
+            return "location_changed"
+
+        # Context interactions — device/activity state changes
+        elif event_type == "context.location":
+            return "context_location"
+        elif event_type == "context.activity":
+            return "context_activity"
+
+        # User commands — explicit user interactions with the system
+        elif event_type == "system.user.command":
+            return "user_command"
+
+        # Fallback for any unmapped event types — should be rare
+        else:
+            # Try to extract a meaningful type from the event_type string
+            # e.g., "system.rule.triggered" -> "rule_triggered"
+            if "." in event_type:
+                return event_type.split(".")[-1]
+            return "other"
 
     def _generate_episode_summary(self, event: dict) -> str:
         """Generate a concise (< 200 char) summary for an episode.
