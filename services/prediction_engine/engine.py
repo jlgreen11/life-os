@@ -302,6 +302,14 @@ class PredictionEngine:
                 time_horizon="2_hours",
                 suggested_action=f"Reply to {from_addr}",
                 relevant_contacts=[from_addr],
+                supporting_signals={
+                    "contact_email": from_addr,
+                    "contact_name": from_addr.split("@")[0],  # Simple heuristic
+                    "message_id": message_id,
+                    "hours_since_received": hours_ago,
+                    "is_priority_contact": is_priority,
+                    "requires_response": payload.get("requires_response", False),
+                },
             ))
 
         return predictions
