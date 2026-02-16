@@ -206,6 +206,14 @@ class LifeOS:
         # communication patterns for every contact.
         await self._backfill_communication_templates_if_needed()
 
+        # 1.8. Clean marketing contacts from relationships profile
+        # The relationship extractor was filtering marketing emails at extraction time
+        # (PR #143) but this left 469+ marketing contacts from historical data that
+        # were tracked before the filter existed. This cleanup removes them to enable
+        # relationship maintenance predictions (which currently don't generate because
+        # 57% of tracked "contacts" are marketing automations, not humans).
+        await self._clean_relationship_profile_if_needed()
+
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -598,6 +606,68 @@ class LifeOS:
 
         except Exception as e:
             print(f"       ⚠ Communication template backfill failed (non-fatal): {e}")
+
+    async def _clean_relationship_profile_if_needed(self):
+        """Remove marketing contacts from the relationships signal profile.
+
+        PROBLEM:
+        The relationship extractor added marketing email filtering in PR #143, but
+        this left 469+ marketing contacts from historical data tracked before the
+        filter existed. These pollute the relationships profile with non-human
+        "contacts" that waste storage and break relationship maintenance predictions.
+
+        SOLUTION:
+        Run the cleanup logic once on startup to purge marketing contacts (no-reply@,
+        newsletter@, @comms., @email., etc.) while preserving real human contacts.
+        This is idempotent and safe to run multiple times.
+
+        IMPACT:
+        - Enables relationship maintenance predictions (currently 0 generated)
+        - Improves prediction engine performance (no longer loops through 469+ marketing
+          contacts every 15 minutes)
+        - Cleans up storage bloat in signal_profiles table
+        - Reduces relationships profile from 820 contacts to ~350 real humans
+        """
+        try:
+            # Check if we have a relationships profile that needs cleaning
+            profile = self.user_model_store.get_signal_profile("relationships")
+            if not profile:
+                return
+
+            contacts = profile["data"].get("contacts", {})
+            if len(contacts) == 0:
+                return
+
+            # Apply marketing detection to every contact address
+            from scripts.clean_relationship_profile_marketing import is_marketing_or_noreply
+
+            marketing_count = sum(
+                1 for addr in contacts.keys()
+                if is_marketing_or_noreply(addr)
+            )
+
+            # If < 10% of contacts are marketing, profile is already clean
+            if marketing_count / len(contacts) < 0.1:
+                return
+
+            print(f"       → Cleaning {marketing_count:,} marketing contacts from relationships profile...")
+
+            # Run the cleanup in a thread to avoid blocking startup
+            def _run_cleanup():
+                from scripts.clean_relationship_profile_marketing import clean_relationship_profile
+                stats = clean_relationship_profile(
+                    db=self.db,
+                    dry_run=False,  # Actually modify the database
+                )
+                return stats
+
+            stats = await asyncio.to_thread(_run_cleanup)
+
+            print(f"       ✓ Removed {stats['removed']:,} marketing contacts, "
+                  f"{stats['remaining']:,} human contacts remaining")
+
+        except Exception as e:
+            print(f"       ⚠ Relationship profile cleanup failed (non-fatal): {e}")
 
     async def _register_event_handlers(self):
         """Wire up the core event processing pipeline."""
