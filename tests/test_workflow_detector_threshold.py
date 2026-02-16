@@ -81,7 +81,7 @@ async def test_email_workflow_detection_with_low_response_rate(db, user_model_st
                 "timestamp": response_time.isoformat(),
                 "priority": 2,
                 "payload": {
-                    "to_address": "boss@company.com",
+                    "to_addresses": ["boss@company.com"],
                     "subject": f"Re: Project Update {i}",
                     "body": "Reviewed and approved.",
                 },
@@ -97,7 +97,7 @@ async def test_email_workflow_detection_with_low_response_rate(db, user_model_st
 
     boss_workflow = boss_workflows[0]
     assert boss_workflow["success_rate"] > 0.0, "Success rate should be non-zero"
-    assert "email.sent" in [step for step in boss_workflow["steps"] if "sent" in step], "Should include email sending step"
+    assert any("sent" in step for step in boss_workflow["steps"]), "Should include email sending step"
     assert boss_workflow["times_observed"] == 10, "Should observe all 10 boss emails"
 
 
@@ -144,7 +144,7 @@ async def test_workflow_detection_filters_pure_noise(db, user_model_store, event
             "timestamp": random_time.isoformat(),
             "priority": 2,
             "payload": {
-                "to_address": "unrelated@example.com",  # Different recipient
+                "to_addresses": ["unrelated@example.com"],  # Different recipient
                 "subject": "Unrelated message",
             },
             "metadata": {},
@@ -233,7 +233,7 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
                 "timestamp": response_time.isoformat(),
                 "priority": 2,
                 "payload": {
-                    "to_address": "colleague@work.com",
+                    "to_addresses": ["colleague@work.com"],
                     "subject": f"Re: Work Item {i}",
                 },
                 "metadata": {},
@@ -265,7 +265,7 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
                 "timestamp": response_time.isoformat(),
                 "priority": 2,
                 "payload": {
-                    "to_address": "mom@family.com",
+                    "to_addresses": ["mom@family.com"],
                     "subject": f"Re: Family Update {i}",
                 },
                 "metadata": {},
@@ -317,7 +317,7 @@ async def test_workflow_threshold_boundary_cases(db, user_model_store, event_sto
         "source": "gmail",
         "timestamp": (base_time + timedelta(hours=2)).isoformat(),
         "priority": 2,
-        "payload": {"to_address": "exact1pct@test.com"},
+        "payload": {"to_addresses": ["exact1pct@test.com"]},
         "metadata": {},
     })
 
@@ -340,7 +340,7 @@ async def test_workflow_threshold_boundary_cases(db, user_model_store, event_sto
         "source": "gmail",
         "timestamp": (base_time + timedelta(hours=202)).isoformat(),
         "priority": 2,
-        "payload": {"to_address": "under1pct@test.com"},
+        "payload": {"to_addresses": ["under1pct@test.com"]},
         "metadata": {},
     })
 
@@ -410,7 +410,7 @@ async def test_multi_step_workflow_detection(db, user_model_store, event_store):
             "timestamp": send_time.isoformat(),
             "priority": 2,
             "payload": {
-                "to_address": "client@business.com",
+                "to_addresses": ["client@business.com"],
                 "subject": f"Re: Request {i}",
             },
             "metadata": {},
@@ -465,7 +465,7 @@ async def test_workflow_storage_integration(db, user_model_store, event_store):
                 "source": "gmail",
                 "timestamp": response_time.isoformat(),
                 "priority": 2,
-                "payload": {"to_address": "storage-test@example.com"},
+                "payload": {"to_addresses": ["storage-test@example.com"]},
                 "metadata": {},
             })
 

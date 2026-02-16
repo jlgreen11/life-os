@@ -14,6 +14,7 @@ Workflow types detected:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -154,14 +155,21 @@ class WorkflowDetector:
 
             received_emails = cursor.fetchall()
 
-        # Step 2: Get all potential response actions in the time window
+        # Step 2: Get all potential response actions in the time window.
+        # For email.sent, we need the recipient to match against the original sender.
+        # For other events (task.created, etc.), we track them generically.
         with self.db.get_connection("events") as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
                     id,
                     type,
-                    timestamp
+                    timestamp,
+                    CASE
+                        WHEN type = 'email.sent' THEN json_extract(payload, '$.to_addresses')
+                        WHEN type = 'message.sent' THEN json_extract(payload, '$.to')
+                        ELSE NULL
+                    END as recipient
                 FROM events
                 WHERE type IN ('email.sent', 'task.created', 'calendar.event.created',
                               'message.sent')
@@ -193,7 +201,7 @@ class WorkflowDetector:
             # Check ALL response actions to see if any fall within the time window
             # after this email. We can't use a sliding window approach because
             # responses may not be in perfect chronological order with emails.
-            for resp_id, resp_type, resp_ts_str in response_actions:
+            for resp_id, resp_type, resp_ts_str, recipient_json in response_actions:
                 resp_ts = datetime.fromisoformat(resp_ts_str.replace('Z', '+00:00'))
 
                 # Calculate hours between email and response
@@ -201,6 +209,31 @@ class WorkflowDetector:
 
                 # Only track responses that occur AFTER the email within the time window
                 if 0 < hours_after <= self.max_step_gap_hours:
+                    # For email.sent and message.sent, verify the recipient matches the sender.
+                    # This prevents false positives where we attribute random emails as
+                    # "responses" to unrelated received emails.
+                    if resp_type in ('email.sent', 'message.sent'):
+                        if not recipient_json:
+                            # No recipient data, skip this response (can't verify it's related)
+                            continue
+
+                        # Parse recipient list (could be JSON array or single value)
+                        try:
+                            recipients = json.loads(recipient_json) if recipient_json else []
+                            if isinstance(recipients, str):
+                                recipients = [recipients]
+                        except (json.JSONDecodeError, TypeError):
+                            # Malformed JSON, skip this response
+                            continue
+
+                        # Check if the original sender is in the recipient list
+                        # (case-insensitive match to handle email variations)
+                        sender_lower = sender.lower()
+                        if not any(sender_lower == r.lower() for r in recipients if r):
+                            # This email.sent is not to the original sender, skip it
+                            continue
+
+                    # Valid response - track it
                     sender_stats[sender]['following_actions'][resp_type].append(hours_after)
 
         # Step 4: Build workflows from sender statistics.
