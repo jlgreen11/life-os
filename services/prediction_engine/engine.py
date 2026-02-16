@@ -1242,11 +1242,16 @@ class PredictionEngine:
         addr_lower = from_addr.lower()
 
         # No-reply and automated system senders
-        # Includes variations like noreply@, no-reply@, mailer-daemon@, postmaster@
+        # Includes variations like noreply@, no-reply@, no_reply@, mailer-daemon@, postmaster@
+        # CRITICAL: Must catch all common separators (-, _, none) and handle + modifiers
+        # Examples: no-reply@, noreply@, no_reply@, no-reply+ID@
         noreply_patterns = (
-            "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
-            "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
-            "autoreply@", "automated@",
+            "no-reply@", "no_reply@", "noreply@",
+            "do-not-reply@", "do_not_reply@", "donotreply@",
+            "no-reply+", "no_reply+", "noreply+",  # Catches no-reply+ID@domain.com
+            "mailer-daemon@", "postmaster@", "daemon@",
+            "auto-reply@", "auto_reply@", "autoreply@",
+            "automated@", "automation@",
         )
         if any(pattern in addr_lower for pattern in noreply_patterns):
             return True
@@ -1254,19 +1259,24 @@ class PredictionEngine:
         # Common bulk sender local-parts (the part before @)
         # These patterns must match at the start of the email address to avoid
         # false positives like john.email@company.com or sarah.reply@startup.io
+        # CRITICAL: Include both singular and plural forms (notification/notifications)
         bulk_localpart_patterns = (
-            "newsletter@", "notifications@", "updates@", "digest@",
+            "newsletter@", "notifications@", "notification@",  # Both singular and plural
+            "updates@", "update@", "digest@",
             "mailer@", "bulk@", "promo@", "marketing@",
-            "reply@", "email@", "news@", "offers@", "deals@",
+            "reply@", "email@", "news@", "offers@", "offer@", "deals@",
             "hello@", "info@", "support@", "help@",
-            "service@",     # PayPal, Stripe, etc. - mostly transactional but repetitive
+            "service@", "services@",  # PayPal, Stripe, etc. - mostly transactional but repetitive
             "discover@",    # Common marketing pattern (Airbnb, etc.)
-            "alert@", "alerts@", "notification@",
+            "alert@", "alerts@",
+            "contactus@",  # Contact forms (usually automated) - NOTE: not "contact@" or "team@" to avoid false positives
             # Transactional/automated senders
             "orders@", "order@", "receipts@", "receipt@",
-            "auto-confirm@", "autoconfirm@", "confirmation@",
+            "auto-confirm@", "autoconfirm@", "confirmation@", "confirm@",
             "shipment-tracking@", "shipping@", "delivery@",
-            "accountservice@", "account-service@",
+            "accountservice@", "account-service@", "account@",
+            "yourhealth@", "youraccount@",  # Personalized automated senders
+            "smartoption@", "quickalert@",  # Financial/loan automated systems
             # Organizational bulk senders
             "communications@", "development@", "fundraising@",
             # Loyalty/rewards programs (always automated)
@@ -1275,11 +1285,13 @@ class PredictionEngine:
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True
 
-        # Embedded notification patterns (middle of local-part)
-        # Catches: HOA-Notifications@, user-notifications@, system-alerts@
+        # Embedded notification patterns (middle or end of local-part)
+        # Catches: HOA-Notifications@, user-notifications@, system-alerts@, lafconews@
+        # Uses "in" check (not startswith) to catch patterns anywhere in local-part
         embedded_notification_patterns = (
             "-notification", "-notifications", "-alert", "-alerts",
             "-update", "-updates", "-digest",
+            "news",  # Catches lafconews@, morningnews@, dailynews@, etc.
         )
         # Extract local-part (everything before @)
         local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
@@ -1298,18 +1310,27 @@ class PredictionEngine:
         # The @mail. pattern was removed in iteration 160 because it incorrectly
         # blocked @gmail.com, @hotmail.com, @protonmail.com, etc., completely
         # breaking relationship maintenance predictions for all Gmail users.
+        #
+        # EXPANDED (iteration 152): Added @m., @notification., @marketing. patterns
+        # to catch starbucks@m.starbucks.com, capitalone@notification.capitalone.com, etc.
         marketing_domain_patterns = (
             "@news-", "@email.", "@reply.", "@mailing.",
             "@newsletters.", "@promo.", "@marketing.",
             "@em.", "@mg.",  # Common email service provider patterns (mail. removed - too broad)
+            "@m.",  # Mobile/marketing subdomain (e.g., @m.starbucks.com, @m.facebook.com)
             "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
             "@comms.", "@communications.",  # Corporate communications (e.g., comms.activision.com)
             "@attn.",  # Attention/notification platforms (e.g., attn.us.lg.com)
+            "@notification.", "@notifications.",  # Notification subdomains (e.g., notification.capitalone.com)
             "@txn.", "@transactional.",  # Transaction notifications
             "@deals.", "@offers.", "@promo-",  # Promotional campaigns
             "@campaigns.", "@campaign.",  # Campaign management platforms
             "@blast.", "@bulk.",  # Bulk sender platforms
             "@lists.", "@list.",  # Mailing list managers
+            "@messages.", "@message.",  # Message notification platforms
+            "@care.",  # Customer care (e.g., care.kansashealthsystem.com)
+            "@mcmap.",  # Marketing campaign manager (e.g., mcmap.chase.com)
+            "@soslprospect.",  # Sales/prospect management (e.g., soslprospect.salliemae.com)
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
             return True
