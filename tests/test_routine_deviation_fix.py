@@ -74,7 +74,7 @@ async def test_routine_deviation_detected_when_routine_not_completed(db: Databas
 
     assert len(predictions) == 1
     pred = predictions[0]
-    assert pred.prediction_type == "opportunity"
+    assert pred.prediction_type == "routine_deviation"
     assert "Morning routine" in pred.description
     assert pred.confidence > 0.3  # Meets SUGGEST threshold
     assert pred.confidence <= 0.65  # Capped at 65% (consistency * 0.5 with max)
