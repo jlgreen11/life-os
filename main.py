@@ -902,7 +902,7 @@ class LifeOS:
             await asyncio.sleep(21600)  # 6 hours
 
     async def _routine_detection_loop(self):
-        """Run routine detection every 12 hours.
+        """Run routine detection with adaptive retry intervals.
 
         The routine detector analyzes episodic memory to identify recurring
         behavioral patterns (Layer 3: Procedural Memory). Examples:
@@ -920,22 +920,24 @@ class LifeOS:
           - "Time for your end-of-day review"
           - "You typically update your task list after meetings"
 
-        Interval: 12 hours (43200 seconds)
-          - Routines are stable patterns that don't change rapidly
-          - 12-hour interval allows sufficient new episodes to accumulate
-          - Balances routine freshness against compute cost
-          - Running twice daily catches both morning and evening patterns
+        Adaptive retry interval:
+          - If 0 routines detected: retry in 1 hour (connectors may still be syncing)
+          - If 1-2 routines detected: retry in 3 hours (partial data, check again soon)
+          - If 3+ routines detected: retry in 12 hours (stable patterns, normal cadence)
+
+        This adaptive approach ensures Layer 3 is populated quickly after startup
+        (when connectors are still syncing and episodes are sparse) while settling
+        into an efficient 12-hour rhythm once patterns are established.
 
         Startup behavior:
-          - Runs immediately after 60-second delay on startup to populate
-            Layer 3 (Procedural Memory) from existing episodic history
-          - This ensures routines are available for predictions/UI without
-            waiting up to 12 hours for first detection cycle
+          - Runs immediately after 60-second delay on startup to check for
+            existing routines in episodic history
+          - Retries frequently (1-3 hours) until patterns stabilize
+          - Settles into 12-hour rhythm once 3+ routines are detected
         """
         # Wait 60 seconds on startup to allow episodic memory to populate from
-        # any ongoing connector syncs, then run immediately to populate routines
-        # from existing episodes. This ensures Layer 3 is populated quickly rather
-        # than waiting up to 12 hours.
+        # any ongoing connector syncs, then run immediately to check for routines
+        # from existing episodes.
         await asyncio.sleep(60)
 
         while not self.shutdown_event.is_set():
@@ -955,13 +957,31 @@ class LifeOS:
                 workflow_stored = self.workflow_detector.store_workflows(workflows)
 
                 print(f"  WorkflowDetector: detected {len(workflows)} workflows, stored {workflow_stored}")
+
+                # Adaptive retry interval based on detection success:
+                # - 0 patterns: retry in 1 hour (cold start, connectors may be syncing)
+                # - 1-2 patterns: retry in 3 hours (partial data, check again soon)
+                # - 3+ patterns: retry in 12 hours (stable patterns, normal cadence)
+                total_patterns = len(routines) + len(workflows)
+                if total_patterns == 0:
+                    retry_seconds = 3600  # 1 hour
+                    retry_desc = "1 hour (no patterns yet, will retry soon)"
+                elif total_patterns <= 2:
+                    retry_seconds = 10800  # 3 hours
+                    retry_desc = "3 hours (partial patterns, will check again soon)"
+                else:
+                    retry_seconds = 43200  # 12 hours
+                    retry_desc = "12 hours (stable patterns detected)"
+
+                print(f"  Next detection cycle in {retry_desc}")
+
             except Exception as e:
                 print(f"Routine/workflow detector error: {e}")
+                # On error, retry in 1 hour to avoid tight error loops
+                retry_seconds = 3600
+                print(f"  Next detection cycle in 1 hour (after error)")
 
-            # 43200 seconds = 12 hours. Routines and workflows are stable patterns, so this
-            # interval provides good coverage (runs twice daily) without excessive
-            # compute on slowly-changing behavioral data.
-            await asyncio.sleep(43200)  # 12 hours
+            await asyncio.sleep(retry_seconds)
 
     async def _behavioral_accuracy_loop(self):
         """Run behavioral accuracy inference every 15 minutes.
