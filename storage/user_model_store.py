@@ -153,7 +153,11 @@ class UserModelStore:
 
     def get_semantic_facts(self, category: Optional[str] = None,
                           min_confidence: float = 0.0) -> list[dict]:
-        """Retrieve semantic memory facts."""
+        """Retrieve semantic memory facts.
+
+        Deserializes the ``value`` and ``source_episodes`` fields from JSON
+        so they are returned as native Python objects.
+        """
         query = "SELECT * FROM semantic_facts WHERE confidence >= ?"
         params: list[Any] = [min_confidence]
 
@@ -165,7 +169,14 @@ class UserModelStore:
 
         with self.db.get_connection("user_model") as conn:
             rows = conn.execute(query, params).fetchall()
-            return [dict(row) for row in rows]
+            facts = []
+            for row in rows:
+                fact = dict(row)
+                # Deserialize JSON fields
+                fact["value"] = json.loads(fact["value"])
+                fact["source_episodes"] = json.loads(fact["source_episodes"])
+                facts.append(fact)
+            return facts
 
     def update_signal_profile(self, profile_type: str, data: dict):
         """Store or update a signal profile (linguistic, cadence, etc.).

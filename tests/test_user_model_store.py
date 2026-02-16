@@ -150,9 +150,9 @@ class TestSemanticMemory:
         assert len(facts) == 1
         assert facts[0]["key"] == "preferred_coffee"
         assert facts[0]["category"] == "preference"
-        assert json.loads(facts[0]["value"]) == "dark roast"
+        assert facts[0]["value"] == "dark roast"
         assert facts[0]["confidence"] == 0.5
-        assert json.loads(facts[0]["source_episodes"]) == ["ep_123"]
+        assert facts[0]["source_episodes"] == ["ep_123"]
         assert facts[0]["times_confirmed"] == 1  # First observation counts as 1
 
     def test_update_semantic_fact_confidence_growth(self, user_model_store: UserModelStore):
@@ -179,7 +179,7 @@ class TestSemanticMemory:
         assert len(facts) == 1
         assert facts[0]["confidence"] == 0.55  # 0.5 + 0.05
         assert facts[0]["times_confirmed"] == 2  # Initial + 1 confirmation
-        assert json.loads(facts[0]["source_episodes"]) == ["ep_1", "ep_2"]
+        assert facts[0]["source_episodes"] == ["ep_1", "ep_2"]
 
     def test_update_semantic_fact_confidence_cap(self, user_model_store: UserModelStore):
         """Confidence should never exceed 1.0."""
@@ -211,7 +211,7 @@ class TestSemanticMemory:
 
         facts = user_model_store.get_semantic_facts()
         assert len(facts) == 1
-        episodes = json.loads(facts[0]["source_episodes"])
+        episodes = facts[0]["source_episodes"]
         assert episodes == ["ep_1"]  # Not ["ep_1", "ep_1"]
 
     def test_get_semantic_facts_filter_by_category(self, user_model_store: UserModelStore):
@@ -611,7 +611,7 @@ class TestEdgeCases:
 
         facts = user_model_store.get_semantic_facts()
         assert len(facts) == 1
-        value = json.loads(facts[0]["value"])
+        value = facts[0]["value"]
         assert "😊" in value
         assert '"nested"' in value
 
