@@ -464,6 +464,20 @@ class PredictionEngine:
         Only considers routines with consistency_score > 0.6 — these are
         habits the user follows at least 60% of the time, so deviations
         are meaningful rather than noisy.
+
+        CRITICAL FIX (iteration 114):
+            Previously, this method had a stubbed implementation with two fatal bugs:
+            1. Day-name matching logic was inverted: checked if day name IN trigger
+               (e.g., "monday" in "morning") instead of checking the trigger's day pattern
+            2. Never checked if routine was actually completed — created duplicate
+               predictions every 15 minutes regardless of user behavior
+
+            Now we:
+            - First check if we've already created a prediction for this routine today
+            - Parse routine steps to identify expected event types
+            - Query events table to see if those event types occurred today
+            - Only create prediction if routine hasn't been completed
+            - Track routine_name in supporting_signals for deduplication
         """
         predictions = []
 
@@ -477,27 +491,112 @@ class PredictionEngine:
             return predictions
 
         now = datetime.now(timezone.utc)
-        day_name = now.strftime("%A").lower()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
+        # Check what routine deviation predictions we've already created today
+        # to avoid duplicate reminders every 15 minutes
+        with self.db.get_connection("user_model") as conn:
+            existing_predictions = conn.execute(
+                """SELECT supporting_signals FROM predictions
+                   WHERE prediction_type = 'opportunity'
+                   AND created_at > ?""",
+                (today_start.isoformat(),),
+            ).fetchall()
+
+        # Build set of routines we've already created predictions for today
+        already_predicted_routines = set()
+        for pred in existing_predictions:
+            try:
+                signals = json.loads(pred["supporting_signals"]) if pred["supporting_signals"] else {}
+                routine_name = signals.get("routine_name")
+                if routine_name:
+                    already_predicted_routines.add(routine_name)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # For each routine, check if it should have been completed by now
         for routine in routines:
-            trigger = routine["trigger_condition"]
-            # Simple day-based check: if today's day name appears in the
-            # routine's trigger condition, the routine should have fired today.
-            if day_name in trigger.lower():
-                # Check if the routine has been executed today
-                # (Look for related events in the last 12 hours)
-                steps = json.loads(routine["steps"])
-                if steps:
-                    first_action = steps[0].get("action", "") if isinstance(steps[0], dict) else str(steps[0])
+            routine_name = routine["name"]
 
-                    # This is simplified — in production you'd check against actual events
-                    predictions.append(Prediction(
-                        prediction_type="reminder",
-                        description=f"You usually {routine['name']} on {day_name.title()}s",
-                        confidence=routine["consistency_score"] * 0.6,
-                        confidence_gate=ConfidenceGate.SUGGEST,
-                        time_horizon="24_hours",
-                    ))
+            # Skip if we've already created a prediction for this routine today
+            if routine_name in already_predicted_routines:
+                continue
+
+            # Parse the routine steps to identify what event types to look for
+            try:
+                steps = json.loads(routine["steps"])
+                if not steps:
+                    continue
+
+                # Extract expected event types from the workflow steps
+                # Steps are dicts with "action" keys (e.g., "email_received", "task_created")
+                expected_actions = []
+                for step in steps[:3]:  # Only check first 3 steps for performance
+                    if isinstance(step, dict):
+                        action = step.get("action", "")
+                        if action:
+                            expected_actions.append(action)
+
+                if not expected_actions:
+                    continue
+
+                # Map routine action types to event types
+                # Routine actions use underscore format (email_received) while
+                # event types use dot format (email.received)
+                event_type_mapping = {
+                    "email_received": "email.received",
+                    "email_sent": "email.sent",
+                    "message_received": "message.received",
+                    "message_sent": "message.sent",
+                    "task_created": "task.created",
+                    "task_completed": "task.completed",
+                    "calendar_event_created": "calendar.event.created",
+                }
+
+                expected_event_types = []
+                for action in expected_actions:
+                    event_type = event_type_mapping.get(action, action.replace("_", "."))
+                    expected_event_types.append(event_type)
+
+                # Check if any of the expected event types occurred today
+                with self.db.get_connection("events") as conn:
+                    result = conn.execute(
+                        f"""SELECT COUNT(*) as count FROM events
+                           WHERE type IN ({','.join('?' * len(expected_event_types))})
+                           AND timestamp > ?""",
+                        (*expected_event_types, today_start.isoformat()),
+                    ).fetchone()
+
+                if result and result["count"] > 0:
+                    # Routine was completed today — no deviation
+                    continue
+
+                # Routine hasn't been completed today — create a prediction
+                # Confidence is based on consistency score but capped lower since
+                # routines can have legitimate skip days
+                confidence = min(routine["consistency_score"] * 0.5, 0.65)
+
+                # Only surface if confidence meets SUGGEST threshold (0.3+)
+                if confidence < 0.3:
+                    continue
+
+                predictions.append(Prediction(
+                    prediction_type="opportunity",
+                    description=f"You usually do your '{routine_name}' routine by now",
+                    confidence=confidence,
+                    confidence_gate=self._gate_from_confidence(confidence),
+                    time_horizon="today",
+                    suggested_action=f"Start {routine_name}",
+                    supporting_signals={
+                        "routine_name": routine_name,
+                        "consistency_score": routine["consistency_score"],
+                        "expected_actions": expected_actions,
+                    },
+                ))
+
+            except (json.JSONDecodeError, TypeError, KeyError) as e:
+                # Fail-open: skip routines with malformed data
+                continue
 
         return predictions
 
