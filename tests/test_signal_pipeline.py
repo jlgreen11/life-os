@@ -21,8 +21,8 @@ def test_pipeline_initialization(db, user_model_store):
     """Test that the pipeline initializes with all extractors registered."""
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
-    # Verify all 5 extractors are registered
-    assert len(pipeline.extractors) == 5
+    # Verify all 6 extractors are registered (added TemporalExtractor in iteration 134)
+    assert len(pipeline.extractors) == 6
 
     # Verify extractor types in correct order
     extractor_names = [type(e).__name__ for e in pipeline.extractors]
@@ -31,6 +31,7 @@ def test_pipeline_initialization(db, user_model_store):
     assert "MoodInferenceEngine" in extractor_names
     assert "RelationshipExtractor" in extractor_names
     assert "TopicExtractor" in extractor_names
+    assert "TemporalExtractor" in extractor_names
 
     # Verify separate mood engine instance exists
     assert pipeline.mood_engine is not None

@@ -18,6 +18,7 @@ from services.signal_extractor.cadence import CadenceExtractor
 from services.signal_extractor.mood import MoodInferenceEngine
 from services.signal_extractor.relationship import RelationshipExtractor
 from services.signal_extractor.topic import TopicExtractor
+from services.signal_extractor.temporal import TemporalExtractor
 from services.signal_extractor.base import BaseExtractor
 
 
@@ -40,6 +41,7 @@ class SignalExtractorPipeline:
             MoodInferenceEngine(db, user_model_store),
             RelationshipExtractor(db, user_model_store),
             TopicExtractor(db, user_model_store),
+            TemporalExtractor(db, user_model_store),
         ]
 
         # A dedicated mood engine instance is kept separately so we can call
@@ -95,7 +97,7 @@ class SignalExtractorPipeline:
         """
         # Gather per-dimension profile summaries (sample counts and freshness).
         profiles = {}
-        for profile_type in ["linguistic", "cadence", "mood_signals", "relationships", "topics"]:
+        for profile_type in ["linguistic", "cadence", "mood_signals", "relationships", "topics", "temporal"]:
             profile = self.ums.get_signal_profile(profile_type)
             if profile:
                 profiles[profile_type] = {
