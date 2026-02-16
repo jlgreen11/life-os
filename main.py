@@ -766,7 +766,19 @@ class LifeOS:
           - 12-hour interval allows sufficient new episodes to accumulate
           - Balances routine freshness against compute cost
           - Running twice daily catches both morning and evening patterns
+
+        Startup behavior:
+          - Runs immediately after 60-second delay on startup to populate
+            Layer 3 (Procedural Memory) from existing episodic history
+          - This ensures routines are available for predictions/UI without
+            waiting up to 12 hours for first detection cycle
         """
+        # Wait 60 seconds on startup to allow episodic memory to populate from
+        # any ongoing connector syncs, then run immediately to populate routines
+        # from existing episodes. This ensures Layer 3 is populated quickly rather
+        # than waiting up to 12 hours.
+        await asyncio.sleep(60)
+
         while not self.shutdown_event.is_set():
             try:
                 # Detect routines from last 30 days of episodic memory
