@@ -81,13 +81,6 @@ class NotificationManager:
                 priority=priority,
             )
 
-        # Mark prediction as surfaced if this notification came from a prediction.
-        # This enables the accuracy feedback loop — only surfaced predictions count
-        # toward accuracy metrics (we can't measure accuracy for predictions the
-        # user never saw).
-        if domain == "prediction" and source_event_id:
-            self._mark_prediction_surfaced(source_event_id)
-
         # --- Delivery decision flow ---
         # Three possible outcomes:
         #   "immediate" -> push to the user right now (via event bus)
@@ -97,15 +90,26 @@ class NotificationManager:
 
         if delivery == "immediate":
             await self._deliver_notification(notif_id, title, body, priority)
+            # Mark prediction as surfaced only when notification is actually delivered.
+            # This fixes a critical bug where predictions were marked as surfaced even
+            # when their notifications were suppressed, causing them to never be
+            # auto-resolved by auto_resolve_stale_predictions() (which only looks for
+            # delivered notifications with status='delivered').
+            if domain == "prediction" and source_event_id:
+                self._mark_prediction_surfaced(source_event_id)
         elif delivery == "batch":
             # Accumulate in the in-memory batch list for later digest delivery
             self._pending_batch.append({
                 "id": notif_id, "title": title, "body": body,
                 "priority": priority, "domain": domain,
+                "source_event_id": source_event_id,  # Preserve for later surfacing
             })
         elif delivery == "suppress":
             # Mark as suppressed in DB so it shows up in audit logs but is
             # never delivered to the user. Return None to signal suppression.
+            # IMPORTANT: Do NOT mark the prediction as surfaced here — suppressed
+            # predictions should be filtered (was_surfaced=0) since the user never
+            # saw them.
             self._mark_status(notif_id, "suppressed")
             return None
 
@@ -222,7 +226,10 @@ class NotificationManager:
             row = conn.execute(
                 "SELECT value FROM user_preferences WHERE key = 'notification_mode'"
             ).fetchone()
-            return row["value"] if row else "batched"
+            if not row:
+                return "batched"
+            # User preferences are stored as JSON strings, so we need to deserialize
+            return json.loads(row["value"])
 
     async def _deliver_notification(self, notif_id: str, title: str,
                                      body: Optional[str], priority: str):
@@ -299,11 +306,12 @@ class NotificationManager:
         calculations — we can't measure whether a prediction was "accurate"
         if the user never saw it.
 
-        This method is called when a notification is created from a prediction,
-        regardless of whether it's delivered immediately, batched, or suppressed
-        by quiet hours. The key distinction is:
-        - was_surfaced = 1: A notification was created (user *will* see it)
-        - was_surfaced = 0: Filtered by confidence gates, never shown at all
+        This method is called ONLY when a notification is actually delivered to
+        the user (either immediately or via batch digest). Predictions whose
+        notifications are suppressed (quiet hours, minimal mode, etc.) are NOT
+        marked as surfaced. The key distinction is:
+        - was_surfaced = 1: Notification was delivered (user saw it)
+        - was_surfaced = 0: Filtered by confidence gates or suppressed before delivery
         """
         with self.db.get_connection("user_model") as conn:
             conn.execute(
@@ -393,6 +401,11 @@ class NotificationManager:
         digest = list(self._pending_batch)
         for item in digest:
             self._mark_status(item["id"], "delivered")
+            # Mark prediction as surfaced when batched notification is delivered.
+            # This ensures predictions are only counted as surfaced when the user
+            # actually sees them (either immediate or batched delivery).
+            if item.get("domain") == "prediction" and item.get("source_event_id"):
+                self._mark_prediction_surfaced(item["source_event_id"])
         self._pending_batch = []
         return digest
 
