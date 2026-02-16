@@ -25,9 +25,18 @@ from storage.database import DatabaseManager
 class TaskManager:
     """Manages the lifecycle of tasks across all sources."""
 
-    def __init__(self, db: DatabaseManager, event_bus: Any = None):
+    def __init__(self, db: DatabaseManager, event_bus: Any = None, ai_engine: Any = None):
+        """
+        Initialize the task manager.
+
+        Args:
+            db: Database manager for task persistence
+            event_bus: Event bus for telemetry publishing
+            ai_engine: AI engine for extracting action items from text
+        """
         self.db = db  # Database access for tasks, events, and contacts tables
         self.bus = event_bus
+        self.ai_engine = ai_engine
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -35,13 +44,73 @@ class TaskManager:
             await self.bus.publish(event_type, payload, source="task_manager")
 
     async def process_event(self, event: dict):
-        """Process an event for potential task extraction (no-op for now).
-
-        Full AI-based task extraction (via LLM) is too slow to run on every
-        event. Instead, the prediction engine handles follow-up detection
-        and the AI engine's extract_action_items() can be called on-demand.
         """
-        pass
+        Process an event for potential task extraction.
+
+        Analyzes actionable event types (emails, messages, calendar events)
+        to extract AI-identified tasks using the local LLM. Task extraction
+        is limited to events with substantial text content to avoid wasting
+        LLM cycles on trivial messages like "ok" or "thanks".
+
+        Actionable event types:
+            - email.received: Incoming emails may contain requests
+            - message.received: Direct messages may contain action items
+            - calendar.event.created: Calendar descriptions may list TODOs
+
+        Args:
+            event: Event dict with type, payload, and metadata
+        """
+        if not self.ai_engine:
+            # AI engine not wired — skip extraction. This is normal during
+            # tests or minimal deployments that don't need automatic task extraction.
+            return
+
+        event_type = event.get("type", "")
+        payload = event.get("payload", {})
+
+        # --- Filter: Only process actionable event types ---
+        # System events, predictions, and notifications are not actionable.
+        # Only process events that contain user-generated text content.
+        if event_type not in ["email.received", "message.received", "calendar.event.created"]:
+            return
+
+        # --- Extract text content from the event payload ---
+        # Different event types store text in different fields. We extract
+        # the most relevant text for LLM analysis.
+        text = None
+        if event_type == "email.received":
+            # For emails, prioritize body > snippet > subject
+            text = payload.get("body") or payload.get("snippet") or payload.get("subject", "")
+        elif event_type == "message.received":
+            # For messages, use the message body
+            text = payload.get("body", "")
+        elif event_type == "calendar.event.created":
+            # For calendar events, check the description field for action items
+            text = payload.get("description", "")
+
+        # --- Filter: Skip empty or trivial messages ---
+        # Don't waste LLM cycles on short messages like "ok", "thanks", etc.
+        # Require at least 20 characters to reduce false positives.
+        if not text or len(text.strip()) < 20:
+            return
+
+        # --- Call AI engine to extract action items ---
+        # The AI engine returns a list of dicts: [{title, due_hint, priority}, ...]
+        # Empty list means no action items were found (which is normal).
+        try:
+            action_items = await self.ai_engine.extract_action_items(text, event_type)
+        except Exception as e:
+            # Graceful degradation: if the AI engine fails (model down, parsing
+            # error, etc.), log the error but don't crash the pipeline.
+            # Task extraction is nice-to-have, not mission-critical.
+            print(f"[TaskManager] AI extraction failed for event {event.get('id')}: {e}")
+            return
+
+        # --- Ingest extracted tasks into the database ---
+        # Each task is linked back to the source event for full provenance.
+        # The ingest_ai_extracted_tasks method handles the database writes.
+        if action_items:
+            await self.ingest_ai_extracted_tasks(action_items, event.get("id"))
 
     async def create_task(
         self,

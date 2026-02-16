@@ -100,7 +100,6 @@ class LifeOS:
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store
         )
-<<<<<<< HEAD
         self.source_weight_manager = SourceWeightManager(self.db)
         self.insight_engine = InsightEngine(
             self.db, self.user_model_store,
@@ -112,7 +111,8 @@ class LifeOS:
         self.routine_detector = RoutineDetector(self.db, self.user_model_store)
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
-        self.task_manager = TaskManager(self.db, event_bus=self.event_bus)
+        # TaskManager needs the ai_engine to extract action items from events
+        self.task_manager = TaskManager(self.db, event_bus=self.event_bus, ai_engine=self.ai_engine)
 
         # --- Browser automation layer ---
         # Wraps Playwright and manages browser-based connectors separately
