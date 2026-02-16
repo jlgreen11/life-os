@@ -1671,6 +1671,47 @@ def register_routes(app: FastAPI, life_os) -> None:
         }
 
     # -------------------------------------------------------------------
+    # Prediction Diagnostics
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/predictions/diagnostics")
+    async def prediction_diagnostics():
+        """
+        Get comprehensive prediction engine diagnostics.
+
+        Returns detailed analysis of why each prediction type is or isn't working,
+        including data availability, configuration gaps, and actionable recommendations.
+
+        This is the single source of truth for understanding prediction engine health
+        and debugging issues.
+
+        Example response:
+        {
+            "prediction_types": {
+                "reminder": {
+                    "status": "active",
+                    "generated_last_7d": 2116,
+                    "data_available": {
+                        "unreplied_emails_24h": 97674,
+                        ...
+                    },
+                    "blockers": [],
+                    "recommendations": []
+                },
+                ...
+            },
+            "overall": {
+                "total_predictions_7d": 2116,
+                "active_types": 1,
+                "blocked_types": 5,
+                "health": "degraded"
+            }
+        }
+        """
+        diagnostics = await life_os.prediction_engine.get_diagnostics()
+        return diagnostics
+
+    # -------------------------------------------------------------------
     # Setup / Onboarding
     # -------------------------------------------------------------------
 
