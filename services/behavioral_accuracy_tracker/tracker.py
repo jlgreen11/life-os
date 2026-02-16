@@ -170,15 +170,30 @@ class BehavioralAccuracyTracker:
 
         # If no contact info in signals, try to extract from description
         if not contact_email and not contact_name:
-            # Simple heuristic: look for "reply to NAME" or "follow up with NAME"
-            # This is intentionally conservative — only matches clear patterns with
-            # capitalized names (e.g., "Grace", "Alice", "Bob Smith")
+            # Extract contact info from common description patterns.
+            # Handles both old descriptions with email addresses and future
+            # descriptions that may use names.
             import re
-            # Case-insensitive match for the trigger phrase, then extract capitalized name
-            match = re.search(r'(?:reply to|follow up with|message)\s+([A-Z][a-z]+)', prediction["description"], re.IGNORECASE)
-            if match:
-                # Extract just the first capitalized word as the name
-                contact_name = match.group(1)
+
+            # Pattern 1: "Unreplied message from EMAIL" (most common)
+            # Example: "Unreplied message from alice@example.com: \"Subject\" (3 hours ago)"
+            # Handles complex emails: john.doe+work@company-name.co.uk
+            email_match = re.search(r'from\s+([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)', prediction["description"], re.IGNORECASE)
+            if email_match:
+                contact_email = email_match.group(1)
+
+            # Pattern 2: "Reply to NAME" or "Follow up with NAME" (for future compatibility)
+            # Example: "Follow up with Alice about the project"
+            # Two-stage match: trigger phrase is case-insensitive, but name must be
+            # properly capitalized to avoid false matches (e.g., "Grace" not "about")
+            if not contact_email:
+                trigger_match = re.search(r'(reply to|follow up with|message)\s+', prediction["description"], re.IGNORECASE)
+                if trigger_match:
+                    # Extract properly capitalized name after the trigger
+                    rest = prediction["description"][trigger_match.end():]
+                    name_match = re.match(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', rest)
+                    if name_match:
+                        contact_name = name_match.group(1)
 
         if not contact_email and not contact_name:
             return None  # Can't determine without contact info
