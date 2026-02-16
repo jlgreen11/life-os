@@ -187,9 +187,9 @@ class SemanticFactInferrer:
         Derive semantic facts from relationship signal profile.
 
         Analyzes communication patterns with specific contacts to infer:
-          - High-priority relationships (fast response times, high frequency)
-          - Low-priority relationships (slow/no responses, low frequency)
-          - Professional vs. personal relationship classifications
+          - High-priority relationships (high interaction frequency)
+          - Active vs. one-sided relationships (inbound/outbound balance)
+          - Multi-channel relationships (communication across platforms)
 
         Confidence threshold: Require 10+ samples for a specific contact
         before inferring relationship priority.
@@ -202,37 +202,74 @@ class SemanticFactInferrer:
         data = profile["data"]
         contacts = data.get("contacts", {})
 
-        # --- Infer high-priority contacts ---
-        # A contact is high-priority if:
-        #   - Average response time < 1 hour (3600 seconds)
-        #   - Interaction count > 5 (enough data to be confident)
+        # --- Infer high-priority contacts based on interaction frequency ---
+        # A contact is high-priority if they have significantly more interactions
+        # than average (top 20% of contacts by interaction count)
+        if not contacts:
+            return
+
+        # Calculate average interaction count across all contacts
+        interaction_counts = [c.get("interaction_count", 0) for c in contacts.values()]
+        if not interaction_counts:
+            return
+
+        avg_interactions = sum(interaction_counts) / len(interaction_counts)
+        high_priority_threshold = avg_interactions * 2  # 2x average = high priority
+
         for contact_id, contact_data in contacts.items():
             interaction_count = contact_data.get("interaction_count", 0)
             if interaction_count < 5:
                 continue  # Not enough data
 
-            avg_response_time = contact_data.get("avg_response_time_seconds")
-            if avg_response_time is not None and avg_response_time < 3600:  # <1 hour
-                # Fast responder — high priority relationship
-                # Link to recent episodes with this contact as source evidence
-                contact_episodes = self._get_recent_episodes(contact=contact_id, limit=3)
+            # Link to recent episodes with this contact as source evidence
+            contact_episodes = self._get_recent_episodes(contact=contact_id, limit=3)
+            episode_id = contact_episodes[0] if contact_episodes else None
+
+            # --- High-priority relationship (frequent communication) ---
+            if interaction_count >= high_priority_threshold:
                 self.ums.update_semantic_fact(
                     key=f"relationship_priority_{contact_id}",
                     category="implicit_preference",
                     value="high_priority",
-                    confidence=min(0.9, 0.6 + (3600 - avg_response_time) / 7200),  # Faster = higher confidence
-                    episode_id=contact_episodes[0] if contact_episodes else None,
+                    confidence=min(0.9, 0.6 + min(0.3, (interaction_count / avg_interactions - 2) * 0.1)),
+                    episode_id=episode_id,
                 )
-            elif avg_response_time is not None and avg_response_time > 86400:  # >24 hours
-                # Slow responder — low priority relationship
-                contact_episodes = self._get_recent_episodes(contact=contact_id, limit=3)
+
+            # --- Multi-channel relationship (communication versatility) ---
+            channels_used = contact_data.get("channels_used", [])
+            if len(channels_used) >= 2:
                 self.ums.update_semantic_fact(
-                    key=f"relationship_priority_{contact_id}",
+                    key=f"relationship_multichannel_{contact_id}",
                     category="implicit_preference",
-                    value="low_priority",
-                    confidence=min(0.8, 0.5 + (avg_response_time - 86400) / 172800),  # Slower = higher confidence
-                    episode_id=contact_episodes[0] if contact_episodes else None,
+                    value="multi_channel",
+                    confidence=min(0.85, 0.5 + len(channels_used) * 0.15),
+                    episode_id=episode_id,
                 )
+
+            # --- Relationship balance (mutual vs. one-sided) ---
+            inbound_count = contact_data.get("inbound_count", 0)
+            outbound_count = contact_data.get("outbound_count", 0)
+            total_count = inbound_count + outbound_count
+
+            if total_count >= 10:  # Need enough data to assess balance
+                balance_ratio = min(inbound_count, outbound_count) / total_count
+
+                if balance_ratio > 0.3:  # Both directions active (30%+ in each direction)
+                    self.ums.update_semantic_fact(
+                        key=f"relationship_balance_{contact_id}",
+                        category="implicit_preference",
+                        value="mutual",
+                        confidence=min(0.85, 0.5 + balance_ratio),
+                        episode_id=episode_id,
+                    )
+                elif outbound_count > inbound_count * 3:  # User initiates 3x more
+                    self.ums.update_semantic_fact(
+                        key=f"relationship_balance_{contact_id}",
+                        category="implicit_preference",
+                        value="user_initiated",
+                        confidence=min(0.8, 0.5 + (outbound_count / total_count - 0.5)),
+                        episode_id=episode_id,
+                    )
 
         logger.info(f"Inferred semantic facts from relationship profile (samples={profile.get('samples_count')})")
 
@@ -254,7 +291,8 @@ class SemanticFactInferrer:
             return
 
         data = profile["data"]
-        topic_frequencies = data.get("topic_frequencies", {})
+        # The topic extractor stores data as "topic_counts", not "topic_frequencies"
+        topic_counts = data.get("topic_counts", {})
 
         # Get recent communication episodes to link as source evidence for
         # topic-based facts. This creates an audit trail from facts back to
@@ -267,7 +305,7 @@ class SemanticFactInferrer:
         # and has been mentioned at least 10 times.
         total_samples = profile.get("samples_count", 1)
 
-        for topic, count in topic_frequencies.items():
+        for topic, count in topic_counts.items():
             frequency_ratio = count / total_samples
 
             if count >= 10 and frequency_ratio > 0.1:
@@ -309,7 +347,8 @@ class SemanticFactInferrer:
             return
 
         data = profile["data"]
-        hourly_distribution = data.get("hourly_distribution", {})
+        # The cadence extractor stores data as "hourly_activity", not "hourly_distribution"
+        hourly_activity = data.get("hourly_activity", {})
 
         # Get recent communication episodes to link as source evidence for
         # cadence-based facts. This creates an audit trail from facts back to
@@ -317,15 +356,15 @@ class SemanticFactInferrer:
         recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
-        # --- Infer work-life boundaries from hourly distribution ---
+        # --- Infer work-life boundaries from hourly activity ---
         # If 90%+ of messages are sent during business hours (9-17),
         # infer a preference for work-life separation.
-        total_messages = sum(hourly_distribution.values())
+        total_messages = sum(hourly_activity.values())
         if total_messages == 0:
             return
 
         business_hours_count = sum(
-            count for hour, count in hourly_distribution.items()
+            count for hour, count in hourly_activity.items()
             if 9 <= int(hour) <= 17
         )
         business_hours_ratio = business_hours_count / total_messages
@@ -352,9 +391,9 @@ class SemanticFactInferrer:
         # --- Infer peak communication hours ---
         # Find the hour with the highest message count — this is the user's
         # most active communication time.
-        if hourly_distribution:
-            peak_hour = max(hourly_distribution, key=hourly_distribution.get)
-            peak_count = hourly_distribution[peak_hour]
+        if hourly_activity:
+            peak_hour = max(hourly_activity, key=hourly_activity.get)
+            peak_count = hourly_activity[peak_hour]
             peak_ratio = peak_count / total_messages
 
             if peak_ratio > 0.2:  # Peak hour accounts for >20% of all messages
@@ -373,9 +412,9 @@ class SemanticFactInferrer:
         Derive semantic facts from mood signal profile.
 
         Analyzes sentiment patterns to infer:
-          - Baseline emotional tone
-          - Stress triggers and patterns
-          - Emotional resilience indicators
+          - Baseline stress levels
+          - Pressure patterns from incoming communications
+          - Language negativity indicators
 
         NOTE: Mood data is highly sensitive. Inferred facts are stored
         for internal prediction calibration ONLY and must never be
@@ -393,7 +432,11 @@ class SemanticFactInferrer:
             return
 
         data = profile["data"]
-        avg_sentiment = data.get("avg_sentiment")
+        recent_signals = data.get("recent_signals", [])
+
+        if not recent_signals:
+            logger.debug("Mood profile has no recent signals, skipping inference")
+            return
 
         # Get recent communication episodes to link as source evidence for
         # mood-based facts. This creates an audit trail from facts back to
@@ -401,27 +444,46 @@ class SemanticFactInferrer:
         recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
-        # --- Infer baseline emotional tone ---
-        # Sentiment ranges from -1 (very negative) to +1 (very positive).
-        # We infer baseline disposition from long-term average.
-        if avg_sentiment is not None:
-            if avg_sentiment > 0.3:
-                # Consistently positive tone — optimistic baseline
+        # --- Analyze signal patterns ---
+        # Compute averages for different signal types to identify patterns
+        stress_signals = [s for s in recent_signals if s.get("signal_type") in ["negative_language", "incoming_negative_language"]]
+        pressure_signals = [s for s in recent_signals if s.get("signal_type") == "incoming_pressure"]
+
+        # --- Infer baseline stress from negative language frequency ---
+        if len(recent_signals) > 0:
+            stress_ratio = len(stress_signals) / len(recent_signals)
+
+            if stress_ratio > 0.3:  # >30% of signals show negative language
+                # High stress baseline — frequent negative language patterns
                 self.ums.update_semantic_fact(
-                    key="emotional_baseline",
+                    key="stress_baseline",
                     category="implicit_preference",
-                    value="optimistic",
-                    confidence=min(0.8, 0.5 + (avg_sentiment - 0.3) * 2),
+                    value="high_stress",
+                    confidence=min(0.75, 0.5 + stress_ratio),
                     episode_id=episode_id,
                 )
-            elif avg_sentiment < -0.2:
-                # Consistently negative tone — may indicate chronic stress
-                # Store this for internal stress detection, NOT for sharing
+            elif stress_ratio < 0.1:  # <10% of signals show negative language
+                # Low stress baseline — positive communication patterns
                 self.ums.update_semantic_fact(
-                    key="emotional_baseline",
+                    key="stress_baseline",
                     category="implicit_preference",
-                    value="stressed",
-                    confidence=min(0.75, 0.5 + abs(avg_sentiment + 0.2) * 2),
+                    value="low_stress",
+                    confidence=min(0.8, 0.5 + (0.1 - stress_ratio) * 3),
+                    episode_id=episode_id,
+                )
+
+        # --- Infer incoming pressure sensitivity ---
+        # Users who consistently receive high-pressure communications may need
+        # notification filtering or quiet hours protection
+        if len(recent_signals) > 0:
+            pressure_ratio = len(pressure_signals) / len(recent_signals)
+
+            if pressure_ratio > 0.2:  # >20% of signals are incoming pressure
+                self.ums.update_semantic_fact(
+                    key="incoming_pressure_exposure",
+                    category="implicit_preference",
+                    value="high_pressure_environment",
+                    confidence=min(0.8, 0.5 + pressure_ratio * 2),
                     episode_id=episode_id,
                 )
 
