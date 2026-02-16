@@ -284,7 +284,7 @@ class UserModelStore:
                     prediction["confidence_gate"],
                     prediction.get("time_horizon"),
                     prediction.get("suggested_action"),
-                    json.dumps(prediction.get("supporting_signals", [])),
+                    json.dumps(prediction.get("supporting_signals", {})),
                     prediction.get("was_surfaced", False),
                 ),
             )
