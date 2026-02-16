@@ -58,7 +58,13 @@ class WorkflowDetector:
         self.min_occurrences = 3  # Need at least 3 instances to identify a workflow
         self.max_step_gap_hours = 4  # Steps within 4h can be part of same workflow
         self.min_steps = 2  # Workflows must have at least 2 distinct steps
-        self.success_threshold = 0.4  # 40% success rate minimum to store workflow
+        # Lower success threshold to 1% to handle realistic email response rates.
+        # Most emails (marketing, newsletters, notifications) don't require responses.
+        # With 77K emails received and 229 sent, the response rate is ~0.3%, so a 40%
+        # threshold would block all workflow detection. A 1% threshold allows detection
+        # of workflows that actually happen (e.g., "respond to boss emails") without
+        # requiring unrealistic response rates.
+        self.success_threshold = 0.01  # 1% success rate minimum to store workflow
 
     def detect_workflows(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all workflows from recent event history.
@@ -127,7 +133,7 @@ class WorkflowDetector:
                     COUNT(*) as receive_count
                 FROM events
                 WHERE type = 'email.received'
-                  AND timestamp > ?
+                  AND julianday(timestamp) > julianday(?)
                   AND json_extract(payload, '$.from_address') IS NOT NULL
                 GROUP BY sender_category
                 HAVING receive_count >= ?
@@ -141,25 +147,33 @@ class WorkflowDetector:
             if not sender_category:
                 continue
 
-            # For each sender category, find the sequence of actions that follow
+            # For each sender category, find the sequence of actions that follow.
+            # FIXED: Query now counts TOTAL occurrences of following actions across
+            # all emails from this sender, not per-email (which would require 3+
+            # responses to the same email, which is unrealistic).
+            #
+            # IMPORTANT: Use julianday() for ALL timestamp comparisons to avoid
+            # timezone string comparison bugs. SQLite datetime() strips timezone
+            # suffixes, causing '2026-02-01T08:00:00+00:00' > '2026-02-01 12:00:00'
+            # in string comparison even though it's earlier in time.
             with self.db.get_connection("events") as conn:
                 cursor = conn.cursor()
                 # Find events that occur within max_step_gap_hours after email receipt
                 cursor.execute("""
                     SELECT
                         e2.type,
-                        COUNT(*) as occurrence_count,
+                        COUNT(DISTINCT e2.id) as occurrence_count,
                         AVG(julianday(e2.timestamp) - julianday(e1.timestamp)) * 24 as avg_hours_after
                     FROM events e1
                     JOIN events e2 ON
-                        e2.timestamp > e1.timestamp
-                        AND e2.timestamp < datetime(e1.timestamp, '+' || ? || ' hours')
+                        julianday(e2.timestamp) > julianday(e1.timestamp)
+                        AND julianday(e2.timestamp) < julianday(e1.timestamp) + (CAST(? AS REAL) / 24.0)
                         AND e2.type != e1.type
                     WHERE e1.type = 'email.received'
-                      AND e1.timestamp > ?
+                      AND julianday(e1.timestamp) > julianday(?)
                       AND json_extract(e1.payload, '$.from_address') = ?
                       AND e2.type IN ('email.sent', 'task.created', 'calendar.event.created',
-                                      'browser.session.started', 'message.sent')
+                                      'message.sent')
                     GROUP BY e2.type
                     HAVING occurrence_count >= ?
                     ORDER BY avg_hours_after ASC
@@ -167,7 +181,11 @@ class WorkflowDetector:
 
                 following_actions = cursor.fetchall()
 
-            if len(following_actions) >= self.min_steps:
+            # A workflow needs at least min_steps total steps. Since we're adding
+            # the trigger event (read_email) as the first step, we only need
+            # (min_steps - 1) following actions. For min_steps=2, this means
+            # a simple "receive → respond" workflow (1 following action) is valid.
+            if len(following_actions) >= (self.min_steps - 1):
                 # Build workflow from detected pattern
                 steps = ["read_email_from_" + sender_category.replace(" ", "_").lower()]
                 tools = ["email"]
@@ -231,7 +249,7 @@ class WorkflowDetector:
                     COUNT(*) as total_tasks
                 FROM events
                 WHERE type = 'task.created'
-                  AND timestamp > ?
+                  AND julianday(timestamp) > julianday(?)
             """, (cutoff.isoformat(),))
 
             result = cursor.fetchone()
@@ -250,16 +268,16 @@ class WorkflowDetector:
                     AVG(julianday(e3.timestamp) - julianday(e1.timestamp)) * 24 as avg_hours_to_complete
                 FROM events e1
                 JOIN events e2 ON
-                    e2.timestamp > e1.timestamp
-                    AND e2.timestamp < datetime(e1.timestamp, '+' || ? || ' hours')
+                    julianday(e2.timestamp) > julianday(e1.timestamp)
+                    AND julianday(e2.timestamp) < julianday(e1.timestamp) + (CAST(? AS REAL) / 24.0)
                 LEFT JOIN events e3 ON
                     e3.type = 'task.completed'
-                    AND e3.timestamp > e1.timestamp
+                    AND julianday(e3.timestamp) > julianday(e1.timestamp)
                     AND json_extract(e3.payload, '$.task_id') = json_extract(e1.payload, '$.task_id')
                 WHERE e1.type = 'task.created'
-                  AND e1.timestamp > ?
+                  AND julianday(e1.timestamp) > julianday(?)
                   AND e2.type != 'task.created'
-                  AND e2.type IN ('email.sent', 'email.received', 'browser.session.started',
+                  AND e2.type IN ('email.sent', 'email.received',
                                   'calendar.event.created', 'message.sent', 'task.completed')
                 GROUP BY e2.type
                 HAVING occurrence_count >= ?
@@ -325,7 +343,7 @@ class WorkflowDetector:
                 SELECT COUNT(*) as event_count
                 FROM events
                 WHERE type = 'calendar.event.created'
-                  AND timestamp > ?
+                  AND julianday(timestamp) > julianday(?)
             """, (cutoff.isoformat(),))
 
             result = cursor.fetchone()
@@ -345,11 +363,11 @@ class WorkflowDetector:
                     'before' as timing
                 FROM events e1
                 JOIN events e2 ON
-                    e2.timestamp < e1.timestamp
-                    AND e2.timestamp > datetime(e1.timestamp, '-' || ? || ' hours')
+                    julianday(e2.timestamp) < julianday(e1.timestamp)
+                    AND julianday(e2.timestamp) > julianday(e1.timestamp) - (CAST(? AS REAL) / 24.0)
                 WHERE e1.type = 'calendar.event.created'
-                  AND e1.timestamp > ?
-                  AND e2.type IN ('email.received', 'browser.session.started', 'task.created')
+                  AND julianday(e1.timestamp) > julianday(?)
+                  AND e2.type IN ('email.received', 'task.created')
                 GROUP BY e2.type
                 HAVING occurrence_count >= ?
                 UNION ALL
@@ -359,10 +377,10 @@ class WorkflowDetector:
                     'after' as timing
                 FROM events e1
                 JOIN events e3 ON
-                    e3.timestamp > e1.timestamp
-                    AND e3.timestamp < datetime(e1.timestamp, '+' || ? || ' hours')
+                    julianday(e3.timestamp) > julianday(e1.timestamp)
+                    AND julianday(e3.timestamp) < julianday(e1.timestamp) + (CAST(? AS REAL) / 24.0)
                 WHERE e1.type = 'calendar.event.created'
-                  AND e1.timestamp > ?
+                  AND julianday(e1.timestamp) > julianday(?)
                   AND e3.type IN ('email.sent', 'task.created', 'message.sent')
                 GROUP BY e3.type
                 HAVING occurrence_count >= ?
@@ -437,10 +455,10 @@ class WorkflowDetector:
                     COUNT(*) as sequence_count
                 FROM episodes e1
                 JOIN episodes e2 ON
-                    e2.timestamp > e1.timestamp
-                    AND e2.timestamp < datetime(e1.timestamp, '+' || ? || ' hours')
+                    julianday(e2.timestamp) > julianday(e1.timestamp)
+                    AND julianday(e2.timestamp) < julianday(e1.timestamp) + (CAST(? AS REAL) / 24.0)
                     AND e1.interaction_type != e2.interaction_type
-                WHERE e1.timestamp > ?
+                WHERE julianday(e1.timestamp) > julianday(?)
                   AND e1.interaction_type IS NOT NULL
                   AND e2.interaction_type IS NOT NULL
                 GROUP BY e1.interaction_type, e2.interaction_type
