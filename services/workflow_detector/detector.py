@@ -89,13 +89,40 @@ class WorkflowDetector:
         """
         workflows = []
 
-        # Detect different workflow types in parallel categories
-        workflows.extend(self._detect_email_workflows(lookback_days))
-        workflows.extend(self._detect_task_workflows(lookback_days))
-        workflows.extend(self._detect_calendar_workflows(lookback_days))
-        workflows.extend(self._detect_interaction_workflows(lookback_days))
-
-        logger.info(f"Detected {len(workflows)} workflows from {lookback_days} days of history")
+        # WORKFLOW DETECTION TEMPORARILY DISABLED
+        #
+        # All workflow detection methods (_detect_email_workflows,
+        # _detect_task_workflows, _detect_calendar_workflows,
+        # _detect_interaction_workflows) use range JOIN queries that create
+        # O(n×m) complexity on 800K+ events. Even with denormalized columns
+        # and indexes, the timestamp range joins cause 30s+ timeouts.
+        #
+        # Root cause: SQLite doesn't optimize range joins well. The query pattern:
+        #   SELECT ... FROM events e1 JOIN events e2 ON
+        #     e2.timestamp > e1.timestamp AND
+        #     e2.timestamp <= e1.timestamp + interval
+        # forces a nested loop join with timestamp comparisons for every
+        # combination of e1 × e2 rows within the WHERE filters.
+        #
+        # Attempted fixes (iterations 96-111):
+        # - Added denormalized columns (email_from, email_to, task_id) ✗
+        # - Added indexes on denormalized columns ✗
+        # - Limited queries to recent 10K events ✗
+        # - Removed unnecessary ORDER BY clauses ✗
+        # - Backfilled 100% of denormalized data ✗
+        #
+        # None of these fixes addressed the fundamental algorithmic problem.
+        #
+        # Required redesign:
+        # - Pre-aggregate workflow candidates into a materialized view or table
+        # - Use sequential scan with sliding window instead of JOIN
+        # - OR: Implement workflow detection as a background batch job that
+        #   runs incrementally and caches results
+        #
+        # Until the redesign is complete, workflow detection returns empty list
+        # to prevent continuous improvement loop hangs.
+        #
+        logger.info("Workflow detection disabled pending algorithmic redesign")
         return workflows
 
     def _detect_email_workflows(self, lookback_days: int) -> list[dict[str, Any]]:
@@ -180,7 +207,6 @@ class WorkflowDetector:
                         FROM events
                         WHERE type IN ('email.sent', 'task.created', 'calendar.event.created', 'message.sent')
                           AND julianday(timestamp) > julianday(?)
-                        ORDER BY timestamp DESC
                     ) resp ON
                         julianday(resp.timestamp) > julianday(recv.timestamp)
                         AND julianday(resp.timestamp) <= julianday(recv.timestamp) + (CAST(? AS REAL) / 24.0)
