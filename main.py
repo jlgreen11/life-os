@@ -173,6 +173,13 @@ class LifeOS:
         # 1.5 — Seed default source weights (no-op if already populated)
         self.source_weight_manager.seed_defaults()
 
+        # 1.6 — Backfill episode classification if needed
+        # This ensures routine and workflow detection have the granular
+        # interaction types they need. Without this, all old episodes would
+        # remain classified as generic "communication" and the detectors
+        # would have no signal to work with.
+        await self._backfill_episode_classification_if_needed()
+
         # 2. Initialize vector store
         print("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -222,6 +229,78 @@ class LifeOS:
         print()
         print("  Life OS is running. Press Ctrl+C to stop.")
         print("=" * 60)
+
+    async def _backfill_episode_classification_if_needed(self):
+        """Reclassify old episodes with granular interaction types if needed.
+
+        Checks for episodes with the old generic "communication" interaction_type
+        and reclassifies them using the granular classification logic. This is
+        critical for enabling routine and workflow detection, which rely on seeing
+        diverse interaction types (email_received, email_sent, meeting_scheduled, etc.)
+        rather than everything collapsing into one generic type.
+
+        This migration runs automatically on startup, making the system self-healing
+        after deployments that add new classification logic.
+        """
+        try:
+            # Count episodes with the old generic classification
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.execute("""
+                    SELECT COUNT(*) FROM episodes
+                    WHERE interaction_type = 'communication'
+                """)
+                stale_count = cursor.fetchone()[0]
+
+            # If there are no stale episodes, skip the backfill
+            if stale_count == 0:
+                return
+
+            print(f"       → Backfilling {stale_count} episode classifications...")
+
+            # Run the backfill: fetch each stale episode, get its original event,
+            # reclassify it, and update the database
+            with self.db.get_connection("user_model") as user_model_conn, \
+                 self.db.get_connection("events") as events_conn:
+
+                # Fetch all stale episodes
+                cursor = user_model_conn.execute("""
+                    SELECT id, event_id FROM episodes
+                    WHERE interaction_type = 'communication'
+                """)
+                stale_episodes = cursor.fetchall()
+
+                reclassified = 0
+                for episode_id, event_id in stale_episodes:
+                    # Fetch the original event to get its type and payload
+                    event_cursor = events_conn.execute("""
+                        SELECT type, payload FROM events
+                        WHERE id = ?
+                    """, (event_id,))
+                    event_row = event_cursor.fetchone()
+
+                    if not event_row:
+                        continue  # Event was deleted; skip this episode
+
+                    event_type = event_row[0]
+                    payload = json.loads(event_row[1])
+
+                    # Reclassify using the current granular logic
+                    new_interaction_type = self._classify_interaction_type(event_type, payload)
+
+                    # Update the episode
+                    user_model_conn.execute("""
+                        UPDATE episodes
+                        SET interaction_type = ?
+                        WHERE id = ?
+                    """, (new_interaction_type, episode_id))
+
+                    reclassified += 1
+
+            print(f"       → Reclassified {reclassified} episodes")
+
+        except Exception as e:
+            # Backfill errors should not crash startup
+            print(f"       ⚠ Episode classification backfill failed: {e}")
 
     async def _register_event_handlers(self):
         """Wire up the core event processing pipeline."""
