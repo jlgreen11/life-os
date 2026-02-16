@@ -693,7 +693,7 @@ class PredictionEngine:
         with self.db.get_connection("user_model") as conn:
             existing_predictions = conn.execute(
                 """SELECT supporting_signals FROM predictions
-                   WHERE prediction_type = 'opportunity'
+                   WHERE prediction_type = 'routine_deviation'
                    AND created_at > ?""",
                 (today_start.isoformat(),),
             ).fetchall()
