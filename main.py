@@ -68,6 +68,7 @@ class LifeOS:
 
         # Used to signal all background tasks (prediction loop, etc.) to stop
         self.shutdown_event = asyncio.Event()
+        self.background_tasks: dict[str, asyncio.Task] = {}  # Track background loops for exception monitoring
 
         # --- Core infrastructure ---
         # Initialization order matters: DB must be created first because almost
@@ -170,6 +171,51 @@ class LifeOS:
             "connectors": {},
         }
 
+    def _start_background_task(self, name: str, coro):
+        """
+        Start and monitor a background task with exception tracking.
+
+        Background tasks (prediction loop, insight loop, etc.) run indefinitely
+        in the background via asyncio.create_task(). If these tasks crash due to
+        an unhandled exception, asyncio silently swallows the error and the task
+        dies — leaving the system in a degraded state with no indication of failure.
+
+        This helper:
+        1. Creates the task and stores it by name for tracking
+        2. Adds a done callback that logs exceptions if the task crashes
+        3. Enables monitoring via /health endpoint or runtime inspection
+
+        Without this, background loop failures are invisible. The system continues
+        running but critical functionality (predictions, insights, routine detection)
+        silently stops working.
+
+        Args:
+            name: Human-readable task name for logging and monitoring
+            coro: The async coroutine to run as a background task
+
+        Example:
+            self._start_background_task("prediction_loop", self._prediction_loop())
+        """
+        task = asyncio.create_task(coro)
+        self.background_tasks[name] = task
+
+        def handle_task_exception(task: asyncio.Task):
+            """Log exception if background task crashes."""
+            try:
+                # Accessing result() will re-raise any exception that occurred
+                task.result()
+            except asyncio.CancelledError:
+                # Normal shutdown, not an error
+                pass
+            except Exception as e:
+                # Background task crashed — log the full traceback so we can diagnose
+                import traceback
+                print(f"CRITICAL: Background task '{name}' crashed with exception:")
+                print(traceback.format_exc())
+                print(f"The system is now running in degraded mode without {name}.")
+
+        task.add_done_callback(handle_task_exception)
+
     async def start(self):
         """Boot the entire system."""
         print("=" * 60)
@@ -248,13 +294,13 @@ class LifeOS:
 
         # 6. Start background loops (prediction, insight, semantic inference)
         print("[6/7] Starting background services...")
-        asyncio.create_task(self._prediction_loop())
-        asyncio.create_task(self._insight_loop())
-        asyncio.create_task(self._semantic_inference_loop())
-        asyncio.create_task(self._routine_detection_loop())
-        asyncio.create_task(self._behavioral_accuracy_loop())
-        asyncio.create_task(self._task_completion_loop())
-        asyncio.create_task(self._digest_delivery_loop())
+        self._start_background_task("prediction_loop", self._prediction_loop())
+        self._start_background_task("insight_loop", self._insight_loop())
+        self._start_background_task("semantic_inference_loop", self._semantic_inference_loop())
+        self._start_background_task("routine_detection_loop", self._routine_detection_loop())
+        self._start_background_task("behavioral_accuracy_loop", self._behavioral_accuracy_loop())
+        self._start_background_task("task_completion_loop", self._task_completion_loop())
+        self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
