@@ -15,6 +15,7 @@ import httpx
 
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
+from storage.vector_store import VectorStore
 from services.ai_engine.context import ContextAssembler
 from services.ai_engine.pii import PIIShield
 
@@ -25,12 +26,24 @@ class AIEngine:
     manages context, and handles PII protection.
     """
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore, config: dict[str, Any]):
+    def __init__(self, db: DatabaseManager, ums: UserModelStore, config: dict[str, Any],
+                 vector_store: VectorStore = None):
+        """
+        Initialize the AI Engine.
+
+        Args:
+            db: Database manager for event and state storage
+            ums: User model store for preferences and behavioral profiles
+            config: Configuration dict for model selection and API keys
+            vector_store: Optional vector store for semantic search. If not provided,
+                         search_life() will fall back to SQL LIKE pattern matching.
+        """
         # Core dependencies: database for event/state storage, user model store for
         # preferences and behavioral profiles, config for model selection.
         self.db = db
         self.ums = ums
         self.config = config
+        self.vector_store = vector_store
         # ContextAssembler pulls relevant data from DB and user model to build the
         # prompt context window; PIIShield strips sensitive data before cloud calls.
         self.context = ContextAssembler(db, ums)
@@ -165,29 +178,82 @@ Respond with exactly one word: critical, high, normal, or low."""
         return "normal"
 
     async def search_life(self, query: str) -> str:
-        """Search across the user's entire digital life."""
+        """
+        Search across the user's entire digital life using semantic vector search.
+
+        This method performs intelligent semantic search rather than simple keyword
+        matching. It can understand queries like "What did Mike say about the Denver
+        project last month?" or "Find that recipe my mom sent me" by matching the
+        semantic meaning of the query against embedded event content.
+
+        Args:
+            query: Natural language search query
+
+        Returns:
+            Natural language answer synthesized from search results
+        """
         # Start with a base context describing the user's intent.
         context = self.context.assemble_search_context(query)
 
-        # --- Database search layer ---
-        # Perform a SQL LIKE search across all stored event payloads. This is a
-        # simple text-match approach (not vector/semantic search). Results are
-        # ordered by recency and capped at 20 to fit within the context window.
-        # TODO [FLAGGED]: Integrate vector similarity search for semantic matching.
-        with self.db.get_connection("events") as conn:
-            rows = conn.execute(
-                """SELECT type, source, timestamp, payload FROM events
-                   WHERE payload LIKE ?
-                   ORDER BY timestamp DESC LIMIT 20""",
-                (f"%{query}%",),
-            ).fetchall()
+        results = []
 
-        # --- Result formatting layer ---
-        # Convert raw DB rows into structured search result objects. Each result
-        # includes the event type, originating source, timestamp, and a truncated
-        # snippet (100 chars) for the LLM to reason over.
-        if rows:
-            results = []
+        # --- Semantic search layer (primary) ---
+        # Use vector similarity search if available. This finds semantically related
+        # content even when exact keywords don't match. For example, "project update"
+        # will match "status report" or "progress check-in".
+        if self.vector_store:
+            try:
+                # Query the vector store for the top 20 most semantically similar
+                # documents. The vector store uses cosine similarity on 384-dim
+                # embeddings from all-MiniLM-L6-v2 to find relevant content.
+                vector_results = self.vector_store.search(query, limit=20)
+
+                # Convert vector store results into the common format expected by
+                # the LLM synthesis layer. Vector results include event_id which we
+                # use to fetch full event details from the database.
+                for vr in vector_results:
+                    # Each vector result contains: event_id, text, similarity_score
+                    # We fetch the full event from the DB to get type, source, timestamp
+                    with self.db.get_connection("events") as conn:
+                        row = conn.execute(
+                            """SELECT type, source, timestamp, payload FROM events
+                               WHERE id = ?""",
+                            (vr["event_id"],),
+                        ).fetchone()
+
+                    if row:
+                        payload = json.loads(row["payload"])
+                        results.append({
+                            "type": row["type"],
+                            "source": row["source"],
+                            "date": row["timestamp"],
+                            # Include the snippet from the vector store (already
+                            # extracted at indexing time) for consistency
+                            "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
+                            # Include similarity score for debugging/transparency
+                            "relevance": round(vr.get("similarity", 0.0), 3),
+                        })
+            except Exception as e:
+                # Graceful degradation: if vector search fails for any reason
+                # (database error, model loading issue, etc.), fall back to SQL.
+                # This ensures search always returns something even if semantic
+                # search is unavailable.
+                print(f"Vector search failed, falling back to SQL LIKE: {e}")
+                self.vector_store = None  # Disable for this session
+
+        # --- SQL fallback layer ---
+        # If vector store is unavailable or disabled, fall back to simple SQL LIKE
+        # pattern matching. This is less intelligent but provides a reliable baseline.
+        if not self.vector_store or not results:
+            with self.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """SELECT type, source, timestamp, payload FROM events
+                       WHERE payload LIKE ?
+                       ORDER BY timestamp DESC LIMIT 20""",
+                    (f"%{query}%",),
+                ).fetchall()
+
+            # Convert SQL rows into the common result format
             for row in rows:
                 payload = json.loads(row["payload"])
                 results.append({
@@ -197,7 +263,12 @@ Respond with exactly one word: critical, high, normal, or low."""
                     # Prefer "snippet" field; fall back to "subject" if absent.
                     "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
                 })
-            # Append formatted results to the context for the LLM to synthesize.
+
+        # --- Result formatting layer ---
+        # Append formatted results to the context for the LLM to synthesize.
+        # The LLM receives a JSON array of search hits with type, source, date,
+        # snippet, and (optionally) relevance score.
+        if results:
             context += f"\n\nSearch results:\n{json.dumps(results, indent=2)}"
 
         # --- LLM synthesis layer ---
