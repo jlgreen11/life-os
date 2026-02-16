@@ -81,7 +81,11 @@ class LifeOS:
         self.db = db if db is not None else DatabaseManager(data_dir)
         self.event_store = event_store if event_store is not None else EventStore(self.db)
         self.event_bus = event_bus if event_bus is not None else EventBus(self.config.get("nats_url", "nats://localhost:4222"))
-        self.user_model_store = user_model_store if user_model_store is not None else UserModelStore(self.db, event_bus=self.event_bus)
+        self.user_model_store = user_model_store if user_model_store is not None else UserModelStore(
+            self.db,
+            event_bus=self.event_bus,
+            event_store=self.event_store
+        )
         self.vector_store = VectorStore(
             db_path=str(Path(data_dir) / "vectors"),
             model_name=self.config.get("embedding_model", "all-MiniLM-L6-v2"),
