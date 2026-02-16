@@ -67,16 +67,34 @@ class BehavioralAccuracyTracker:
     async def run_inference_cycle(self) -> dict[str, int]:
         """Run one inference cycle over unresolved predictions.
 
-        Returns:
-            Dict with counts: {'marked_accurate': N, 'marked_inaccurate': M}
-        """
-        stats = {'marked_accurate': 0, 'marked_inaccurate': 0}
+        Processes both surfaced and filtered predictions to enable full learning loop:
+        - Surfaced predictions: Check if user took predicted action (true positive)
+        - Filtered predictions: Check if user STILL took action despite filter (false negative)
 
-        # Get all surfaced predictions that haven't been resolved yet
+        This closes a critical gap: filtered predictions with was_accurate=NULL never
+        contributed to the learning loop, preventing the system from discovering that
+        its filters are rejecting valuable predictions.
+
+        Returns:
+            Dict with counts: {
+                'marked_accurate': N,
+                'marked_inaccurate': M,
+                'surfaced': surfaced_count,
+                'filtered': filtered_count
+            }
+        """
+        stats = {
+            'marked_accurate': 0,
+            'marked_inaccurate': 0,
+            'surfaced': 0,
+            'filtered': 0,
+        }
+
+        # Process surfaced predictions that haven't been resolved yet
         with self.db.get_connection("user_model") as conn:
-            predictions = conn.execute(
+            surfaced_predictions = conn.execute(
                 """SELECT id, prediction_type, description, suggested_action,
-                          supporting_signals, created_at
+                          supporting_signals, created_at, was_surfaced
                    FROM predictions
                    WHERE was_surfaced = 1
                      AND resolved_at IS NULL
@@ -86,7 +104,7 @@ class BehavioralAccuracyTracker:
                 ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
             ).fetchall()
 
-        for pred in predictions:
+        for pred in surfaced_predictions:
             # Try to infer accuracy from behavioral signals
             result = await self._infer_accuracy(dict(pred))
 
@@ -109,6 +127,57 @@ class BehavioralAccuracyTracker:
                     stats['marked_accurate'] += 1
                 else:
                     stats['marked_inaccurate'] += 1
+                stats['surfaced'] += 1
+
+        # Process filtered predictions to detect false negatives (filter mistakes)
+        # These predictions were auto-filtered but might have been valuable!
+        # If the user took the action anyway, the filter was WRONG (false negative).
+        # If the user didn't take the action, the filter was RIGHT (true negative).
+        with self.db.get_connection("user_model") as conn:
+            filtered_predictions = conn.execute(
+                """SELECT id, prediction_type, description, suggested_action,
+                          supporting_signals, created_at, was_surfaced
+                   FROM predictions
+                   WHERE was_surfaced = 0
+                     AND user_response = 'filtered'
+                     AND was_accurate IS NULL
+                     AND created_at > ?
+                     AND created_at < ?""",
+                # Look at filtered predictions from 48 hours to 7 days ago.
+                # - Must be 48+ hours old so we have time to observe behavior
+                # - Must be <7 days old to stay relevant
+                (
+                    (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
+                    (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),
+                ),
+            ).fetchall()
+
+        for pred in filtered_predictions:
+            # Try to infer accuracy from behavioral signals
+            result = await self._infer_accuracy(dict(pred))
+
+            if result is not None:
+                # We can now determine if the filter was correct!
+                # - result=True: User DID take action → filter was WRONG (false negative)
+                # - result=False: User didn't take action → filter was RIGHT (true negative)
+                was_accurate = result
+                now = datetime.now(timezone.utc).isoformat()
+
+                with self.db.get_connection("user_model") as conn:
+                    conn.execute(
+                        """UPDATE predictions SET
+                           was_accurate = ?,
+                           resolved_at = ?
+                           WHERE id = ?""",
+                        # Keep user_response='filtered' to preserve provenance
+                        (1 if was_accurate else 0, now, pred["id"]),
+                    )
+
+                if was_accurate:
+                    stats['marked_accurate'] += 1
+                else:
+                    stats['marked_inaccurate'] += 1
+                stats['filtered'] += 1
 
         return stats
 
