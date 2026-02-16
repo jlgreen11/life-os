@@ -43,6 +43,7 @@ from services.insight_engine.engine import InsightEngine
 from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 from services.routine_detector.detector import RoutineDetector
 from services.insight_engine.source_weights import SourceWeightManager
+from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
 
 
 class LifeOS:
@@ -109,6 +110,8 @@ class LifeOS:
         self.semantic_fact_inferrer = SemanticFactInferrer(self.user_model_store)
         # RoutineDetector analyzes episodic memory to find recurring behavioral patterns
         self.routine_detector = RoutineDetector(self.db, self.user_model_store)
+        # BehavioralAccuracyTracker infers prediction accuracy from user behavior
+        self.behavioral_tracker = BehavioralAccuracyTracker(self.db)
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         # TaskManager needs the ai_engine to extract action items from events
@@ -205,6 +208,7 @@ class LifeOS:
         asyncio.create_task(self._insight_loop())
         asyncio.create_task(self._semantic_inference_loop())
         asyncio.create_task(self._routine_detection_loop())
+        asyncio.create_task(self._behavioral_accuracy_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
@@ -779,6 +783,52 @@ class LifeOS:
             # interval provides good coverage (runs twice daily) without excessive
             # compute on slowly-changing behavioral data.
             await asyncio.sleep(43200)  # 12 hours
+
+    async def _behavioral_accuracy_loop(self):
+        """Run behavioral accuracy inference every 15 minutes.
+
+        The behavioral accuracy tracker infers prediction accuracy from user
+        behavior patterns, closing the feedback loop without requiring explicit
+        user interaction with notifications. This dramatically accelerates the
+        learning loop for new systems.
+
+        Examples of behavioral signals:
+          - Prediction: "Reply to Alice about dinner plans"
+            Behavior: User sends a message to Alice within 6 hours
+            → Mark prediction as ACCURATE
+
+          - Prediction: "Calendar conflict: Team sync overlaps with dentist"
+            Behavior: User reschedules one of the events within 24 hours
+            → Mark prediction as ACCURATE
+
+          - Prediction: "Follow up with Bob about the project"
+            Behavior: 48 hours pass, no message sent to Bob
+            → Mark prediction as INACCURATE
+
+        This allows the system to bootstrap its learning from observed behavior
+        instead of waiting for explicit feedback, dramatically accelerating the
+        calibration loop.
+
+        Interval: 15 minutes (900 seconds)
+          - Same cadence as prediction engine for responsive feedback
+          - Predictions can be validated within 1-2 cycles of user action
+          - Balances responsiveness against compute cost
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                # Run inference cycle over all unresolved predictions
+                stats = await self.behavioral_tracker.run_inference_cycle()
+
+                if stats['marked_accurate'] + stats['marked_inaccurate'] > 0:
+                    print(f"  BehavioralAccuracyTracker: inferred accuracy for "
+                          f"{stats['marked_accurate']} accurate, "
+                          f"{stats['marked_inaccurate']} inaccurate predictions")
+            except Exception as e:
+                print(f"Behavioral accuracy tracker error: {e}")
+
+            # 900 seconds = 15 minutes. Same interval as prediction engine to
+            # ensure predictions are validated shortly after user behavior occurs.
+            await asyncio.sleep(900)  # 15 minutes
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
