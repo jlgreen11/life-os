@@ -181,7 +181,75 @@ PROMPT_EOF
     # Ensure we're back on master for the next iteration regardless of
     # what state Claude left git in
     git checkout master >> "$ITER_LOG" 2>&1 || true
+
+    # Capture git HEAD before pull to detect if code changed
+    OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+
     git pull --ff-only >> "$ITER_LOG" 2>&1 || true
+
+    # ------------------------------------------------------------------
+    # 6.5. Restart Life OS if code was updated
+    # ------------------------------------------------------------------
+    # After pulling latest code, check if the codebase changed. If so,
+    # restart the main.py process to ensure fixes actually deploy.
+    # This is critical for the improvement loop — without restart, all
+    # merged PRs update the codebase but the running process never picks
+    # up the changes, rendering all improvements inert.
+    NEW_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+
+    if [[ "$OLD_HEAD" != "$NEW_HEAD" && "$OLD_HEAD" != "unknown" ]]; then
+        log "Code updated ($OLD_HEAD -> $NEW_HEAD). Restarting Life OS..."
+
+        # Find the running main.py process
+        LIFEOS_PID=$(pgrep -f "python.*main.py" | head -1)
+
+        if [[ -n "$LIFEOS_PID" ]]; then
+            log "Found Life OS process (PID $LIFEOS_PID). Sending SIGTERM..."
+            kill "$LIFEOS_PID" >> "$ITER_LOG" 2>&1 || true
+
+            # Wait up to 10 seconds for graceful shutdown
+            for i in {1..10}; do
+                if ! kill -0 "$LIFEOS_PID" 2>/dev/null; then
+                    log "Life OS stopped gracefully."
+                    break
+                fi
+                sleep 1
+            done
+
+            # Force kill if still running
+            if kill -0 "$LIFEOS_PID" 2>/dev/null; then
+                log "WARNING: Life OS did not stop gracefully. Sending SIGKILL..."
+                kill -9 "$LIFEOS_PID" >> "$ITER_LOG" 2>&1 || true
+                sleep 2
+            fi
+        else
+            log "WARNING: No running Life OS process found (expected main.py)."
+        fi
+
+        # Start Life OS in the background
+        log "Starting Life OS with updated code..."
+        cd "$PROJECT_DIR"
+        if [[ -f "$VENV" ]]; then
+            source "$VENV"
+            nohup python main.py >> "$LOG_DIR/lifeos.log" 2>&1 &
+            NEW_PID=$!
+            log "Life OS started (PID $NEW_PID)."
+
+            # Give it 3 seconds to initialize
+            sleep 3
+
+            # Verify it's still running
+            if kill -0 "$NEW_PID" 2>/dev/null; then
+                log "Life OS is running successfully."
+            else
+                log "ERROR: Life OS failed to start. Check $LOG_DIR/lifeos.log"
+            fi
+        else
+            log "ERROR: Cannot start Life OS — venv not found at $VENV"
+        fi
+    else
+        log "No code changes detected. Skipping restart."
+    fi
 
     # ------------------------------------------------------------------
     # 7. Housekeeping: keep only last 100 iteration logs
