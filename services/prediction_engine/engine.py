@@ -535,6 +535,13 @@ class PredictionEngine:
             # Check if from a priority contact
             from_addr = payload.get("from_address", "")
 
+            # Skip messages with missing or empty from_address — these are
+            # malformed events that shouldn't generate predictions. Without
+            # this check, empty addresses bypass the marketing filter entirely
+            # and create broken predictions with blank sender fields.
+            if not from_addr or not from_addr.strip():
+                continue
+
             # Skip marketing/automated emails — no-reply senders, bulk
             # sender patterns, and messages containing "unsubscribe" in
             # snippet, body_plain, or body.
