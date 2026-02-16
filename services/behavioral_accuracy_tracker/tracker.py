@@ -128,8 +128,12 @@ class BehavioralAccuracyTracker:
         created_at = datetime.fromisoformat(prediction["created_at"].replace('Z', '+00:00'))
 
         # Parse supporting_signals JSON to extract relevant context
+        # Handle both old list format and new dict format for backward compatibility
         try:
             signals = json.loads(prediction["supporting_signals"]) if prediction["supporting_signals"] else {}
+            # If it's a list (old format), convert to empty dict
+            if isinstance(signals, list):
+                signals = {}
         except (json.JSONDecodeError, TypeError):
             signals = {}
 
@@ -156,12 +160,16 @@ class BehavioralAccuracyTracker:
         We look for outbound messages to the mentioned contact within a reasonable
         timeframe (6-48 hours).
         """
-        # Extract contact name/email from signals or description
-        contact_id = signals.get("contact_id")
+        # Extract contact email/name from signals (new dict format)
+        contact_email = signals.get("contact_email")
         contact_name = signals.get("contact_name")
 
-        # If no contact info, try to extract from description
-        if not contact_id and not contact_name:
+        # Fallback: try old keys for backward compatibility
+        if not contact_email:
+            contact_email = signals.get("contact_id")
+
+        # If no contact info in signals, try to extract from description
+        if not contact_email and not contact_name:
             # Simple heuristic: look for "reply to NAME" or "follow up with NAME"
             # This is intentionally conservative — only matches clear patterns with
             # capitalized names (e.g., "Grace", "Alice", "Bob Smith")
@@ -172,7 +180,7 @@ class BehavioralAccuracyTracker:
                 # Extract just the first capitalized word as the name
                 contact_name = match.group(1)
 
-        if not contact_id and not contact_name:
+        if not contact_email and not contact_name:
             return None  # Can't determine without contact info
 
         # Look for outbound messages to this contact within 6-48 hours of prediction
@@ -194,11 +202,11 @@ class BehavioralAccuracyTracker:
         for event in events:
             try:
                 payload = json.loads(event["payload"])
-                # Check if recipient matches
+                # Check if recipient matches (handle both email addresses and names)
                 to = payload.get("to", "")
-                if contact_name and contact_name.lower() in to.lower():
+                if contact_email and contact_email.lower() in to.lower():
                     return True  # User DID follow up — prediction was accurate
-                if contact_id and contact_id in to:
+                if contact_name and contact_name.lower() in to.lower():
                     return True
             except (json.JSONDecodeError, TypeError):
                 continue

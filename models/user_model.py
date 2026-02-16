@@ -418,7 +418,7 @@ class Prediction(BaseModel):
     suggested_message: Optional[str] = None
 
     # Context
-    supporting_signals: list[str] = Field(default_factory=list)  # What evidence supports this
+    supporting_signals: dict[str, Any] = Field(default_factory=dict)  # Structured metadata for behavioral inference
     relevant_episodes: list[str] = Field(default_factory=list)
     relevant_contacts: list[str] = Field(default_factory=list)
 
