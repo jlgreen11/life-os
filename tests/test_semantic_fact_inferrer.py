@@ -76,10 +76,11 @@ class TestSemanticFactInferrer:
         assert emoji_fact["value"] == "expressive_with_emojis"
 
     def test_no_inference_with_insufficient_samples(self, user_model_store):
-        """Skip inference when sample count is below threshold (20)."""
+        """Skip inference when sample count is below threshold (1 for linguistic)."""
+        # Threshold was lowered from 20 to 1, so we need 0 samples to skip inference
         profile_data = {"averages": {"formality": 0.1}}
         user_model_store.update_signal_profile("linguistic", profile_data)
-        _set_samples(user_model_store, "linguistic", 10)  # Below 20-sample threshold
+        _set_samples(user_model_store, "linguistic", 0)  # Below 1-sample threshold
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_linguistic_profile()

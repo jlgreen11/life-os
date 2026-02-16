@@ -91,12 +91,14 @@ class SemanticFactInferrer:
           - Per-contact style variations (indicates relationship dynamics)
           - Emotional expressiveness patterns
 
-        Confidence threshold: Require 20+ samples before inferring facts to
-        ensure statistical significance.
+        Confidence threshold: Require 1+ sample before inferring facts.
+        This minimal threshold enables semantic fact generation even with very
+        limited outbound communication history. Initial facts will have lower
+        confidence that grows as more samples accumulate.
         """
         profile = self.ums.get_signal_profile("linguistic")
-        if not profile or profile.get("samples_count", 0) < 20:
-            logger.debug("Linguistic profile has insufficient samples (<20), skipping inference")
+        if not profile or profile.get("samples_count", 0) < 1:
+            logger.debug("Linguistic profile has insufficient samples (<1), skipping inference")
             return
 
         data = profile["data"]
@@ -380,12 +382,14 @@ class SemanticFactInferrer:
         shared externally or used in user-facing features without
         explicit consent.
 
-        Confidence threshold: Require 100+ samples to establish reliable
-        mood baselines and avoid overreacting to temporary fluctuations.
+        Confidence threshold: Require 5+ samples to enable early inference.
+        This low threshold allows the system to start building mood-based
+        semantic facts even with limited history. Initial facts will have
+        lower confidence that grows as more data accumulates.
         """
         profile = self.ums.get_signal_profile("mood_signals")
-        if not profile or profile.get("samples_count", 0) < 100:
-            logger.debug("Mood profile has insufficient samples (<100), skipping inference")
+        if not profile or profile.get("samples_count", 0) < 5:
+            logger.debug("Mood profile has insufficient samples (<5), skipping inference")
             return
 
         data = profile["data"]
