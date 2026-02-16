@@ -187,10 +187,11 @@ class LifeOS:
         print("[5/7] Starting connectors...")
         await self._start_connectors()
 
-        # 6. Start prediction engine background loop
-        print("[6/7] Starting prediction engine...")
+        # 6. Start background loops (prediction, insight, semantic inference)
+        print("[6/7] Starting background services...")
         asyncio.create_task(self._prediction_loop())
         asyncio.create_task(self._insight_loop())
+        asyncio.create_task(self._semantic_inference_loop())
 
         # 7. Launch web server
         print("[7/7] Starting web server...")
@@ -666,6 +667,41 @@ class LifeOS:
             except Exception as e:
                 print(f"Insight engine error: {e}")
             await asyncio.sleep(3600)  # 1 hour
+
+    async def _semantic_inference_loop(self):
+        """Run semantic fact inference every 6 hours.
+
+        The semantic fact inferrer analyzes accumulated signal profiles
+        (linguistic, relationship, topic, cadence, mood) and derives high-level
+        facts about the user's preferences, expertise, and values.
+
+        This bridges Layer 0/1 (raw signals and episodes) to Layer 2 (semantic
+        memory). It runs less frequently than prediction generation because
+        semantic facts are long-term patterns that don't change minute-to-minute.
+
+        Examples of derived facts:
+          - "User prefers casual communication" (from linguistic formality < 0.3)
+          - "User has expertise in Python" (from topic frequency + depth)
+          - "Contact X is high priority" (from response time consistently < 1hr)
+          - "User values work-life boundaries" (from cadence showing no work emails after 6pm)
+
+        Interval: 6 hours (21600 seconds)
+          - Balances freshness against compute cost
+          - Allows sufficient new data to accumulate between runs
+          - Semantic patterns are stable, so frequent re-inference is unnecessary
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                # Run inference across all signal profiles to extract semantic facts
+                self.semantic_fact_inferrer.run_all_inference()
+                print("  SemanticFactInferrer: completed inference cycle")
+            except Exception as e:
+                print(f"Semantic fact inferrer error: {e}")
+
+            # 21600 seconds = 6 hours. Semantic facts are long-term patterns,
+            # so this interval provides a good balance between staying current
+            # and avoiding unnecessary compute on stable patterns.
+            await asyncio.sleep(21600)  # 6 hours
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
