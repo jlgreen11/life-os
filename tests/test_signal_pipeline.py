@@ -21,8 +21,8 @@ def test_pipeline_initialization(db, user_model_store):
     """Test that the pipeline initializes with all extractors registered."""
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
-    # Verify all 6 extractors are registered (added TemporalExtractor in iteration 134)
-    assert len(pipeline.extractors) == 6
+    # Verify all 7 extractors are registered (added SpatialExtractor in iteration 136)
+    assert len(pipeline.extractors) == 7
 
     # Verify extractor types in correct order
     extractor_names = [type(e).__name__ for e in pipeline.extractors]
