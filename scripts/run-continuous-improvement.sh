@@ -37,6 +37,10 @@ COOLDOWN="${IMPROVEMENT_COOLDOWN:-10}"
 # Max consecutive failures before backing off (sleep 5 min).
 MAX_CONSECUTIVE_FAILURES=3
 
+# Timeout per Claude invocation (seconds). Kills a hung process that's
+# waiting for input or stuck in a loop. Default: 30 minutes.
+CLAUDE_TIMEOUT="${IMPROVEMENT_TIMEOUT:-1800}"
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -58,6 +62,17 @@ fi
 if [[ ! -x "$CLAUDE_BIN" ]]; then
     echo "FATAL: claude not found at $CLAUDE_BIN" >&2
     exit 1
+fi
+
+# Resolve timeout command: GNU coreutils `timeout` on Linux,
+# `gtimeout` on macOS via Homebrew (brew install coreutils).
+# Falls back to no timeout if neither is available.
+if command -v timeout &>/dev/null; then
+    TIMEOUT_CMD="timeout"
+elif command -v gtimeout &>/dev/null; then
+    TIMEOUT_CMD="gtimeout"
+else
+    TIMEOUT_CMD=""
 fi
 
 # ---------------------------------------------------------------------------
@@ -99,6 +114,14 @@ while true; do
     # Clean up any leftover improvement branches from prior failed runs
     git branch --list 'improve/*' | while read -r branch; do
         git branch -D "$branch" >> "$ITER_LOG" 2>&1 || true
+    done
+
+    # Clean up merged remote improvement branches (these accumulate over time).
+    # Only delete branches whose PRs have already been merged into master.
+    git fetch origin --prune >> "$ITER_LOG" 2>&1 || true
+    git branch -r --list 'origin/improve/*' --merged origin/master 2>/dev/null | while read -r rbranch; do
+        local_name="${rbranch#origin/}"
+        git push origin --delete "$local_name" >> "$ITER_LOG" 2>&1 || true
     done
 
     # ------------------------------------------------------------------
@@ -148,18 +171,39 @@ PROMPT_EOF
     # ------------------------------------------------------------------
     # 5. Run Claude Code
     # ------------------------------------------------------------------
-    log "Invoking Claude ($MODEL, budget \$$MAX_BUDGET)..."
+    log "Invoking Claude ($MODEL, budget \$$MAX_BUDGET, timeout ${CLAUDE_TIMEOUT}s)..."
     # Note: set -e is NOT active (script uses set -uo pipefail only).
     # Do NOT add set -e here — it would persist into subsequent iterations
     # and cause the script to crash on any unprotected command failure.
-    CLAUDECODE= "$CLAUDE_BIN" --print \
-        --dangerously-skip-permissions \
-        --append-system-prompt "$(cat scripts/improvement-agent.md)" \
-        --model "$MODEL" \
-        --max-budget-usd "$MAX_BUDGET" \
-        "$PROMPT" \
-        >> "$ITER_LOG" 2>&1
-    EXIT_CODE=$?
+    #
+    # timeout(1)/gtimeout(1) kills the process if it exceeds CLAUDE_TIMEOUT
+    # seconds. This prevents a hung Claude process (e.g. waiting for stdin
+    # after a CLI update changes flag names) from blocking the loop forever.
+    # Exit code 124 = timed out.
+    if [[ -n "$TIMEOUT_CMD" ]]; then
+        "$TIMEOUT_CMD" "$CLAUDE_TIMEOUT" \
+            env CLAUDECODE= "$CLAUDE_BIN" --print \
+            --dangerously-skip-permissions \
+            --append-system-prompt "$(cat scripts/improvement-agent.md)" \
+            --model "$MODEL" \
+            --max-budget-usd "$MAX_BUDGET" \
+            "$PROMPT" \
+            >> "$ITER_LOG" 2>&1
+        EXIT_CODE=$?
+    else
+        CLAUDECODE= "$CLAUDE_BIN" --print \
+            --dangerously-skip-permissions \
+            --append-system-prompt "$(cat scripts/improvement-agent.md)" \
+            --model "$MODEL" \
+            --max-budget-usd "$MAX_BUDGET" \
+            "$PROMPT" \
+            >> "$ITER_LOG" 2>&1
+        EXIT_CODE=$?
+    fi
+
+    if [[ $EXIT_CODE -eq 124 ]]; then
+        log "WARNING: Claude timed out after ${CLAUDE_TIMEOUT}s"
+    fi
 
     # ------------------------------------------------------------------
     # 6. Evaluate result
@@ -170,6 +214,13 @@ PROMPT_EOF
     else
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
         log "WARNING: Iteration $ITERATION failed (exit code $EXIT_CODE, streak: $CONSECUTIVE_FAILURES)"
+
+        # Log the last 20 lines of the iteration log so the launchd
+        # stdout/stderr captures contain actionable failure context
+        # without needing to SSH in and read individual iter logs.
+        log "--- Last 20 lines of $ITER_LOG ---"
+        tail -20 "$ITER_LOG" 2>/dev/null || true
+        log "--- end ---"
 
         # Back off after repeated failures to avoid burning credits
         if [[ $CONSECUTIVE_FAILURES -ge $MAX_CONSECUTIVE_FAILURES ]]; then
