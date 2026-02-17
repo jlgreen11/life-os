@@ -149,7 +149,9 @@ PROMPT_EOF
     # 5. Run Claude Code
     # ------------------------------------------------------------------
     log "Invoking Claude ($MODEL, budget \$$MAX_BUDGET)..."
-    set +e
+    # Note: set -e is NOT active (script uses set -uo pipefail only).
+    # Do NOT add set -e here — it would persist into subsequent iterations
+    # and cause the script to crash on any unprotected command failure.
     CLAUDECODE= "$CLAUDE_BIN" --print \
         --dangerously-skip-permissions \
         --append-system-prompt "$(cat scripts/improvement-agent.md)" \
@@ -158,7 +160,6 @@ PROMPT_EOF
         "$PROMPT" \
         >> "$ITER_LOG" 2>&1
     EXIT_CODE=$?
-    set -e
 
     # ------------------------------------------------------------------
     # 6. Evaluate result
