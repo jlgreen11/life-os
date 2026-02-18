@@ -113,6 +113,62 @@ class RoutineDetector:
             ).fetchone()
         return max(1, row[0] if row and row[0] else 1)
 
+    def _compute_step_duration_map(self, cutoff: datetime) -> dict[str, float]:
+        """Compute average gap (in minutes) from each interaction type to the next.
+
+        For each interaction type observed since *cutoff*, measures the average
+        time to the immediately-following episode on the same calendar day.  This
+        replaces the old hardcoded 5-minute placeholder with real observed
+        inter-step durations, giving every detection strategy (temporal,
+        location-based, event-triggered) accurate timing data.
+
+        Implementation details:
+        - Uses a window-function CTE to rank episodes within each day, then
+          self-joins each episode to the one immediately after it (rn + 1).
+        - JULIANDAY arithmetic converts the gap to fractional days, which we
+          multiply by 24 * 60 to get minutes.
+        - Both sides of the gap join use datetime() so that SQLite compares
+          normalised ``YYYY-MM-DD HH:MM:SS`` strings (stored timestamps may
+          carry a ``+00:00`` suffix that breaks plain string comparison).
+
+        Args:
+            cutoff: Only consider episodes after this timestamp.
+
+        Returns:
+            Dict mapping interaction_type → average gap in minutes to the
+            next episode.  Types with no measurable successor are absent;
+            callers should use a sensible fallback (e.g. 5.0 minutes).
+
+        Example::
+
+            map = detector._compute_step_duration_map(cutoff)
+            duration = map.get("check_email", 5.0)  # → ~15.0 if observed
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute("""
+                WITH ranked AS (
+                    SELECT
+                        interaction_type,
+                        DATE(timestamp) as day,
+                        datetime(timestamp) as ts,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY DATE(timestamp)
+                            ORDER BY datetime(timestamp)
+                        ) as rn
+                    FROM episodes
+                    WHERE timestamp > ? AND interaction_type IS NOT NULL
+                )
+                SELECT
+                    a.interaction_type,
+                    AVG(
+                        (JULIANDAY(b.ts) - JULIANDAY(a.ts)) * 24 * 60
+                    ) as avg_gap_minutes
+                FROM ranked a
+                JOIN ranked b ON a.day = b.day AND b.rn = a.rn + 1
+                GROUP BY a.interaction_type
+            """, (cutoff.isoformat(),)).fetchall()
+        return {row[0]: row[1] for row in rows if row[1] is not None}
+
     def _detect_temporal_routines(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect routines that occur at similar times each day.
 
@@ -124,6 +180,11 @@ class RoutineDetector:
         systematically underestimates consistency when data spans only a fraction
         of the lookback period — e.g., 10 days of perfect data in a 30-day window
         would score 0.33 instead of 1.0.
+
+        Step durations are measured from actual observed inter-episode gaps via
+        ``_compute_step_duration_map()``, with a 5-minute fallback for types
+        where no successor was observed, and a 15-minute default for the final
+        step of every routine (no successor to measure against).
 
         Args:
             lookback_days: Days of history to analyze
@@ -169,39 +230,11 @@ class RoutineDetector:
             "night": (23, 5),      # 11pm-5am (wraps around midnight)
         }
 
-        # For each interaction type in each bucket, compute the average minutes
-        # to the *next* action in the same routine.  This gives us a per-step
-        # duration that reflects actual observed gaps rather than the hardcoded
-        # 5-minute placeholder.
-        #
-        # For the final step we fall back to a 15-minute default because there
-        # is no subsequent step to measure the gap to.
+        # Compute actual measured inter-step durations once, reuse for all buckets.
+        # The final step of each routine falls back to LAST_STEP_DEFAULT_MINUTES
+        # because there is no subsequent step to measure a gap against.
         LAST_STEP_DEFAULT_MINUTES = 15.0
-        with self.db.get_connection("user_model") as conn:
-            # Compute average gap (in minutes) from each interaction_type to the
-            # next episode on the same calendar day.  The inner subquery ranks
-            # episodes within each day so we can join each episode to the one
-            # immediately following it.
-            step_durations_rows = conn.execute("""
-                WITH ranked AS (
-                    SELECT
-                        interaction_type,
-                        DATE(timestamp) as day,
-                        datetime(timestamp) as ts,
-                        ROW_NUMBER() OVER (PARTITION BY DATE(timestamp) ORDER BY datetime(timestamp)) as rn
-                    FROM episodes
-                    WHERE timestamp > ? AND interaction_type IS NOT NULL
-                )
-                SELECT
-                    a.interaction_type,
-                    AVG(
-                        (JULIANDAY(b.ts) - JULIANDAY(a.ts)) * 24 * 60
-                    ) as avg_gap_minutes
-                FROM ranked a
-                JOIN ranked b ON a.day = b.day AND b.rn = a.rn + 1
-                GROUP BY a.interaction_type
-            """, (cutoff.isoformat(),)).fetchall()
-        step_duration_map = {row[0]: row[1] for row in step_durations_rows if row[1] is not None}
+        step_duration_map = self._compute_step_duration_map(cutoff)
 
         bucket_actions: dict[str, list] = defaultdict(list)
         for hour_str, interaction_type, day_count in hour_actions:
@@ -278,6 +311,10 @@ class RoutineDetector:
         Consistency is normalized against actual active days, not the full
         lookback window, for the same reason as temporal routines.
 
+        Step durations use actual measured inter-episode gaps from
+        ``_compute_step_duration_map()``, with a 5-minute fallback for types
+        where no successor was observed.
+
         Args:
             lookback_days: Days of history to analyze
 
@@ -289,6 +326,12 @@ class RoutineDetector:
 
         # Reuse active-day count computed once for the whole detection pass.
         active_days = self._count_active_days(cutoff)
+
+        # Use actual measured inter-step durations instead of a hardcoded
+        # placeholder.  Falls back to 5.0 minutes for interaction types where
+        # no same-day successor was observed.
+        step_duration_map = self._compute_step_duration_map(cutoff)
+        STEP_DURATION_FALLBACK = 5.0
 
         # Fetch recurring (location, interaction_type) pairs.
         # day_count = distinct days where this action occurred at this location,
@@ -314,10 +357,11 @@ class RoutineDetector:
         if not location_actions:
             return routines
 
-        # Group recurring actions by location
+        # Group recurring actions by location, attaching measured durations.
         location_groups: dict[str, list] = defaultdict(list)
         for location, interaction_type, day_count in location_actions:
-            location_groups[location].append((interaction_type, day_count, 5.0))
+            duration = step_duration_map.get(interaction_type, STEP_DURATION_FALLBACK)
+            location_groups[location].append((interaction_type, day_count, duration))
 
         # Create a routine for every location that has at least one recurring action.
         # We use >= 1 (not >= 2) because even a single reliable action at a
@@ -401,6 +445,12 @@ class RoutineDetector:
 
             trigger_events = cursor.fetchall()
 
+        # Compute measured inter-step durations once, shared across all trigger types.
+        # Falls back to 5.0 minutes for interaction types where no same-day successor
+        # was observed in the lookback window.
+        step_duration_map = self._compute_step_duration_map(cutoff)
+        STEP_DURATION_FALLBACK = 5.0
+
         for interaction_type, days_occurred in trigger_events:
             # For each candidate trigger, find interaction types that commonly
             # follow it within a 2-hour window on the same calendar day.
@@ -440,6 +490,15 @@ class RoutineDetector:
                 if consistency >= self.consistency_threshold:
                     trigger_name = interaction_type.replace("_", " ").title()
 
+                    # Attach measured durations to each following action.
+                    # Replaces the old hardcoded 5.0-minute value with actual
+                    # observed inter-step gaps for more accurate routine timing.
+                    steps_with_duration = [
+                        (action, dc, step_duration_map.get(action, STEP_DURATION_FALLBACK))
+                        for action, dc in following_actions[:10]
+                    ]
+                    total_duration = sum(d for _, _, d in steps_with_duration)
+
                     routine = {
                         "name": f"After {trigger_name}",
                         "trigger": f"after_{interaction_type}",
@@ -447,12 +506,12 @@ class RoutineDetector:
                             {
                                 "order": i,
                                 "action": action,
-                                "typical_duration_minutes": 5.0,
+                                "typical_duration_minutes": dur,
                                 "skip_rate": max(0.0, 1.0 - (dc / days_occurred)),
                             }
-                            for i, (action, dc) in enumerate(following_actions[:10])
+                            for i, (action, dc, dur) in enumerate(steps_with_duration)
                         ],
-                        "typical_duration_minutes": len(following_actions) * 5.0,
+                        "typical_duration_minutes": total_duration,
                         "consistency_score": consistency,
                         "times_observed": int(avg_day_count),
                         "variations": [],
