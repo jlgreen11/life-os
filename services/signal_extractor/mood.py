@@ -481,13 +481,85 @@ class MoodInferenceEngine(BaseExtractor):
         return min(1.0, max(0.0, weighted_sum / total_weight))
 
     def _compute_trend(self) -> str:
-        """Compare recent mood to historical baseline.
+        """Compare recent mood to historical baseline to determine trajectory.
 
-        In a full implementation this would query the mood_history table,
-        compare the latest N snapshots against the running average, and
-        return "improving", "declining", or "stable".  Currently simplified
-        to always return "stable".
+        Queries the ``mood_history`` time-series table (written by
+        ``SignalExtractorPipeline.get_current_mood()``) and computes a
+        composite mood score for two windows:
+
+        - **Recent window** (last 4 snapshots, ~1 hour at 15-min cadence):
+          the user's current trajectory.
+        - **Baseline window** (snapshots 5–12, the hour before that):
+          the recent historical baseline to compare against.
+
+        A single *composite score* is computed for each window:
+
+            composite = energy_level + emotional_valence − stress_level
+
+        This combines the three most meaningful mood dimensions into a single
+        scalar in the range [−1, 2] (high energy and positive affect decrease
+        stress → high composite; exhausted and stressed → low composite).
+
+        Thresholds (empirically chosen to avoid hair-trigger changes):
+        - composite delta > +0.10  → "improving"
+        - composite delta < −0.10  → "declining"
+        - otherwise                → "stable"
+
+        Returns "stable" when there are fewer than 5 history rows (not enough
+        data to establish a baseline), or when a database error occurs.  This
+        matches the safe default so the calling code never crashes.
+
+        Algorithm notes:
+        - We use ``ORDER BY timestamp DESC LIMIT 12`` to bound the query cost.
+        - Confidence-weighted averaging would be more accurate but adds
+          complexity without proportionate benefit given the ~15-min cadence.
+        - The threshold is intentionally conservative (0.10) to avoid surfacing
+          noise from a single outlier signal as a "declining" mood alert.
         """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT energy_level, stress_level, emotional_valence
+                       FROM mood_history
+                       ORDER BY timestamp DESC
+                       LIMIT 12""",
+                ).fetchall()
+        except Exception:
+            # Fail-open: return "stable" if history cannot be read.
+            return "stable"
+
+        # Need at least 5 rows to split into a recent window and a baseline.
+        if len(rows) < 5:
+            return "stable"
+
+        def _composite(subset: list) -> float:
+            """Compute average composite mood score for a list of DB rows.
+
+            composite = energy_level + emotional_valence - stress_level
+
+            Each dimension defaults to 0.5 on NULL (the neutral/default value
+            used at insertion time) so missing data does not skew the score.
+            """
+            total = 0.0
+            for row in subset:
+                energy = row["energy_level"] if row["energy_level"] is not None else 0.5
+                stress = row["stress_level"] if row["stress_level"] is not None else 0.5
+                valence = row["emotional_valence"] if row["emotional_valence"] is not None else 0.5
+                total += energy + valence - stress
+            return total / len(subset)
+
+        # Rows come back newest-first.  Slice into the two windows.
+        recent_window = rows[:4]      # Most recent ~1 hour
+        baseline_window = rows[4:]    # Previous ~2 hours
+
+        recent_score = _composite(recent_window)
+        baseline_score = _composite(baseline_window)
+        delta = recent_score - baseline_score
+
+        if delta > 0.10:
+            return "improving"
+        if delta < -0.10:
+            return "declining"
         return "stable"
 
     def _get_baseline(self, metric: str) -> float:
