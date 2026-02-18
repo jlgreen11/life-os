@@ -114,8 +114,23 @@ def is_marketing_or_noreply(
     # -----------------------------------------------------------------------
     # 1. No-reply and automated system senders
     #
-    # Covers all common separators (-, _, none) and + modifier variants.
-    # Examples: noreply@, no-reply@, no_reply@, no-reply+ID@domain.com
+    # Two complementary checks:
+    #
+    # (a) Substring search in the full address for patterns like "noreply@".
+    #     Catches the common exact-prefix forms and also "noreply+" variants
+    #     (e.g. "no-reply+ID@domain.com" where the + is a tag separator).
+    #
+    # (b) Local-part STEM check: extract the local part and check whether it
+    #     STARTS WITH a no-reply stem.  This is necessary because many senders
+    #     append a suffix to the stem before the @:
+    #
+    #         DoNotReply_US@us.mcdonalds.com  → local = donotreply_us
+    #         no-reply-ugc@samsclub.com       → local = no-reply-ugc
+    #         no_reply_msg@hcahealthcare.com  → local = no_reply_msg
+    #         noreply-service@anker.com       → local = noreply-service
+    #
+    #     All of these are structurally automated; a human would never use
+    #     "noreply" as the start of their personal address.
     # -----------------------------------------------------------------------
     noreply_patterns = (
         "no-reply@", "no_reply@", "noreply@",
@@ -126,6 +141,16 @@ def is_marketing_or_noreply(
         "automated@", "automation@",
     )
     if any(pattern in addr_lower for pattern in noreply_patterns):
+        return True
+
+    # Local-part stem check for noreply variants (check (b) above).
+    # Extract the local part once so it can also be reused below.
+    local_part_early = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
+    noreply_stems = (
+        "no-reply", "no_reply", "noreply",
+        "do-not-reply", "do_not_reply", "donotreply",
+    )
+    if any(local_part_early.startswith(stem) for stem in noreply_stems):
         return True
 
     # -----------------------------------------------------------------------
@@ -205,6 +230,24 @@ def is_marketing_or_noreply(
         # send statements, trade confirmations, and tax forms — never human mail.
         # Pattern: eDelivery@etradefrommorganstanley.com, econfirm@schwab.com
         "edelivery@", "econfirm@", "enotice@",
+        # Plural variant of existing accountservice@ (both forms appear in prod data)
+        "accountservices@",       # e.g., accountservices@ncl.com (Norwegian Cruise Line)
+        # Hospitality / government automated senders observed in production data.
+        # These are transactional systems that send booking confirmations, payment
+        # notices, and service updates — they are never human correspondents.
+        "stay@",                  # e.g., stay@hotelvandivort.com (hotel booking system)
+        "claims@",                # e.g., claims@treasurer.mo.gov (government payment system)
+        "irrigation@",            # e.g., irrigation@ryanlawn.com (automated service alerts)
+        # Retail / brand promotional senders
+        "top@",                   # e.g., top@raymore.com (store "top picks" promo mailer)
+        "alumni@",                # e.g., alumni@mst.edu (university alumni bulk mailer)
+        # System-generated sender local-parts that clearly identify automated accounts
+        "msftpc@",                # e.g., msftpc@microsoft.com (Microsoft PC automated system)
+        # Tagged notification senders: alerts+HASH@ is a common pattern used by
+        # monitoring/alert systems (e.g. PrismIntelligence, PagerDuty) to route
+        # outbound notifications.  The + tag makes each address unique but the stem
+        # "alerts+" unambiguously identifies it as an automated alert sender.
+        "alerts+",                # e.g., alerts+Xe6Cu7@prismintelligence.com
     ) + extra_localparts
 
     if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
@@ -284,6 +327,9 @@ def is_marketing_or_noreply(
         # Compound subdomain patterns (no leading @; match anywhere in domain)
         "info.email.",     # e.g., @info.email.aa.com
         "points-mail.",    # e.g., points@points-mail.ihg.com (IHG loyalty)
+        # CRM/marketing platform routing subdomains observed in production data
+        "@customer.",      # e.g., national@customer.ehi.com (Enterprise Holdings)
+        "@rewards.",       # e.g., sproutsrewards@rewards.sprouts.com (loyalty program)
     ) + extra_domain_patterns
 
     if any(pattern in addr_lower for pattern in marketing_domain_patterns):
@@ -333,6 +379,10 @@ def is_marketing_or_noreply(
         # "substack.com" as well.
         "substack.com",         # Newsletter platform (e.g. bytebytego@substack.com)
         "beehiiv.com",          # Newsletter platform (e.g. author@newsletter.beehiiv.com)
+        # Email marketing / CRM platforms observed in production data
+        "e-vanguard.com",       # e.g., flagship@eonline.e-vanguard.com (marketing ESP)
+        # Government transactional payment system (not a human correspondence address)
+        "directpay.irs.gov",    # e.g., mail@directpay.irs.gov (IRS Direct Pay system)
     )
     if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
         return True
