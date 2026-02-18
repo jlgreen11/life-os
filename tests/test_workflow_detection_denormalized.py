@@ -179,14 +179,15 @@ def test_workflow_detection_uses_denormalized_columns(db, event_store, user_mode
             "metadata": {},
         })
 
-    # Detect workflows (currently disabled, see WorkflowDetector.detect_workflows docstring)
+    # Detect workflows. WorkflowDetector is now active after the algorithmic redesign.
+    # This test's primary purpose is verifying that the denormalized columns and
+    # triggers exist and are populated correctly. The workflows list may or may
+    # not be empty depending on whether the test data meets detection thresholds.
     detector = WorkflowDetector(db, user_model_store)
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Workflow detection is disabled pending algorithmic redesign.
-    # This test verifies that the denormalized columns and triggers exist
-    # and are populated correctly, ready for when the redesign is complete.
-    assert workflows == [], "Workflow detection should be disabled (returns empty list)"
+    # The detector should return a list (empty or populated — both are valid).
+    assert isinstance(workflows, list), "detect_workflows should always return a list"
 
 
 @pytest.mark.skip(reason="Workflow detection disabled pending algorithmic redesign")

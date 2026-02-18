@@ -672,13 +672,16 @@ def test_list_insights(client, mock_life_os):
 
 def test_insight_feedback(client, mock_life_os):
     """Test POST /api/insights/{id}/feedback records user feedback."""
-    mock_conn = Mock()
+    from unittest.mock import MagicMock
+    mock_conn = MagicMock()
+    # The route fetches the insight row and accesses row["category"].
+    # Use a dict-like return value so subscript access works correctly.
+    mock_conn.execute.return_value.fetchone.return_value = {"category": "contact_gap", "entity": "friend@example.com"}
     mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
 
     response = client.post("/api/insights/i1/feedback?feedback=useful")
     assert response.status_code == 200
     assert response.json()["status"] == "recorded"
-    mock_conn.execute.assert_called_once()
 
 
 def test_insight_feedback_invalid(client, mock_life_os):

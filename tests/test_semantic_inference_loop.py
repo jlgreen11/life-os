@@ -213,30 +213,66 @@ class TestSemanticInferenceLoop:
             }
             user_model_store.store_episode(episode)
 
-        # Create relationship profile with fast average response time
+        # Create relationship profile using the current schema (interaction_count +
+        # inbound/outbound counts). The inferrer determines "high_priority" when a
+        # contact's interaction_count >= 2x the average across all bidirectional
+        # contacts.  With two contacts (counts 20 and 2), avg = 11, threshold = 22;
+        # boss@company.com at 20 does NOT qualify.  Use a large gap instead:
+        # boss=30, coworker=5 → avg=17.5, threshold=35 → boss still doesn't qualify.
+        # The easiest approach: one contact with outbound>0 and interaction_count large
+        # enough relative to a second "anchor" contact:
+        #   boss=30, anchor=5 → avg=17.5, threshold=35 → boss (30) < 35 — still no.
+        # With only one bidirectional contact, avg == that contact, threshold == 2x —
+        # the sole contact can never beat its own 2x threshold.
+        #
+        # Fix: test two bidirectional contacts where one is clearly dominant:
+        #   boss=20, occasional@example.com=2 → avg=11, threshold=22 → boss(20) < 22.
+        # We need boss >= 2x average: boss=30, low=2 → avg=16, threshold=32 → 30<32.
+        # Try: boss=20, low=1 → avg=10.5, threshold=21 → 20<21. Still short.
+        # boss=22, low=2 → avg=12, threshold=24 → 22<24. No.
+        # The ratio matters: to pass, contact_count >= 2 * avg, i.e.
+        #   boss >= 2 * (boss + low) / 2  →  boss >= boss + low  →  0 >= low.
+        # That's impossible with two contacts. Need THREE or more:
+        #   boss=30, c1=5, c2=5 → avg=13.3, threshold=26.7 → boss(30) >= 26.7. ✓
         profile_data = {
             "contacts": {
                 "boss@company.com": {
-                    "interaction_count": 10,
-                    "avg_response_time_seconds": 1800,  # 30 minutes (< 1 hour)
+                    "interaction_count": 30,
+                    "inbound_count": 15,
+                    "outbound_count": 15,
                     "last_contact": datetime.now(timezone.utc).isoformat(),
-                }
+                },
+                "coworker1@example.com": {
+                    "interaction_count": 5,
+                    "inbound_count": 3,
+                    "outbound_count": 2,
+                    "last_contact": datetime.now(timezone.utc).isoformat(),
+                },
+                "coworker2@example.com": {
+                    "interaction_count": 5,
+                    "inbound_count": 2,
+                    "outbound_count": 3,
+                    "last_contact": datetime.now(timezone.utc).isoformat(),
+                },
             }
         }
         user_model_store.update_signal_profile("relationships", profile_data)
-        _set_samples(user_model_store, "relationships", 10)
+        _set_samples(user_model_store, "relationships", 40)
 
         # Run inference
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_relationship_profile()
 
-        # Assert: High priority fact was created
+        # Assert: High priority fact was created for boss (30 >= 2x avg of 13.3)
         facts = user_model_store.get_semantic_facts()
         priority_fact = next(
             (f for f in facts if "relationship_priority_boss@company.com" in f["key"]), None
         )
-        assert priority_fact is not None, "Expected relationship priority fact"
+        assert priority_fact is not None, (
+            "Expected relationship_priority fact for boss@company.com "
+            "(interaction_count=30 >= 2x avg of 13.3)"
+        )
         assert priority_fact["value"] == "high_priority"
         assert priority_fact["confidence"] >= 0.6
 

@@ -73,10 +73,12 @@ class TestEpisodeLinkageFix:
         # We need to call it 100 times to get 100 samples, but that's inefficient.
         # Instead, update the profile once, then manually set samples_count in DB.
         topic_data = {
-            "topic_frequencies": {
-                "python": 50,  # 50% frequency → expertise
-                "docker": 15,  # 15% frequency → interest
-                "kubernetes": 3,  # 3% frequency → ignored (too low)
+            # The topic extractor stores counts under "topic_counts", not "topic_frequencies".
+            # The inferrer computes frequency as count/samples_count internally.
+            "topic_counts": {
+                "python": 50,  # 50/100 = 50% frequency → expertise (>=10% && >=10 count)
+                "docker": 15,  # 15/100 = 15% frequency → interest (>=5% && >=5 count)
+                "kubernetes": 3,  # 3/100 = 3% → ignored (below 5% threshold)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -118,7 +120,8 @@ class TestEpisodeLinkageFix:
         """
         # Create a cadence profile showing strong work-life boundaries
         cadence_data = {
-            "hourly_distribution": {
+            # The cadence extractor stores data under "hourly_activity", not "hourly_distribution".
+            "hourly_activity": {
                 # 95% of messages during business hours (9-17)
                 "9": 10, "10": 12, "11": 15, "12": 10,
                 "13": 14, "14": 16, "15": 13, "16": 10,
@@ -162,10 +165,29 @@ class TestEpisodeLinkageFix:
         Before the fix, mood facts had no episode linkage.
         After the fix, all mood facts should reference source episodes.
         """
-        # Create a mood profile with optimistic baseline
+        # Create a mood profile that will trigger stress_baseline inference.
+        # The inferrer reads "recent_signals" (not "avg_sentiment") and computes
+        # a stress ratio from signals of type "negative_language" / total.
+        # <10% negative → "low_stress" baseline.
         mood_data = {
-            "avg_sentiment": 0.6,  # Positive baseline → optimistic
-            "samples": [],
+            "recent_signals": [
+                # 1 negative signal out of 15 total → 6.7% → low_stress
+                {"signal_type": "negative_language", "value": -0.5},
+                {"signal_type": "positive_language", "value": 0.7},
+                {"signal_type": "positive_language", "value": 0.6},
+                {"signal_type": "positive_language", "value": 0.8},
+                {"signal_type": "positive_language", "value": 0.5},
+                {"signal_type": "positive_language", "value": 0.9},
+                {"signal_type": "positive_language", "value": 0.6},
+                {"signal_type": "positive_language", "value": 0.7},
+                {"signal_type": "positive_language", "value": 0.8},
+                {"signal_type": "positive_language", "value": 0.6},
+                {"signal_type": "neutral", "value": 0.0},
+                {"signal_type": "neutral", "value": 0.1},
+                {"signal_type": "neutral", "value": 0.0},
+                {"signal_type": "neutral", "value": 0.0},
+                {"signal_type": "neutral", "value": 0.1},
+            ]
         }
         user_model_store.update_signal_profile("mood_signals", mood_data)
 
@@ -178,13 +200,13 @@ class TestEpisodeLinkageFix:
         # Run mood inference
         inferrer.infer_from_mood_profile()
 
-        # Verify emotional baseline fact has episode linkage
+        # Verify stress_baseline fact was inferred (low_stress with <10% negative signals)
         facts = user_model_store.get_semantic_facts()
-        emotional_facts = [f for f in facts if f["key"] == "emotional_baseline"]
-        assert len(emotional_facts) == 1, "Should have 1 emotional baseline fact"
+        stress_facts = [f for f in facts if f["key"] == "stress_baseline"]
+        assert len(stress_facts) == 1, "Should have 1 stress_baseline fact"
 
-        baseline_fact = emotional_facts[0]
-        assert baseline_fact["value"] == "optimistic"
+        baseline_fact = stress_facts[0]
+        assert baseline_fact["value"] == "low_stress"
 
         # CRITICAL: Verify episode linkage exists
         assert "source_episodes" in baseline_fact
@@ -207,30 +229,48 @@ class TestEpisodeLinkageFix:
         profiles = {
             "linguistic": {
                 "averages": {
-                    "formality": 0.2,  # Casual
-                    "emoji_rate": 0.08,  # Expressive
+                    "formality": 0.2,  # Casual → implicit_preference fact
+                    "emoji_rate": 0.08,  # Expressive → implicit_preference fact
                 }
             },
             "relationships": {
+                # Use the actual schema: inbound_count + outbound_count + interaction_count.
+                # Single contact with outbound_count>0 → bidirectional.
+                # interaction_count (10) must be >= 2x avg (10) to be high_priority,
+                # but with only one contact avg==10 so threshold=20 → no priority fact.
+                # Two channels → multi_channel fact is still created.
                 "contacts": {
-                    "contact0@example.com": {  # Match the contacts in sample_episodes
+                    "contact0@example.com": {
                         "interaction_count": 10,
-                        "avg_response_time_seconds": 1800,  # 30 min → high priority
+                        "inbound_count": 5,
+                        "outbound_count": 5,
+                        "channels_used": ["email", "signal"],  # 2 channels → multi_channel fact
                     }
                 }
             },
             "topics": {
-                "topic_frequencies": {
-                    "ai": 20,  # 33% → expertise
+                # The inferrer reads "topic_counts", not "topic_frequencies"
+                "topic_counts": {
+                    "ai": 20,  # 20/60 = 33% → expertise
                 }
             },
             "cadence": {
-                "hourly_distribution": {
-                    "10": 30, "11": 25, "14": 20, "15": 5,  # Peak at 10am
+                # The inferrer reads "hourly_activity", not "hourly_distribution"
+                "hourly_activity": {
+                    "10": 30, "11": 25, "14": 20, "15": 5,  # Peak at 10am (37.5%)
                 }
             },
             "mood_signals": {
-                "avg_sentiment": 0.5,  # Positive → optimistic
+                # The inferrer reads "recent_signals" list, not "avg_sentiment".
+                # 1/10 = 10% negative → exactly at low_stress boundary (< 0.1 check uses <, not <=)
+                # Use 0 negative signals to ensure low_stress is triggered.
+                "recent_signals": [
+                    {"signal_type": "positive_language", "value": 0.8},
+                    {"signal_type": "positive_language", "value": 0.7},
+                    {"signal_type": "neutral", "value": 0.0},
+                    {"signal_type": "neutral", "value": 0.1},
+                    {"signal_type": "neutral", "value": 0.0},
+                ]
             },
         }
 
@@ -273,9 +313,9 @@ class TestEpisodeLinkageFix:
 
         This tests the end-to-end flow: fact created → re-confirmed → confidence increases.
         """
-        # Create topic profile
+        # Create topic profile — use "topic_counts" (the key the inferrer actually reads)
         topic_data = {
-            "topic_frequencies": {"rust": 20}  # 40% → expertise
+            "topic_counts": {"rust": 20}  # 20/50 = 40% → expertise (>=10% && >=10 count)
         }
         user_model_store.update_signal_profile("topics", topic_data)
 
@@ -336,9 +376,9 @@ class TestEpisodeLinkageFix:
         """
         # Don't create any episodes (no sample_episodes fixture)
 
-        # Create topic profile
+        # Create topic profile — use "topic_counts" (the key the inferrer actually reads)
         topic_data = {
-            "topic_frequencies": {"golang": 15}
+            "topic_counts": {"golang": 15}  # 15/40 = 37.5% frequency → expertise
         }
         user_model_store.update_signal_profile("topics", topic_data)
 
