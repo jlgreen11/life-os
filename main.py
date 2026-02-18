@@ -153,7 +153,7 @@ class LifeOS:
             # Fallback: if the YAML config file is missing, return a complete
             # set of sensible defaults so the app can still boot (useful for
             # first-run / development).  See _default_config() for the values.
-            print(f"Config not found at {path}, using defaults.")
+            logger.warning("Config not found at %s, using defaults.", path)
             return self._default_config()
 
         with open(config_path) as f:
@@ -221,12 +221,12 @@ class LifeOS:
 
     async def start(self):
         """Boot the entire system."""
-        print("=" * 60)
-        print("  Life OS — Starting Up")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("  Life OS — Starting Up")
+        logger.info("=" * 60)
 
         # 1. Initialize databases
-        print("[1/7] Initializing databases...")
+        logger.info("[1/7] Initializing databases...")
         self.db.initialize_all()
 
         # 1.5 — Seed default source weights (no-op if already populated)
@@ -264,39 +264,39 @@ class LifeOS:
         await self._clean_relationship_profile_if_needed()
 
         # 2. Initialize vector store
-        print("[2/7] Initializing vector store...")
+        logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()
 
         # 3. Connect to NATS
-        print("[3/7] Connecting to event bus...")
+        logger.info("[3/7] Connecting to event bus...")
         try:
             await self.event_bus.connect()
-            print("       Connected to NATS.")
+            logger.info("       Connected to NATS.")
         except Exception as e:
-            print(f"       NATS connection failed: {e}")
+            logger.error("       NATS connection failed: %s", e)
             # Degraded mode: the app continues to run without the event bus.
             # In this mode, connectors cannot publish events, the signal
             # extractor / rules engine won't fire, and real-time notifications
             # are unavailable.  The web UI, DB, and prediction engine still
             # work — so users can still browse history and manage tasks.
-            print("       Running in degraded mode (no event bus).")
+            logger.warning("       Running in degraded mode (no event bus).")
 
         # Install default rules (after event bus is available for telemetry)
         await install_default_rules(self.db, event_bus=self.event_bus)
 
         # 4. Register core event handlers
-        print("[4/7] Registering event handlers...")
+        logger.info("[4/7] Registering event handlers...")
         # Only register handlers when the bus is actually connected;
         # in degraded mode this block is skipped entirely.
         if self.event_bus.is_connected:
             await self._register_event_handlers()
 
         # 5. Start connectors
-        print("[5/7] Starting connectors...")
+        logger.info("[5/7] Starting connectors...")
         await self._start_connectors()
 
         # 6. Start background loops (prediction, insight, semantic inference)
-        print("[6/7] Starting background services...")
+        logger.info("[6/7] Starting background services...")
         self._start_background_task("prediction_loop", self._prediction_loop())
         self._start_background_task("insight_loop", self._insight_loop())
         self._start_background_task("semantic_inference_loop", self._semantic_inference_loop())
@@ -306,14 +306,13 @@ class LifeOS:
         self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
 
         # 7. Launch web server
-        print("[7/7] Starting web server...")
-        print()
-        print(f"  → Web UI:  http://localhost:{self.config.get('web_port', 8080)}")
-        print(f"  → API:     http://localhost:{self.config.get('web_port', 8080)}/api")
-        print(f"  → Health:  http://localhost:{self.config.get('web_port', 8080)}/health")
-        print()
-        print("  Life OS is running. Press Ctrl+C to stop.")
-        print("=" * 60)
+        logger.info("[7/7] Starting web server...")
+        port = self.config.get('web_port', 8080)
+        logger.info("  → Web UI:  http://localhost:%s", port)
+        logger.info("  → API:     http://localhost:%s/api", port)
+        logger.info("  → Health:  http://localhost:%s/health", port)
+        logger.info("  Life OS is running. Press Ctrl+C to stop.")
+        logger.info("=" * 60)
 
     async def _backfill_episode_classification_if_needed(self):
         """Reclassify old episodes with granular interaction types if needed.
@@ -340,7 +339,7 @@ class LifeOS:
             if stale_count == 0:
                 return
 
-            print(f"       → Backfilling {stale_count} episode classifications...")
+            logger.info("       → Backfilling %d episode classifications...", stale_count)
 
             # Run the backfill: fetch each stale episode, get its original event,
             # reclassify it, and update the database
@@ -381,11 +380,11 @@ class LifeOS:
 
                     reclassified += 1
 
-            print(f"       → Reclassified {reclassified} episodes")
+            logger.info("       → Reclassified %d episodes", reclassified)
 
         except Exception as e:
             # Backfill errors should not crash startup
-            print(f"       ⚠ Episode classification backfill failed: {e}")
+            logger.warning("       ⚠ Episode classification backfill failed: %s", e)
 
     async def _backfill_task_completion_if_needed(self):
         """Mark historical tasks as completed based on behavioral signals.
@@ -429,7 +428,7 @@ class LifeOS:
             if pending_count < 10:
                 return
 
-            print(f"       → Backfilling task completion for {pending_count} pending tasks...")
+            logger.info("       → Backfilling task completion for %d pending tasks...", pending_count)
 
             # Import the backfill script inline to avoid circular dependencies
             # and keep the main.py imports clean
@@ -583,11 +582,11 @@ class LifeOS:
                         break  # Found completion signal, no need to check more events
 
             if completed_count > 0:
-                print(f"       → Marked {completed_count} tasks as completed")
+                logger.info("       → Marked %d tasks as completed", completed_count)
 
         except Exception as e:
             # Backfill errors should not crash startup
-            print(f"       ⚠ Task completion backfill failed: {e}")
+            logger.warning("       ⚠ Task completion backfill failed: %s", e)
 
     async def _backfill_communication_templates_if_needed(self):
         """Extract communication templates from all historical communication events.
@@ -637,7 +636,7 @@ class LifeOS:
             if event_count < 50:
                 return
 
-            print(f"       → Backfilling communication templates from {event_count:,} historical events...")
+            logger.info("       → Backfilling communication templates from %s historical events...", f"{event_count:,}")
 
             # Run the backfill in a thread to avoid blocking startup
             def _run_backfill():
@@ -650,11 +649,15 @@ class LifeOS:
 
             stats = await asyncio.to_thread(_run_backfill)
 
-            print(f"       ✓ Created {stats['templates_created']:,} templates from {stats['events_processed']:,} events "
-                  f"({stats['elapsed_seconds']:.1f}s)")
+            logger.info(
+                "       ✓ Created %s templates from %s events (%.1fs)",
+                f"{stats['templates_created']:,}",
+                f"{stats['events_processed']:,}",
+                stats['elapsed_seconds'],
+            )
 
         except Exception as e:
-            print(f"       ⚠ Communication template backfill failed (non-fatal): {e}")
+            logger.warning("       ⚠ Communication template backfill failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
@@ -699,7 +702,7 @@ class LifeOS:
             if marketing_count / len(contacts) < 0.1:
                 return
 
-            print(f"       → Cleaning {marketing_count:,} marketing contacts from relationships profile...")
+            logger.info("       → Cleaning %s marketing contacts from relationships profile...", f"{marketing_count:,}")
 
             # Run the cleanup in a thread to avoid blocking startup
             def _run_cleanup():
@@ -713,11 +716,14 @@ class LifeOS:
 
             stats = await asyncio.to_thread(_run_cleanup)
 
-            print(f"       ✓ Removed {stats['removed']:,} marketing contacts, "
-                  f"{stats['remaining']:,} human contacts remaining")
+            logger.info(
+                "       ✓ Removed %s marketing contacts, %s human contacts remaining",
+                f"{stats['removed']:,}",
+                f"{stats['remaining']:,}",
+            )
 
         except Exception as e:
-            print(f"       ⚠ Relationship profile cleanup failed (non-fatal): {e}")
+            logger.warning("       ⚠ Relationship profile cleanup failed (non-fatal): %s", e)
 
     async def _register_event_handlers(self):
         """Wire up the core event processing pipeline."""
@@ -735,7 +741,8 @@ class LifeOS:
             try:
                 self.event_store.store_event(event)
             except Exception as e:
-                print(f"Event store error: {e}")
+                logger.error("Event store error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
 
             # Stage 1.2 — Feedback Loop: process notification feedback events
             # (acted_on, dismissed) to close the learning loop. This enables
@@ -761,7 +768,7 @@ class LifeOS:
                             response_time_seconds=0,
                         )
             except Exception as e:
-                print(f"Feedback collector error: {e}")
+                logger.error("Feedback collector error (event_id=%s): %s", event.get("id"), e)
 
             # Stage 1.3 — Source Weight Tracking: classify the event into a
             # source_key and increment its interaction counter.  This builds
@@ -771,7 +778,7 @@ class LifeOS:
                 source_key = self.source_weight_manager.classify_event(event)
                 self.source_weight_manager.record_interaction(source_key)
             except Exception as e:
-                print(f"Source weight tracking error: {e}")
+                logger.error("Source weight tracking error (event_id=%s): %s", event.get("id"), e)
 
             # Stage 1.5 — Episodic Memory: convert each event into a memory
             # episode for the user model's Layer 1 (Episodic) storage.
@@ -781,14 +788,16 @@ class LifeOS:
             try:
                 await self._create_episode(event)
             except Exception as e:
-                print(f"Episode creation error: {e}")
+                logger.error("Episode creation error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
 
             # Stage 2 — Learn: the signal extractor passively analyses the
             # event to update the user model (patterns, preferences, etc.).
             try:
                 await self.signal_extractor.process_event(event)
             except Exception as e:
-                print(f"Signal extractor error: {e}")
+                logger.error("Signal extractor error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
 
             # Stage 3 — React: the rules engine evaluates deterministic,
             # user-defined rules and returns a list of actions to execute
@@ -805,21 +814,24 @@ class LifeOS:
                 for action in suppress_actions + other_actions:
                     await self._execute_rule_action(action, event)
             except Exception as e:
-                print(f"Rules engine error: {e}")
+                logger.error("Rules engine error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
 
             # Stage 4 — Extract tasks: scan the event payload (e.g. email
             # body, chat message) for actionable items and create tasks.
             try:
                 await self.task_manager.process_event(event)
             except Exception as e:
-                print(f"Task manager error: {e}")
+                logger.error("Task manager error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
 
             # Stage 5 — Embed: generate a vector embedding of the event
             # content so it can be retrieved via semantic search later.
             try:
                 await self._embed_event(event)
             except Exception as e:
-                print(f"Embedding error: {e}")
+                logger.error("Embedding error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
 
         # Subscribe with a wildcard so every subject published on the bus
         # is routed to master_event_handler.
@@ -1008,9 +1020,7 @@ class LifeOS:
             # Log the exception so we can diagnose mood retrieval failures.
             # Mood inference is optional (episodes should still be created),
             # but complete silence on failures prevents us from fixing bugs.
-            print(f"WARNING: Mood retrieval failed in episode creation: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("Mood retrieval failed in episode creation: %s", e, exc_info=True)
 
         # Determine the active domain (work, personal, health, finance) from
         # event metadata if available. This helps segment episodes by life area.
@@ -1274,7 +1284,7 @@ class LifeOS:
                 # the prediction engine can learn which types to suppress.
                 resolved = await self.notification_manager.auto_resolve_stale_predictions(timeout_hours=24)
                 if resolved > 0:
-                    print(f"  Auto-resolved {resolved} stale prediction(s)")
+                    logger.info("  Auto-resolved %d stale prediction(s)", resolved)
 
                 # Auto-resolve filtered predictions to prevent database bloat.
                 # Predictions with was_surfaced=0 were filtered by confidence gates
@@ -1284,10 +1294,10 @@ class LifeOS:
                     self.notification_manager.auto_resolve_filtered_predictions, 1
                 )
                 if filtered_resolved > 0:
-                    print(f"  Auto-resolved {filtered_resolved} filtered prediction(s)")
+                    logger.info("  Auto-resolved %d filtered prediction(s)", filtered_resolved)
 
             except Exception as e:
-                print(f"Prediction engine error: {e}")
+                logger.error("Prediction engine error: %s", e)
 
             # 900 seconds = 15 minutes.  This interval balances freshness
             # against compute cost; predictions depend on aggregated patterns,
@@ -1305,15 +1315,15 @@ class LifeOS:
             try:
                 insights = await self.insight_engine.generate_insights()
                 if insights:
-                    print(f"  InsightEngine: generated {len(insights)} new insights")
+                    logger.info("  InsightEngine: generated %d new insights", len(insights))
             except Exception as e:
-                print(f"Insight engine error: {e}")
+                logger.error("Insight engine error: %s", e)
 
             # Recalculate AI drift based on engagement ratios
             try:
                 await asyncio.to_thread(self.source_weight_manager.bulk_recalculate_drift)
             except Exception as e:
-                print(f"Source weight drift recalc error: {e}")
+                logger.error("Source weight drift recalc error: %s", e)
 
             await asyncio.sleep(3600)  # 1 hour
 
@@ -1345,9 +1355,9 @@ class LifeOS:
                 # Offloaded to a thread to avoid blocking the async event loop —
                 # run_all_inference is fully synchronous (SQLite queries + computation).
                 await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
-                print("  SemanticFactInferrer: completed inference cycle")
+                logger.info("  SemanticFactInferrer: completed inference cycle")
             except Exception as e:
-                print(f"Semantic fact inferrer error: {e}")
+                logger.error("Semantic fact inferrer error: %s", e)
 
             # 21600 seconds = 6 hours. Semantic facts are long-term patterns,
             # so this interval provides a good balance between staying current
@@ -1402,7 +1412,7 @@ class LifeOS:
                 # Store detected routines to database
                 stored_count = await asyncio.to_thread(self.routine_detector.store_routines, routines)
 
-                print(f"  RoutineDetector: detected {len(routines)} routines, stored {stored_count}")
+                logger.info("  RoutineDetector: detected %d routines, stored %d", len(routines), stored_count)
 
                 # Publish routine detection events from async context (not from thread).
                 # UserModelStore._emit_telemetry() fails silently when called from threads
@@ -1427,11 +1437,11 @@ class LifeOS:
                                 source="routine_detector",
                             )
                         except Exception as e:
-                            print(f"  ⚠ Failed to publish routine event for '{routine.get('name')}': {e}")
+                            logger.warning("  ⚠ Failed to publish routine event for '%s': %s", routine.get('name'), e)
                 else:
                     # Event bus not connected — log the skip for visibility
                     if routines:
-                        print(f"  ⚠ Skipping {len(routines)} routine event publications (event bus not connected)")
+                        logger.warning("  ⚠ Skipping %d routine event publications (event bus not connected)", len(routines))
 
                 # Detect workflows from last 30 days of event sequences
                 workflows = await asyncio.to_thread(self.workflow_detector.detect_workflows, 30)
@@ -1439,7 +1449,7 @@ class LifeOS:
                 # Store detected workflows to database
                 workflow_stored = await asyncio.to_thread(self.workflow_detector.store_workflows, workflows)
 
-                print(f"  WorkflowDetector: detected {len(workflows)} workflows, stored {workflow_stored}")
+                logger.info("  WorkflowDetector: detected %d workflows, stored %d", len(workflows), workflow_stored)
 
                 # Publish workflow detection events from async context (not from thread).
                 # UserModelStore._emit_telemetry() fails silently when called from threads
@@ -1465,11 +1475,11 @@ class LifeOS:
                             source="workflow_detector",
                         )
                         except Exception as e:
-                            print(f"  ⚠ Failed to publish workflow event for '{workflow.get('name')}': {e}")
+                            logger.warning("  ⚠ Failed to publish workflow event for '%s': %s", workflow.get('name'), e)
                 else:
                     # Event bus not connected — log the skip for visibility
                     if workflows:
-                        print(f"  ⚠ Skipping {len(workflows)} workflow event publications (event bus not connected)")
+                        logger.warning("  ⚠ Skipping %d workflow event publications (event bus not connected)", len(workflows))
 
                 # Adaptive retry interval based on detection success:
                 # - 0 patterns: retry in 1 hour (cold start, connectors may be syncing)
@@ -1486,13 +1496,13 @@ class LifeOS:
                     retry_seconds = 43200  # 12 hours
                     retry_desc = "12 hours (stable patterns detected)"
 
-                print(f"  Next detection cycle in {retry_desc}")
+                logger.info("  Next detection cycle in %s", retry_desc)
 
             except Exception as e:
-                print(f"Routine/workflow detector error: {e}")
+                logger.error("Routine/workflow detector error: %s", e)
                 # On error, retry in 1 hour to avoid tight error loops
                 retry_seconds = 3600
-                print(f"  Next detection cycle in 1 hour (after error)")
+                logger.info("  Next detection cycle in 1 hour (after error)")
 
             await asyncio.sleep(retry_seconds)
 
@@ -1532,11 +1542,13 @@ class LifeOS:
                 stats = await self.behavioral_tracker.run_inference_cycle()
 
                 if stats['marked_accurate'] + stats['marked_inaccurate'] > 0:
-                    print(f"  BehavioralAccuracyTracker: inferred accuracy for "
-                          f"{stats['marked_accurate']} accurate, "
-                          f"{stats['marked_inaccurate']} inaccurate predictions")
+                    logger.info(
+                        "  BehavioralAccuracyTracker: inferred accuracy for %d accurate, %d inaccurate predictions",
+                        stats['marked_accurate'],
+                        stats['marked_inaccurate'],
+                    )
             except Exception as e:
-                print(f"Behavioral accuracy tracker error: {e}")
+                logger.error("Behavioral accuracy tracker error: %s", e)
 
             # 900 seconds = 15 minutes. Same interval as prediction engine to
             # ensure predictions are validated shortly after user behavior occurs.
@@ -1574,10 +1586,10 @@ class LifeOS:
                 completed_count = await self.task_completion_detector.detect_completions()
 
                 if completed_count > 0:
-                    print(f"  TaskCompletionDetector: auto-completed {completed_count} tasks "
-                          f"from behavioral signals")
+                    logger.info("  TaskCompletionDetector: auto-completed %d tasks from behavioral signals",
+                                completed_count)
             except Exception as e:
-                print(f"Task completion detector error: {e}")
+                logger.error("Task completion detector error: %s", e)
 
             # 1800 seconds = 30 minutes. Tasks aren't typically completed within
             # minutes (unlike prediction validation), so we can run less frequently
@@ -1620,7 +1632,7 @@ class LifeOS:
                     # Deliver the batched digest
                     digest = await self.notification_manager.get_digest()
                     if digest:
-                        print(f"  DigestDelivery: delivered {len(digest)} batched notifications")
+                        logger.info("  DigestDelivery: delivered %d batched notifications", len(digest))
 
                     # Track that we've delivered for this hour to prevent duplicate deliveries
                     last_delivered_hour = current_hour
@@ -1631,7 +1643,7 @@ class LifeOS:
                     last_delivered_hour = None
 
             except Exception as e:
-                print(f"Digest delivery error: {e}")
+                logger.error("Digest delivery error: %s", e)
                 # Continue running even if delivery fails — we'll try again next cycle
 
             # Check every 5 minutes for the next digest window
@@ -1681,9 +1693,9 @@ class LifeOS:
                 await connector.start()
                 self.connector_map[cid] = connector
                 self.connectors.append(connector)
-                print(f"       ✓ {connector.DISPLAY_NAME}")
+                logger.info("       ✓ %s", connector.DISPLAY_NAME)
             except Exception as e:
-                print(f"       ✗ {typedef.display_name}: {e}")
+                logger.error("       ✗ %s: %s", typedef.display_name, e)
 
         # Start browser automation layer (shared engine + browser connectors)
         if self.browser_orchestrator.is_enabled:
@@ -1915,7 +1927,7 @@ class LifeOS:
 
     async def stop(self):
         """Graceful shutdown."""
-        print("\nShutting down Life OS...")
+        logger.info("Shutting down Life OS...")
         # Signal all background loops (_prediction_loop, etc.) to exit
         self.shutdown_event.set()
 
@@ -1938,7 +1950,7 @@ class LifeOS:
         if self.event_bus.is_connected:
             await self.event_bus.disconnect()
 
-        print("Goodbye.")
+        logger.info("Goodbye.")
 
 
 # ---------------------------------------------------------------------------
