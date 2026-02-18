@@ -40,9 +40,15 @@ class ContextAssembler:
         Each section is separated by "---" delimiters so the LLM can easily
         distinguish between context categories. The ordering is intentional:
         preferences first (sets the tone), then temporal context, then
-        actionable items (calendar, tasks, messages), then background knowledge
-        (semantic facts, mood). This prioritization ensures the most important
-        information appears early in the context window.
+        actionable items (calendar, tasks, messages, predictions), then
+        background knowledge (semantic facts, mood). This prioritization
+        ensures the most important information appears early in the context
+        window.
+
+        Predictions are included so the LLM can surface relationship
+        maintenance reminders, upcoming preparation needs, calendar conflicts,
+        and other high-confidence signals that the prediction engine has
+        identified — without the user needing to ask explicitly.
         """
         parts = []
 
@@ -66,7 +72,17 @@ class ContextAssembler:
         # Gives the user a sense of their inbox backlog.
         parts.append(self._get_unread_context())
 
-        # Section 6: Semantic facts the system has learned about the user
+        # Section 6: Active predictions from the prediction engine.
+        # These are high-confidence, unresolved predictions that have already
+        # passed all confidence gates and been surfaced to the user. Including
+        # them here lets the LLM weave prediction-based insights ("you haven't
+        # replied to Alice in 10 days") naturally into the briefing narrative
+        # rather than emitting them only as separate push notifications.
+        predictions_context = self._get_predictions_context()
+        if predictions_context:
+            parts.append(predictions_context)
+
+        # Section 7: Semantic facts the system has learned about the user
         # (e.g., "preferred_language: English", "works_at: Acme Corp").
         # Only facts with confidence >= 0.6 are included to avoid noise.
         # Capped at 20 facts to respect the token budget.
@@ -75,7 +91,7 @@ class ContextAssembler:
             fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:20]]
             parts.append("Known facts about user:\n" + "\n".join(fact_lines))
 
-        # Section 7: Recent mood signals (last 3 data points). This allows
+        # Section 8: Recent mood signals (last 3 data points). This allows
         # the LLM to adjust its tone -- e.g., more encouraging if the user
         # has been stressed, more energetic if mood is positive.
         mood_profile = self.ums.get_signal_profile("mood_signals")
@@ -223,6 +239,59 @@ class ContextAssembler:
             pass
 
         return "\n\n---\n\n".join(parts)
+
+    def _get_predictions_context(self) -> str:
+        """Fetch active, surfaced predictions to surface in the briefing.
+
+        Queries the predictions table for entries that:
+          - Have been surfaced (was_surfaced = 1), meaning they passed all
+            confidence gates and were shown to the user as notifications.
+          - Are still unresolved (resolved_at IS NULL), meaning the predicted
+            condition hasn't been confirmed or dismissed yet.
+          - Were created within the last 7 days to avoid surfacing stale
+            predictions from long-completed situations.
+          - Have no filter_reason, confirming they passed all quality gates.
+
+        Results are sorted by confidence descending so the most reliable
+        predictions appear first, capped at 10 to respect token budget.
+
+        Returns an empty string when there are no active predictions, which
+        causes the caller to skip this section entirely (no "none" noise).
+
+        Example output::
+
+            Active predictions from the system:
+            - [opportunity] You haven't replied to alice@example.com in 10 days — consider following up (confidence: 0.82)
+            - [reminder] Prepare for "Q1 Planning" starting in 2 hours (confidence: 0.75)
+            - [conflict] Calendar conflict: "Standup" overlaps "Team Lunch" on 2026-02-19 (confidence: 0.91)
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT prediction_type, description, confidence, suggested_action
+                   FROM predictions
+                   WHERE was_surfaced = 1
+                     AND resolved_at IS NULL
+                     AND filter_reason IS NULL
+                     AND datetime(created_at) > datetime('now', '-7 days')
+                   ORDER BY confidence DESC
+                   LIMIT 10"""
+            ).fetchall()
+
+        if not rows:
+            return ""
+
+        lines = []
+        for row in rows:
+            # Format each prediction as a concise bullet: type, description,
+            # and confidence rounded to 2 decimal places.
+            line = f"- [{row['prediction_type']}] {row['description']} (confidence: {row['confidence']:.2f})"
+            # Append suggested action when the prediction engine provides one.
+            # This gives the LLM concrete, actionable language to include.
+            if row["suggested_action"]:
+                line += f" — suggested: {row['suggested_action']}"
+            lines.append(line)
+
+        return "Active predictions from the system:\n" + "\n".join(lines)
 
     def _get_preference_context(self) -> str:
         """Load all user preferences as a JSON object for the context window.
