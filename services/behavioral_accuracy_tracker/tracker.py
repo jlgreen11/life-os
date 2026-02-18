@@ -572,13 +572,37 @@ class BehavioralAccuracyTracker:
             "experian", "equifax", "transunion", "creditkarma",
             # Transactional sender patterns (e.g. eDelivery, eConfirm)
             "edelivery", "econfirm", "enotice",
+            # Retail/hospitality/travel transactional senders (iteration 178)
+            # Synced with PredictionEngine._is_marketing_or_noreply patterns to ensure
+            # the fast-path in _infer_opportunity_accuracy covers the same senders.
+            "customerservice",   # e.g., Customerservice@nationalcar.com
+            "reservations",      # e.g., reservations@nationalcar.com
+            "onlineservice",     # e.g., onlineservice@fedex.com
+            "return",            # e.g., return@amazon.com (retail returns)
+            "tracking",          # e.g., tracking@shipstation.com
+            "transaction",       # e.g., transaction@info.samsclub.com
+            "online.account",    # e.g., online.account@marriott.com
+            "guestservices",     # e.g., guestservices@boxoffice.axs.com
+            "drivers",           # e.g., drivers@chargepoint.com
+            "gaming",            # e.g., gaming@nvgaming.nvidia.com
+            "messenger",         # e.g., messenger@messaging.squareup.com
+            "tickets",           # e.g., tickets@transactions.axs.com
+            "walgreens",         # e.g., walgreens@eml.walgreens.com
+            "rei",               # e.g., rei@alerts.rei.com
+            "applecash",         # e.g., applecash@insideapple.apple.com
+            "worldofhyatt",      # e.g., worldofhyatt@loyalty.hyatt.com
+            "disneycruiseline",  # e.g., disneycruiseline@vacations.disneydestinations.com
         )
         if any(local_part.startswith(p) for p in bulk_prefixes):
             return True
 
         # Embedded notification patterns anywhere in local-part
-        embedded = ("-notification", "-notifications", "-alert", "-alerts",
-                    "-update", "-updates", "-digest", "news")
+        embedded = (
+            "-notification", "-notifications", "-alert", "-alerts",
+            "-update", "-updates", "-digest", "news",
+            # Dot-separated no-reply variants (iteration 178)
+            "no.reply", "do.not.reply",
+        )
         if any(p in local_part for p in embedded):
             return True
 
@@ -592,8 +616,29 @@ class BehavioralAccuracyTracker:
             "mail.", "email.", "ifly.", "trx.", "mailer.", "em.", "e.",
             "eonline.", "rewards.", "points-mail.", "shareholderdocs.",
             "investordelivery.", "customer.",
+            # Additional subdomains identified from production data (iteration 178)
+            "alerts.", "loyalty.", "vacations.", "transactions.", "eml.",
+            "insideapple.", "card.", "eg.", "mc.", "odysseymail.",
         )
         if any(domain.startswith(p) for p in marketing_subdomains):
+            return True
+
+        # Specific automated domains that only send transactional emails
+        automated_domains = (
+            "proxyvote.com",    # Proxy voting service (Broadridge Financial)
+            "playatmcd.com",    # McDonald's Monopoly game promo
+            "facebookmail.com", # Facebook automated notifications
+        )
+        if any(domain.endswith(d) for d in automated_domains):
+            return True
+
+        # Compound subdomain patterns (match anywhere in domain)
+        compound_patterns = (
+            "info.email.",  # e.g., @info.email.aa.com (American Airlines marketing)
+            ".smg.com",     # Service Management Group survey platform
+            ".ms.aa.com",   # American Airlines info subdomain
+        )
+        if any(p in domain for p in compound_patterns):
             return True
 
         return False
