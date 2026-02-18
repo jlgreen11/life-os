@@ -18,12 +18,15 @@ Configuration:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class FinanceConnector(BaseConnector):
@@ -88,7 +91,7 @@ class FinanceConnector(BaseConnector):
             self._client = plaid_api.PlaidApi(api_client)
             return True
         except Exception as e:
-            print(f"[finance] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     async def sync(self) -> int:
@@ -168,7 +171,7 @@ class FinanceConnector(BaseConnector):
                     self.set_sync_cursor(response.next_cursor)
 
             except Exception as e:
-                print(f"[finance] Sync error for token: {e}")
+                logger.error("Sync error for token: %s", e)
 
         return count
 

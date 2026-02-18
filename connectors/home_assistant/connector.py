@@ -19,6 +19,7 @@ Configuration:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -27,6 +28,8 @@ import httpx
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class HomeAssistantConnector(BaseConnector):
@@ -78,7 +81,7 @@ class HomeAssistantConnector(BaseConnector):
                 resp.raise_for_status()
                 return True
         except Exception as e:
-            print(f"[home_assistant] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     async def sync(self) -> int:
@@ -146,7 +149,7 @@ class HomeAssistantConnector(BaseConnector):
                 except Exception as e:
                     # Log individual entity failures without aborting the loop
                     # so that other entities still get polled.
-                    print(f"[home_assistant] Error reading {entity_id}: {e}")
+                    logger.warning("Error reading entity %s: %s", entity_id, e)
 
         return count
 

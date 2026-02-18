@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -37,6 +38,8 @@ from typing import Any, Optional
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 # Recipient addresses must look like a phone number or email — reject
 # anything that could smuggle AppleScript via the ``participant`` string.
@@ -131,7 +134,7 @@ class iMessageConnector(BaseConnector):
             try:
                 self._sync_contacts()
             except Exception as e:
-                print(f"[imessage] Contact sync error: {e}")
+                logger.error("Contact sync error: %s", e)
 
     # ------------------------------------------------------------------
     # Core lifecycle methods
@@ -153,7 +156,7 @@ class iMessageConnector(BaseConnector):
             conn.close()
             return True
         except Exception as e:
-            print(f"[imessage] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     async def sync(self) -> int:
@@ -342,7 +345,7 @@ class iMessageConnector(BaseConnector):
             finally:
                 conn.close()
         except Exception as e:
-            print(f"[imessage] Could not read handles: {e}")
+            logger.error("Could not read handles: %s", e)
             return
 
         now = datetime.now(timezone.utc).isoformat()

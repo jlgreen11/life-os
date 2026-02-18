@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class BaseConnector(ABC):
@@ -173,7 +176,7 @@ class BaseConnector(ABC):
         # increments the error_count column. This allows the UI and health
         # checks to surface repeated failures without in-memory state.
         error_msg = str(error)
-        print(f"[{self.CONNECTOR_ID}] Sync error: {error_msg}")
+        logger.error("[%s] Sync error: %s", self.CONNECTOR_ID, error_msg)
 
         await self.bus.publish(
             "system.connector.error",
