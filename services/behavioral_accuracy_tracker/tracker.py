@@ -230,6 +230,20 @@ class BehavioralAccuracyTracker:
         Reminder predictions typically suggest: "Reply to X" or "Follow up with Y".
         We look for outbound messages to the mentioned contact within a reasonable
         timeframe (6-48 hours).
+
+        Accuracy inference logic:
+        - If the contact is an automated/marketing sender: immediately INACCURATE
+          (the prediction was generated before the marketing filter was robust;
+          the user will never "reply" to a no-reply mailer by definition)
+        - If the user sends a message to the contact within 48 hours: ACCURATE
+        - If 48+ hours pass with no reply: INACCURATE
+        - If no contact info can be found AND 48+ hours have passed: INACCURATE
+          (the prediction can never be confirmed so it's safe to resolve)
+        - If still within the window: None (wait)
+
+        The automated-sender fast-path resolves stale predictions from before
+        the marketing filter improvements within minutes instead of waiting
+        48 hours, keeping accuracy stats clean and the learning loop tight.
         """
         # Extract contact email/name from signals (new dict format)
         contact_email = signals.get("contact_email")
@@ -266,8 +280,27 @@ class BehavioralAccuracyTracker:
                     if name_match:
                         contact_name = name_match.group(1)
 
+        now = datetime.now(timezone.utc)
+
         if not contact_email and not contact_name:
-            return None  # Can't determine without contact info
+            # No contact information found in signals or description.
+            # A reminder without a contact can never be confirmed (we have no
+            # way to look for outbound messages). Once the 48-hour window has
+            # elapsed, resolve as inaccurate so the prediction doesn't remain
+            # permanently pending and pollute the unresolved count.
+            if now - created_at > timedelta(hours=48):
+                return False  # Unresolvable after timeout → mark inaccurate
+            return None  # Still within window, wait before giving up
+
+        # Fast-path: if the contact is an automated/marketing sender, the
+        # prediction was wrong by definition. These were generated before the
+        # marketing filter was robust enough to catch all automated addresses.
+        # The user will never "reply" to a no-reply mailer, so we mark them
+        # inaccurate immediately rather than waiting the full 48-hour window.
+        # This prevents accuracy stats from being polluted by structurally
+        # unfulfillable predictions and keeps the learning loop accurate.
+        if contact_email and self._is_automated_sender(contact_email):
+            return False  # Automated sender → prediction was inaccurate
 
         # Look for outbound messages to this contact within 6-48 hours of prediction
         window_start = created_at
@@ -305,9 +338,10 @@ class BehavioralAccuracyTracker:
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        # Check if enough time has passed to infer inaccuracy
-        # If 48+ hours have passed with no action, prediction was likely wrong
-        now = datetime.now(timezone.utc)
+        # Check if enough time has passed to infer inaccuracy.
+        # If 48+ hours have passed with no action, prediction was likely wrong —
+        # the user chose not to reply (or already replied outside our tracking window).
+        # `now` was computed above before the event scan to avoid repeated syscalls.
         if now - created_at > timedelta(hours=48):
             return False  # No action taken → prediction was inaccurate
 
@@ -549,9 +583,13 @@ class BehavioralAccuracyTracker:
             return True
 
         # Marketing/transactional subdomain patterns (e.g. email.example.com,
-        # info.example.com, mailer.example.com, transaction@info.samsclub.com)
+        # mail.fidelity.com, ifly.southwest.com, trx.company.com).
+        # 'mail.' captures bulk-sender subdomains like mail.fidelity.com,
+        # mail.instagram.com, mail.schwab.com, mail.hbomax.com — all confirmed
+        # to be dedicated transactional email infrastructure in production data.
+        # Real humans never have @mail.* email addresses.
         marketing_subdomains = (
-            "email.", "ifly.", "trx.", "mailer.", "em.", "e.",
+            "mail.", "email.", "ifly.", "trx.", "mailer.", "em.", "e.",
             "eonline.", "rewards.", "points-mail.", "shareholderdocs.",
             "investordelivery.", "customer.",
         )
