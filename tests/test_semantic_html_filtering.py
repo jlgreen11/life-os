@@ -438,5 +438,5 @@ class TestSemanticHTMLFiltering:
         # Run inference
         inferrer.infer_from_topic_profile()
 
-        # Verify logging message reports filtered count
-        assert any("Filtered 3 HTML/CSS tokens" in record.message for record in caplog.records)
+        # Verify logging message reports filtered count (message uses "noise tokens")
+        assert any("Filtered 3 noise tokens" in record.message for record in caplog.records)

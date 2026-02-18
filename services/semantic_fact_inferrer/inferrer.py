@@ -293,6 +293,62 @@ class SemanticFactInferrer:
 
         logger.info(f"Inferred semantic facts from relationship profile (samples={profile.get('samples_count')})")
 
+    def _purge_noise_topic_facts(self, noise_blocklist: set) -> int:
+        """
+        Remove previously-stored expertise/interest facts whose topic word is noise.
+
+        When the noise blocklist is expanded (e.g., to add generic English stopwords),
+        stale facts from prior inference runs may still exist in the database under
+        keys like "expertise_more" or "interest_please". This method deletes those
+        stale facts so the semantic memory reflects the updated, cleaner inference.
+
+        Safety: Only facts with ``is_user_corrected = 0`` are removed. User-corrected
+        facts are never touched, even if their key appears in the blocklist.
+
+        Args:
+            noise_blocklist: Set of lowercase topic words that should never appear
+                as expertise or interest facts.
+
+        Returns:
+            Number of stale noise facts deleted.
+
+        Example::
+
+            purged = self._purge_noise_topic_facts({'more', 'view', 'please'})
+            # Removes "expertise_more", "expertise_view", "interest_please" etc.
+            # from semantic_facts if they exist and are not user-corrected.
+        """
+        if not noise_blocklist:
+            return 0
+
+        deleted = 0
+        with self.ums.db.get_connection("user_model") as conn:
+            # Fetch all expertise_* and interest_* facts that are not user-corrected.
+            # We'll filter in Python to avoid constructing a large SQL IN clause.
+            rows = conn.execute(
+                "SELECT key FROM semantic_facts "
+                "WHERE (key LIKE 'expertise_%' OR key LIKE 'interest_%') "
+                "AND is_user_corrected = 0"
+            ).fetchall()
+
+            for row in rows:
+                key = row["key"]
+                # Extract the topic word from the key (everything after the first "_")
+                prefix, _, topic_word = key.partition("_")
+                if topic_word.lower() in noise_blocklist:
+                    conn.execute(
+                        "DELETE FROM semantic_facts WHERE key = ? AND is_user_corrected = 0",
+                        (key,)
+                    )
+                    deleted += 1
+
+        if deleted > 0:
+            logger.info(
+                f"Purged {deleted} stale noise topic facts (expertise_*/interest_* "
+                f"whose topic word is in the updated blocklist)"
+            )
+        return deleted
+
     def infer_from_topic_profile(self):
         """
         Derive semantic facts from topic signal profile.
@@ -320,12 +376,23 @@ class SemanticFactInferrer:
         recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
-        # --- HTML/CSS token blocklist ---
-        # Historical topic profiles may contain HTML/CSS tokens from emails
-        # processed before HTML stripping was implemented. Filter these out
-        # to prevent semantic fact pollution (e.g., "expertise_nbsp", "expertise_padding").
-        # This blocklist covers common HTML entities, CSS properties, and HTML tags.
-        HTML_CSS_BLOCKLIST = {
+        # --- Noise token blocklist ---
+        # Topic profiles accumulate noise from three sources:
+        #   1. HTML/CSS tokens from marketing emails processed before HTML stripping
+        #      (e.g., 'nbsp', 'padding', 'tbody', 'border')
+        #   2. Generic English stopwords that appear in nearly every email
+        #      (e.g., 'more', 'here', 'please', 'free', 'valid', 'view')
+        #   3. Generic email/marketing vocabulary that saturates the topic profile
+        #      but carries no signal about the user's expertise or interests
+        #      (e.g., 'email', 'message', 'update', 'offer', 'shop', 'account')
+        #
+        # Without filtering these, marketing emails dominate the topic profile and
+        # produce expertise/interest facts for noise words instead of real topics.
+        # A topic needs >10% frequency to reach the "expertise" threshold — but
+        # with 95K samples mostly from marketing emails, generic words far exceed
+        # that threshold while real expertise words (like "python" or "machine_learning")
+        # get crowded out.
+        TOPIC_NOISE_BLOCKLIST = {
             # HTML entities
             'nbsp', 'zwnj', 'zwj', 'lrm', 'rlm', 'mdash', 'ndash', 'hellip',
             'quot', 'apos', 'amp', 'lt', 'gt', 'copy', 'reg', 'trade',
@@ -344,7 +411,39 @@ class SemanticFactInferrer:
             'http', 'https', 'www', 'com', 'html', 'css', 'js', 'png', 'jpg', 'gif',
             # Common email template artifacts
             'unsubscribe', 'pixel', 'tracker', 'analytics', 'campaign', 'utm',
+            # Generic English stopwords that appear in nearly every email
+            'more', 'here', 'please', 'free', 'valid', 'view', 'just', 'also',
+            'like', 'get', 'this', 'that', 'have', 'with', 'from', 'your', 'our',
+            'all', 'new', 'now', 'one', 'not', 'use', 'can', 'will', 'has', 'are',
+            'was', 'its', 'for', 'but', 'you', 'the', 'and', 'any', 'are', 'be',
+            'by', 'do', 'he', 'in', 'it', 'me', 'my', 'no', 'of', 'on', 'or',
+            'so', 'to', 'up', 'us', 'we',
+            # Generic email/communication vocabulary (not expertise signals)
+            'email', 'message', 'update', 'offer', 'shop', 'account', 'click',
+            'order', 'store', 'today', 'week', 'month', 'year', 'time', 'day',
+            'news', 'info', 'read', 'send', 'reply', 'forward', 'contact', 'team',
+            'support', 'help', 'check', 'confirm', 'verify', 'access', 'open',
+            'save', 'sale', 'deal', 'discount', 'reward', 'point', 'earn',
+            'subscribe', 'newsletter', 'notification', 'alert', 'reminder',
+            'manage', 'setting', 'preference', 'privacy', 'policy', 'term',
+            'service', 'product', 'item', 'price', 'cost', 'amount', 'total',
+            'customer', 'member', 'user', 'account', 'profile', 'password',
+            'review', 'rating', 'comment', 'share', 'follow', 'like', 'post',
+            # Additional CSS/font/whitespace artifacts seen in email templates
+            'lspace', 'rspace', 'sans', 'serif', 'arial', 'verdana', 'helvetica',
+            'line', 'letter', 'spacing', 'indent', 'overflow', 'wrap', 'break',
+            'normal', 'bold', 'italic', 'underline', 'decoration', 'transform',
+            'uppercase', 'lowercase', 'capitalize', 'shadow', 'opacity', 'radius',
+            'cursor', 'pointer', 'hover', 'focus', 'active', 'disabled', 'checked',
         }
+
+        # --- Purge previously-stored garbage facts ---
+        # If this blocklist has been expanded since last run, stale noise facts
+        # (e.g., "expertise_more", "expertise_view", "interest_please") may still
+        # exist in the database from earlier inference cycles. Remove any
+        # expertise_*/interest_* facts whose topic word is now in the blocklist,
+        # provided the fact has never been user-corrected (we never overwrite user edits).
+        self._purge_noise_topic_facts(TOPIC_NOISE_BLOCKLIST)
 
         # --- Infer expertise from topic frequency ---
         # A topic becomes an expertise area if it appears in >10% of messages
@@ -353,8 +452,8 @@ class SemanticFactInferrer:
         filtered_count = 0
 
         for topic, count in topic_counts.items():
-            # Skip HTML/CSS garbage tokens
-            if topic.lower() in HTML_CSS_BLOCKLIST:
+            # Skip noise tokens — HTML/CSS garbage and generic English words
+            if topic.lower() in TOPIC_NOISE_BLOCKLIST:
                 filtered_count += 1
                 continue
 
@@ -380,7 +479,7 @@ class SemanticFactInferrer:
                 )
 
         if filtered_count > 0:
-            logger.info(f"Filtered {filtered_count} HTML/CSS tokens from topic-based fact inference")
+            logger.info(f"Filtered {filtered_count} noise tokens from topic-based fact inference")
         logger.info(f"Inferred semantic facts from topic profile (samples={profile.get('samples_count')})")
 
     def infer_from_cadence_profile(self):
