@@ -165,32 +165,42 @@ class TestActivityDetectionTimestampFix:
 # ---------------------------------------------------------------------------
 
 class TestInactivityDetectionTimestampFix:
-    """Verify that inactivity detection uses the correct single cutoff param."""
+    """Verify that inactivity detection uses task age as the only completion signal.
+
+    The previous implementation checked ``COUNT(*) == 0`` over all system events
+    in the last 7 days.  On any live instance with continuous email/calendar
+    traffic this count is always > 0, so the strategy never fired.
+
+    The fix removes that global-activity guard entirely.  An old task is closed
+    based solely on its age — unrelated system activity no longer interferes.
+    """
 
     @pytest.mark.asyncio
-    async def test_recent_event_blocks_inactivity_completion(self, detector, db, now):
-        """A recent event (within 7 days) must prevent an old task from being
-        marked complete due to inactivity.
+    async def test_old_task_completed_despite_unrelated_recent_event(self, detector, db, now):
+        """An unrelated received email must NOT prevent inactivity-based completion.
 
-        The corrected query checks ``timestamp > cutoff``.  An event 2 days ago
-        satisfies that condition so the task should be kept pending.
+        Previously the detector checked global ``recent_activity_count == 0``
+        which meant any received email — however unrelated — would shield every
+        old task from auto-completion.  That guard has been removed; task age
+        is now the sole criterion.
         """
         task_id = str(uuid.uuid4())
         created_at = now - timedelta(days=10)
-        _insert_task(db, task_id, "Old active task", created_at=created_at)
+        _insert_task(db, task_id, "Old dormant task", created_at=created_at)
 
-        # Recent email (2 days ago) — within the 7-day inactivity window
+        # Recent email completely unrelated to the task — must NOT block completion.
         _insert_event(db, "email.received", {
-            "subject": "Follow-up on old task",
-            "body_plain": "Just checking in on this.",
+            "subject": "Newsletter digest",
+            "body_plain": "Totally unrelated content.",
         }, timestamp=now - timedelta(days=2))
 
         completed = await detector._detect_inactivity_based_completion()
 
-        assert completed == 0, (
-            "Recent activity should prevent inactivity-based completion"
+        assert completed == 1, (
+            "Unrelated system activity must not prevent inactivity-based completion "
+            "of an old task.  The global activity guard has been removed."
         )
-        detector.task_manager.complete_task.assert_not_called()
+        detector.task_manager.complete_task.assert_called_once_with(task_id)
 
     @pytest.mark.asyncio
     async def test_old_event_does_not_block_inactivity_completion(self, detector, db, now):
@@ -312,29 +322,28 @@ class TestSqlParamCounts:
                 )
 
     @pytest.mark.asyncio
-    async def test_inactivity_detection_executes_single_timestamp_param(
+    async def test_inactivity_detection_no_events_query_in_source(
         self, detector, db, now
     ):
-        """_detect_inactivity_based_completion must use exactly one timestamp per count query."""
-        # Insert one old task to make the loop run
-        task_id = str(uuid.uuid4())
-        _insert_task(db, task_id, "Old task", created_at=now - timedelta(days=10))
+        """_detect_inactivity_based_completion must NOT contain an events timestamp query.
 
-        # Capture SQL via a real DB call interception isn't trivial in SQLite,
-        # so instead we verify by inspecting the source code pattern directly.
-        # This is a documentation-level assertion about the code we just fixed.
+        The original bug involved a global ``COUNT(*) FROM events WHERE timestamp > ?``
+        guard that prevented inactivity detection from ever firing on a live system.
+        The fix removes the events query entirely — only the tasks query (with a single
+        ``created_at < ?`` param) remains.  This source-level assertion documents that
+        the events guard is gone.
+        """
         import inspect
         from services.task_completion_detector import detector as det_module
 
         source = inspect.getsource(det_module.TaskCompletionDetector._detect_inactivity_based_completion)
 
-        # After the fix, the inactivity query should NOT have a duplicate timestamp clause
-        # Count occurrences of "timestamp > ?" in the inactivity method
-        timestamp_clause_count = source.count("AND timestamp > ?")
-        assert timestamp_clause_count == 1, (
-            f"_detect_inactivity_based_completion should have exactly 1 "
-            f"'AND timestamp > ?' clause, found {timestamp_clause_count}. "
-            "The duplicate timestamp param bug may not be fixed."
+        # The old broken implementation had a COUNT(*) query over the events table.
+        # After the fix, no such query should exist in this method.
+        assert "FROM events" not in source, (
+            "_detect_inactivity_based_completion must not query the events table. "
+            "The global activity guard that prevented inactivity detection on live "
+            "systems has been removed; task age is the sole completion criterion."
         )
 
     @pytest.mark.asyncio
