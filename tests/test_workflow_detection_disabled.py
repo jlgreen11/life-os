@@ -118,15 +118,21 @@ def test_workflow_detection_with_large_event_volume(db, user_model_store, event_
 
 
 def test_workflow_detection_logging(db, user_model_store, caplog):
-    """Verify workflow detection logs appropriate message."""
+    """Verify workflow detection logs a completion message at INFO level.
+
+    Workflow detection was previously disabled to prevent 30s+ hangs on 800K+
+    events.  It was re-enabled after the sliding-window algorithm (O(n) instead
+    of O(n×m)) made it fast enough.  The log message now reports how many
+    workflows were detected rather than 'disabled'.
+    """
     import logging
     caplog.set_level(logging.INFO)
 
     detector = WorkflowDetector(db, user_model_store)
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Should log that detection is disabled
-    assert any("disabled" in record.message.lower() for record in caplog.records), \
-        "Should log that workflow detection is disabled"
-    assert any("redesign" in record.message.lower() for record in caplog.records), \
-        "Should mention algorithmic redesign as the reason"
+    # Should log the number of detected workflows (active detection, not disabled)
+    assert any("detected" in record.message.lower() for record in caplog.records), \
+        "Should log 'Detected N workflows …' at INFO level"
+    assert any("workflows" in record.message.lower() for record in caplog.records), \
+        "Log message should mention 'workflows'"
