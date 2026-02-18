@@ -1293,6 +1293,26 @@ class PredictionEngine:
         types that are frequently wrong lose confidence; types that are usually right
         gain confidence.
 
+        **Excludes automated-sender fast-path resolutions from the count.**
+
+        Background: The BehavioralAccuracyTracker resolves predictions immediately as
+        inaccurate when the contact is a marketing/automated sender (PRs #183–#189).
+        This "fast-path" was introduced to clean up predictions generated before the
+        marketing filter was robust — predictions that were structurally unfulfillable
+        (the user can never reach out to noreply@company.com). These are bugs in
+        prediction generation, not real user-behavior signals.
+
+        Without this exclusion, the 174 fast-path-resolved opportunity predictions
+        inflated the "inaccurate" count, producing a measured accuracy of 19% and a
+        0.3 multiplier floor. Combined with the opportunity confidence cap of 0.6,
+        this meant: 0.6 × 0.3 = 0.18 — below the 0.3 surfacing threshold, so
+        ALL opportunity predictions were silently suppressed. The learning loop was
+        broken: no predictions surfaced → no new accuracy data → can't recover.
+
+        By excluding ``resolution_reason = 'automated_sender_fast_path'`` rows, the
+        multiplier now reflects real user behavior (did the user reach out or not?)
+        rather than historical prediction-generation bugs.
+
         Returns:
             0.3  — heavy penalty floor for very low accuracy (<20% after 10+ resolved).
                    Using 0.3 instead of 0.0 ensures the learning loop can recover
@@ -1303,8 +1323,9 @@ class PredictionEngine:
             1.0  — insufficient data (<5 resolved predictions)
 
         Examples:
-            _get_accuracy_multiplier("opportunity")  # 19% accuracy, 248 resolved
-            # → 0.3  (heavy penalty but still allows predictions to surface)
+            _get_accuracy_multiplier("opportunity")
+            # 41 accurate / 74 real-behavior samples (fast-path excluded) = 55%
+            # → 0.5 + 0.55 * 0.6 = 0.83  (healthy multiplier, predictions surface)
 
             _get_accuracy_multiplier("reminder")  # 71% accuracy
             # → 0.5 + 0.71 * 0.6 = 0.926
@@ -1320,7 +1341,9 @@ class PredictionEngine:
                    FROM predictions
                    WHERE prediction_type = ?
                      AND was_surfaced = 1
-                     AND resolved_at IS NOT NULL""",
+                     AND resolved_at IS NOT NULL
+                     AND (resolution_reason IS NULL
+                          OR resolution_reason != 'automated_sender_fast_path')""",
                 (prediction_type,),
             ).fetchone()
 
@@ -1343,7 +1366,8 @@ class PredictionEngine:
         if accuracy_rate < 0.2 and total >= 10:
             print(
                 f"[prediction_engine] accuracy_multiplier: {prediction_type} has "
-                f"{accuracy_rate:.1%} accuracy over {total} samples — "
+                f"{accuracy_rate:.1%} accuracy over {total} samples "
+                f"(excluding automated-sender fast-path) — "
                 f"applying heavy-penalty floor (0.3)"
             )
             return 0.3

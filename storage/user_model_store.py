@@ -514,21 +514,30 @@ class UserModelStore:
         })
 
     def resolve_prediction(self, prediction_id: str, was_accurate: bool,
-                          user_response: str = None):
+                          user_response: str = None, resolution_reason: str = None):
         """Mark a prediction as resolved with user feedback.
 
-        Records whether the prediction was accurate and any optional user
-        response text. This feedback drives the accuracy-based confidence
-        adjustment system in the prediction engine.
+        Records whether the prediction was accurate, any optional user response
+        text, and an optional machine-readable resolution_reason. This feedback
+        drives the accuracy-based confidence adjustment in the prediction engine.
 
         Args:
             prediction_id: UUID of the prediction to resolve
             was_accurate: True if the prediction was helpful/correct,
                          False if it was unhelpful/incorrect
-            user_response: Optional free-text feedback from the user
+            user_response: Optional free-text or coded response ('inferred',
+                          'filtered', or direct user feedback text)
+            resolution_reason: Optional machine-readable reason for resolution.
+                Callers should use well-known values so the accuracy multiplier
+                can selectively exclude non-behavioral resolutions:
+                  'automated_sender_fast_path' — resolved immediately because
+                      the contact is a marketing/automated sender; this is a
+                      historical bug cleanup, not a real user-behavior signal
+                  'timeout_no_action' — inference window elapsed with no action
+                  NULL — user explicit feedback or pre-v4 resolution (no reason)
 
         The resolved_at timestamp is set automatically to track when the
-        user provided feedback. This enables queries like "predictions
+        prediction was resolved. This enables queries like "predictions
         resolved in the last 30 days" for computing rolling accuracy rates.
         """
         with self.db.get_connection("user_model") as conn:
@@ -536,15 +545,17 @@ class UserModelStore:
                 """UPDATE predictions
                    SET was_accurate = ?,
                        user_response = ?,
+                       resolution_reason = ?,
                        resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                    WHERE id = ?""",
-                (int(was_accurate), user_response, prediction_id),
+                (int(was_accurate), user_response, resolution_reason, prediction_id),
             )
 
         self._emit_telemetry("usermodel.prediction.resolved", {
             "prediction_id": prediction_id,
             "was_accurate": was_accurate,
             "has_response": bool(user_response),
+            "resolution_reason": resolution_reason,
             "resolved_at": datetime.now(timezone.utc).isoformat(),
         })
 
