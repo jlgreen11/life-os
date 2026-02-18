@@ -929,18 +929,36 @@ class BehavioralAccuracyTracker:
         for event in events:
             try:
                 payload = json.loads(event["payload"])
-                # Check if recipient matches
-                to_field = payload.get("to_addresses") or payload.get("to", "")
 
-                # Convert list to string for matching
-                if isinstance(to_field, list):
-                    to_str = ", ".join(to_field).lower()
-                else:
-                    to_str = to_field.lower()
+                # Build a unified recipient string covering To, CC, and BCC fields.
+                # Previously only to_addresses was checked, which caused false
+                # INACCURATE outcomes when the user replied-all to a group thread
+                # and the predicted contact was in CC rather than To. Both ProtonMail
+                # and Gmail connectors include cc_addresses in all email payloads
+                # (connectors/proton_mail/connector.py:253 and
+                #  connectors/google/connector.py:284), so historical events already
+                # contain this data — no connector changes required.
+                all_recipients: list[str] = []
+                for field in ("to_addresses", "cc_addresses", "bcc_addresses"):
+                    value = payload.get(field) or []
+                    if isinstance(value, list):
+                        all_recipients.extend(value)
+                    elif isinstance(value, str) and value:
+                        all_recipients.append(value)
 
-                if contact_email and contact_email.lower() in to_str:
+                # Legacy fallback: some connectors emit a plain "to" string
+                # instead of a list (e.g. older iMessage events).
+                if not all_recipients:
+                    legacy_to = payload.get("to", "")
+                    if legacy_to:
+                        all_recipients.append(legacy_to)
+
+                # Single lowercase string for substring matching
+                recipients_str = ", ".join(all_recipients).lower()
+
+                if contact_email and contact_email.lower() in recipients_str:
                     return True  # User DID reach out — prediction was accurate
-                if contact_name and contact_name.lower() in to_str:
+                if contact_name and contact_name.lower() in recipients_str:
                     return True
             except (json.JSONDecodeError, TypeError):
                 continue
