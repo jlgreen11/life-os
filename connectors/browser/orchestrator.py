@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -43,6 +44,8 @@ from connectors.browser.base_connector import BrowserBaseConnector
 from connectors.browser.generic import GenericBrowserConnector, create_browser_connectors
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserOrchestrator:
@@ -90,13 +93,13 @@ class BrowserOrchestrator:
         if not self._enabled:
             return
 
-        print("  [browser] Initializing browser automation layer...")
+        logger.info("Initializing browser automation layer...")
 
         # Launch the single shared Chromium instance that all browser
         # connectors will share (one process, many isolated contexts).
         self._engine = BrowserEngine(data_dir=self._data_dir)
         await self._engine.start()
-        print("  [browser] ✓ Chromium launched (stealth mode)")
+        logger.info("Chromium launched (stealth mode)")
 
         # Load credentials
         self._vault = CredentialVault(
@@ -109,9 +112,9 @@ class BrowserOrchestrator:
             export_path = self.config.get("proton_pass_export", "")
             if export_path and Path(export_path).exists():
                 self._vault.load_proton_pass_export(export_path)
-                print(f"  [browser] ✓ Proton Pass vault loaded ({len(self._vault.list_sites())} sites)")
+                logger.info("Proton Pass vault loaded (%d sites)", len(self._vault.list_sites()))
             else:
-                print(f"  [browser] ⚠ Proton Pass export not found at {export_path}")
+                logger.warning("Proton Pass export not found at %s", export_path)
 
         # Also load manual vault
         manual_path = self.config.get("manual_vault", "")
@@ -121,7 +124,7 @@ class BrowserOrchestrator:
         # Create browser-specific connectors
         await self._create_connectors()
 
-        print(f"  [browser] ✓ {len(self._connectors)} browser connectors ready")
+        logger.info("%d browser connectors ready", len(self._connectors))
 
     async def _create_connectors(self):
         """Create all browser-based connectors from config."""
@@ -172,9 +175,9 @@ class BrowserOrchestrator:
         for connector in self._connectors:
             try:
                 await connector.start()
-                print(f"       ✓ {connector.DISPLAY_NAME} (browser)")
+                logger.info("%s (browser) started", connector.DISPLAY_NAME)
             except Exception as e:
-                print(f"       ✗ {connector.DISPLAY_NAME} (browser): {e}")
+                logger.error("%s (browser) failed to start: %s", connector.DISPLAY_NAME, e)
 
     async def stop(self):
         """Shut down all browser connectors and the shared engine."""
@@ -268,18 +271,21 @@ class APIFallbackWrapper:
                 return count
             except Exception as e:
                 self._api_failures += 1
-                print(
-                    f"  [{self.api_connector.CONNECTOR_ID}] API failed "
-                    f"({self._api_failures}/{self._failure_threshold}): {e}"
+                logger.warning(
+                    "[%s] API failed (%d/%d): %s",
+                    self.api_connector.CONNECTOR_ID,
+                    self._api_failures,
+                    self._failure_threshold,
+                    e,
                 )
 
         # Browser fallback
-        print(f"  [{self.api_connector.CONNECTOR_ID}] Using browser fallback...")
+        logger.info("[%s] Using browser fallback...", self.api_connector.CONNECTOR_ID)
         return await self._browser_fallback_sync()
 
     async def _browser_fallback_sync(self) -> int:
         """Override in subclasses with site-specific browser scraping."""
-        print(f"  [{self.api_connector.CONNECTOR_ID}] No browser fallback implemented")
+        logger.warning("[%s] No browser fallback implemented", self.api_connector.CONNECTOR_ID)
         return 0
 
     def reset_api(self):

@@ -24,12 +24,15 @@ Configuration:
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
 
 from connectors.browser.base_connector import BrowserBaseConnector
 from connectors.browser.engine import HumanEmulator, PageInteractor
+
+logger = logging.getLogger(__name__)
 
 
 class WhatsAppConnector(BrowserBaseConnector):
@@ -82,14 +85,15 @@ class WhatsAppConnector(BrowserBaseConnector):
             await self._human.wait_human(3.0, 5.0)
 
             if await self.is_logged_in(self._page):
-                print(f"  [{self.CONNECTOR_ID}] Existing session valid")
+                logger.info("[%s] Existing session valid", self.CONNECTOR_ID)
                 return True
 
             # No valid session -- the user must scan the QR code with their phone.
             # We screenshot it to a known path so it can be viewed externally.
-            print(f"  [{self.CONNECTOR_ID}] Waiting for QR code scan...")
-            print(f"  [{self.CONNECTOR_ID}] Open a browser to see the QR code,")
-            print(f"  [{self.CONNECTOR_ID}] or check the screenshot at data/browser/whatsapp_qr.png")
+            logger.info(
+                "[%s] Waiting for QR code scan — check screenshot at data/browser/whatsapp_qr.png",
+                self.CONNECTOR_ID,
+            )
 
             await self._interactor.screenshot(
                 self._page, "data/browser/whatsapp_qr.png"
@@ -99,16 +103,16 @@ class WhatsAppConnector(BrowserBaseConnector):
             for _ in range(24):
                 await self._human.wait_human(5.0, 5.0)
                 if await self.is_logged_in(self._page):
-                    print(f"  [{self.CONNECTOR_ID}] QR code scanned, connected!")
+                    logger.info("[%s] QR code scanned, connected!", self.CONNECTOR_ID)
                     # Save the authenticated session for future reuse
                     await self._browser_engine.save_session(self._context, self.SITE_ID)
                     return True
 
-            print(f"  [{self.CONNECTOR_ID}] QR code scan timed out")
+            logger.warning("[%s] QR code scan timed out", self.CONNECTOR_ID)
             return False
 
         except Exception as e:
-            print(f"  [{self.CONNECTOR_ID}] Auth error: {e}")
+            logger.error("[%s] Auth error: %s", self.CONNECTOR_ID, e)
             return False
 
     async def browser_sync(self, page: Any, human: HumanEmulator,
@@ -156,7 +160,7 @@ class WhatsAppConnector(BrowserBaseConnector):
                         count += 1
 
             except Exception as e:
-                print(f"  [{self.CONNECTOR_ID}] Error reading chat {chat.get('name')}: {e}")
+                logger.warning("[%s] Error reading chat '%s': %s", self.CONNECTOR_ID, chat.get("name"), e)
 
         return count
 
