@@ -347,8 +347,9 @@ def test_run_inference_cycle_after_inline_migration(db):
     # Insert an unresolved surfaced prediction (no supporting_signals → no match)
     _insert_prediction(db, prediction_type="opportunity", was_accurate=None, was_surfaced=True)
 
-    # Must not raise
-    stats = asyncio.get_event_loop().run_until_complete(tracker.run_inference_cycle())
+    # Must not raise — use asyncio.run() so this test is independent of
+    # pytest-asyncio's event loop (get_event_loop() fails after async tests close it)
+    stats = asyncio.run(tracker.run_inference_cycle())
     assert isinstance(stats, dict)
     assert "marked_accurate" in stats
     assert "marked_inaccurate" in stats

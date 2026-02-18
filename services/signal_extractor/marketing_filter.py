@@ -240,7 +240,10 @@ def is_marketing_or_noreply(
         "irrigation@",            # e.g., irrigation@ryanlawn.com (automated service alerts)
         # Retail / brand promotional senders
         "top@",                   # e.g., top@raymore.com (store "top picks" promo mailer)
-        "alumni@",                # e.g., alumni@mst.edu (university alumni bulk mailer)
+        # "alumni@" was removed: it incorrectly matched legitimate educational contacts
+        # like alumni@mst.edu (a real university address for the user). The pattern
+        # was too broad. Any specific alumni bulk-mailer domains should be added to
+        # marketing_service_patterns instead.
         # System-generated sender local-parts that clearly identify automated accounts
         "msftpc@",                # e.g., msftpc@microsoft.com (Microsoft PC automated system)
         # Tagged notification senders: alerts+HASH@ is a common pattern used by
@@ -379,6 +382,9 @@ def is_marketing_or_noreply(
         # "substack.com" as well.
         "substack.com",         # Newsletter platform (e.g. bytebytego@substack.com)
         "beehiiv.com",          # Newsletter platform (e.g. author@newsletter.beehiiv.com)
+        "ghost.io",             # Ghost newsletter platform (e.g. author@ghost.io)
+        "convertkit.com",       # ConvertKit creator marketing platform
+        "buttondown.email",     # Buttondown newsletter platform
         # Email marketing / CRM platforms observed in production data
         "e-vanguard.com",       # e.g., flagship@eonline.e-vanguard.com (marketing ESP)
         # Government transactional payment system (not a human correspondence address)
