@@ -21,11 +21,14 @@ YouTube subscriptions), the browser IS the primary connector.
 from __future__ import annotations
 
 import asyncio
+import logging
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from connectors.base.connector import BaseConnector
+
+logger = logging.getLogger(__name__)
 from connectors.browser.engine import (
     BrowserEngine,
     CredentialVault,
@@ -106,10 +109,10 @@ class BrowserBaseConnector(BaseConnector):
             try:
                 result = await self.api_authenticate()
                 if result:
-                    print(f"  [{self.CONNECTOR_ID}] Authenticated via API")
+                    logger.info("[%s] Authenticated via API", self.CONNECTOR_ID)
                     return True
             except Exception as e:
-                print(f"  [{self.CONNECTOR_ID}] API auth failed: {e}")
+                logger.warning("[%s] API auth failed: %s", self.CONNECTOR_ID, e)
 
         # Fall back to browser
         return await self._browser_login()
@@ -130,23 +133,26 @@ class BrowserBaseConnector(BaseConnector):
                 return count
             except Exception as e:
                 self._api_failures += 1
-                print(
-                    f"  [{self.CONNECTOR_ID}] API sync failed "
-                    f"({self._api_failures}/{self._api_failure_threshold}): {e}"
+                logger.warning(
+                    "[%s] API sync failed (%d/%d): %s",
+                    self.CONNECTOR_ID,
+                    self._api_failures,
+                    self._api_failure_threshold,
+                    e,
                 )
 
                 if self._api_failures >= self._api_failure_threshold:
-                    print(
-                        f"  [{self.CONNECTOR_ID}] Switching to browser mode "
-                        f"after {self._api_failures} consecutive API failures"
+                    logger.warning(
+                        "[%s] Switching to browser mode after %d consecutive API failures",
+                        self.CONNECTOR_ID,
+                        self._api_failures,
                     )
 
         # Browser mode
         try:
             return await self._browser_sync_wrapper()
         except Exception as e:
-            print(f"  [{self.CONNECTOR_ID}] Browser sync failed: {e}")
-            traceback.print_exc()
+            logger.error("[%s] Browser sync failed: %s", self.CONNECTOR_ID, e, exc_info=True)
             return 0
 
     async def stop(self):
@@ -177,8 +183,11 @@ class BrowserBaseConnector(BaseConnector):
         # Step 1: Look up credentials from the vault (Proton Pass or manual)
         creds = self._credential_vault.get_credential(self.SITE_ID)
         if not creds:
-            print(f"  [{self.CONNECTOR_ID}] No credentials found for {self.SITE_ID}")
-            print(f"  [{self.CONNECTOR_ID}] Load Proton Pass export or add to manual vault")
+            logger.error(
+                "[%s] No credentials found for site '%s' — load Proton Pass export or add to manual vault",
+                self.CONNECTOR_ID,
+                self.SITE_ID,
+            )
             return False
 
         try:
@@ -196,11 +205,11 @@ class BrowserBaseConnector(BaseConnector):
             if self._browser_engine.session_manager.has_session(self.SITE_ID):
                 await self._page.goto(self.get_login_url(), wait_until="networkidle")
                 if await self.is_logged_in(self._page):
-                    print(f"  [{self.CONNECTOR_ID}] Session still valid")
+                    logger.info("[%s] Existing session still valid", self.CONNECTOR_ID)
                     return True
 
             # Fresh login needed
-            print(f"  [{self.CONNECTOR_ID}] Logging in via browser...")
+            logger.info("[%s] Logging in via browser...", self.CONNECTOR_ID)
             await self._page.goto(self.get_login_url(), wait_until="networkidle")
             await self._human.wait_human(1.0, 3.0)
 
@@ -222,8 +231,10 @@ class BrowserBaseConnector(BaseConnector):
                     code_selector = selectors.get("totp", "input[name='code']")
                     await self._interactor.handle_2fa(self._page, totp_code, code_selector)
                 else:
-                    print(f"  [{self.CONNECTOR_ID}] 2FA required but no TOTP URI configured")
-                    print(f"  [{self.CONNECTOR_ID}] Add totp_uri to credential vault")
+                    logger.error(
+                        "[%s] 2FA required but no TOTP URI configured — add totp_uri to credential vault",
+                        self.CONNECTOR_ID,
+                    )
                     return False
 
             # Verify login succeeded
@@ -231,15 +242,14 @@ class BrowserBaseConnector(BaseConnector):
             if await self.is_logged_in(self._page):
                 # Save session for reuse
                 await self._browser_engine.save_session(self._context, self.SITE_ID)
-                print(f"  [{self.CONNECTOR_ID}] Browser login successful")
+                logger.info("[%s] Browser login successful", self.CONNECTOR_ID)
                 return True
             else:
-                print(f"  [{self.CONNECTOR_ID}] Login appears to have failed")
+                logger.warning("[%s] Browser login appears to have failed", self.CONNECTOR_ID)
                 return False
 
         except Exception as e:
-            print(f"  [{self.CONNECTOR_ID}] Browser login error: {e}")
-            traceback.print_exc()
+            logger.error("[%s] Browser login error: %s", self.CONNECTOR_ID, e, exc_info=True)
             return False
 
     # ------------------------------------------------------------------
@@ -269,7 +279,7 @@ class BrowserBaseConnector(BaseConnector):
             # mentions "session" or "login", clear the stale session file
             # and attempt a fresh login before retrying the sync.
             if "session" in str(e).lower() or "login" in str(e).lower():
-                print(f"  [{self.CONNECTOR_ID}] Session expired, re-authenticating...")
+                logger.info("[%s] Session expired, re-authenticating...", self.CONNECTOR_ID)
                 self._browser_engine.session_manager.clear_session(self.SITE_ID)
                 if await self._browser_login():
                     return await self.browser_sync(self._page, self._human, self._interactor)

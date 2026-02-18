@@ -27,12 +27,15 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import logging
 import os
 import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 # Playwright is an optional dependency — the rest of the system can run
 # without browser automation.  We gate all browser usage behind this flag.
@@ -351,7 +354,7 @@ class CredentialVault:
             totp = pyotp.parse_uri(cred["totp_uri"])
             return totp.now()
         except ImportError:
-            print("pyotp not installed — cannot generate TOTP codes")
+            logger.warning("pyotp not installed — cannot generate TOTP codes")
             return None
 
     def list_sites(self) -> list[str]:
