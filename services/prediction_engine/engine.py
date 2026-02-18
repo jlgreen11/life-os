@@ -1394,6 +1394,27 @@ class PredictionEngine:
             "paypal@", "venmo@", "stripe@", "square@",
             "coinbase@", "binance@", "kraken@",
             "experian@", "equifax@", "transunion@", "creditkarma@",
+            # Retail/hospitality transactional senders (iteration 178)
+            # Production data showed 135 unresolved opportunity predictions for
+            # automated senders at hotel chains, airlines, retailers, and services.
+            # These addresses are corporate automated systems, never personal contacts.
+            "customerservice@",   # e.g., Customerservice@nationalcar.com
+            "reservations@",      # e.g., reservations@nationalcar.com (hospitality automated)
+            "onlineservice@",     # e.g., onlineservice@fedex.com (shipping automated)
+            "return@",            # e.g., return@amazon.com (retail returns automated)
+            "tracking@",          # e.g., tracking@shipstation.com (shipment tracking)
+            "transaction@",       # e.g., transaction@info.samsclub.com (purchase receipts)
+            "online.account@",    # e.g., online.account@marriott.com (hotel account automated)
+            "guestservices@",     # e.g., guestservices@boxoffice.axs.com (ticketing automated)
+            "drivers@",           # e.g., drivers@chargepoint.com (EV charging automated)
+            "gaming@",            # e.g., gaming@nvgaming.nvidia.com (gaming service automated)
+            "messenger@",         # e.g., messenger@messaging.squareup.com (payment platform)
+            "tickets@",           # e.g., tickets@transactions.axs.com (ticket purchase receipts)
+            "walgreens@",         # e.g., walgreens@eml.walgreens.com (pharmacy automated)
+            "rei@",               # e.g., rei@alerts.rei.com (retail membership automated)
+            "applecash@",         # e.g., applecash@insideapple.apple.com (Apple Cash automated)
+            "worldofhyatt@",      # e.g., worldofhyatt@loyalty.hyatt.com (loyalty program)
+            "disneycruiseline@",  # e.g., disneycruiseline@vacations.disneydestinations.com
         )
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True
@@ -1405,6 +1426,10 @@ class PredictionEngine:
             "-notification", "-notifications", "-alert", "-alerts",
             "-update", "-updates", "-digest",
             "news",  # Catches lafconews@, morningnews@, dailynews@, etc.
+            # Dot-separated no-reply variants (iteration 178)
+            # "no.reply" pattern catches no.reply@domain.com and no.reply.alerts@domain.com
+            "no.reply",   # e.g., no.reply.alerts@chase.com
+            "do.not.reply",  # e.g., do.not.reply@domain.com
         )
         # Extract local-part (everything before @)
         local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
@@ -1426,6 +1451,13 @@ class PredictionEngine:
         #
         # EXPANDED (iteration 152): Added @m., @notification., @marketing. patterns
         # to catch starbucks@m.starbucks.com, capitalone@notification.capitalone.com, etc.
+        #
+        # NOTE: The check below uses `pattern in addr_lower` which means patterns
+        # starting with @ will only match if @subdomain. appears in the full address
+        # AFTER the user's own @ separator. For example, @email. catches addresses
+        # like user@email.domain.com (where @email. is the start of the domain).
+        # Compound subdomain patterns like "info.email." (without @) will match
+        # anywhere in the domain string.
         marketing_domain_patterns = (
             "@news-", "@email.", "@reply.", "@mailing.",
             "@newsletters.", "@promo.", "@marketing.",
@@ -1444,6 +1476,25 @@ class PredictionEngine:
             "@care.",  # Customer care (e.g., care.kansashealthsystem.com)
             "@mcmap.",  # Marketing campaign manager (e.g., mcmap.chase.com)
             "@soslprospect.",  # Sales/prospect management (e.g., soslprospect.salliemae.com)
+            # Retail/hospitality/transactional domain subdomains (iteration 178)
+            # Added after production data revealed 135 unresolved opportunity predictions
+            # for automated senders using these subdomain patterns.
+            "@alerts.",     # Alert subdomains (e.g., @alerts.rei.com, @alerts.chase.com)
+            "@loyalty.",    # Loyalty program subdomains (e.g., @loyalty.hyatt.com)
+            "@vacations.",  # Travel booking automated (e.g., @vacations.disneydestinations.com)
+            "@transactions.", # Transaction receipt platforms (e.g., @transactions.axs.com)
+            "@eml.",        # Email delivery subdomains (e.g., @eml.walgreens.com)
+            "@insideapple.",  # Apple automated services (e.g., @insideapple.apple.com)
+            "@card.",       # Card/payment automated (e.g., @card.southwest.com)
+            "@odysseymail.", # Tyler Technologies court automated (e.g., @odysseymail.tylertech.cloud)
+            "@mc.",         # Marketing/campaign subdomains (e.g., @mc.ihg.com hotel loyalty)
+                            # Note: @mg. was already present; @mc. is a different ESP pattern
+            "@eg.",         # Email gateway/engagement subdomains (e.g., @eg.vrbo.com)
+            # Compound subdomain patterns (no leading @ — match anywhere in domain)
+            # These patterns don't start with @ because they need to match as part of
+            # a longer subdomain sequence after the user's @ separator.
+            "info.email.",  # Multi-level info/email subdomain (e.g., @info.email.aa.com for
+                            # American Airlines marketing — "info.email." in domain string)
         )
         if any(pattern in addr_lower for pattern in marketing_domain_patterns):
             return True
@@ -1474,6 +1525,13 @@ class PredictionEngine:
             ".customer.io",       # Customer.io
             ".iterable.com",      # Iterable
             ".klaviyo.com",       # Klaviyo e-commerce marketing
+            # Additional automated/transactional domains identified from production data
+            # (iteration 178) — specific domains that only send automated messages.
+            "proxyvote.com",       # Proxy voting service (Broadridge Financial automated)
+            "playatmcd.com",       # McDonald's Monopoly game promotion (automated)
+            "facebookmail.com",    # Facebook automated emails (security, notifications)
+            ".smg.com",            # Service Management Group — survey/marketing platform
+            ".ms.aa.com",          # American Airlines info/marketing subdomain
         )
         if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
             return True
