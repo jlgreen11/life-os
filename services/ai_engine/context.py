@@ -153,12 +153,76 @@ class ContextAssembler:
     def assemble_search_context(self, query: str) -> str:
         """Build context for a life-search query.
 
-        Currently returns a minimal context string. The heavy lifting (actual
-        search results) is appended by AIEngine.search_life() after querying
-        the events database. This method exists as a hook for future enrichment
-        (e.g., adding user preferences, recent context, or search history).
+        Assembles a richer context string that helps the LLM:
+          1. Understand *who* the user is (preferences, known facts) so it can
+             disambiguate references like "my project" or "Mike".
+          2. Anchor relative time expressions ("last month", "yesterday") to
+             the actual current date.
+          3. Calibrate output style (verbosity, preferred name) from preferences.
+
+        The search results themselves are appended by ``AIEngine.search_life()``
+        after this method returns; this context appears *before* those results so
+        the LLM can interpret them with full user context.
+
+        Args:
+            query: The natural-language search string entered by the user.
+
+        Returns:
+            A multi-section context string separated by "---" delimiters.
+
+        Example usage::
+
+            ctx = assembler.assemble_search_context("What did Mike say about the Denver project?")
+            # Returns a string with preferences, timestamp, known facts, and mood context
+            # that the LLM can use to disambiguate "Mike" and "Denver project".
         """
-        return f"User is searching across their entire digital life for: {query}"
+        parts = []
+
+        # Section 1: The search intent — always first so the LLM knows what
+        # question to answer when it reads the subsequent context sections.
+        parts.append(f"User is searching across their entire digital life for: {query}")
+
+        # Section 2: Current timestamp — anchors relative time expressions
+        # ("last month", "yesterday", "this week") to a concrete date so the
+        # LLM can compute the correct time window rather than guessing.
+        now = datetime.now(timezone.utc)
+        parts.append(f"Current time: {now.strftime('%A, %B %d, %Y at %H:%M UTC')}")
+
+        # Section 3: User preferences — verbosity level, preferred name, etc.
+        # This lets the LLM calibrate its answer length and form of address.
+        parts.append(self._get_preference_context())
+
+        # Section 4: High-confidence semantic facts about the user.
+        # These help disambiguate references: e.g., "my boss" maps to a known
+        # name, "the project" could map to a known employer or project fact.
+        # Only facts with confidence >= 0.6 are included to keep the context
+        # signal-rich and avoid injecting speculative noise.
+        try:
+            facts = self.ums.get_semantic_facts(min_confidence=0.6)
+            if facts:
+                fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:15]]
+                parts.append("Known facts about user (use for disambiguation):\n"
+                             + "\n".join(fact_lines))
+        except Exception:
+            # Fail-open: missing facts degrade search quality slightly but
+            # should never prevent the search from returning a result.
+            pass
+
+        # Section 5: Recent mood signals (last 3 entries).
+        # Gives the LLM soft context about the user's recent emotional state
+        # so it can frame results empathetically (e.g., a stressed user asking
+        # about overdue tasks deserves an encouraging framing).
+        try:
+            mood_profile = self.ums.get_signal_profile("mood_signals")
+            if mood_profile:
+                recent = mood_profile["data"].get("recent_signals", [])[-3:]
+                if recent:
+                    parts.append(f"Recent mood context: {recent}")
+        except Exception:
+            # Fail-open: mood context is a nice-to-have; omit it silently.
+            pass
+
+        return "\n\n---\n\n".join(parts)
 
     def _get_preference_context(self) -> str:
         """Load all user preferences as a JSON object for the context window.
