@@ -14,6 +14,8 @@ Insight Types:
     actionable_alert            -- Something the user should act on now
     relationship_intelligence   -- Social-graph discoveries
     communication_style         -- Writing-style observations from linguistic profile
+    temporal_pattern            -- Chronotype and productive-hour insights from temporal profile
+    mood_trend                  -- Mood trajectory insights derived from mood_history
 """
 
 from __future__ import annotations
@@ -77,6 +79,16 @@ class InsightEngine:
         except Exception:
             logger.exception("actionable_alert correlator failed")
 
+        try:
+            raw.extend(self._temporal_pattern_insights())
+        except Exception:
+            logger.exception("temporal_pattern correlator failed")
+
+        try:
+            raw.extend(self._mood_trend_insights())
+        except Exception:
+            logger.exception("mood_trend correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -124,6 +136,12 @@ class InsightEngine:
             "contact_gap": "messaging.direct",
             "email_volume": "email.work",
             "communication_style": "messaging.direct",
+            # Temporal and mood insights derive from all communication signals,
+            # so they are weighted against the broadest applicable source key.
+            "chronotype": "email.work",
+            "peak_hour": "email.work",
+            "busiest_day": "email.work",
+            "mood_trajectory": "messaging.direct",
         }
 
         weighted: list[Insight] = []
@@ -623,6 +641,349 @@ class InsightEngine:
         insights.append(insight)
 
         return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Temporal Patterns
+    # ------------------------------------------------------------------
+
+    def _temporal_pattern_insights(self) -> list[Insight]:
+        """Surface chronotype and productive-hour insights from the temporal profile.
+
+        Reads the ``temporal`` signal profile (built by ``TemporalExtractor``) and
+        translates raw activity-by-hour and activity-by-day histograms into two
+        human-readable insight types:
+
+        **Chronotype (early bird / night owl / mixed):**
+            Compares activity density in the morning window (5–11 h) versus the
+            evening window (18–23 h).  At least ``MIN_SAMPLES`` data points must
+            exist before the correlator fires.  A morning-biased user whose morning
+            activity exceeds evening by ``CHRONOTYPE_RATIO`` or more is labelled an
+            "early bird"; the inverse yields "night owl"; otherwise "mixed".
+
+        **Peak productive hour:**
+            Identifies the single hour with the most recorded activity events.
+            Only hours in the productive day (6–22 h) are considered.  At least
+            ``MIN_PEAK_ACTIVITY`` events must be recorded for the peak hour before
+            an insight is generated.
+
+        **Busiest day of the week:**
+            Finds the calendar day with the highest activity count.  Requires at
+            least ``MIN_DAY_SAMPLES`` total day-level samples to avoid noise from
+            sparse data.
+
+        Dedup strategy:
+            Each insight sub-type uses a stable ``entity`` derived from the
+            detected pattern label (e.g. "early_bird", "peak_hour_9", "tuesday").
+            This means the insight is resurfaced only when the label itself changes
+            (i.e. the pattern shifts), not just because a new sample was added.
+            Staleness TTL is 168 hours (7 days) — appropriate for slow-moving
+            behavioral traits.
+
+        Returns:
+            list[Insight]: Zero, one, two, or three insights depending on how much
+            temporal data is available and how clear the patterns are.
+
+        Example insights generated::
+
+            "You tend to be most active in the morning, suggesting you're an
+            early bird (60% of activity between 05:00–11:00)."
+
+            "Your most productive hour is 9 AM — consider scheduling deep-work
+            blocks then."
+
+            "Tuesday is your busiest day (32% more activity than your weekly
+            average)."
+        """
+        # Minimum data requirements to avoid noise from sparse profiles
+        MIN_SAMPLES = 50          # total activity samples required for chronotype
+        MIN_PEAK_ACTIVITY = 10   # events in the busiest hour for a peak-hour insight
+        MIN_DAY_SAMPLES = 30     # total day-level samples for busiest-day insight
+        CHRONOTYPE_RATIO = 1.5   # morning vs evening activity ratio threshold
+
+        profile = self.ums.get_signal_profile("temporal")
+        if not profile:
+            return []
+
+        data = profile.get("data", {})
+        total_samples = profile.get("samples_count", 0)
+
+        activity_by_hour: dict[str, int] = data.get("activity_by_hour", {})
+        activity_by_day: dict[str, int] = data.get("activity_by_day", {})
+
+        if not activity_by_hour or total_samples < MIN_SAMPLES:
+            return []
+
+        insights: list[Insight] = []
+
+        # ----------------------------------------------------------------
+        # Sub-insight 1: Chronotype (early bird / night owl / mixed)
+        # ----------------------------------------------------------------
+        # Morning window: 05:00–10:59; evening window: 18:00–22:59
+        morning_hours = [str(h) for h in range(5, 11)]
+        evening_hours = [str(h) for h in range(18, 23)]
+
+        morning_count = sum(activity_by_hour.get(h, 0) for h in morning_hours)
+        evening_count = sum(activity_by_hour.get(h, 0) for h in evening_hours)
+        total_windowed = morning_count + evening_count
+
+        if total_windowed >= 10:  # enough window samples to compare
+            if morning_count >= evening_count * CHRONOTYPE_RATIO:
+                chronotype = "early_bird"
+                pct = int(100 * morning_count / total_windowed)
+                description = "early bird"
+                window_label = "05:00–11:00"
+            elif evening_count >= morning_count * CHRONOTYPE_RATIO:
+                chronotype = "night_owl"
+                pct = int(100 * evening_count / total_windowed)
+                description = "night owl"
+                window_label = "18:00–23:00"
+            else:
+                chronotype = "mixed"
+                pct = int(100 * morning_count / total_windowed)
+                description = "mixed (morning and evening activity are balanced)"
+                window_label = "morning and evening windows"
+
+            if chronotype in ("early_bird", "night_owl"):
+                summary = (
+                    f"You tend to be most active in the {'morning' if chronotype == 'early_bird' else 'evening'}, "
+                    f"suggesting you're an {description} ({pct}% of windowed activity between {window_label})."
+                )
+            else:
+                summary = (
+                    f"Your activity is fairly balanced between morning and evening ({description})."
+                )
+
+            insight = Insight(
+                type="temporal_pattern",
+                summary=summary,
+                # Confidence ramps with sample count; reaches 0.85 at 500+ samples
+                confidence=min(0.85, 0.4 + total_samples / 1000),
+                evidence=[
+                    f"chronotype={chronotype}",
+                    f"morning_count={morning_count}",
+                    f"evening_count={evening_count}",
+                    f"total_samples={total_samples}",
+                ],
+                category="chronotype",
+                entity=chronotype,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 2: Peak productive hour
+        # ----------------------------------------------------------------
+        # Only consider daytime hours (06:00–21:59) to avoid fringe outliers
+        productive_hours = {h: activity_by_hour.get(str(h), 0) for h in range(6, 22)}
+        if productive_hours:
+            peak_hour = max(productive_hours, key=lambda h: productive_hours[h])
+            peak_count = productive_hours[peak_hour]
+
+            if peak_count >= MIN_PEAK_ACTIVITY:
+                # Format hour as human-readable "9 AM", "2 PM", etc.
+                hour_label = datetime.now().replace(hour=peak_hour).strftime("%-I %p")
+                summary = (
+                    f"Your most active hour is {hour_label} — consider scheduling "
+                    f"important work or focus blocks during this window "
+                    f"({peak_count} activity events recorded)."
+                )
+                insight = Insight(
+                    type="temporal_pattern",
+                    summary=summary,
+                    confidence=min(0.80, 0.35 + peak_count / 100),
+                    evidence=[
+                        f"peak_hour={peak_hour}",
+                        f"peak_count={peak_count}",
+                        f"total_samples={total_samples}",
+                    ],
+                    category="peak_hour",
+                    # Entity encodes the specific hour so the insight refreshes
+                    # only if the peak hour shifts to a different time slot.
+                    entity=f"peak_hour_{peak_hour}",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 3: Busiest day of the week
+        # ----------------------------------------------------------------
+        total_day_samples = sum(activity_by_day.values())
+        if activity_by_day and total_day_samples >= MIN_DAY_SAMPLES:
+            busiest_day = max(activity_by_day, key=lambda d: activity_by_day[d])
+            busiest_count = activity_by_day[busiest_day]
+            avg_count = total_day_samples / max(len(activity_by_day), 1)
+
+            # Only surface if the busiest day is meaningfully above average
+            if busiest_count >= avg_count * 1.3:
+                pct_above = int(100 * (busiest_count / avg_count - 1))
+                summary = (
+                    f"{busiest_day.capitalize()} is your busiest day of the week "
+                    f"({pct_above}% more activity than your daily average)."
+                )
+                insight = Insight(
+                    type="temporal_pattern",
+                    summary=summary,
+                    confidence=min(0.80, 0.40 + total_day_samples / 500),
+                    evidence=[
+                        f"busiest_day={busiest_day}",
+                        f"busiest_count={busiest_count}",
+                        f"avg_count={avg_count:.1f}",
+                        f"pct_above_avg={pct_above}",
+                    ],
+                    category="busiest_day",
+                    entity=busiest_day,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        logger.debug(
+            "temporal_pattern_insights: %d insights generated "
+            "(samples=%d, hours=%d, days=%d)",
+            len(insights),
+            total_samples,
+            len(activity_by_hour),
+            len(activity_by_day),
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Mood Trend
+    # ------------------------------------------------------------------
+
+    def _mood_trend_insights(self) -> list[Insight]:
+        """Surface mood trajectory insights from the mood_history time-series.
+
+        Reads the ``mood_history`` table and computes a composite mood score for
+        two windows (recent vs. baseline) to determine whether the user's overall
+        mood is improving, declining, or stable.  This mirrors the logic in
+        ``MoodExtractor.detect_mood_trend()`` but converts the trend into a
+        persistent, deduplicated insight rather than a transient signal.
+
+        **Composite score formula:**
+            ``composite = energy_level + emotional_valence - stress_level``
+
+        This combines the three most meaningful mood dimensions into a single
+        scalar on approximately the range −1 to 2.  A higher score is better.
+
+        **Window design:**
+            - *Recent* window: most recent 3 mood_history rows
+            - *Baseline* window: rows 4–12 (next-most-recent 9 rows)
+
+        At least 6 rows are required to compute a meaningful comparison.
+
+        **Thresholds:**
+            - ``> 0.15`` delta → "improving"  (positive trajectory)
+            - ``< -0.15`` delta → "declining" (negative trajectory)
+            - Otherwise → "stable"
+
+        Only "improving" and "declining" trends generate insights — stable mood
+        is the expected baseline and not worth surfacing.  The staleness TTL is
+        set to 48 hours so that mood trends refresh twice a day, keeping the
+        insight relevant as mood fluctuates.
+
+        Dedup strategy:
+            Entity is the trend label ("improving" or "declining"), so the insight
+            stays fresh while the trend persists and is replaced if the label changes.
+
+        Returns:
+            list[Insight]: Zero or one insight (only for non-stable trends with
+            sufficient data).
+
+        Example insights generated::
+
+            "Your mood has been improving over the past few days — energy and
+            positivity are trending upward."
+
+            "Your mood appears to be declining recently — stress levels are elevated
+            compared to your recent baseline."
+        """
+        # Minimum rows needed to compute a meaningful recent-vs-baseline comparison
+        MIN_ROWS = 6
+        TREND_THRESHOLD = 0.15  # minimum composite-score delta to call a trend
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT energy_level, stress_level, emotional_valence
+                       FROM mood_history
+                       ORDER BY timestamp DESC
+                       LIMIT 12""",
+                ).fetchall()
+        except Exception:
+            logger.exception("mood_trend_insights: failed to query mood_history")
+            return []
+
+        if len(rows) < MIN_ROWS:
+            return []
+
+        def _composite(subset: list) -> float:
+            """Compute average composite mood score (energy + valence − stress)."""
+            total = 0.0
+            for row in subset:
+                energy = row["energy_level"] if row["energy_level"] is not None else 0.5
+                stress = row["stress_level"] if row["stress_level"] is not None else 0.5
+                valence = row["emotional_valence"] if row["emotional_valence"] is not None else 0.5
+                total += energy + valence - stress
+            return total / len(subset)
+
+        # Recent: most recent 3 rows; baseline: next 9 rows
+        recent_rows = rows[:3]
+        baseline_rows = rows[3:]
+
+        if not recent_rows or not baseline_rows:
+            return []
+
+        recent_score = _composite(recent_rows)
+        baseline_score = _composite(baseline_rows)
+        delta = recent_score - baseline_score
+
+        if delta > TREND_THRESHOLD:
+            trend = "improving"
+            summary = (
+                "Your mood has been improving over the past few days — "
+                "energy and positivity appear to be trending upward."
+            )
+            # Higher confidence for larger positive swings
+            confidence = min(0.80, 0.50 + delta * 0.5)
+        elif delta < -TREND_THRESHOLD:
+            trend = "declining"
+            summary = (
+                "Your mood appears to be declining recently — "
+                "stress levels are elevated compared to your recent baseline. "
+                "Consider whether workload or sleep quality has changed."
+            )
+            confidence = min(0.80, 0.50 + abs(delta) * 0.5)
+        else:
+            # Stable mood is the expected baseline; not worth surfacing as an insight.
+            logger.debug(
+                "mood_trend_insights: trend=stable (delta=%.3f), skipping insight",
+                delta,
+            )
+            return []
+
+        insight = Insight(
+            type="mood_trend",
+            summary=summary,
+            confidence=confidence,
+            evidence=[
+                f"trend={trend}",
+                f"recent_composite={recent_score:.3f}",
+                f"baseline_composite={baseline_score:.3f}",
+                f"delta={delta:.3f}",
+                f"rows_analyzed={len(rows)}",
+            ],
+            category="mood_trajectory",
+            entity=trend,
+            # Refresh every 48 hours so mood trends stay current without flooding
+            staleness_ttl_hours=48,
+        )
+        insight.compute_dedup_key()
+
+        logger.debug(
+            "mood_trend_insights: trend=%s delta=%.3f recent=%.3f baseline=%.3f",
+            trend, delta, recent_score, baseline_score,
+        )
+        return [insight]
 
     # ------------------------------------------------------------------
     # Deduplication
