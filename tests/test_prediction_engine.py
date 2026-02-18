@@ -788,8 +788,13 @@ def test_accuracy_multiplier_scales_with_accuracy(db, user_model_store):
     assert abs(multiplier - 0.8) < 0.01
 
 
-def test_accuracy_multiplier_auto_suppresses_low_accuracy(db, user_model_store):
-    """Prediction types with <20% accuracy and >10 samples should be auto-suppressed (0.0)."""
+def test_accuracy_multiplier_applies_penalty_floor_for_low_accuracy(db, user_model_store):
+    """Prediction types with <20% accuracy and ≥10 samples should get the 0.3 penalty floor.
+
+    A hard 0.0 would create a death spiral (no predictions → no data → never recovers).
+    The 0.3 floor keeps the type alive at reduced confidence so the learning loop can
+    rehabilitate it as new, higher-quality predictions accumulate.
+    """
     engine = PredictionEngine(db, user_model_store)
     now = datetime.now(timezone.utc)
 
@@ -816,7 +821,8 @@ def test_accuracy_multiplier_auto_suppresses_low_accuracy(db, user_model_store):
             )
 
     multiplier = engine._get_accuracy_multiplier("reminder")
-    assert multiplier == 0.0  # Auto-suppressed
+    # Heavy penalty but NOT a hard cutoff — 0.3 allows recovery
+    assert multiplier == 0.3, f"Expected 0.3 penalty floor for <20% accuracy, got {multiplier}"
 
 
 # -------------------------------------------------------------------------
