@@ -918,6 +918,19 @@ class LifeOS:
                 source_event_id=event.get("id"),
                 priority=action.get("priority", "normal"),
             )
+        else:
+            # Log unrecognised action types so operators can catch misconfigured
+            # rules.  Previously these were silently dropped, making it
+            # impossible to diagnose rules that specified unsupported types
+            # such as "forward" or "auto_reply" (documented in the rules engine
+            # but not yet wired here).
+            logger.warning(
+                "Rule action type %r is not implemented; action dropped "
+                "(rule_id=%r, event_type=%r)",
+                action_type,
+                action.get("rule_id"),
+                event.get("type"),
+            )
 
     async def _create_episode(self, event: dict):
         """Create an episodic memory from an event.

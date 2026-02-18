@@ -1786,7 +1786,10 @@ class PredictionEngine:
                         all_day_count += 1
                     else:
                         timed_count += 1
-                except:
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    # Malformed or missing payload — skip this event and
+                    # continue counting the rest.  The previous bare except:
+                    # would have caught KeyboardInterrupt/SystemExit too.
                     pass
 
         conflict_status = "active" if prediction_type_counts.get("conflict", 0) > 0 else "blocked"
