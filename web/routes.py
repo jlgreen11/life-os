@@ -344,7 +344,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, req: TaskUpdateRequest):
-        await life_os.task_manager.update_task(task_id, **req.dict(exclude_none=True))
+        await life_os.task_manager.update_task(task_id, **req.model_dump(exclude_none=True))
         return {"status": "updated"}
 
     @app.post("/api/tasks/{task_id}/complete")
@@ -547,12 +547,16 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def get_mood():
         """Return the current inferred mood state.
 
-        Handles both Pydantic models (with ``.dict()``) and plain dataclass-like
-        objects by falling back to manual attribute access.
+        Uses Pydantic V2 ``model_dump()`` to serialize the ``MoodState``
+        object.  Falls back to manual attribute access for any non-Pydantic
+        object that may be returned during testing or early startup.
+
+        Returns:
+            dict: ``{"mood": {...}}`` with all MoodState fields.
         """
         mood = life_os.signal_extractor.get_current_mood()
         return {
-            "mood": mood.dict() if hasattr(mood, "dict") else {
+            "mood": mood.model_dump() if hasattr(mood, "model_dump") else {
                 "energy_level": mood.energy_level,
                 "stress_level": mood.stress_level,
                 "social_battery": mood.social_battery,
@@ -1178,11 +1182,11 @@ def register_routes(app: FastAPI, life_os) -> None:
             "source": req.source,
             "timestamp": ts,
             "priority": "silent",
-            "payload": req.payload.dict(exclude_none=True),
+            "payload": req.payload.model_dump(exclude_none=True),
             "metadata": {
                 "domain": "context",
                 "mobile_event_type": req.type,
-                **(req.metadata.dict(exclude_none=True) if req.metadata else {}),
+                **(req.metadata.model_dump(exclude_none=True) if req.metadata else {}),
             },
         }
 
@@ -1222,11 +1226,11 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "source": event_req.source,
                 "timestamp": ts,
                 "priority": "silent",
-                "payload": event_req.payload.dict(exclude_none=True),
+                "payload": event_req.payload.model_dump(exclude_none=True),
                 "metadata": {
                     "domain": "context",
                     "mobile_event_type": event_req.type,
-                    **(event_req.metadata.dict(exclude_none=True) if event_req.metadata else {}),
+                    **(event_req.metadata.model_dump(exclude_none=True) if event_req.metadata else {}),
                 },
             }
             event_id = life_os.event_store.store_event(event)

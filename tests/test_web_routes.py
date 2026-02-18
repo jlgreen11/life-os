@@ -630,9 +630,10 @@ def test_get_mood(client, mock_life_os):
 
 
 def test_get_mood_with_pydantic_model(client, mock_life_os):
-    """Test GET /api/user-model/mood handles Pydantic models with .dict()."""
+    """Test GET /api/user-model/mood serialises via model_dump() (Pydantic V2)."""
     pydantic_mood = Mock()
-    pydantic_mood.dict.return_value = {"energy_level": 0.8, "stress_level": 0.2}
+    # The route now checks for model_dump (Pydantic V2) rather than dict (V1).
+    pydantic_mood.model_dump.return_value = {"energy_level": 0.8, "stress_level": 0.2}
     mock_life_os.signal_extractor.get_current_mood.return_value = pydantic_mood
 
     response = client.get("/api/user-model/mood")
