@@ -1024,6 +1024,11 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "busiest_day": "email.work",
                 # Mood trend insight category (from _mood_trend_insights)
                 "mood_trajectory": "messaging.direct",
+                # Spending pattern insight categories (from _spending_pattern_insights)
+                "top_spending_category": "finance.transactions",
+                "spending_increase": "finance.transactions",
+                "spending_decrease": "finance.transactions",
+                "recurring_subscription": "finance.transactions",
                 # actionable_alert categories (overdue_task, upcoming_calendar) are
                 # intentionally absent: they bypass source-weight tuning entirely.
             }

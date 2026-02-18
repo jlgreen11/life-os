@@ -16,6 +16,7 @@ Insight Types:
     communication_style         -- Writing-style observations from linguistic profile
     temporal_pattern            -- Chronotype and productive-hour insights from temporal profile
     mood_trend                  -- Mood trajectory insights derived from mood_history
+    spending_pattern            -- Financial behavioral patterns from transaction history
 """
 
 from __future__ import annotations
@@ -89,6 +90,11 @@ class InsightEngine:
         except Exception:
             logger.exception("mood_trend correlator failed")
 
+        try:
+            raw.extend(self._spending_pattern_insights())
+        except Exception:
+            logger.exception("spending_pattern correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -142,6 +148,11 @@ class InsightEngine:
             "peak_hour": "email.work",
             "busiest_day": "email.work",
             "mood_trajectory": "messaging.direct",
+            # Spending pattern insights derive from finance connector data.
+            "top_spending_category": "finance.transactions",
+            "spending_increase": "finance.transactions",
+            "spending_decrease": "finance.transactions",
+            "recurring_subscription": "finance.transactions",
         }
 
         weighted: list[Insight] = []
@@ -995,6 +1006,329 @@ class InsightEngine:
             trend, delta, recent_score, baseline_score,
         )
         return [insight]
+
+    # ------------------------------------------------------------------
+    # Correlator: Spending Patterns
+    # ------------------------------------------------------------------
+
+    def _spending_pattern_insights(self) -> list[Insight]:
+        """Surface financial behavioral patterns from transaction history.
+
+        Reads ``finance.transaction.new`` events and produces up to three
+        categories of insight:
+
+        **1. Top spending category (behavioral_pattern)**
+            The single category that consumed the most of the user's budget
+            over the last 30 days.  Only fires when the top category accounts
+            for ≥25% of total spend AND at least $100 absolute — below those
+            thresholds the signal is noise.  Confidence scales with the
+            category's share of total spend.
+
+            Example: "FOOD_AND_DRINK is your largest spending category this
+            month at $430 (34% of total)."
+
+        **2. Month-over-month category change (spending_pattern)**
+            Compares each category's 30-day total against the prior 30 days.
+            Surfaces the single category with the largest *absolute* dollar
+            change when the change exceeds $100 AND 30% of the prior-period
+            amount.  Both a notable increase and a notable decrease generate
+            an insight.  This avoids flooding the user with incremental noise
+            while surfacing genuinely significant budget shifts.
+
+            Example: "Your TRAVEL spending increased by $280 this month
+            ($130 → $410, +215%)."
+
+        **3. Recurring subscription detection (behavioral_pattern)**
+            Groups transactions by (merchant, rounded-amount) bucket and
+            flags any combination that appears in ≥2 distinct calendar months
+            within the last 90 days.  Buckets amounts to the nearest $1 so
+            small rounding differences don't break the match.  Only fires for
+            amounts ≥$5 to ignore micro-transactions.
+
+            Example: "Recurring subscription detected: 'Netflix' charges
+            ~$15 every month (3 occurrences in the last 90 days)."
+
+        **Data requirements:**
+            - Methods 1 & 2 require ≥5 transactions in the last 30 days.
+            - Method 3 requires ≥90 days of transaction history.
+
+        **Staleness TTL:**
+            - Top-category and MoM-change insights expire after 7 days (168h)
+              so they refresh on the next monthly billing cycle.
+            - Subscription insights expire after 30 days (720h) — they are
+              expected to be stable and re-surfacing them weekly would be
+              noisy.
+
+        **Dedup strategy:**
+            Category is the spending insight sub-type (``top_spending_category``,
+            ``spending_increase``, ``spending_decrease``, ``recurring_subscription``).
+            Entity is the merchant/category name so each distinct merchant or
+            category generates its own dedup key and can refresh independently.
+
+        Returns:
+            list[Insight]: Zero or more spending-related insights.
+        """
+        insights: list[Insight] = []
+        now = datetime.now(timezone.utc)
+
+        # ----------------------------------------------------------------
+        # Load 30-day and 60-day transaction windows
+        # ----------------------------------------------------------------
+        cutoff_30 = (now - timedelta(days=30)).isoformat()
+        cutoff_60 = (now - timedelta(days=60)).isoformat()
+        cutoff_90 = (now - timedelta(days=90)).isoformat()
+
+        try:
+            with self.db.get_connection("events") as conn:
+                recent_rows = conn.execute(
+                    """SELECT payload, timestamp FROM events
+                       WHERE type = 'finance.transaction.new'
+                         AND timestamp > ?
+                       ORDER BY timestamp DESC""",
+                    (cutoff_30,),
+                ).fetchall()
+
+                prior_rows = conn.execute(
+                    """SELECT payload, timestamp FROM events
+                       WHERE type = 'finance.transaction.new'
+                         AND timestamp > ?
+                         AND timestamp <= ?
+                       ORDER BY timestamp DESC""",
+                    (cutoff_60, cutoff_30),
+                ).fetchall()
+
+                subscription_rows = conn.execute(
+                    """SELECT payload, timestamp FROM events
+                       WHERE type = 'finance.transaction.new'
+                         AND timestamp > ?
+                       ORDER BY timestamp DESC""",
+                    (cutoff_90,),
+                ).fetchall()
+        except Exception:
+            logger.exception("spending_pattern_insights: failed to query transactions")
+            return []
+
+        # ----------------------------------------------------------------
+        # Parse transaction payloads into structured dicts
+        # ----------------------------------------------------------------
+        def _parse_txns(rows: list) -> list[dict]:
+            """Parse raw DB rows into (amount, category, merchant, timestamp) dicts.
+
+            Skips rows with malformed JSON or missing/zero amounts since they
+            provide no signal.  Amount is always taken as absolute value so that
+            Plaid's sign convention (negative = outflow) doesn't affect aggregation.
+            """
+            result = []
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload"])
+                    amount = abs(payload.get("amount", 0))
+                    if amount <= 0:
+                        # Income or zero-value event — not a spending transaction
+                        continue
+                    result.append({
+                        "amount": amount,
+                        "category": (payload.get("category") or "uncategorized").strip(),
+                        "merchant": (
+                            payload.get("merchant") or payload.get("name") or "unknown"
+                        ).strip(),
+                        "timestamp": row["timestamp"],
+                    })
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    continue
+            return result
+
+        recent_txns = _parse_txns(recent_rows)
+        prior_txns = _parse_txns(prior_rows)
+        sub_txns = _parse_txns(subscription_rows)
+
+        # ----------------------------------------------------------------
+        # Insight 1: Top spending category (last 30 days)
+        # Requires ≥5 transactions so averages are meaningful.
+        # ----------------------------------------------------------------
+        if len(recent_txns) >= 5:
+            # Aggregate spend per category
+            by_category: dict[str, float] = {}
+            for txn in recent_txns:
+                cat = txn["category"]
+                by_category[cat] = by_category.get(cat, 0) + txn["amount"]
+
+            total = sum(by_category.values())
+
+            if total > 0:
+                # Find the dominant category
+                top_cat, top_amt = max(by_category.items(), key=lambda x: x[1])
+                top_pct = top_amt / total
+
+                # Only surface when the category is both a large fraction AND
+                # a meaningful absolute amount — avoids noise for sparse data.
+                if top_pct >= 0.25 and top_amt >= 100:
+                    confidence = min(0.80, 0.50 + top_pct * 0.60)
+                    insight = Insight(
+                        type="spending_pattern",
+                        summary=(
+                            f"{top_cat.replace('_', ' ').title()} is your largest "
+                            f"spending category this month at ${top_amt:.0f} "
+                            f"({top_pct * 100:.0f}% of ${total:.0f} total)."
+                        ),
+                        confidence=confidence,
+                        evidence=[
+                            f"top_category={top_cat}",
+                            f"top_amount=${top_amt:.2f}",
+                            f"top_pct={top_pct * 100:.1f}%",
+                            f"total_spend=${total:.2f}",
+                            f"transaction_count={len(recent_txns)}",
+                            f"categories_count={len(by_category)}",
+                        ],
+                        category="top_spending_category",
+                        entity=top_cat,
+                        # Refresh weekly — spending categories shift on billing cycles
+                        staleness_ttl_hours=168,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+            # ----------------------------------------------------------------
+            # Insight 2: Month-over-month change (largest absolute shift)
+            # Requires data in both windows to compare.
+            # ----------------------------------------------------------------
+            if len(prior_txns) >= 5:
+                prior_by_category: dict[str, float] = {}
+                for txn in prior_txns:
+                    cat = txn["category"]
+                    prior_by_category[cat] = prior_by_category.get(cat, 0) + txn["amount"]
+
+                # Find the category with the biggest absolute dollar change
+                all_cats = set(by_category.keys()) | set(prior_by_category.keys())
+                best_change_cat: Optional[str] = None
+                best_change_abs = 0.0
+                best_change_delta = 0.0
+                best_change_prior = 0.0
+                best_change_recent = 0.0
+
+                for cat in all_cats:
+                    recent_amt = by_category.get(cat, 0)
+                    prior_amt = prior_by_category.get(cat, 0)
+                    delta = recent_amt - prior_amt
+                    abs_delta = abs(delta)
+
+                    # Require both absolute change ≥$100 and relative change ≥30%
+                    # to avoid surfacing noise from low-spend categories.
+                    if prior_amt > 0:
+                        pct_change = abs_delta / prior_amt
+                    else:
+                        # New category with no prior history — only surface if
+                        # it's a significant new expense (≥$100).
+                        pct_change = 1.0 if recent_amt >= 100 else 0.0
+
+                    if abs_delta >= 100 and pct_change >= 0.30:
+                        if abs_delta > best_change_abs:
+                            best_change_abs = abs_delta
+                            best_change_cat = cat
+                            best_change_delta = delta
+                            best_change_prior = prior_amt
+                            best_change_recent = recent_amt
+
+                if best_change_cat is not None:
+                    sign = "increased" if best_change_delta > 0 else "decreased"
+                    pct_str = ""
+                    if best_change_prior > 0:
+                        pct = abs(best_change_delta) / best_change_prior * 100
+                        pct_str = f" (+{pct:.0f}%)" if best_change_delta > 0 else f" (-{pct:.0f}%)"
+                    cat_display = best_change_cat.replace("_", " ").title()
+                    cat_key = "spending_increase" if best_change_delta > 0 else "spending_decrease"
+                    # Confidence scales with the size of the change relative to prior spend
+                    if best_change_prior > 0:
+                        rel_change = min(1.0, abs(best_change_delta) / best_change_prior)
+                    else:
+                        rel_change = 1.0
+                    confidence = min(0.80, 0.50 + rel_change * 0.30)
+
+                    insight = Insight(
+                        type="spending_pattern",
+                        summary=(
+                            f"Your {cat_display} spending {sign} by "
+                            f"${abs(best_change_delta):.0f} this month "
+                            f"(${best_change_prior:.0f} → ${best_change_recent:.0f}"
+                            f"{pct_str})."
+                        ),
+                        confidence=confidence,
+                        evidence=[
+                            f"category={best_change_cat}",
+                            f"prior_30d=${best_change_prior:.2f}",
+                            f"recent_30d=${best_change_recent:.2f}",
+                            f"delta=${best_change_delta:+.2f}",
+                            f"abs_delta=${best_change_abs:.2f}",
+                        ],
+                        category=cat_key,
+                        entity=best_change_cat,
+                        staleness_ttl_hours=168,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Insight 3: Recurring subscription detection (90-day window)
+        # ----------------------------------------------------------------
+        if len(sub_txns) >= 3:
+            # Group by (merchant, rounded-amount) to find recurring charges.
+            # Rounding to nearest $1 handles minor Plaid rounding differences.
+            # month_key = YYYY-MM so each calendar month contributes one hit.
+            from collections import defaultdict
+            bucket_months: dict[tuple[str, int], set[str]] = defaultdict(set)
+
+            for txn in sub_txns:
+                if txn["amount"] < 5:
+                    # Ignore micro-transactions (cents-level fees, etc.)
+                    continue
+                merchant = txn["merchant"]
+                rounded_amt = round(txn["amount"])
+                try:
+                    ts = datetime.fromisoformat(
+                        txn["timestamp"].replace("Z", "+00:00")
+                    )
+                    month_key = ts.strftime("%Y-%m")
+                except (ValueError, AttributeError):
+                    continue
+                bucket_months[(merchant, rounded_amt)].add(month_key)
+
+            # Surface any (merchant, amount) pair that appeared in ≥2 distinct months
+            for (merchant, rounded_amt), months in bucket_months.items():
+                if len(months) < 2:
+                    continue
+                occurrence_count = len(months)
+                confidence = min(0.80, 0.50 + occurrence_count * 0.10)
+                insight = Insight(
+                    type="spending_pattern",
+                    summary=(
+                        f"Recurring subscription detected: '{merchant}' charges "
+                        f"~${rounded_amt} every month "
+                        f"({occurrence_count} occurrences in the last 90 days)."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"merchant={merchant}",
+                        f"rounded_amount=${rounded_amt}",
+                        f"months_seen={occurrence_count}",
+                        f"calendar_months={sorted(months)}",
+                    ],
+                    category="recurring_subscription",
+                    entity=f"{merchant}_{rounded_amt}",
+                    # Refresh monthly — subscriptions are stable over time
+                    staleness_ttl_hours=720,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        logger.debug(
+            "spending_pattern_insights: %d insights generated "
+            "(recent_txns=%d, prior_txns=%d, sub_txns=%d)",
+            len(insights),
+            len(recent_txns),
+            len(prior_txns),
+            len(sub_txns),
+        )
+        return insights
 
     # ------------------------------------------------------------------
     # Deduplication
