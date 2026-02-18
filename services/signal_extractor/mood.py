@@ -292,6 +292,60 @@ class MoodInferenceEngine(BaseExtractor):
                 "source": "calendar",
             })
 
+            # --- Social battery (meeting load indicator) ---
+            # Social interactions — particularly multi-person meetings — drain
+            # the social battery for most people.  A calendar event with ≥1
+            # attendees (or a title containing "meeting", "standup", "sync",
+            # "review", "interview") is treated as a social draw-down; a solo
+            # block is treated as a recovery opportunity.
+            #
+            # Why derive social_battery from calendar events rather than actual
+            # attendance?  Because Life OS does not yet track real-time
+            # attendance; it only sees CalDAV/Google Calendar sync events.
+            # Using scheduled meetings as a proxy is the best available signal
+            # without adding a new connector.
+            #
+            # Social-drain heuristic (value = residual battery level, 0-1):
+            #   - Solo block (no attendees, no social keywords): 0.7  (mild recovery)
+            #   - Small meeting (1-2 attendees):                 0.5  (moderate drain)
+            #   - Medium meeting (3-5 attendees):                0.3  (significant drain)
+            #   - Large meeting (6+ attendees):                  0.1  (heavy drain)
+            #
+            # The weight is intentionally low (0.4) because a single meeting
+            # cannot override the overall daily mood — many such signals must
+            # accumulate to move the average materially.
+            attendees = payload.get("attendees", [])
+            title = payload.get("title", "").lower()
+            social_keywords = {"meeting", "standup", "stand-up", "sync", "review",
+                               "interview", "workshop", "presentation", "all-hands",
+                               "team", "1:1", "one-on-one"}
+            is_social = bool(attendees) or any(kw in title for kw in social_keywords)
+
+            if is_social:
+                n = len(attendees)
+                if n >= 6:
+                    battery_after = 0.1   # Heavy drain: large meeting
+                elif n >= 3:
+                    battery_after = 0.3   # Significant drain: medium meeting
+                elif n >= 1:
+                    battery_after = 0.5   # Moderate drain: small meeting
+                else:
+                    # Social keyword in title but no explicit attendees — treat
+                    # as a small meeting (conservative estimate).
+                    battery_after = 0.5
+            else:
+                # Solo block: treat as partial recovery from previous social drain.
+                battery_after = 0.7
+
+            mood_signals.append({
+                "signal_type": "social_battery",
+                "value": battery_after,
+                # Delta relative to a neutral 0.5 baseline (positive = above, negative = below).
+                "delta_from_baseline": battery_after - 0.5,
+                "weight": 0.4,
+                "source": "calendar",
+            })
+
         # --- Spending anomaly (stress signal) ---
         # Unusually large transactions can correlate with stress-spending or
         # an out-of-routine event.  Only flag amounts > $100.
@@ -322,7 +376,8 @@ class MoodInferenceEngine(BaseExtractor):
           - energy_level:       derived from sleep and activity signals (0-1)
           - stress_level:       derived from calendar density, negative language,
                                 spending spikes, and response latency (0-1)
-          - social_battery:     placeholder — would need meeting/interaction data
+          - social_battery:     weighted average of "social_battery" signals derived
+                                from calendar events (attendee count + title keywords)
           - cognitive_load:     approximated by the sheer count of stress signals
           - emotional_valence:  inverted weighted average of negativity signals
                                 (1.0 = positive, 0.0 = negative)
@@ -366,10 +421,16 @@ class MoodInferenceEngine(BaseExtractor):
             "incoming_negative_language",
         ]]
 
+        # Social battery: derived from accumulated social_battery signals emitted
+        # by the calendar event handler above.  Falls back to 0.5 (neutral) when
+        # no meeting data has been seen yet — e.g., for a user who has not
+        # connected a calendar connector.
+        social_signals = [s for s in recent_signals if s["signal_type"] == "social_battery"]
+
         mood = MoodState(
             energy_level=self._weighted_average(energy_signals, default=0.5),
             stress_level=self._weighted_average(stress_signals, default=0.3),
-            social_battery=0.5,  # Requires meeting/social-interaction signals to estimate.
+            social_battery=self._weighted_average(social_signals, default=0.5),
             # Cognitive load is a rough proxy: each stress signal adds 0.15,
             # capped at 1.0 to stay within the 0-1 range.
             cognitive_load=min(1.0, len(stress_signals) * 0.15),
