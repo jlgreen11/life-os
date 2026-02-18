@@ -20,6 +20,7 @@ Insight Types:
     decision_pattern            -- Decision-making style from speed, delegation, and fatigue signals
     topic_interest              -- Dominant interests and trending topics from topic signal profile
     cadence_response            -- Reply-latency baseline, priority contacts, and peak hours from cadence profile
+    routine_pattern             -- Recurring behavioral sequences detected in procedural memory (Layer 3)
 """
 
 from __future__ import annotations
@@ -37,6 +38,56 @@ from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def _routine_trigger_label(trigger: str) -> str:
+    """Convert a machine trigger key to a human-readable phrase.
+
+    Args:
+        trigger: Trigger key stored by RoutineDetector, e.g. ``"morning"``,
+                 ``"arrive_home"``, ``"after_meeting"``.
+
+    Returns:
+        A readable phrase suitable for insertion into an insight summary,
+        e.g. ``"morning routine"`` or ``"arrival routine at home"``.
+
+    Examples::
+
+        >>> _routine_trigger_label("morning")
+        'morning routine'
+        >>> _routine_trigger_label("arrive_home")
+        'arrival routine at home'
+        >>> _routine_trigger_label("after_meeting")
+        'post-meeting routine'
+        >>> _routine_trigger_label("custom_label")
+        'custom_label routine'
+    """
+    known: dict[str, str] = {
+        "morning": "morning routine",
+        "midday": "midday routine",
+        "afternoon": "afternoon routine",
+        "evening": "evening routine",
+        "night": "night routine",
+    }
+    if trigger in known:
+        return known[trigger]
+
+    # "arrive_<location>" → "arrival routine at <location>"
+    if trigger.startswith("arrive_"):
+        location = trigger[len("arrive_"):].replace("_", " ")
+        return f"arrival routine at {location}"
+
+    # "after_<event>" → "post-<event> routine"
+    if trigger.startswith("after_"):
+        event = trigger[len("after_"):].replace("_", " ")
+        return f"post-{event} routine"
+
+    # Fallback: use the trigger string verbatim
+    return f"{trigger.replace('_', ' ')} routine"
 
 
 class InsightEngine:
@@ -118,6 +169,11 @@ class InsightEngine:
         except Exception:
             logger.exception("cadence_response correlator failed")
 
+        try:
+            raw.extend(self._routine_insights())
+        except Exception:
+            logger.exception("routine correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -196,6 +252,10 @@ class InsightEngine:
             "fastest_contacts": "messaging.direct",
             "communication_peak_hours": "email.work",
             "channel_cadence": "email.work",
+            # Routine pattern insights derive from episodic memory (calendar events,
+            # email events, location signals), weighted against the broadest applicable
+            # source key.  Routines shift slowly, so a 7-day staleness TTL is appropriate.
+            "routine_pattern": "email.work",
         }
 
         weighted: list[Insight] = []
@@ -2225,6 +2285,125 @@ class InsightEngine:
             len(global_rts),
             len(per_contact),
             sum(hourly.values()) if hourly else 0,
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Routine Patterns (Layer 3 Procedural Memory)
+    # ------------------------------------------------------------------
+
+    def _routine_insights(self) -> list[Insight]:
+        """Surface high-consistency routines detected in procedural memory.
+
+        Reads the ``routines`` table (populated by ``RoutineDetector``) and
+        generates one insight per qualifying routine.  A routine qualifies when
+        it has been observed at least ``MIN_OBSERVATIONS`` times **and** its
+        ``consistency_score`` meets or exceeds ``MIN_CONSISTENCY``.  Low-quality
+        routines (rare or highly variable) are silently skipped to keep the
+        insight surface actionable.
+
+        Insight confidence scales linearly with consistency:
+            ``confidence = min(0.85, 0.50 + consistency_score * 0.40)``
+
+        This gives a 0.70 baseline for a perfectly consistent routine and
+        rewards stronger patterns, capping at 0.85 to leave headroom for
+        source-weight modulation.
+
+        **Dedup strategy:**
+            Each routine uses its name as the entity, so the dedup key is stable
+            across runs.  Staleness TTL is 7 days (168 h) — routines shift
+            slowly and re-surfacing weekly is appropriate.
+
+        **Trigger labels:**
+            - ``morning``         → "morning routine"
+            - ``midday``          → "midday routine"
+            - ``afternoon``       → "afternoon routine"
+            - ``evening``         → "evening routine"
+            - ``night``           → "night routine"
+            - ``arrive_*``        → "arrival routine at <location>"
+            - ``after_*``         → "post-<event> routine"
+            - anything else       → the trigger string verbatim
+
+        Returns:
+            list[Insight]: One ``behavioral_pattern`` insight per qualifying
+            routine, ordered by consistency_score descending (highest first).
+
+        Example output::
+
+            "You have a consistent morning routine (5 steps, seen 14 times,
+             87% consistency, ~28 min)."
+        """
+        # Minimum times a routine must be observed before surfacing it.
+        MIN_OBSERVATIONS = 3
+        # Minimum consistency fraction (0–1) required to surface the insight.
+        MIN_CONSISTENCY = 0.70
+
+        try:
+            routines = self.ums.get_routines()
+        except Exception:
+            logger.exception("routine_insights: failed to fetch routines")
+            return []
+
+        if not routines:
+            logger.debug("routine_insights: no routines stored — skipping")
+            return []
+
+        insights: list[Insight] = []
+
+        for routine in routines:
+            consistency = routine.get("consistency_score", 0.0)
+            observed = routine.get("times_observed", 0)
+            name = routine.get("name", "")
+            trigger = routine.get("trigger", "")
+            steps = routine.get("steps", [])
+            duration_min = routine.get("typical_duration_minutes", 0.0)
+
+            if not name or observed < MIN_OBSERVATIONS or consistency < MIN_CONSISTENCY:
+                continue
+
+            # Build a human-readable trigger label.
+            trigger_label = _routine_trigger_label(trigger)
+
+            # Round duration to the nearest minute for readability.
+            duration_str = f", ~{round(duration_min)} min" if duration_min > 0 else ""
+            steps_str = f"{len(steps)} steps" if steps else "multiple steps"
+            pct = round(consistency * 100)
+
+            summary = (
+                f"You have a consistent {trigger_label} "
+                f"({steps_str}, seen {observed} times, "
+                f"{pct}% consistency{duration_str})."
+            )
+
+            confidence = min(0.85, 0.50 + consistency * 0.40)
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=summary,
+                confidence=confidence,
+                evidence=[
+                    f"routine_name={name}",
+                    f"trigger={trigger}",
+                    f"consistency_score={consistency:.2f}",
+                    f"times_observed={observed}",
+                    f"steps_count={len(steps)}",
+                    f"typical_duration_min={round(duration_min, 1)}",
+                ],
+                category="routine_pattern",
+                entity=name,
+                staleness_ttl_hours=168,  # 7 days — routines shift slowly
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        logger.debug(
+            "routine_insights: %d insights generated "
+            "(total_routines=%d, qualifying=%d, min_observations=%d, min_consistency=%.2f)",
+            len(insights),
+            len(routines),
+            len(insights),
+            MIN_OBSERVATIONS,
+            MIN_CONSISTENCY,
         )
         return insights
 
