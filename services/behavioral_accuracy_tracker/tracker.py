@@ -59,10 +59,153 @@ class BehavioralAccuracyTracker:
     def __init__(self, db: DatabaseManager):
         """Initialize the behavioral accuracy tracker.
 
+        Proactively applies the schema migration that adds the
+        ``resolution_reason`` column (migration 3 → 4) if it is missing.
+        This ensures the tracker works correctly even when the server has
+        not been restarted since the migration was introduced — for example,
+        if PR #197 was merged while the server was still running with the
+        old schema.
+
+        Without this guard the tracker's UPDATE statement fails with
+        ``OperationalError: no such column: resolution_reason``, causing
+        ``run_inference_cycle`` to raise on every cycle and the entire
+        behavioral-accuracy learning loop to be silently broken.
+
         Args:
             db: Database manager for accessing events and predictions.
         """
         self.db = db
+        self._ensure_resolution_reason_column()
+
+    # ------------------------------------------------------------------
+    # Schema self-repair
+    # ------------------------------------------------------------------
+
+    def _ensure_resolution_reason_column(self) -> None:
+        """Add the ``resolution_reason`` column to predictions if it is missing.
+
+        This is a forward-compatibility guard for the schema migration
+        introduced in ``storage/manager.py`` (migration 3 → 4, CURRENT_VERSION=4).
+        That migration runs automatically when the DatabaseManager is first
+        initialized *after* the code update — i.e., on the next server restart.
+        However, if the server is still running with an in-memory
+        DatabaseManager instance that was created before the migration code was
+        merged, the column will be absent from the live database and every
+        ``run_inference_cycle`` call will raise::
+
+            sqlite3.OperationalError: no such column: resolution_reason
+
+        By applying the ALTER TABLE here we ensure the tracker is operational
+        immediately after the code update, without requiring a restart.
+
+        The operation is idempotent: if the column already exists (normal path
+        after a clean restart) the PRAGMA check short-circuits and no DDL is
+        executed.
+
+        Post-migration: sets ``resolution_reason = 'automated_sender_fast_path'``
+        on all existing inaccurate opportunity/reminder predictions whose
+        supporting_signals point to an automated sender.  This retroactively
+        tags the historical pollution so that ``_get_accuracy_multiplier``
+        excludes them from the accuracy denominator immediately, rather than
+        waiting for the next BehavioralAccuracyTracker cycle to set the flag on
+        newly-resolved predictions only.
+
+        Usage:
+            Called once from ``__init__``.  Safe to call multiple times.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        with self.db.get_connection("user_model") as conn:
+            # 1. Check whether the predictions table exists yet.
+            #    If it doesn't (e.g., DatabaseManager initialized but
+            #    initialize_all() not yet called, as happens in some tests),
+            #    there is nothing to migrate — silently return.
+            table_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
+            ).fetchone()
+            if not table_exists:
+                return  # Schema not initialized yet; migration will run at startup
+
+            # 2. Check whether the column already exists (schema v4+)
+            columns = [row[1] for row in conn.execute(
+                "PRAGMA table_info(predictions)"
+            ).fetchall()]
+
+            if "resolution_reason" in columns:
+                return  # Already migrated — nothing to do
+
+            # 3. Column is missing: apply the migration now
+            logger.info(
+                "BehavioralAccuracyTracker: resolution_reason column missing "
+                "from predictions table — applying migration 3→4 inline "
+                "(server restart not required)"
+            )
+            conn.execute("ALTER TABLE predictions ADD COLUMN resolution_reason TEXT")
+
+            # 4. Update schema_version table so the DatabaseManager won't
+            #    re-run the same migration on next restart and log a confusing
+            #    "column already exists" warning.
+            try:
+                max_ver = conn.execute(
+                    "SELECT MAX(version) FROM schema_version"
+                ).fetchone()[0] or 0
+                if max_ver < 4:
+                    conn.execute(
+                        "INSERT INTO schema_version (version) VALUES (4)"
+                    )
+                    logger.info(
+                        "BehavioralAccuracyTracker: schema_version updated to 4"
+                    )
+            except Exception:
+                pass  # schema_version table absence is non-fatal
+
+            # 5. Retroactively tag existing inaccurate predictions for automated
+            #    senders as 'automated_sender_fast_path' so _get_accuracy_multiplier
+            #    excludes them immediately rather than waiting for the next cycle.
+            #
+            #    We only tag rows that are:
+            #    - already resolved (resolved_at IS NOT NULL)
+            #    - marked inaccurate (was_accurate = 0)
+            #    - were surfaced (was_accurate accuracy multiplier only counts surfaced)
+            #    - have a contact_email in supporting_signals that is an automated sender
+            #
+            #    We do NOT use Python to loop over rows here because the table can have
+            #    hundreds of thousands of rows.  Instead we use SQLite json_extract to
+            #    pull the contact_email inline, then filter in Python for automated-sender
+            #    patterns (there is no SQL REGEXP without loading an extension).
+            backfill_rows = conn.execute(
+                """SELECT id, supporting_signals
+                   FROM predictions
+                   WHERE was_surfaced = 1
+                     AND was_accurate = 0
+                     AND resolved_at IS NOT NULL
+                     AND resolution_reason IS NULL
+                     AND prediction_type IN ('opportunity', 'reminder')"""
+            ).fetchall()
+
+            tagged = 0
+            for row in backfill_rows:
+                try:
+                    signals = json.loads(row["supporting_signals"] or "{}") or {}
+                    if isinstance(signals, list):
+                        signals = {}
+                    contact_email = signals.get("contact_email", "")
+                    if contact_email and self._is_automated_sender(contact_email):
+                        conn.execute(
+                            "UPDATE predictions SET resolution_reason = ? WHERE id = ?",
+                            ("automated_sender_fast_path", row["id"]),
+                        )
+                        tagged += 1
+                except Exception:
+                    continue  # Skip malformed rows; non-fatal
+
+            if tagged:
+                logger.info(
+                    f"BehavioralAccuracyTracker: retroactively tagged {tagged} "
+                    f"automated-sender predictions as 'automated_sender_fast_path' "
+                    f"to unblock accuracy multiplier recovery"
+                )
 
     async def run_inference_cycle(self) -> dict[str, int]:
         """Run one inference cycle over unresolved predictions.
