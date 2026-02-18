@@ -18,9 +18,12 @@ The profile enables decision-aware predictions like:
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from models.core import EventType
 from models.user_model import DecisionProfile
@@ -98,7 +101,7 @@ class DecisionExtractor(BaseExtractor):
 
         except Exception as e:
             # Fail-open: decision extraction should never block the pipeline
-            print(f"DecisionExtractor error: {e}")
+            logger.error("DecisionExtractor error: %s", e, exc_info=True)
 
         return signals
 

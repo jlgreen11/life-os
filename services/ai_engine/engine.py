@@ -9,9 +9,12 @@ calls a cloud API (Claude) for complex reasoning — with PII stripped.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
@@ -268,7 +271,7 @@ Respond with exactly one word: critical, high, normal, or low."""
                 # (database error, model loading issue, etc.), fall back to SQL.
                 # This ensures search always returns something even if semantic
                 # search is unavailable.
-                print(f"Vector search failed, falling back to SQL LIKE: {e}")
+                logger.warning("Vector search failed, falling back to SQL LIKE: %s", e)
                 self.vector_store = None  # Disable for this session
 
         # --- SQL fallback layer ---

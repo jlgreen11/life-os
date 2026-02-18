@@ -13,11 +13,14 @@ documents, and any deadlines.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 from models.core import Priority, Task
@@ -189,7 +192,7 @@ class TaskManager:
             # Graceful degradation: if the AI engine fails (model down, parsing
             # error, etc.), log the error but don't crash the pipeline.
             # Task extraction is nice-to-have, not mission-critical.
-            print(f"[TaskManager] AI extraction failed for event {event.get('id')}: {e}")
+            logger.error("AI extraction failed for event %s: %s", event.get("id"), e, exc_info=True)
             return
 
         # --- Ingest extracted tasks into the database ---
