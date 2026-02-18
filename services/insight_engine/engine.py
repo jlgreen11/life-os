@@ -26,6 +26,7 @@ from typing import Optional
 
 from services.insight_engine.models import Insight
 from services.insight_engine.source_weights import SourceWeightManager
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
 
@@ -176,6 +177,33 @@ class InsightEngine:
         interaction_timestamps.  For each contact with sufficient history
         (>= 5 interactions) we compute the average gap and flag when the
         current gap exceeds 1.5x the average and is at least 7 days.
+
+        Filtering:
+            - Marketing/automated senders are excluded via the shared
+              ``is_marketing_or_noreply`` filter.  Without this filter, the
+              relationships profile (170K+ samples) contains many automated
+              mailers (newsletters, no-reply accounts, brokerage alerts, etc.)
+              that produce ``relationship_intelligence`` insights the user can
+              never act on — the same root cause that drove opportunity prediction
+              accuracy to 19% before PRs #127–#189 fixed the prediction engine.
+            - Inbound-only contacts (outbound_count == 0) are skipped.  If the
+              user has never sent a message to someone, there is no established
+              bidirectional relationship to maintain.  This mirrors the filter
+              added to ``_check_relationship_maintenance`` in PR #204.
+
+        Gap calculation:
+            Uses fractional days (``total_seconds() / 86400``) rather than the
+            integer ``.days`` attribute.  For contacts who interact daily or
+            multiple times per day, ``.days`` truncates sub-24-hour gaps to 0,
+            making ``avg_gap = 0`` and causing the threshold condition
+            ``days_since > 0 * 1.5`` to always fire for anyone unseen >7 days —
+            a false-positive generator.  This is the same integer-truncation bug
+            fixed in the prediction engine in PR #166.
+
+        Examples:
+            Contact with avg daily email interaction:
+                Old: gaps = [0, 0, 0, 0]  →  avg_gap = 0  →  any gap > 7d fires
+                New: gaps = [0.9, 1.1, 0.8, …]  →  avg_gap ≈ 1.0  →  fires only at 1.5d
         """
         insights: list[Insight] = []
 
@@ -185,6 +213,8 @@ class InsightEngine:
 
         contacts = rel_profile["data"].get("contacts", {})
         now = datetime.now(timezone.utc)
+        skipped_marketing = 0
+        skipped_inbound_only = 0
 
         for addr, data in contacts.items():
             last = data.get("last_interaction")
@@ -193,13 +223,29 @@ class InsightEngine:
             if not last or count < 5:
                 continue
 
+            # Skip marketing/automated senders — the shared filter checks for
+            # noreply, newsletter, bulk-mail patterns, financial senders, etc.
+            # These generate structurally unfulfillable insights because the user
+            # cannot reach out to an automated mailer.
+            if is_marketing_or_noreply(addr):
+                skipped_marketing += 1
+                continue
+
+            # Skip inbound-only contacts (user has never messaged them).
+            # A one-sided follow from a mailing list or cold-email sender is not
+            # an established relationship; there is nothing to "maintain".
+            if data.get("outbound_count", 0) == 0:
+                skipped_inbound_only += 1
+                continue
+
             timestamps = data.get("interaction_timestamps", [])
             if len(timestamps) < 3:
                 continue
 
             try:
                 last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
-                days_since = (now - last_dt).days
+                # Fractional days so same-day contacts don't appear stale
+                days_since = (now - last_dt).total_seconds() / 86400
             except (ValueError, TypeError):
                 continue
 
@@ -208,7 +254,13 @@ class InsightEngine:
                     datetime.fromisoformat(t.replace("Z", "+00:00"))
                     for t in timestamps[-10:]
                 ])
-                gaps = [(dts[i + 1] - dts[i]).days for i in range(len(dts) - 1)]
+                # Fractional days: avoids avg_gap=0 for high-frequency contacts
+                # (daily emailers, instant-message threads).  The .days attribute
+                # truncates to integers, turning a 6-hour gap into 0 days.
+                gaps = [
+                    (dts[i + 1] - dts[i]).total_seconds() / 86400
+                    for i in range(len(dts) - 1)
+                ]
                 avg_gap = sum(gaps) / len(gaps) if gaps else 30
             except (ValueError, TypeError):
                 avg_gap = 30
@@ -218,12 +270,12 @@ class InsightEngine:
                 insight = Insight(
                     type="relationship_intelligence",
                     summary=(
-                        f"It has been {days_since} days since you last contacted {addr} "
+                        f"It has been {int(days_since)} days since you last contacted {addr} "
                         f"(usual interval ~{int(avg_gap)} days)."
                     ),
                     confidence=confidence,
                     evidence=[
-                        f"days_since_last={days_since}",
+                        f"days_since_last={int(days_since)}",
                         f"avg_gap_days={int(avg_gap)}",
                         f"interaction_count={count}",
                     ],
@@ -233,6 +285,13 @@ class InsightEngine:
                 insight.compute_dedup_key()
                 insights.append(insight)
 
+        logger.debug(
+            "contact_gap_insights: %d insights generated "
+            "(skipped_marketing=%d, skipped_inbound_only=%d)",
+            len(insights),
+            skipped_marketing,
+            skipped_inbound_only,
+        )
         return insights
 
     # ------------------------------------------------------------------
