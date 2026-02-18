@@ -50,6 +50,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.database import DatabaseManager
 
 
@@ -723,9 +724,10 @@ class BehavioralAccuracyTracker:
         accuracy stats from being polluted by predictions that are structurally
         impossible to fulfill.
 
-        This replicates the key patterns from PredictionEngine._is_marketing_or_noreply()
-        without creating a shared dependency between two services (which would require
-        extracting a utility module and touching more files than needed).
+        Delegates to the shared canonical implementation in
+        services.signal_extractor.marketing_filter.is_marketing_or_noreply(),
+        which is the single source of truth for marketing/automated-sender detection
+        across the entire system.
 
         Args:
             email: Email address to check (any case).
@@ -733,111 +735,7 @@ class BehavioralAccuracyTracker:
         Returns:
             True if the email is clearly automated/marketing, False if it could be human.
         """
-        addr = email.lower()
-        local_part = addr.split("@")[0] if "@" in addr else addr
-        domain = addr.split("@")[1] if "@" in addr else ""
-
-        # No-reply and auto-reply senders
-        noreply_patterns = (
-            "noreply", "no-reply", "no_reply",
-            "donotreply", "do-not-reply", "do_not_reply",
-            "autoreply", "auto-reply", "auto_reply",
-            "mailer-daemon", "postmaster", "daemon",
-            "automated", "automation",
-        )
-        if any(p in local_part for p in noreply_patterns):
-            return True
-
-        # Bulk/transactional local-part prefixes that indicate automated systems
-        bulk_prefixes = (
-            "newsletter", "notifications", "notification",
-            "updates", "update", "digest",
-            "mailer", "bulk", "promo", "marketing",
-            "reply", "email", "news", "offers", "offer", "deals",
-            "info", "support", "help", "service", "services",
-            "alert", "alerts",
-            "orders", "order", "receipts", "receipt",
-            "confirmation", "confirm", "shipment", "shipping", "delivery",
-            "account", "accountservice",
-            "rewards", "loyalty",
-            "communications", "development", "fundraising",
-            # Financial/brokerage automated systems
-            "fidelity", "schwab", "vanguard", "etrade", "merrilledge",
-            "robinhood", "wealthfront", "betterment",
-            "paypal", "venmo", "stripe", "square",
-            "experian", "equifax", "transunion", "creditkarma",
-            # Transactional sender patterns (e.g. eDelivery, eConfirm)
-            "edelivery", "econfirm", "enotice",
-            # Retail/hospitality/travel transactional senders (iteration 178)
-            # Synced with PredictionEngine._is_marketing_or_noreply patterns to ensure
-            # the fast-path in _infer_opportunity_accuracy covers the same senders.
-            "customerservice",   # e.g., Customerservice@nationalcar.com
-            "reservations",      # e.g., reservations@nationalcar.com
-            "onlineservice",     # e.g., onlineservice@fedex.com
-            "return",            # e.g., return@amazon.com (retail returns)
-            "tracking",          # e.g., tracking@shipstation.com
-            "transaction",       # e.g., transaction@info.samsclub.com
-            "online.account",    # e.g., online.account@marriott.com
-            "guestservices",     # e.g., guestservices@boxoffice.axs.com
-            "drivers",           # e.g., drivers@chargepoint.com
-            "gaming",            # e.g., gaming@nvgaming.nvidia.com
-            "messenger",         # e.g., messenger@messaging.squareup.com
-            "tickets",           # e.g., tickets@transactions.axs.com
-            "walgreens",         # e.g., walgreens@eml.walgreens.com
-            "rei",               # e.g., rei@alerts.rei.com
-            "applecash",         # e.g., applecash@insideapple.apple.com
-            "worldofhyatt",      # e.g., worldofhyatt@loyalty.hyatt.com
-            "disneycruiseline",  # e.g., disneycruiseline@vacations.disneydestinations.com
-        )
-        if any(local_part.startswith(p) for p in bulk_prefixes):
-            return True
-
-        # Embedded notification patterns anywhere in local-part
-        embedded = (
-            "-notification", "-notifications", "-alert", "-alerts",
-            "-update", "-updates", "-digest", "news",
-            # Dot-separated no-reply variants (iteration 178)
-            "no.reply", "do.not.reply",
-        )
-        if any(p in local_part for p in embedded):
-            return True
-
-        # Marketing/transactional subdomain patterns (e.g. email.example.com,
-        # mail.fidelity.com, ifly.southwest.com, trx.company.com).
-        # 'mail.' captures bulk-sender subdomains like mail.fidelity.com,
-        # mail.instagram.com, mail.schwab.com, mail.hbomax.com — all confirmed
-        # to be dedicated transactional email infrastructure in production data.
-        # Real humans never have @mail.* email addresses.
-        marketing_subdomains = (
-            "mail.", "email.", "ifly.", "trx.", "mailer.", "em.", "e.",
-            "eonline.", "rewards.", "points-mail.", "shareholderdocs.",
-            "investordelivery.", "customer.",
-            # Additional subdomains identified from production data (iteration 178)
-            "alerts.", "loyalty.", "vacations.", "transactions.", "eml.",
-            "insideapple.", "card.", "eg.", "mc.", "odysseymail.",
-        )
-        if any(domain.startswith(p) for p in marketing_subdomains):
-            return True
-
-        # Specific automated domains that only send transactional emails
-        automated_domains = (
-            "proxyvote.com",    # Proxy voting service (Broadridge Financial)
-            "playatmcd.com",    # McDonald's Monopoly game promo
-            "facebookmail.com", # Facebook automated notifications
-        )
-        if any(domain.endswith(d) for d in automated_domains):
-            return True
-
-        # Compound subdomain patterns (match anywhere in domain)
-        compound_patterns = (
-            "info.email.",  # e.g., @info.email.aa.com (American Airlines marketing)
-            ".smg.com",     # Service Management Group survey platform
-            ".ms.aa.com",   # American Airlines info subdomain
-        )
-        if any(p in domain for p in compound_patterns):
-            return True
-
-        return False
+        return is_marketing_or_noreply(email)
 
     async def _infer_opportunity_accuracy(
         self, prediction: dict, signals: dict, created_at: datetime
