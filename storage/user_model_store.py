@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from storage.manager import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class UserModelStore:
@@ -187,8 +190,17 @@ class UserModelStore:
           confidence (typically 0.5 for inferred facts).
         - ``source_episodes`` accumulates the list of episode IDs that support
           this fact, providing an audit trail back to raw observations.
+
+        User-correction protection:
+        - If the existing fact has ``is_user_corrected = 1``, this method skips
+          the update entirely and returns without modifying the fact.  This
+          guarantees that inference never silently overwrites an explicit user
+          correction.  The PATCH /api/user-model/facts/{key} endpoint writes
+          ``is_user_corrected`` directly via SQL (bypassing this method) so it
+          can still update corrected facts when the user changes their mind.
         """
         is_new = False
+        existing = None
         with self.db.get_connection("user_model") as conn:
             # Check whether this fact already exists in semantic memory.
             existing = conn.execute(
@@ -196,6 +208,20 @@ class UserModelStore:
             ).fetchone()
 
             if existing:
+                # --- Guard: never overwrite a user-corrected fact ---
+                # When is_user_corrected = 1, the user has explicitly told the
+                # system that the inferred value is wrong.  Honoring that flag
+                # is critical: without this guard, every SemanticFactInferrer
+                # run would silently restore the incorrect inferred value,
+                # making user corrections completely ineffective.
+                if existing["is_user_corrected"]:
+                    logger.debug(
+                        "Skipping update for user-corrected fact '%s' "
+                        "(inference cannot overwrite explicit user corrections)",
+                        key,
+                    )
+                    return
+
                 # --- Existing fact: increment confidence and append the source episode ---
                 episodes = json.loads(existing["source_episodes"])
                 if episode_id and episode_id not in episodes:
