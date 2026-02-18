@@ -606,23 +606,36 @@ async def test_execute_unknown_action(event_bus, db, caldav_config):
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_basic(event_bus, db, caldav_config):
-    """Test basic conflict detection between overlapping events."""
+    """Test basic conflict detection between overlapping events.
+
+    Uses dynamic future dates (tomorrow) so the test remains valid regardless
+    of when it runs.  The connector's _detect_conflicts() filters out events
+    whose end_time is in the past, so hardcoded past dates would cause this
+    test to fail once the date passes.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
 
-    # Create two overlapping events in the database
+    # Create two overlapping events in the database.
+    # Use tomorrow's date so events are always within the 48-hour window.
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # Event 1: 10:00-11:00
+    now = datetime.now(timezone.utc)
+    # Base time: tomorrow at 10:00 UTC, rounded to the hour for clean timestamps
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Event 1: base+0:00 to base+1:00
+    start1 = base
+    end1 = base + timedelta(hours=1)
     payload1 = {
         "event_id": "event-1",
         "title": "Meeting A",
-        "start_time": "2026-02-15T10:00:00+00:00",
-        "end_time": "2026-02-15T11:00:00+00:00",
+        "start_time": start1.isoformat(),
+        "end_time": end1.isoformat(),
         "is_all_day": False,
         "calendar_id": "Personal",
     }
@@ -630,16 +643,18 @@ async def test_detect_conflicts_basic(event_bus, db, caldav_config):
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload1,
     })
 
-    # Event 2: 10:30-11:30 (overlaps with Event 1)
+    # Event 2: base+0:30 to base+1:30 (overlaps with Event 1)
+    start2 = base + timedelta(minutes=30)
+    end2 = base + timedelta(hours=1, minutes=30)
     payload2 = {
         "event_id": "event-2",
         "title": "Meeting B",
-        "start_time": "2026-02-15T10:30:00+00:00",
-        "end_time": "2026-02-15T11:30:00+00:00",
+        "start_time": start2.isoformat(),
+        "end_time": end2.isoformat(),
         "is_all_day": False,
         "calendar_id": "Work",
     }
@@ -647,7 +662,7 @@ async def test_detect_conflicts_basic(event_bus, db, caldav_config):
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload2,
     })
 
@@ -662,15 +677,19 @@ async def test_detect_conflicts_basic(event_bus, db, caldav_config):
     conflict_payload = call_args[0][1]
     assert conflict_payload["event1"]["title"] == "Meeting A"
     assert conflict_payload["event2"]["title"] == "Meeting B"
-    assert conflict_payload["overlap_start"] == "2026-02-15T10:30:00+00:00"
-    assert conflict_payload["overlap_end"] == "2026-02-15T11:00:00+00:00"
+    # Overlap is from start of Event 2 to end of Event 1
+    assert conflict_payload["overlap_start"] == start2.isoformat()
+    assert conflict_payload["overlap_end"] == end1.isoformat()
 
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_no_overlap(event_bus, db, caldav_config):
-    """Test conflict detection with non-overlapping events."""
+    """Test conflict detection with non-overlapping events.
+
+    Uses dynamic future dates so the test remains valid as time passes.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
@@ -678,49 +697,55 @@ async def test_detect_conflicts_no_overlap(event_bus, db, caldav_config):
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # Event 1: 10:00-11:00
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Event 1: base+0:00 to base+1:00
     payload1 = {
         "event_id": "event-1",
         "title": "Meeting A",
-        "start_time": "2026-02-15T10:00:00+00:00",
-        "end_time": "2026-02-15T11:00:00+00:00",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload1,
     })
 
-    # Event 2: 11:00-12:00 (no overlap)
+    # Event 2: base+1:00 to base+2:00 (adjacent, no overlap — touching end to start)
     payload2 = {
         "event_id": "event-2",
         "title": "Meeting B",
-        "start_time": "2026-02-15T11:00:00+00:00",
-        "end_time": "2026-02-15T12:00:00+00:00",
+        "start_time": (base + timedelta(hours=1)).isoformat(),
+        "end_time": (base + timedelta(hours=2)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload2,
     })
 
     await connector._detect_conflicts()
 
-    # Should not publish any conflict events
+    # Should not publish any conflict events (events touch but do not overlap)
     assert connector.publish_event.call_count == 0
 
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_all_day_ignored(event_bus, db, caldav_config):
-    """Test that all-day events are excluded from conflict detection."""
+    """Test that all-day events are excluded from conflict detection.
+
+    Uses dynamic future dates so the test remains valid as time passes.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
@@ -728,49 +753,60 @@ async def test_detect_conflicts_all_day_ignored(event_bus, db, caldav_config):
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # All-day event
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).date()
+    day_after = (now + timedelta(days=2)).date()
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # All-day event — uses date-only ISO format (no time component)
     payload1 = {
         "event_id": "allday-1",
         "title": "Birthday",
-        "start_time": "2026-02-15",
-        "end_time": "2026-02-16",
+        "start_time": tomorrow.isoformat(),
+        "end_time": day_after.isoformat(),
         "is_all_day": True,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload1,
     })
 
-    # Timed event on same day
+    # Timed event on the same day as the all-day event
     payload2 = {
         "event_id": "timed-1",
         "title": "Meeting",
-        "start_time": "2026-02-15T10:00:00+00:00",
-        "end_time": "2026-02-15T11:00:00+00:00",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload2,
     })
 
     await connector._detect_conflicts()
 
-    # Should not detect conflict (all-day events are excluded)
+    # Should not detect a conflict — all-day events are explicitly excluded
+    # since you can have multiple all-day markers (holidays, birthdays, etc.)
+    # without it being a scheduling conflict.
     assert connector.publish_event.call_count == 0
 
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_multiple_overlaps(event_bus, db, caldav_config):
-    """Test detecting multiple conflicts with three overlapping events."""
+    """Test detecting multiple conflicts with three overlapping events.
+
+    Uses dynamic future dates so the test remains valid as time passes.
+    Layout: Event 1 (long) overlaps both Event 2 and Event 3 → 2 conflicts.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
@@ -778,65 +814,76 @@ async def test_detect_conflicts_multiple_overlaps(event_bus, db, caldav_config):
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # Event 1: 10:00-12:00
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Event 1: base+0:00 to base+2:00 (long meeting that overlaps both others)
     payload1 = {
         "event_id": "event-1",
         "title": "Long Meeting",
-        "start_time": "2026-02-15T10:00:00+00:00",
-        "end_time": "2026-02-15T12:00:00+00:00",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=2)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload1,
     })
 
-    # Event 2: 10:30-11:00 (overlaps with Event 1)
+    # Event 2: base+0:30 to base+1:00 (overlaps with Event 1)
     payload2 = {
         "event_id": "event-2",
         "title": "Short Meeting",
-        "start_time": "2026-02-15T10:30:00+00:00",
-        "end_time": "2026-02-15T11:00:00+00:00",
+        "start_time": (base + timedelta(minutes=30)).isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload2,
     })
 
-    # Event 3: 11:30-12:30 (overlaps with Event 1)
+    # Event 3: base+1:30 to base+2:30 (overlaps with Event 1's tail end)
     payload3 = {
         "event_id": "event-3",
         "title": "Another Meeting",
-        "start_time": "2026-02-15T11:30:00+00:00",
-        "end_time": "2026-02-15T12:30:00+00:00",
+        "start_time": (base + timedelta(hours=1, minutes=30)).isoformat(),
+        "end_time": (base + timedelta(hours=2, minutes=30)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload3,
     })
 
     await connector._detect_conflicts()
 
-    # Should detect 2 conflicts (1-2 and 1-3)
+    # Should detect 2 conflicts: (Event 1 ∩ Event 2) and (Event 1 ∩ Event 3)
     assert connector.publish_event.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_no_duplicate_pairs(event_bus, db, caldav_config):
-    """Test that the same conflict pair isn't reported twice."""
+    """Test that the same DB-row conflict pair isn't reported twice.
+
+    Stores one event twice (simulating a double-sync where the same calendar
+    event appears as two rows in the events table).  The sweep-line algorithm
+    uses the DB row ``id`` as the dedup key, so two rows for the same logical
+    event will be detected as a pair conflict only once.
+
+    Uses dynamic future dates so the test remains valid as time passes.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
@@ -844,34 +891,47 @@ async def test_detect_conflicts_no_duplicate_pairs(event_bus, db, caldav_config)
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # Create same events twice to ensure deduplication works
-    for _ in range(2):
-        payload1 = {
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    row_id_1 = str(uuid.uuid4())
+    row_id_2 = str(uuid.uuid4())
+
+    # Store the same logical event twice (double-sync) — two different DB rows
+    # with the same payload but unique row IDs.  The events have identical time
+    # windows so they will be detected as an "overlapping pair."
+    for row_id in [row_id_1, row_id_2]:
+        payload = {
             "event_id": "event-1",
             "title": "Meeting A",
-            "start_time": "2026-02-15T10:00:00+00:00",
-            "end_time": "2026-02-15T11:00:00+00:00",
+            "start_time": base.isoformat(),
+            "end_time": (base + timedelta(hours=1)).isoformat(),
             "is_all_day": False,
         }
         event_store.store_event({
-            "id": str(uuid.uuid4()),
+            "id": row_id,
             "type": "calendar.event.created",
             "source": "caldav",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": payload1,
+            "timestamp": now.isoformat(),
+            "payload": payload,
         })
 
     await connector._detect_conflicts()
 
-    # Should only report one conflict even though events are stored twice
+    # The two rows form one unique (row_id_1, row_id_2) sorted pair — should
+    # only be reported once regardless of iteration order.
     assert connector.publish_event.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_less_than_two_events(event_bus, db, caldav_config):
-    """Test conflict detection with fewer than 2 events (no conflicts possible)."""
+    """Test conflict detection with fewer than 2 events (no conflicts possible).
+
+    Uses a dynamic future date so the single event is within the 48-hour window
+    and not silently filtered out as a past event.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
@@ -879,33 +939,41 @@ async def test_detect_conflicts_less_than_two_events(event_bus, db, caldav_confi
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # Only one event
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Only one event — need at least 2 to detect a conflict
     payload = {
         "event_id": "event-1",
         "title": "Solo Meeting",
-        "start_time": "2026-02-15T10:00:00+00:00",
-        "end_time": "2026-02-15T11:00:00+00:00",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload,
     })
 
     await connector._detect_conflicts()
 
-    # Should not detect any conflicts
+    # Cannot conflict with itself — should detect no conflicts
     assert connector.publish_event.call_count == 0
 
 
 @pytest.mark.asyncio
 async def test_detect_conflicts_malformed_event_skipped(event_bus, db, caldav_config):
-    """Test that malformed events are skipped in conflict detection."""
+    """Test that malformed events are skipped in conflict detection.
+
+    One event is missing start_time (invalid) and one is valid.  With only one
+    parseable event, no conflict is possible.  Uses a dynamic future date so the
+    valid event is within the 48-hour window.
+    """
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     connector = CalDAVConnector(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
@@ -913,41 +981,44 @@ async def test_detect_conflicts_malformed_event_skipped(event_bus, db, caldav_co
     from storage.event_store import EventStore
     event_store = EventStore(db)
 
-    # Malformed event (missing start_time)
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Malformed event (missing start_time) — should be silently skipped
     payload1 = {
         "event_id": "bad-event",
         "title": "Bad Event",
-        "end_time": "2026-02-15T11:00:00+00:00",
-        # Missing start_time
+        "end_time": (base + timedelta(hours=1)).isoformat(),
+        # Missing start_time intentionally — exercises the parse-error handler
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload1,
     })
 
-    # Valid event
+    # Valid future event
     payload2 = {
         "event_id": "good-event",
         "title": "Good Event",
-        "start_time": "2026-02-15T10:00:00+00:00",
-        "end_time": "2026-02-15T11:00:00+00:00",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": "calendar.event.created",
         "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "payload": payload2,
     })
 
-    # Should not crash, should skip malformed event
+    # Should not crash — malformed event is skipped, leaving only one valid event
     await connector._detect_conflicts()
 
-    # No conflicts should be detected (only one valid event)
+    # No conflicts: only one parseable event exists in the window
     assert connector.publish_event.call_count == 0
 
 
