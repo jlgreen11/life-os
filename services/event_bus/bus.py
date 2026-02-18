@@ -21,12 +21,15 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
 
 import nats
 from nats.js.api import StreamConfig, ConsumerConfig, AckPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class EventBus:
@@ -193,7 +196,7 @@ class EventBus:
                 # processed and should not be redelivered.
                 await msg.ack()
             except Exception as e:
-                print(f"Event handler error for {pattern}: {e}")
+                logger.error("Event handler error for %s: %s", pattern, e, exc_info=True)
                 # NAK (negative acknowledgment) with a 5-second delay triggers
                 # automatic redelivery. This provides basic retry semantics
                 # for transient failures (network blips, temporary DB locks).

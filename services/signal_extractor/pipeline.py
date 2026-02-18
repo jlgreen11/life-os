@@ -7,8 +7,12 @@ Subscribes to the NATS event bus and processes every event.
 
 from __future__ import annotations
 
+import logging
+
 from models.user_model import MoodState
 from storage.database import DatabaseManager, UserModelStore
+
+logger = logging.getLogger(__name__)
 
 # Each extractor is responsible for one behavioral dimension.  The pipeline
 # instantiates all of them and fans every incoming event out to each one that
@@ -77,7 +81,7 @@ class SignalExtractorPipeline:
                 except Exception as e:
                     # Fail-open: signal extraction must never block or crash the
                     # main event processing loop.  Log and continue.
-                    print(f"Extractor {type(extractor).__name__} error: {e}")
+                    logger.error("Extractor %s error: %s", type(extractor).__name__, e, exc_info=True)
 
         return all_signals
 
@@ -127,7 +131,7 @@ class SignalExtractorPipeline:
             except Exception as e:
                 # Fail-open: mood history persistence must never crash the
                 # event loop.  The mood state is still returned to the caller.
-                print(f"WARNING: Failed to persist mood snapshot to history: {e}")
+                logger.warning("Failed to persist mood snapshot to history: %s", e)
 
         return mood
 
