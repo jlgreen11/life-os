@@ -18,6 +18,7 @@ Insight Types:
     mood_trend                  -- Mood trajectory insights derived from mood_history
     spending_pattern            -- Financial behavioral patterns from transaction history
     decision_pattern            -- Decision-making style from speed, delegation, and fatigue signals
+    topic_interest              -- Dominant interests and trending topics from topic signal profile
 """
 
 from __future__ import annotations
@@ -106,6 +107,11 @@ class InsightEngine:
         except Exception:
             logger.exception("decision_pattern correlator failed")
 
+        try:
+            raw.extend(self._topic_interest_insights())
+        except Exception:
+            logger.exception("topic_interest correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -173,6 +179,10 @@ class InsightEngine:
             "decision_speed": "email.work",
             "delegation_tendency": "messaging.direct",
             "decision_fatigue": "messaging.direct",
+            # Topic interest insights derive from all communication events (email
+            # and messages), weighted against the broadest applicable source key.
+            "top_interests": "email.work",
+            "trending_topic": "email.work",
         }
 
         weighted: list[Insight] = []
@@ -1694,6 +1704,221 @@ class InsightEngine:
             len(speed_by_domain),
             f"{delegation_comfort:.2f}" if delegation_comfort is not None else "None",
             fatigue_hour,
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Topic Interest
+    # ------------------------------------------------------------------
+
+    def _topic_interest_insights(self) -> list[Insight]:
+        """Surface dominant-interest and trending-topic insights from the topics profile.
+
+        Reads the ``topics`` signal profile (built by ``TopicExtractor``) which
+        accumulates two structures:
+
+          - ``topic_counts``: all-time keyword → message-count frequency map built
+            incrementally as every email/message event is processed.
+          - ``recent_topics``: ring buffer (capped at 500) of timestamped topic
+            lists, one entry per processed event.
+
+        This correlator translates those raw counts into two human-readable insight
+        sub-types.
+
+        **1. Top interests (``top_interests``):**
+            Reads ``topic_counts`` and surfaces the user's five most-mentioned topics
+            as a compact interest summary.  Requires at least ``MIN_SAMPLES`` (50)
+            profile updates and at least ``MIN_TOP_COUNT`` (5) occurrences for the
+            top topic, so that a sparse early profile does not produce misleading
+            "top interests".  The ``entity`` fingerprint is derived from the top-3
+            topic names so the insight is only re-surfaced when the dominant interest
+            composition actually changes (e.g., a new topic displaces one of the
+            top 3), not just because a new email arrived.
+
+            Example::
+
+                "Your most-engaged topics: work (847), project (634), team (523),
+                email (441), meeting (312). Across 12,480 message observations."
+
+        **2. Trending topic (``trending_topic``):**
+            Compares topic frequencies in the most recent ``MIN_RECENT`` (50) entries
+            of the ring buffer against the all-time ``topic_counts`` baseline.  A
+            topic is "trending" when its recent-window rate is at least
+            ``TRENDING_RATIO`` (2.0×) higher than its historical average and it
+            appears at least 3 times in the recent window (avoids surfacing a topic
+            that appeared only once as "trending").  The topic with the highest
+            ratio is selected when multiple candidates exist.  Only fires when there
+            are at least ``MIN_RECENT`` ring-buffer entries so the comparison is
+            meaningful.
+
+            Example::
+
+                "You've been engaging significantly more with 'budget' topics
+                recently — 3.2× above your usual rate (8 mentions in your last
+                50 messages)."
+
+        **Data requirements:**
+            Both sub-types require the ``topics`` profile to exist with at least
+            ``MIN_SAMPLES`` (50) updates to guard against noise from the first few
+            events processed by the extractor.
+
+        **Staleness TTL:**
+            ``top_interests``: 168 hours (7 days) — dominant interests shift slowly.
+            ``trending_topic``: 48 hours (2 days) — trending topics can change quickly.
+
+        **Dedup strategy:**
+            ``top_interests`` uses the concatenated top-3 topic names as ``entity``
+            so the insight re-surfaces only when the dominant interest composition
+            changes.  ``trending_topic`` uses the topic name itself as ``entity``
+            so each unique trending topic gets its own dedup lifecycle.
+
+        Returns:
+            list[Insight]: Zero, one, or two insights depending on data availability
+            and pattern strength.
+        """
+        # Minimum profile updates before we trust the data enough to surface insights.
+        MIN_SAMPLES = 50
+        # The top topic must appear in at least this many messages to be meaningful.
+        MIN_TOP_COUNT = 5
+        # Minimum recent_topics ring-buffer entries for trending-topic detection.
+        MIN_RECENT = 50
+        # Recent-rate / historical-rate ratio threshold for "trending" classification.
+        TRENDING_RATIO = 2.0
+        # A trending topic must appear at least this many times in the recent window.
+        MIN_TRENDING_COUNT = 3
+        # Number of top topics to include in the summary sentence.
+        TOP_N = 5
+
+        profile = self.ums.get_signal_profile("topics")
+        if not profile:
+            return []
+
+        data = profile.get("data", {})
+        total_samples = profile.get("samples_count", 0)
+
+        if total_samples < MIN_SAMPLES:
+            return []
+
+        topic_counts: dict[str, int] = data.get("topic_counts", {})
+        recent_topics: list[dict] = data.get("recent_topics", [])
+
+        if not topic_counts:
+            return []
+
+        insights: list[Insight] = []
+
+        # ----------------------------------------------------------------
+        # Sub-insight 1: Top interests
+        # ----------------------------------------------------------------
+        # Sort topics by all-time frequency descending and take the top N.
+        sorted_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)
+        top_topics = [(t, c) for t, c in sorted_topics[:TOP_N] if c >= MIN_TOP_COUNT]
+
+        if top_topics:
+            # Format as "topic (count)" pairs for readability in the summary.
+            topic_list = ", ".join(f"{t} ({c:,})" for t, c in top_topics)
+            # Total observation count across all topics provides context for scale.
+            n_total = sum(c for _, c in sorted_topics)
+
+            # Stable fingerprint: concatenate top-3 names so the dedup key
+            # only changes when the composition of dominant interests shifts.
+            top3_names = "_".join(t for t, _ in sorted_topics[:3])
+
+            # Confidence grows with sample count, capped at 0.80.
+            confidence = min(0.80, 0.50 + total_samples * 0.001)
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your most-engaged topics: {topic_list}. "
+                    f"Across {n_total:,} message observations."
+                ),
+                confidence=confidence,
+                evidence=[
+                    f"top_topic={sorted_topics[0][0]}",
+                    f"top_count={sorted_topics[0][1]}",
+                    f"unique_topics={len(topic_counts)}",
+                    f"samples={total_samples}",
+                ],
+                category="top_interests",
+                entity=top3_names,
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 2: Trending topic
+        # ----------------------------------------------------------------
+        if len(recent_topics) >= MIN_RECENT:
+            # Tally topic frequencies within the most recent MIN_RECENT entries.
+            recent_window = recent_topics[-MIN_RECENT:]
+            recent_counts: dict[str, int] = {}
+            for entry in recent_window:
+                for topic in entry.get("topics", []):
+                    recent_counts[topic] = recent_counts.get(topic, 0) + 1
+
+            if recent_counts:
+                # Total all-time mentions across the full corpus for the baseline rate.
+                total_all_time = sum(topic_counts.values())
+
+                best_trending: tuple[str, int, float] | None = None
+                best_ratio = 0.0
+
+                for topic, recent_count in recent_counts.items():
+                    historical_count = topic_counts.get(topic, 0)
+                    # Skip topics with no historical baseline — no rate to compare.
+                    if historical_count == 0:
+                        continue
+                    # Skip topics that appear only once or twice in the recent window
+                    # to prevent single-occurrence noise from registering as "trending".
+                    if recent_count < MIN_TRENDING_COUNT:
+                        continue
+
+                    # Normalise each count by its corpus size to get comparable rates.
+                    # recent_rate  = fraction of recent-window messages mentioning this topic
+                    # historical_rate = fraction of all-time messages mentioning this topic
+                    recent_rate = recent_count / len(recent_window)
+                    historical_rate = historical_count / total_all_time
+
+                    if historical_rate <= 0:
+                        continue
+
+                    ratio = recent_rate / historical_rate
+                    if ratio > best_ratio and ratio >= TRENDING_RATIO:
+                        best_ratio = ratio
+                        best_trending = (topic, recent_count, ratio)
+
+                if best_trending is not None:
+                    topic, count, ratio = best_trending
+                    insight = Insight(
+                        type="behavioral_pattern",
+                        summary=(
+                            f"You've been engaging significantly more with '{topic}' "
+                            f"recently — {ratio:.1f}× above your usual rate "
+                            f"({count} mentions in your last {MIN_RECENT} messages)."
+                        ),
+                        confidence=min(0.75, 0.40 + ratio * 0.05),
+                        evidence=[
+                            f"trending_topic={topic}",
+                            f"recent_count={count}",
+                            f"ratio={ratio:.2f}",
+                            f"recent_window_size={len(recent_window)}",
+                        ],
+                        category="trending_topic",
+                        entity=topic,
+                        staleness_ttl_hours=48,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+        logger.debug(
+            "topic_interest_insights: %d insights generated "
+            "(unique_topics=%d, recent_entries=%d, samples=%d)",
+            len(insights),
+            len(topic_counts),
+            len(recent_topics),
+            total_samples,
         )
         return insights
 
