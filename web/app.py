@@ -62,9 +62,11 @@ def create_web_app(life_os) -> FastAPI:
     )
 
     # --- CORS Middleware ---
-    # Read allowed origins from config. If missing, default to localhost-only
+    # Read allowed origins from config. If missing or if life_os has no config
+    # attribute (e.g., in minimal test fixtures), default to localhost-only
     # (secure by default). The user must explicitly configure broader access.
-    cors_config = life_os.config.get("cors", {})
+    config = getattr(life_os, "config", {}) or {}
+    cors_config = config.get("cors", {})
     allowed_origins = cors_config.get("allowed_origins")
 
     # Validate and sanitize the allowed_origins list
