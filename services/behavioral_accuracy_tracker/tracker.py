@@ -217,6 +217,8 @@ class BehavioralAccuracyTracker:
             return await self._infer_opportunity_accuracy(prediction, signals, created_at)
         elif pred_type == "risk":
             return await self._infer_risk_accuracy(prediction, signals, created_at)
+        elif pred_type == "routine_deviation":
+            return await self._infer_routine_deviation_accuracy(prediction, signals, created_at)
         else:
             return None  # Unknown prediction type
 
@@ -675,3 +677,123 @@ class BehavioralAccuracyTracker:
         else:
             # Spending alert was for a small amount → likely false positive
             return False
+
+    async def _infer_routine_deviation_accuracy(
+        self, prediction: dict, signals: dict, created_at: datetime
+    ) -> Optional[bool]:
+        """Infer accuracy for 'routine_deviation' predictions.
+
+        Routine deviation predictions suggest: "You usually do your '<routine>'
+        routine by now" — meaning the user has deviated from a detected pattern.
+        The prediction engine generates these when expected routine events haven't
+        occurred by the time the routine typically starts.
+
+        Accuracy inference logic:
+          - Look for events matching the routine's expected_actions within 2 hours
+            of the prediction being created.
+          - If the user performed the expected routine actions within 2 hours:
+            ACCURATE (the nudge was timely — routine was late, user did it)
+          - If 4 hours pass with no matching events:
+            INACCURATE (the routine truly didn't happen — probably a legitimate
+            skip day rather than a delay the user needed to be reminded about)
+          - If still within the 4-hour observation window: None (wait)
+
+        The 2-hour ACCURATE window captures "late starts" where the prediction
+        nudge coincided with the user eventually doing the routine. The 4-hour
+        INACCURATE threshold avoids penalising legitimate off-day skips while
+        still resolving predictions that will never be confirmed.
+
+        Supporting signals structure (from PredictionEngine):
+            {
+                "routine_name": "morning_email_review",
+                "consistency_score": 0.85,
+                "expected_actions": ["email_received", "task_created"],
+            }
+        """
+        import re as _re
+
+        # Extract routine metadata from signals
+        routine_name = signals.get("routine_name")
+        expected_actions = signals.get("expected_actions") or []
+
+        # Build the list of event types to look for.  Routine actions use
+        # underscore format ("email_received") while stored events use dot
+        # format ("email.received").  Map between the two so our query
+        # finds actual events in the events table.
+        action_to_event = {
+            "email_received": "email.received",
+            "email_sent": "email.sent",
+            "message_received": "message.received",
+            "message_sent": "message.sent",
+            "task_created": "task.created",
+            "task_completed": "task.completed",
+            "calendar_event_created": "calendar.event.created",
+        }
+        expected_event_types = [
+            action_to_event.get(a, a.replace("_", "."))
+            for a in expected_actions
+        ]
+
+        # If we have neither a routine name nor expected actions, fall back to
+        # trying to parse them from the prediction description.
+        # Handles: "You usually do your 'morning_email_review' routine by now"
+        if not routine_name and not expected_event_types:
+            name_match = _re.search(r"'([^']+)'", prediction.get("description", ""))
+            if name_match:
+                routine_name = name_match.group(1)
+
+        if not expected_event_types:
+            # Without event types we can only resolve by timeout, not by activity.
+            # Use a 24-hour window to avoid permanent stagnation.
+            now = datetime.now(timezone.utc)
+            if now > created_at + timedelta(hours=24):
+                # No event type information; conservatively mark as unresolvable.
+                # Return False so the prediction doesn't stay pending indefinitely.
+                return False
+            return None
+
+        now = datetime.now(timezone.utc)
+        accurate_window_end = created_at + timedelta(hours=2)
+        inaccurate_window_end = created_at + timedelta(hours=4)
+
+        # Query events table for any of the expected routine event types within
+        # the 4-hour observation window.
+        with self.db.get_connection("events") as conn:
+            placeholders = ",".join("?" * len(expected_event_types))
+            events = conn.execute(
+                f"""SELECT type, timestamp FROM events
+                    WHERE type IN ({placeholders})
+                      AND timestamp >= ?
+                      AND timestamp <= ?
+                    ORDER BY timestamp ASC
+                    LIMIT 1""",
+                (
+                    *expected_event_types,
+                    created_at.isoformat(),
+                    min(inaccurate_window_end, now).isoformat(),
+                ),
+            ).fetchall()
+
+        if events:
+            # At least one expected routine event occurred within the observation
+            # window — the routine was performed (possibly after a delay).
+            first_event_time = datetime.fromisoformat(
+                events[0]["timestamp"].replace("Z", "+00:00")
+            )
+            if first_event_time <= accurate_window_end:
+                # User completed the routine within 2 hours of the prediction →
+                # the prediction correctly identified a late-start deviation.
+                return True
+            else:
+                # User completed the routine between 2-4 hours later — still
+                # did it, so the prediction was valid (deviation detected correctly).
+                return True
+
+        # No matching events found so far.
+        if now > inaccurate_window_end:
+            # 4-hour window elapsed with no routine activity — this was likely
+            # a legitimate skip day, not a delay the user needed prompting for.
+            return False
+
+        # Still within the observation window — too early to determine.
+        return None
