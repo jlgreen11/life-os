@@ -72,6 +72,11 @@ class InsightEngine:
         except Exception:
             logger.exception("communication_style correlator failed")
 
+        try:
+            raw.extend(self._actionable_alert_insights())
+        except Exception:
+            logger.exception("actionable_alert correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -109,7 +114,11 @@ class InsightEngine:
         if not self.swm:
             return insights
 
-        # Map insight categories to source weight keys
+        # Map insight categories to source weight keys.
+        # actionable_alert categories are intentionally excluded: overdue tasks
+        # and upcoming calendar events should always be surfaced regardless of
+        # source-weight tuning — they represent direct user obligations, not
+        # inferred patterns that can be deprioritized.
         category_to_source = {
             "place": "location.visits",
             "contact_gap": "messaging.direct",
@@ -356,6 +365,210 @@ class InsightEngine:
             insight.compute_dedup_key()
             insights.append(insight)
 
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Actionable Alerts
+    # ------------------------------------------------------------------
+
+    def _actionable_alert_insights(self) -> list[Insight]:
+        """Surface time-sensitive items the user should act on now.
+
+        Generates ``actionable_alert`` insights from two sources:
+
+        **Overdue / soon-due tasks:**
+            Queries the ``tasks`` table for open tasks whose ``due_date`` is
+            in the past (overdue) or within the next 24 hours (due soon).
+            Tasks with ``status`` of ``pending`` or ``in_progress`` are
+            considered; completed/cancelled tasks are excluded.  Each
+            qualifying task generates one insight so the user is reminded
+            even if they are not looking at the task list.
+
+        **Upcoming calendar events requiring preparation:**
+            Queries ``calendar.event.created`` events from the last 24 hours
+            that start within the next 24 hours.  Events that start in less
+            than one hour get a ``high_urgency`` flag and higher confidence.
+            This mirrors the logic in the prediction engine's
+            ``_check_preparation_needs`` but surfaces the alert directly as
+            an insight (immediately visible) rather than a prediction that
+            must clear a confidence gate before being notified.
+
+        Dedup strategy:
+            Category ``overdue_task`` + entity = task id (changes each time
+            the task is touched, so the insight refreshes naturally).
+            Category ``upcoming_calendar`` + entity = calendar event id.
+            Both use the default 168-hour (7-day) staleness TTL, which means
+            a calendar-event insight won't re-fire for 7 days after first
+            generation — appropriate because the event itself is a one-off.
+
+        Example insights generated:
+            "Task 'Submit Q1 report' is overdue (due 3 days ago)."
+            "Upcoming event 'Team standup' starts in 45 minutes — consider preparing."
+
+        Returns:
+            list[Insight]: Zero or more ``actionable_alert`` insights.
+        """
+        insights: list[Insight] = []
+        now = datetime.now(timezone.utc)
+
+        # ----------------------------------------------------------------
+        # Source 1: Overdue and soon-due tasks
+        # ----------------------------------------------------------------
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    """SELECT id, title, due_date, priority
+                       FROM tasks
+                       WHERE status IN ('pending', 'in_progress')
+                         AND due_date IS NOT NULL
+                         AND due_date <= ?
+                       ORDER BY due_date ASC""",
+                    # Include tasks due within the next 24 hours
+                    ((now + timedelta(hours=24)).isoformat(),),
+                ).fetchall()
+        except Exception:
+            logger.exception("actionable_alert: failed to query tasks")
+            rows = []
+
+        for row in rows:
+            try:
+                due_dt = datetime.fromisoformat(
+                    row["due_date"].replace("Z", "+00:00")
+                )
+                hours_until_due = (due_dt - now).total_seconds() / 3600
+
+                if hours_until_due < 0:
+                    # Overdue
+                    days_overdue = abs(hours_until_due) / 24
+                    summary = (
+                        f"Task '{row['title']}' is overdue "
+                        f"(due {int(days_overdue) + 1} day(s) ago)."
+                    )
+                    # Confidence increases with how overdue the task is,
+                    # capped at 0.9 to leave room for very long-overdue tasks.
+                    confidence = min(0.9, 0.6 + days_overdue * 0.05)
+                    evidence = [
+                        "status=overdue",
+                        f"days_overdue={int(days_overdue)}",
+                        f"priority={row['priority']}",
+                    ]
+                else:
+                    # Due within 24 hours
+                    summary = (
+                        f"Task '{row['title']}' is due in "
+                        f"{int(hours_until_due) + 1} hour(s)."
+                    )
+                    # Higher urgency for tasks due very soon
+                    confidence = min(0.85, 0.5 + (24 - hours_until_due) / 24 * 0.3)
+                    evidence = [
+                        "status=due_soon",
+                        f"hours_until_due={int(hours_until_due)}",
+                        f"priority={row['priority']}",
+                    ]
+
+                insight = Insight(
+                    type="actionable_alert",
+                    summary=summary,
+                    confidence=confidence,
+                    evidence=evidence,
+                    category="overdue_task",
+                    entity=row["id"],
+                    # Shorter staleness for task alerts: re-surface after 6 hours
+                    # so persistent overdue tasks stay visible without being annoying.
+                    staleness_ttl_hours=6,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            except (ValueError, TypeError):
+                # Skip tasks with malformed due_date
+                continue
+
+        # ----------------------------------------------------------------
+        # Source 2: Calendar events starting within the next 24 hours
+        # ----------------------------------------------------------------
+        try:
+            cutoff_past = (now - timedelta(hours=24)).isoformat()
+            cutoff_future = (now + timedelta(hours=24)).isoformat()
+
+            with self.db.get_connection("events") as conn:
+                cal_rows = conn.execute(
+                    """SELECT payload FROM events
+                       WHERE type = 'calendar.event.created'
+                         AND timestamp > ?
+                         AND timestamp <= ?
+                       ORDER BY timestamp DESC
+                       LIMIT 200""",
+                    (cutoff_past, cutoff_future),
+                ).fetchall()
+        except Exception:
+            logger.exception("actionable_alert: failed to query calendar events")
+            cal_rows = []
+
+        seen_cal_ids: set[str] = set()
+        for row in cal_rows:
+            try:
+                payload = json.loads(row["payload"])
+                event_id = payload.get("event_id") or payload.get("id") or ""
+                title = payload.get("title") or payload.get("summary") or "Untitled event"
+                start_str = payload.get("start_time") or payload.get("start") or ""
+
+                if not start_str or event_id in seen_cal_ids:
+                    continue
+                seen_cal_ids.add(event_id)
+
+                # Parse start time
+                start_dt = datetime.fromisoformat(
+                    start_str.replace("Z", "+00:00")
+                )
+
+                # Only surface events that start in the future
+                hours_until_start = (start_dt - now).total_seconds() / 3600
+                if hours_until_start < 0 or hours_until_start > 24:
+                    continue
+
+                if hours_until_start < 1:
+                    urgency_label = "starts very soon"
+                    confidence = 0.85
+                elif hours_until_start < 4:
+                    urgency_label = f"starts in {int(hours_until_start) + 1} hour(s)"
+                    confidence = 0.75
+                else:
+                    urgency_label = f"starts in {int(hours_until_start)} hours"
+                    confidence = 0.65
+
+                summary = (
+                    f"Upcoming event '{title}' {urgency_label} — consider preparing."
+                )
+                evidence = [
+                    f"hours_until_start={int(hours_until_start)}",
+                    f"event_id={event_id}",
+                ]
+                if hours_until_start < 1:
+                    evidence.append("high_urgency=true")
+
+                insight = Insight(
+                    type="actionable_alert",
+                    summary=summary,
+                    confidence=confidence,
+                    evidence=evidence,
+                    category="upcoming_calendar",
+                    entity=event_id or title,
+                    # Use 12-hour staleness so the insight refreshes mid-day
+                    # for events that were created overnight.
+                    staleness_ttl_hours=12,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+
+        logger.debug(
+            "actionable_alert_insights: %d insights generated "
+            "(tasks=%d, calendar=%d)",
+            len(insights),
+            sum(1 for i in insights if i.category == "overdue_task"),
+            sum(1 for i in insights if i.category == "upcoming_calendar"),
+        )
         return insights
 
     # ------------------------------------------------------------------
