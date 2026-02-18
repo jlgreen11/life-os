@@ -1164,6 +1164,19 @@ class PredictionEngine:
                     confidence_gate=ConfidenceGate.SUGGEST,
                     time_horizon="this_week",
                     suggested_action=f"Review {cat} spending",
+                    # supporting_signals enables BehavioralAccuracyTracker._infer_risk_accuracy()
+                    # to identify the flagged category and measure whether spending in that
+                    # category decreased after the alert (lines 703-705 of tracker.py).
+                    # Without these fields the tracker must fall back to regex-parsing the
+                    # description, which can fail for category names containing special
+                    # characters.  Providing structured signals is the authoritative path.
+                    supporting_signals={
+                        "category": cat,
+                        "amount": round(amount, 2),
+                        "percentage": round(pct * 100, 1),
+                        "total_spending": round(total, 2),
+                        "transaction_count": len(transactions),
+                    },
                 ))
 
         # Diagnostic summary
