@@ -199,58 +199,93 @@ class TestActivityBasedCompletion:
 
 
 class TestInactivityBasedCompletion:
-    """Test completion detection from task inactivity."""
+    """Test completion detection from task inactivity.
+
+    The inactivity detector closes any pending task older than ``inactivity_days``
+    that was not already handled by the activity-based detector.  Task age is the
+    only signal — unrelated system activity (other emails, received messages) does
+    NOT keep a dormant task alive.  The old implementation tested a global
+    ``recent_activity_count == 0`` guard which caused the strategy to never fire
+    on a live instance where there is always at least one recent event.
+    """
 
     @pytest.mark.asyncio
     async def test_marks_inactive_tasks_complete(self, detector, db, base_time):
-        """Tasks with no activity for 7+ days should be marked complete."""
+        """Tasks older than inactivity_days should be marked complete."""
         task_id = str(uuid.uuid4())
-        # Task created 8 days ago
         create_task(db, task_id, "Old task", created_at=base_time - timedelta(days=8))
 
-        # No recent events at all
         completed = await detector.detect_completions()
 
         assert completed >= 1
         detector.task_manager.complete_task.assert_called_with(task_id)
 
     @pytest.mark.asyncio
-    async def test_keeps_tasks_with_recent_activity(self, detector, db, base_time):
-        """Tasks with recent activity should remain pending."""
-        task_id = str(uuid.uuid4())
-        create_task(db, task_id, "Active task", created_at=base_time - timedelta(days=8))
+    async def test_marks_inactive_task_complete_even_with_unrelated_system_activity(
+        self, detector, db, base_time
+    ):
+        """Global system activity must NOT prevent an old task from being closed.
 
-        # Recent email activity
+        Previously the detector checked ``COUNT(*) == 0`` over all events in the
+        last 7 days.  On any live instance this count is always > 0, so the
+        inactivity strategy never fired.  This test proves the fix: an
+        unrelated received email no longer shields a dormant 8-day-old task.
+        """
+        task_id = str(uuid.uuid4())
+        create_task(db, task_id, "Dormant task", created_at=base_time - timedelta(days=8))
+
+        # Add recent activity completely unrelated to the task — should NOT matter.
         create_event(db, "email.received", {
-            "from_address": "colleague@company.com",
-            "subject": "Re: Active task discussion",
-            "body_plain": "Let's sync on this tomorrow.",
+            "from_address": "newsletter@example.com",
+            "subject": "Weekly digest",
+            "body_plain": "Here is your weekly digest of unrelated news.",
         }, timestamp=base_time - timedelta(days=2))
 
         completed = await detector.detect_completions()
 
-        # Task should NOT be completed because there's recent activity
-        detector.task_manager.complete_task.assert_not_called()
+        # Task is old enough and has no completion signal — must be closed.
+        assert completed >= 1
+        calls = [call.args[0] for call in detector.task_manager.complete_task.call_args_list]
+        assert task_id in calls
 
     @pytest.mark.asyncio
     async def test_respects_inactivity_threshold(self, detector, db, base_time):
-        """Should only mark tasks complete after full inactivity period."""
-        # Task created exactly at threshold (7 days) - should NOT complete
+        """Should only mark tasks complete after the full inactivity period."""
+        # Task created exactly at threshold (7 days) — still inside window, skip.
         task_id_at_threshold = str(uuid.uuid4())
         create_task(db, task_id_at_threshold, "At threshold",
                    created_at=base_time - timedelta(days=7))
 
-        # Task created just past threshold (7 days + 1 hour) - should complete
+        # Task created just past threshold (7 days + 1 hour) — should complete.
         task_id_past_threshold = str(uuid.uuid4())
         create_task(db, task_id_past_threshold, "Past threshold",
                    created_at=base_time - timedelta(days=7, hours=1))
 
         completed = await detector.detect_completions()
 
-        # Only the past-threshold task should complete
         assert completed >= 1
         calls = [call.args[0] for call in detector.task_manager.complete_task.call_args_list]
         assert task_id_past_threshold in calls
+
+    @pytest.mark.asyncio
+    async def test_does_not_complete_recent_tasks(self, detector, db, base_time):
+        """Tasks created within the inactivity window should NOT be auto-completed."""
+        task_id = str(uuid.uuid4())
+        create_task(db, task_id, "Recent task", created_at=base_time - timedelta(days=3))
+
+        # Add lots of unrelated activity — still should not close a recent task.
+        for i in range(5):
+            create_event(db, "email.received", {
+                "from_address": f"sender{i}@example.com",
+                "subject": "Something",
+                "body_plain": "Content",
+            }, timestamp=base_time - timedelta(hours=i + 1))
+
+        completed = await detector.detect_completions()
+
+        # Inactivity detector must not fire for tasks younger than threshold.
+        calls = [call.args[0] for call in detector.task_manager.complete_task.call_args_list]
+        assert task_id not in calls
 
 
 class TestStaleTaskCleanup:
@@ -356,8 +391,9 @@ class TestIntegration:
 
         completed = await detector.detect_completions()
 
-        # Should detect both activity-based and stale
-        # Inactivity-based won't trigger because there's recent email activity in the system
+        # Activity-based (task_id_1) + stale cleanup (task_id_2).
+        # The inactivity detector would also fire for task_id_2 were it not
+        # already past the stale threshold (35 days > 30 days stale cutoff).
         assert completed >= 2
         calls = [call.args[0] for call in detector.task_manager.complete_task.call_args_list]
         assert task_id_1 in calls  # Activity

@@ -228,11 +228,20 @@ class TaskCompletionDetector:
     async def _detect_inactivity_based_completion(self) -> int:
         """Detect completion from task inactivity.
 
-        Tasks that haven't had any related activity for {inactivity_days} days
-        are likely completed or abandoned. We mark them complete to close the loop.
+        Any pending task that is older than ``inactivity_days`` and was not
+        already handled by the activity-based detector (strategy 1) is assumed
+        to be completed or abandoned.  The previous implementation checked
+        whether the *system* had any recent activity, which meant this strategy
+        never fired on a live instance (there is always at least one email or
+        calendar event in the window).  The correct signal is task age alone:
+        if a task has been sitting for 7+ days without surfacing a completion
+        signal via sent emails or messages, it is safe to close it out.
 
-        This handles cases where users complete tasks but don't explicitly mark
-        them done or send confirmation emails (e.g., personal tasks, quick fixes).
+        Note: strategy 1 (_detect_activity_based_completion) runs first and
+        handles tasks that were explicitly referenced in outbound communication.
+        By the time we reach this method, every task in the results either has
+        no keyword overlap with any sent message or had no outbound
+        communication at all — both cases warrant auto-completion.
 
         Returns:
             Number of tasks marked complete due to inactivity
@@ -240,7 +249,9 @@ class TaskCompletionDetector:
         completed_count = 0
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.inactivity_days)
 
-        # Find tasks created more than {inactivity_days} ago that are still pending
+        # Fetch all pending tasks that are older than the inactivity threshold.
+        # The WHERE clause alone is sufficient: any task that has survived
+        # strategy 1 AND is older than `inactivity_days` should be closed.
         with self.db.get_connection("state") as conn:
             cursor = conn.execute("""
                 SELECT id, title, created_at
@@ -252,39 +263,14 @@ class TaskCompletionDetector:
 
             inactive_tasks = [dict(row) for row in cursor.fetchall()]
 
-        # For each inactive task, check if there's been ANY recent activity
         for task in inactive_tasks:
-            task_id = task['id']
-            created_at = task['created_at']
-
-            # Check for any *recent* events (within the 7-day inactivity window).
-            # We only need ``timestamp > cutoff`` here: tasks in this loop were
-            # all created *before* cutoff (that's the WHERE clause above), so
-            # passing ``created_at`` as well would be redundant — cutoff is
-            # always more restrictive.  Using a single clear param avoids the
-            # ambiguity of the previous two-param form and makes the intent
-            # explicit: "has there been any user activity in the last 7 days?".
-            with self.db.get_connection("events") as conn:
-                cursor = conn.execute("""
-                    SELECT COUNT(*)
-                    FROM events
-                    WHERE type IN ('email.sent', 'email.received', 'message.sent',
-                                   'message.received', 'calendar.event.created')
-                      AND timestamp > ?
-                """, (cutoff.isoformat(),))
-
-                recent_activity_count = cursor.fetchone()[0]
-
-            # If there's been activity in the lookback window, the user is still
-            # engaged with this area of work, so keep the task pending
-            # If there's been NO activity at all recently, mark complete (or abandoned)
-            if recent_activity_count == 0:
-                await self.task_manager.complete_task(task_id)
-                completed_count += 1
-                logger.debug(
-                    f"Auto-completed inactive task '{task['title']}' "
-                    f"(no activity for {self.inactivity_days}+ days)"
-                )
+            await self.task_manager.complete_task(task['id'])
+            completed_count += 1
+            logger.debug(
+                "Auto-completed inactive task '%s' "
+                "(pending for %d+ days without completion signal)",
+                task['title'], self.inactivity_days,
+            )
 
         return completed_count
 
