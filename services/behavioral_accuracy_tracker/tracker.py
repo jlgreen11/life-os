@@ -113,14 +113,22 @@ class BehavioralAccuracyTracker:
                 was_accurate = result
                 now = datetime.now(timezone.utc).isoformat()
 
+                # Determine WHY this prediction was resolved.  This distinguishes
+                # historical-pollution resolutions (automated-sender fast-path) from
+                # real user-behavior signals.  The accuracy multiplier in the prediction
+                # engine excludes fast-path resolutions so that bug-era predictions
+                # don't permanently depress confidence for an entire prediction type.
+                resolution_reason = self._get_resolution_reason(dict(pred), was_accurate)
+
                 with self.db.get_connection("user_model") as conn:
                     conn.execute(
                         """UPDATE predictions SET
                            was_accurate = ?,
                            resolved_at = ?,
-                           user_response = 'inferred'
+                           user_response = 'inferred',
+                           resolution_reason = ?
                            WHERE id = ?""",
-                        (1 if was_accurate else 0, now, pred["id"]),
+                        (1 if was_accurate else 0, now, resolution_reason, pred["id"]),
                     )
 
                 if was_accurate:
@@ -180,6 +188,51 @@ class BehavioralAccuracyTracker:
                 stats['filtered'] += 1
 
         return stats
+
+    def _get_resolution_reason(self, prediction: dict, was_accurate: bool) -> Optional[str]:
+        """Determine the machine-readable reason a prediction was resolved.
+
+        Returns a well-known reason string for resolutions that are NOT driven by
+        real user behavior.  The accuracy multiplier in the prediction engine
+        excludes these from accuracy calculations so historical-bug pollution
+        doesn't permanently suppress prediction types.
+
+        Args:
+            prediction: The prediction dict (must contain supporting_signals and
+                        prediction_type fields).
+            was_accurate: Whether the prediction was inferred accurate or not.
+
+        Returns:
+            'automated_sender_fast_path'  — inaccurate because contact is a
+                marketing/automated sender (structurally unfulfillable prediction
+                generated before the marketing filter improvements in PRs #183–#189).
+            None  — real user-behavior signal (user acted or didn't act within window).
+
+        Usage example:
+            reason = self._get_resolution_reason(prediction, was_accurate=False)
+            # reason = 'automated_sender_fast_path' for noreply@company.com contacts
+            # reason = None for real human contacts the user chose not to message
+        """
+        # Only mark as fast-path if the prediction was inaccurate AND involves a contact
+        if was_accurate:
+            return None  # Accurate predictions are always real behavioral signals
+
+        # Parse supporting_signals to check for contact email
+        try:
+            signals = json.loads(prediction.get("supporting_signals") or "{}") or {}
+            if isinstance(signals, list):
+                signals = {}
+        except (json.JSONDecodeError, TypeError):
+            signals = {}
+
+        contact_email = signals.get("contact_email")
+
+        # For opportunity and reminder predictions: check if the contact is an
+        # automated sender.  If so, this was an automated-sender fast-path resolution.
+        if contact_email and self._is_automated_sender(contact_email):
+            return "automated_sender_fast_path"
+
+        return None  # Real user-behavior signal (timeout or confirmed no action)
 
     async def _infer_accuracy(self, prediction: dict) -> Optional[bool]:
         """Infer whether a prediction was accurate based on user behavior.

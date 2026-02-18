@@ -443,7 +443,7 @@ class DatabaseManager:
         added.
         """
         # Current schema version (increment when making schema changes)
-        CURRENT_VERSION = 3
+        CURRENT_VERSION = 4
 
         with self.get_connection("user_model") as conn:
             # Create schema_version table if it doesn't exist
@@ -587,6 +587,7 @@ class DatabaseManager:
                     user_response       TEXT,
                     was_accurate        INTEGER,
                     filter_reason       TEXT,
+                    resolution_reason   TEXT,
                     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                     resolved_at         TEXT
                 );
@@ -704,6 +705,54 @@ class DatabaseManager:
                     "for observability into prediction filtering logic"
                 )
                 conn.execute("ALTER TABLE predictions ADD COLUMN filter_reason TEXT")
+
+        if from_version < 4 and to_version >= 4:
+            # Migration 3 → 4: Add resolution_reason column to predictions table.
+            #
+            # Background: The accuracy multiplier penalizes prediction types with
+            # <20% accuracy. Opportunity predictions measured at 19% accuracy (41/248),
+            # but most "inaccurate" resolutions came from the automated-sender fast-path
+            # in BehavioralAccuracyTracker — predictions generated before marketing
+            # filter improvements (PRs #183–#189) that targeted no-reply addresses the
+            # user could never reach out to. These were bugs in prediction generation,
+            # not real user-behavior signals.
+            #
+            # Without a resolution_reason, the accuracy multiplier couldn't distinguish:
+            #   - Inaccurate because of automated-sender fast-path (historical bug)
+            #   - Inaccurate because user genuinely didn't reach out (real signal)
+            #
+            # This column lets _get_accuracy_multiplier exclude fast-path resolutions
+            # (resolution_reason = 'automated_sender_fast_path') so the computed
+            # accuracy reflects actual user behavior rather than historical pollution.
+            #
+            # Values:
+            #   'automated_sender_fast_path'  — BehavioralAccuracyTracker instant-resolved
+            #                                   because contact is an automated/marketing sender
+            #   'timeout_no_action'           — User didn't act within the inference window
+            #   NULL                          — User feedback or filtered prediction (pre-v4)
+            #
+            # NOTE: This migration only runs ALTER TABLE if the predictions table already
+            # exists. If we're migrating from version 0 (fresh install), the migration
+            # 0→1 drops all tables and the CREATE TABLE IF NOT EXISTS block that follows
+            # all migrations will create the table with resolution_reason already in the
+            # DDL — so no ALTER TABLE is needed.
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # Check if the predictions table exists before attempting ALTER TABLE
+            table_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
+            ).fetchone()
+
+            if table_exists:
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()]
+                if "resolution_reason" not in columns:
+                    logger.info(
+                        "Migration 3→4: Adding resolution_reason column to predictions table "
+                        "to distinguish automated-sender fast-path resolutions from real "
+                        "user-behavior signals in accuracy calculations"
+                    )
+                    conn.execute("ALTER TABLE predictions ADD COLUMN resolution_reason TEXT")
 
     def _migrate_events_db(self, conn: sqlite3.Connection, from_version: int, to_version: int):
         """Apply schema migrations to events.db.
