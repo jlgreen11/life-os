@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import signal
 import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import uvicorn
 import yaml
@@ -209,10 +212,10 @@ class LifeOS:
                 pass
             except Exception as e:
                 # Background task crashed — log the full traceback so we can diagnose
-                import traceback
-                print(f"CRITICAL: Background task '{name}' crashed with exception:")
-                print(traceback.format_exc())
-                print(f"The system is now running in degraded mode without {name}.")
+                logger.critical(
+                    "Background task '%s' crashed: %s — system is running in degraded mode",
+                    name, e, exc_info=True,
+                )
 
         task.add_done_callback(handle_task_exception)
 

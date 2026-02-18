@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,8 @@ from typing import Any, Optional
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 # Google API scopes
 SCOPES = [
@@ -110,7 +113,7 @@ class GoogleConnector(BaseConnector):
 
             creds = self._load_credentials()
             if not creds:
-                print("[google] No valid token found. Complete OAuth via admin UI first.")
+                logger.warning("No valid token found. Complete OAuth via admin UI first.")
                 return False
 
             self._gmail_service = build("gmail", "v1", credentials=creds)
@@ -120,11 +123,11 @@ class GoogleConnector(BaseConnector):
             # Verify by fetching profile
             profile = self._gmail_service.users().getProfile(userId="me").execute()
             self._email_address = profile.get("emailAddress", self._email_address)
-            print(f"[google] Authenticated as {self._email_address}")
+            logger.info("Authenticated as %s", self._email_address)
 
             return True
         except Exception as e:
-            print(f"[google] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     def _load_credentials(self):
@@ -209,7 +212,7 @@ class GoogleConnector(BaseConnector):
                     break
 
             if not cursor:
-                print(f"[google] Initial sync: fetching {len(messages)} messages")
+                logger.info("Initial sync: fetching %d messages", len(messages))
 
             for i, msg_stub in enumerate(messages):
                 try:
@@ -225,12 +228,12 @@ class GoogleConnector(BaseConnector):
 
                     # Progress logging for large syncs
                     if not cursor and (i + 1) % 500 == 0:
-                        print(f"[google] Processed {i + 1}/{len(messages)} messages")
+                        logger.info("Processed %d/%d messages", i + 1, len(messages))
                 except Exception as e:
-                    print(f"[google] Error processing message {msg_stub['id']}: {e}")
+                    logger.error("Error processing message %s: %s", msg_stub["id"], e)
 
         except Exception as e:
-            print(f"[google] Gmail sync error: {e}")
+            logger.error("Gmail sync error: %s", e)
 
         # Update sync cursor to current epoch
         now_epoch = int(datetime.now(timezone.utc).timestamp())
@@ -421,7 +424,7 @@ class GoogleConnector(BaseConnector):
                 cal_list = self._calendar_service.calendarList().list().execute()
                 cal_ids = [c["id"] for c in cal_list.get("items", [])]
             except Exception as e:
-                print(f"[google] Error listing calendars: {e}")
+                logger.error("Error listing calendars: %s", e)
                 return 0
 
         for cal_id in cal_ids:
@@ -439,10 +442,10 @@ class GoogleConnector(BaseConnector):
                         event_count = await self._process_calendar_event(event, cal_id)
                         count += event_count
                     except Exception as e:
-                        print(f"[google] Error processing calendar event: {e}")
+                        logger.error("Error processing calendar event: %s", e)
 
             except Exception as e:
-                print(f"[google] Calendar sync error ({cal_id}): {e}")
+                logger.error("Calendar sync error (%s): %s", cal_id, e)
 
         return count
 
@@ -529,12 +532,12 @@ class GoogleConnector(BaseConnector):
                     try:
                         count += self._upsert_contact(conn, person, email_to_id, now)
                     except Exception as e:
-                        print(f"[google] Error upserting contact: {e}")
+                        logger.error("Error upserting contact: %s", e)
 
-            print(f"[google] Synced {count} contacts")
+            logger.info("Synced %d contacts", count)
 
         except Exception as e:
-            print(f"[google] Contact sync error: {e}")
+            logger.error("Contact sync error: %s", e)
 
         return count
 

@@ -15,11 +15,14 @@ All of these work through vector similarity search.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class VectorStore:
@@ -72,9 +75,9 @@ class VectorStore:
             self._db = lancedb.connect(str(self.db_path / "lance"))
             self._use_lancedb = True
             self._ensure_table()
-            print("       Vector store: LanceDB initialized")
+            logger.info("Vector store: LanceDB initialized")
         except ImportError:
-            print("       Vector store: LanceDB not available, using fallback")
+            logger.warning("Vector store: LanceDB not available, using NumPy fallback")
             self._load_fallback()
 
         # --- Embedding model loading ---
@@ -83,10 +86,12 @@ class VectorStore:
         try:
             from sentence_transformers import SentenceTransformer
             self._embedder = SentenceTransformer(self.model_name)
-            print(f"       Embedding model: {self.model_name} loaded")
+            logger.info("Embedding model: %s loaded", self.model_name)
         except ImportError:
-            print("       Embedding model: sentence-transformers not available")
-            print("       Install with: pip install sentence-transformers")
+            logger.warning(
+                "Embedding model: sentence-transformers not available — "
+                "install with: pip install sentence-transformers"
+            )
             self._embedder = None
 
     def _ensure_table(self):
@@ -164,7 +169,7 @@ class VectorStore:
             embedding = self._embedder.encode(text, normalize_embeddings=True)
             return embedding.tolist()
         except Exception as e:
-            print(f"Embedding error: {e}")
+            logger.error("Embedding error: %s", e)
             return None
 
     def add_document(self, doc_id: str, text: str,
@@ -212,7 +217,7 @@ class VectorStore:
                     import pyarrow as pa
                     self._table.add([doc])
                 except Exception as e:
-                    print(f"LanceDB add error: {e}")
+                    logger.error("LanceDB add error: %s", e)
                     return False
             else:
                 self._fallback_docs.append({
@@ -277,7 +282,7 @@ class VectorStore:
                 for r in results
             ]
         except Exception as e:
-            print(f"LanceDB search error: {e}")
+            logger.error("LanceDB search error: %s", e)
             return []
 
     def _numpy_search(self, query_embedding: list[float], limit: int,
@@ -434,7 +439,7 @@ class VectorStore:
                 # LanceDB SQL filter: match exact doc_id OR any chunked variant.
                 self._table.delete(f"doc_id = '{doc_id}' OR doc_id LIKE '{doc_id}_%'")
             except Exception as e:
-                print(f"LanceDB delete error: {e}")
+                logger.error("LanceDB delete error: %s", e)
         else:
             # Collect indices of all matching documents (exact + chunk suffixes).
             indices_to_remove = [
