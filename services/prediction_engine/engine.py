@@ -1415,6 +1415,19 @@ class PredictionEngine:
             "applecash@",         # e.g., applecash@insideapple.apple.com (Apple Cash automated)
             "worldofhyatt@",      # e.g., worldofhyatt@loyalty.hyatt.com (loyalty program)
             "disneycruiseline@",  # e.g., disneycruiseline@vacations.disneydestinations.com
+            # Additional automated local-part prefixes identified from production data
+            # (iteration 179): these senders generate relationship_maintenance predictions
+            # that are never valid because none of them are real human contacts.
+            "mail@",        # e.g., mail@directpay.irs.gov, mail@cardsagainsthumanity.com,
+                            #        mail@ifttt.com — generic "mail@" is always automated,
+                            #        never a personal address (cf. @mail.* domain pattern)
+            "alumni@",      # e.g., alumni@mst.edu — university/college mass-mailing lists
+            "top@",         # e.g., top@raymore.com — promotional "top deals" automated
+                            #        (Raymore & Flanigan furniture store — confirmed)
+            "stay@",        # e.g., stay@hotelvandivort.com — hotel booking CRM automated
+            "msftpc@",      # e.g., msftpc@microsoft.com — Microsoft PC-fleet management
+            "irrigation@",  # e.g., irrigation@ryanlawn.com — landscaping service automated
+            "claims@",      # e.g., claims@treasurer.mo.gov — government/insurance automated
         )
         if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
             return True

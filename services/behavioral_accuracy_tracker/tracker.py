@@ -592,6 +592,19 @@ class BehavioralAccuracyTracker:
             "applecash",         # e.g., applecash@insideapple.apple.com
             "worldofhyatt",      # e.g., worldofhyatt@loyalty.hyatt.com
             "disneycruiseline",  # e.g., disneycruiseline@vacations.disneydestinations.com
+            # Additional automated local-part prefixes identified from production data
+            # (iteration 179): synced with PredictionEngine._is_marketing_or_noreply.
+            # Each pattern was confirmed against 67 unresolved opportunity predictions.
+            "mail",         # e.g., mail@directpay.irs.gov, mail@cardsagainsthumanity.com,
+                            #        mail@ifttt.com, mail@cdkeys.com — generic "mail@" is
+                            #        always an automated system, never a personal address
+            "alumni",       # e.g., alumni@mst.edu — university/college mass-mailing lists
+            "top",          # e.g., top@raymore.com — promotional "top deals" automated sender
+                            #        (Raymore & Flanigan furniture) — single-word dept prefix
+            "stay",         # e.g., stay@hotelvandivort.com — hotel booking/CRM automated
+            "msftpc",       # e.g., msftpc@microsoft.com — Microsoft PC-fleet automated
+            "irrigation",   # e.g., irrigation@ryanlawn.com — landscaping service automated
+            "claims",       # e.g., claims@treasurer.mo.gov — government/insurance automated
         )
         if any(local_part.startswith(p) for p in bulk_prefixes):
             return True
@@ -630,6 +643,42 @@ class BehavioralAccuracyTracker:
             "facebookmail.com", # Facebook automated notifications
         )
         if any(domain.endswith(d) for d in automated_domains):
+            return True
+
+        # Marketing service provider domain endings.
+        # These are third-party email marketing platforms — any address whose
+        # domain ends with one of these suffixes was delivered via an ESP (Email
+        # Service Provider) and is therefore automated by definition.
+        # Synced from PredictionEngine._is_marketing_or_noreply (iteration 179).
+        marketing_service_patterns = (
+            ".e2ma.net",             # Emma email marketing
+            ".sendgrid.net",         # SendGrid
+            ".mailchimp.com",        # Mailchimp
+            ".constantcontact.com",  # Constant Contact
+            ".hubspot.com",          # HubSpot
+            ".marketo.com",          # Marketo
+            ".pardot.com",           # Salesforce Pardot
+            ".eloqua.com",           # Oracle Eloqua
+            ".sailthru.com",         # Sailthru email platform
+            ".responsys.net",        # Oracle Responsys
+            ".exacttarget.com",      # Salesforce Marketing Cloud
+            ".smtp2go.com",          # SMTP2GO transactional email
+            ".postmarkapp.com",      # Postmark transactional
+            ".mandrillapp.com",      # Mandrill by Mailchimp
+            ".amazonses.com",        # Amazon SES
+            ".sparkpostmail.com",    # SparkPost
+            ".sendinblue.com",       # Sendinblue/Brevo
+            ".intercom-mail.com",    # Intercom notifications
+            ".customer.io",          # Customer.io
+            ".iterable.com",         # Iterable
+            ".klaviyo.com",          # Klaviyo e-commerce marketing
+            "proxyvote.com",         # Proxy voting (Broadridge Financial)
+            "playatmcd.com",         # McDonald's Monopoly promo
+            "facebookmail.com",      # Facebook automated
+            ".smg.com",              # Service Management Group surveys
+            ".ms.aa.com",            # American Airlines marketing
+        )
+        if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
             return True
 
         # Compound subdomain patterns (match anywhere in domain)
