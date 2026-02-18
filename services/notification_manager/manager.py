@@ -253,12 +253,27 @@ class NotificationManager:
         return False
 
     def _get_notification_mode(self) -> str:
-        """
-        Get the user's notification preference.
+        """Get the user's notification preference.
 
         Returns one of: "minimal", "batched", "frequent".
         Defaults to "batched" if the user hasn't set a preference yet
         (safest default — avoids overwhelming a new user).
+
+        Preferences can be stored in two formats depending on how they were
+        written:
+        - Plain string: ``"frequent"`` (written by ``update_preference`` route
+          when the value is already a str, or inserted directly in tests)
+        - JSON-encoded string: ``'"frequent"'`` (written by callers that
+          JSON-encode all values before storage)
+
+        We try JSON deserialization first and fall back to the raw value so
+        the method works correctly regardless of which storage path was used.
+        This prevents a ``json.JSONDecodeError`` when the value is stored as a
+        plain string (the most common path via the web API).
+
+        Example:
+            >>> mgr._get_notification_mode()
+            'batched'
         """
         with self.db.get_connection("preferences") as conn:
             row = conn.execute(
@@ -266,8 +281,22 @@ class NotificationManager:
             ).fetchone()
             if not row:
                 return "batched"
-            # User preferences are stored as JSON strings, so we need to deserialize
-            return json.loads(row["value"])
+
+        raw = row["value"]
+        try:
+            # Attempt JSON deserialization in case the value was stored as a
+            # JSON-encoded string (e.g. '"frequent"').
+            decoded = json.loads(raw)
+            # json.loads('"frequent"') → 'frequent' (a str) — that's what we want.
+            # json.loads('frequent') raises JSONDecodeError — handled below.
+            if isinstance(decoded, str):
+                return decoded
+            # If decoded to a non-string type, fall through to returning raw
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Raw value is already a plain string (e.g. 'frequent' stored directly).
+        return raw
 
     async def _deliver_notification(self, notif_id: str, title: str,
                                      body: Optional[str], priority: str):

@@ -546,11 +546,21 @@ async def test_dismiss_updates_status_and_publishes_event(
 
 @pytest.mark.asyncio
 async def test_prediction_notification_marks_surfaced(
-    notification_manager, create_prediction, db
+    notification_manager, create_prediction, set_notification_mode, db
 ):
-    """Test that creating a notification from a prediction marks it as surfaced."""
+    """Test that creating a notification from a prediction marks it as surfaced.
+
+    High priority is used so the notification is delivered immediately (not
+    batched) and _mark_prediction_surfaced() is called synchronously.  In
+    "batched" mode, normal-priority notifications are queued for the digest
+    window, meaning the was_surfaced flag is set later when the digest is
+    delivered — not at creation time.
+    """
     prediction_id = "pred-123"
     create_prediction(prediction_id, was_surfaced=0)
+
+    # Use frequent mode so normal-priority notifications deliver immediately
+    set_notification_mode("frequent")
 
     await notification_manager.create_notification(
         title="Prediction Alert",
