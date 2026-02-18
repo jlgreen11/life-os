@@ -84,11 +84,20 @@ class DecisionExtractor(BaseExtractor):
                 if decision_speed_signal:
                     signals.append(decision_speed_signal)
 
-            # Detect delegation patterns in outbound messages
+            # Detect delegation patterns in outbound messages.
+            # When no delegation is detected we still emit a synthetic
+            # "outbound_message" signal so _update_profile can keep the
+            # _total_outbound_count denominator accurate for delegation_comfort.
             if event_type in [EventType.EMAIL_SENT.value, EventType.MESSAGE_SENT.value]:
                 delegation_signal = self._detect_delegation_patterns(payload, dt)
                 if delegation_signal:
                     signals.append(delegation_signal)
+                else:
+                    # Non-delegation outbound message: counted for the ratio only
+                    signals.append({
+                        "type": "outbound_nondelegation",
+                        "timestamp": dt.isoformat(),
+                    })
 
             # Track calendar commitment speed (how far in advance they schedule)
             if event_type == EventType.CALENDAR_EVENT_CREATED.value:
@@ -96,14 +105,17 @@ class DecisionExtractor(BaseExtractor):
                 if commitment_signal:
                     signals.append(commitment_signal)
 
-            # Update the profile with aggregated signals
+            # Update the profile with aggregated signals (including the internal
+            # outbound_nondelegation accounting token when present)
             self._update_profile(signals, dt)
 
         except Exception as e:
             # Fail-open: decision extraction should never block the pipeline
             logger.error("DecisionExtractor error: %s", e, exc_info=True)
 
-        return signals
+        # Strip internal accounting tokens before returning; callers only need
+        # semantically meaningful signals (delegation_pattern, decision_speed, etc.)
+        return [s for s in signals if s.get("type") != "outbound_nondelegation"]
 
     def _track_task_decision_speed(self, payload: dict, completed_at: datetime) -> Optional[dict]:
         """
@@ -320,16 +332,102 @@ class DecisionExtractor(BaseExtractor):
                 delegation_type = signal["delegation_type"]
                 hour = signal["hour"]
 
-                # Track delegation comfort (ratio of delegating vs. deciding alone)
-                # For now, just increment a counter; full ratio calculation needs
-                # total message volume which we'd compute in a separate aggregation pass
+                # ----------------------------------------------------------------
+                # Update delegation_comfort (0=micromanage, 1=fully delegated).
+                #
+                # We maintain a running tally of:
+                #   delegation_event_count  – outbound messages that delegate/seek input
+                #   total_outbound_count    – all outbound messages processed so far
+                #
+                # Both counters are stored in the profile dict so they survive
+                # across process restarts.  The comfort score is their ratio,
+                # smoothed with an EMA (α=0.3) so that one burst of delegation
+                # doesn't permanently spike the score.
+                # ----------------------------------------------------------------
+                prev_delegation_count = profile_dict.get("_delegation_event_count", 0)
+                prev_total_count = profile_dict.get("_total_outbound_count", 0)
 
-                # Track decision fatigue by hour (late hours = more delegation)
+                prev_delegation_count += 1   # this signal IS a delegation event
+                prev_total_count += 1        # it is also an outbound message
+                profile_dict["_delegation_event_count"] = prev_delegation_count
+                profile_dict["_total_outbound_count"] = prev_total_count
+
+                # Instantaneous ratio for this update
+                instant_ratio = prev_delegation_count / prev_total_count
+
+                # EMA blend into the stored comfort score (α=0.3)
+                current_comfort = profile_dict.get("delegation_comfort", 0.5)
+                profile_dict["delegation_comfort"] = round(
+                    0.7 * current_comfort + 0.3 * instant_ratio, 4
+                )
+
+                # ----------------------------------------------------------------
+                # Update delegation_by_domain — per-recipient delegation tendency.
+                #
+                # The "domain" here is the normalized recipient identifier (email
+                # address or contact name).  We store a per-recipient EMA so the
+                # prediction engine can say "you always defer restaurant choices
+                # to your partner."
+                # ----------------------------------------------------------------
+                if recipient:
+                    current_by_domain = profile_dict.get("delegation_by_domain", {})
+                    if recipient in current_by_domain:
+                        # EMA: new delegation toward this recipient
+                        current_by_domain[recipient] = round(
+                            0.7 * current_by_domain[recipient] + 0.3 * 1.0, 4
+                        )
+                    else:
+                        current_by_domain[recipient] = 1.0  # first delegation to them
+                    profile_dict["delegation_by_domain"] = current_by_domain
+
+                    # ----------------------------------------------------------------
+                    # Update defers_to — domain-keyed list of recipients the user
+                    # trusts with a given decision category.  We infer the decision
+                    # category from the hour and delegation type:
+                    #   - full delegation at evening hours → social/personal category
+                    #   - seeking_input during work hours → work category
+                    # ----------------------------------------------------------------
+                    defers_to = profile_dict.get("defers_to", {})
+                    if delegation_type == "full":
+                        category = "personal" if hour >= 17 else "general"
+                    else:
+                        category = "work" if 8 <= hour < 17 else "general"
+
+                    recipients_for_category = defers_to.get(category, [])
+                    if recipient not in recipients_for_category:
+                        recipients_for_category.append(recipient)
+                    defers_to[category] = recipients_for_category
+                    profile_dict["defers_to"] = defers_to
+
+                # ----------------------------------------------------------------
+                # Track decision fatigue by hour (late hours = more delegation).
+                # We record the earliest hour at which delegation consistently
+                # starts, which is a proxy for when decision fatigue sets in.
+                # ----------------------------------------------------------------
                 if hour >= 20:  # After 8pm
                     # Detect fatigue patterns
                     current_fatigue_hour = profile_dict.get("fatigue_time_of_day")
                     if current_fatigue_hour is None or hour < current_fatigue_hour:
                         profile_dict["fatigue_time_of_day"] = hour
+
+            elif signal["type"] == "outbound_nondelegation":
+                # ----------------------------------------------------------------
+                # Non-delegation outbound message: increment the denominator so
+                # that delegation_comfort reflects a true ratio (delegation events
+                # / total outbound messages) rather than drifting toward 1.0.
+                # The numerator (_delegation_event_count) is unchanged here.
+                # ----------------------------------------------------------------
+                prev_total_count = profile_dict.get("_total_outbound_count", 0)
+                prev_total_count += 1
+                profile_dict["_total_outbound_count"] = prev_total_count
+
+                # Recompute comfort with the updated denominator
+                delegation_count = profile_dict.get("_delegation_event_count", 0)
+                instant_ratio = delegation_count / prev_total_count if prev_total_count > 0 else 0.0
+                current_comfort = profile_dict.get("delegation_comfort", 0.5)
+                profile_dict["delegation_comfort"] = round(
+                    0.7 * current_comfort + 0.3 * instant_ratio, 4
+                )
 
             elif signal["type"] == "commitment_pattern":
                 domain = signal["domain"]
