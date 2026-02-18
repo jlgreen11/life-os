@@ -338,7 +338,10 @@ async def test_prediction_feedback_enables_accuracy_learning(
         user_model_store.store_prediction({
             "id": prediction_id,
             "prediction_type": pred_type,
-            "description": f"{context} prediction",
+            # Include index in description to bypass 24h deduplication logic,
+            # which would skip identical (type, description) pairs and only
+            # store the first one — causing wrong accuracy totals.
+            "description": f"{context} prediction {i}",
             "confidence": 0.7,
             "confidence_gate": "SUGGEST",
             "was_surfaced": False,

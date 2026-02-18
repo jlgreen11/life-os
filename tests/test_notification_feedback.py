@@ -244,12 +244,12 @@ async def test_unsurfaced_predictions_excluded_from_accuracy_calculation(db, use
 @pytest.mark.asyncio
 async def test_multiple_prediction_types_tracked_separately(db, user_model_store):
     """Each prediction type should have independent accuracy tracking."""
-    # Create accurate "reminder" predictions
+    # Create accurate "reminder" predictions (unique descriptions to bypass deduplication)
     for i in range(3):
         pred = Prediction(
             id=str(uuid.uuid4()),
             prediction_type="reminder",
-            description="Reminder prediction",
+            description=f"Reminder prediction {i}",
             confidence=0.7,
             confidence_gate=ConfidenceGate.DEFAULT,
             time_horizon="24_hours",
@@ -262,12 +262,12 @@ async def test_multiple_prediction_types_tracked_separately(db, user_model_store
                 (datetime.now(timezone.utc).isoformat(), pred.id),
             )
 
-    # Create inaccurate "conflict" predictions
+    # Create inaccurate "conflict" predictions (unique descriptions to bypass deduplication)
     for i in range(2):
         pred = Prediction(
             id=str(uuid.uuid4()),
             prediction_type="conflict",
-            description="Conflict prediction",
+            description=f"Conflict prediction {i}",
             confidence=0.7,
             confidence_gate=ConfidenceGate.DEFAULT,
             time_horizon="24_hours",
