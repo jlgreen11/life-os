@@ -48,6 +48,11 @@ async def test_prediction_marked_surfaced_when_notification_created(db, event_st
         domain="prediction",
     )
 
+    # Flush the batch digest so batched notifications are delivered and
+    # predictions are marked as surfaced. In production this is called by
+    # the periodic digest loop; in tests we call it directly.
+    await nm.get_digest()
+
     # Verify prediction is now marked as surfaced
     with db.get_connection("user_model") as conn:
         row = conn.execute(
@@ -136,6 +141,10 @@ async def test_multiple_notifications_from_same_prediction(db, event_store, user
         domain="prediction",
     )
 
+    # Flush the batch digest so batched notifications are delivered and
+    # predictions are marked as surfaced (idempotent — second flush is a no-op).
+    await nm.get_digest()
+
     # Verify prediction is still marked as surfaced (idempotent update)
     with db.get_connection("user_model") as conn:
         row = conn.execute(
@@ -177,6 +186,10 @@ async def test_accuracy_calculation_only_counts_surfaced_predictions(db, event_s
                 source_event_id=prediction_id,
                 domain="prediction",
             )
+
+    # Flush the batch digest so batched notifications are delivered and
+    # predictions 0, 1, 2 are marked as surfaced.
+    await nm.get_digest()
 
     # Manually resolve surfaced predictions (simulating user feedback)
     with db.get_connection("user_model") as conn:
