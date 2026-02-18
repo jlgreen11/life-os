@@ -503,25 +503,25 @@ def test_command_request_extra_fields_ignored():
 
 
 def test_task_create_request_dict_export():
-    """Test that TaskCreateRequest can be exported to dict."""
+    """Test that TaskCreateRequest can be exported to dict (Pydantic V2 model_dump)."""
     req = TaskCreateRequest(title="Test", priority="high")
-    data = req.dict()
+    data = req.model_dump()
     assert data["title"] == "Test"
     assert data["priority"] == "high"
 
 
 def test_task_create_request_dict_exclude_none():
-    """Test TaskCreateRequest dict export excludes None values."""
+    """Test TaskCreateRequest model_dump excludes None values."""
     req = TaskCreateRequest(title="Test")
-    data = req.dict(exclude_none=True)
+    data = req.model_dump(exclude_none=True)
     assert "title" in data
     assert "description" not in data  # Was None
 
 
 def test_search_request_json_serialization():
-    """Test SearchRequest can be serialized to JSON."""
+    """Test SearchRequest can be serialized to JSON (Pydantic V2 model_dump_json)."""
     req = SearchRequest(query="test", limit=5, filters={"source": "email"})
-    json_str = req.json()
+    json_str = req.model_dump_json()
     assert "test" in json_str
     assert "email" in json_str
 
