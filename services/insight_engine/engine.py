@@ -17,6 +17,7 @@ Insight Types:
     temporal_pattern            -- Chronotype and productive-hour insights from temporal profile
     mood_trend                  -- Mood trajectory insights derived from mood_history
     spending_pattern            -- Financial behavioral patterns from transaction history
+    decision_pattern            -- Decision-making style from speed, delegation, and fatigue signals
 """
 
 from __future__ import annotations
@@ -100,6 +101,11 @@ class InsightEngine:
         except Exception:
             logger.exception("spending_pattern correlator failed")
 
+        try:
+            raw.extend(self._decision_pattern_insights())
+        except Exception:
+            logger.exception("decision_pattern correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -162,6 +168,11 @@ class InsightEngine:
             "spending_increase": "finance.transactions",
             "spending_decrease": "finance.transactions",
             "recurring_subscription": "finance.transactions",
+            # Decision pattern insights: speed/fatigue come from task/calendar
+            # signals; delegation comes from outbound message patterns.
+            "decision_speed": "email.work",
+            "delegation_tendency": "messaging.direct",
+            "decision_fatigue": "messaging.direct",
         }
 
         weighted: list[Insight] = []
@@ -1467,6 +1478,222 @@ class InsightEngine:
             len(recent_txns),
             len(prior_txns),
             len(sub_txns),
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Decision Patterns
+    # ------------------------------------------------------------------
+
+    def _decision_pattern_insights(self) -> list[Insight]:
+        """Surface decision-making behavioral patterns from the decision signal profile.
+
+        Reads the ``decision`` signal profile (built by ``DecisionExtractor``) and
+        translates raw speed, delegation, and fatigue data into up to three insight
+        sub-types.  The profile accumulates signals from task completions, outbound
+        messages, and calendar events, so it captures a full picture of how the user
+        approaches choices.
+
+        **1. Decision speed comparison across domains (``decision_speed``):**
+            Reads ``decision_speed_by_domain`` (time in seconds from task creation
+            to completion, per domain) and surfaces a comparison between the fastest
+            and slowest domains.  Only fires when at least two domains have data and
+            the slowest domain takes at least 2× longer than the fastest — otherwise
+            there is nothing meaningful to compare.  Seconds are translated into
+            human-readable labels (under an hour / same day / multiple days).
+
+            Example: "You complete work tasks quickly (under an hour) but take
+            longer on finance decisions (avg 2.3 days)."
+
+        **2. Delegation tendency (``delegation_tendency``):**
+            Reads ``delegation_comfort`` (0 = micromanage everything, 1 = fully
+            delegated) and ``_total_outbound_count`` (denominator used to compute
+            the score).  Only fires when the score departs from the neutral 0.5
+            baseline by more than ``DELEGATION_THRESHOLD`` (0.15), so balanced
+            delegators receive no misleading label.  Requires at least 10 outbound
+            messages to avoid noise from sparse early data.
+
+            Example: "You prefer to handle decisions yourself (delegation score
+            0.23, based on 85 messages)."
+
+        **3. Decision fatigue time (``decision_fatigue``):**
+            Reads ``fatigue_time_of_day`` — the hour at which the user consistently
+            starts delegating decisions.  Only fires when the field is set (the
+            DecisionExtractor writes it when it detects late-evening delegation
+            events ≥ 20:00).
+
+            Example: "Your decision fatigue tends to set in after 8 PM — consider
+            front-loading complex choices earlier in the day."
+
+        **Data requirements:**
+            All sub-types require ``samples_count >= MIN_SAMPLES`` on the decision
+            profile to guard against noise from the first few events.
+
+        **Staleness TTL:**
+            168 hours (7 days) for all sub-types.  Decision-making habits are
+            slow-moving traits; daily refresh would be noisy.
+
+        **Dedup strategy:**
+            ``category`` is the sub-type (``decision_speed``, ``delegation_tendency``,
+            ``decision_fatigue``).  ``entity`` is a stable string derived from the
+            detected pattern label so the insight only re-surfaces when the
+            underlying pattern changes, not on every new data point.
+
+        Returns:
+            list[Insight]: Zero to three decision-pattern insights.
+        """
+        # Low minimum: even 5 samples give a reasonable delegation ratio.
+        MIN_SAMPLES = 5
+        # Must depart from neutral 0.5 by this much to earn a label.
+        DELEGATION_THRESHOLD = 0.15
+        # Minimum outbound messages before delegation score is trustworthy.
+        MIN_OUTBOUND = 10
+
+        profile = self.ums.get_signal_profile("decision")
+        if not profile:
+            return []
+
+        data = profile.get("data", {})
+        total_samples = profile.get("samples_count", 0)
+
+        if total_samples < MIN_SAMPLES:
+            return []
+
+        insights: list[Insight] = []
+
+        # ----------------------------------------------------------------
+        # Sub-insight 1: Decision speed comparison across domains
+        # ----------------------------------------------------------------
+        speed_by_domain: dict[str, float] = data.get("decision_speed_by_domain", {})
+
+        if len(speed_by_domain) >= 2:
+            def _speed_label(seconds: float) -> str:
+                """Convert raw seconds into a human-readable speed description."""
+                if seconds < 3600:
+                    return "quickly (under an hour)"
+                elif seconds < 28800:  # 8 hours
+                    return f"within the same day (avg {seconds / 3600:.1f} hours)"
+                elif seconds < 86400:  # 24 hours
+                    return f"within a day (avg {seconds / 3600:.1f} hours)"
+                else:
+                    days = seconds / 86400
+                    return f"over multiple days (avg {days:.1f} days)"
+
+            sorted_domains = sorted(speed_by_domain.items(), key=lambda x: x[1])
+            fastest_domain, fastest_seconds = sorted_domains[0]
+            slowest_domain, slowest_seconds = sorted_domains[-1]
+
+            # Only surface when there is a meaningful contrast (at least 2×).
+            if slowest_seconds >= fastest_seconds * 2:
+                summary = (
+                    f"You complete {fastest_domain} tasks {_speed_label(fastest_seconds)} "
+                    f"but take longer on {fastest_domain if fastest_domain != slowest_domain else slowest_domain} "
+                    f"— your {slowest_domain} decisions take {_speed_label(slowest_seconds)}."
+                )
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"You complete {fastest_domain} tasks {_speed_label(fastest_seconds)}, "
+                        f"but your {slowest_domain} decisions take {_speed_label(slowest_seconds)}."
+                    ),
+                    confidence=min(0.80, 0.50 + total_samples * 0.003),
+                    evidence=[
+                        f"fastest_domain={fastest_domain}",
+                        f"fastest_seconds={fastest_seconds:.0f}",
+                        f"slowest_domain={slowest_domain}",
+                        f"slowest_seconds={slowest_seconds:.0f}",
+                        f"samples={total_samples}",
+                    ],
+                    category="decision_speed",
+                    entity=f"{fastest_domain}_vs_{slowest_domain}",
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 2: Delegation tendency
+        # ----------------------------------------------------------------
+        delegation_comfort = data.get("delegation_comfort")
+        total_outbound = data.get("_total_outbound_count", 0)
+
+        if delegation_comfort is not None and total_outbound >= MIN_OUTBOUND:
+            if delegation_comfort >= 0.5 + DELEGATION_THRESHOLD:
+                tendency = "high"
+                description = (
+                    f"You tend to delegate decisions freely to others "
+                    f"(delegation score {delegation_comfort:.2f}, based on "
+                    f"{total_outbound} outbound messages)."
+                )
+            elif delegation_comfort <= 0.5 - DELEGATION_THRESHOLD:
+                tendency = "low"
+                description = (
+                    f"You prefer to handle decisions yourself "
+                    f"(delegation score {delegation_comfort:.2f}, based on "
+                    f"{total_outbound} outbound messages)."
+                )
+            else:
+                tendency = None
+                description = None
+
+            if tendency is not None:
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=description,
+                    confidence=min(0.80, 0.40 + total_outbound * 0.005),
+                    evidence=[
+                        f"delegation_comfort={delegation_comfort:.2f}",
+                        f"total_outbound={total_outbound}",
+                        f"tendency={tendency}",
+                    ],
+                    category="delegation_tendency",
+                    entity=tendency,
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 3: Decision fatigue time
+        # ----------------------------------------------------------------
+        fatigue_hour = data.get("fatigue_time_of_day")
+
+        if fatigue_hour is not None:
+            # Convert to 12-hour clock label for readability.
+            if fatigue_hour == 0:
+                hour_label = "midnight"
+            elif fatigue_hour < 12:
+                hour_label = f"{fatigue_hour} AM"
+            elif fatigue_hour == 12:
+                hour_label = "noon"
+            else:
+                hour_label = f"{fatigue_hour - 12} PM"
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your decision fatigue tends to set in after {hour_label} — "
+                    f"consider front-loading complex choices earlier in the day."
+                ),
+                confidence=0.65,
+                evidence=[
+                    f"fatigue_hour={fatigue_hour}",
+                    f"samples={total_samples}",
+                ],
+                category="decision_fatigue",
+                entity=str(fatigue_hour),
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        logger.debug(
+            "decision_pattern_insights: %d insights generated "
+            "(speed_domains=%d, delegation_comfort=%s, fatigue_hour=%s)",
+            len(insights),
+            len(speed_by_domain),
+            f"{delegation_comfort:.2f}" if delegation_comfort is not None else "None",
+            fatigue_hour,
         )
         return insights
 
