@@ -1288,10 +1288,29 @@ class PredictionEngine:
     def _get_accuracy_multiplier(self, prediction_type: str) -> float:
         """Compute confidence multiplier based on historical accuracy for this prediction type.
 
+        The multiplier scales prediction confidence up or down based on how accurate
+        that prediction type has been historically. This closes the feedback loop:
+        types that are frequently wrong lose confidence; types that are usually right
+        gain confidence.
+
         Returns:
-            0.0 — auto-suppress (<20% accuracy after 10+ resolved)
+            0.3  — heavy penalty floor for very low accuracy (<20% after 10+ resolved).
+                   Using 0.3 instead of 0.0 ensures the learning loop can recover
+                   naturally as new, higher-quality predictions accumulate.  A hard
+                   0.0 creates a death spiral: predictions are blocked → no new data
+                   → accuracy never improves → permanently blocked.
             0.5-1.1 — scaled by accuracy rate (50% accuracy = 1.0x baseline)
-            1.0 — insufficient data (<5 resolved predictions)
+            1.0  — insufficient data (<5 resolved predictions)
+
+        Examples:
+            _get_accuracy_multiplier("opportunity")  # 19% accuracy, 248 resolved
+            # → 0.3  (heavy penalty but still allows predictions to surface)
+
+            _get_accuracy_multiplier("reminder")  # 71% accuracy
+            # → 0.5 + 0.71 * 0.6 = 0.926
+
+            _get_accuracy_multiplier("routine_deviation")  # 100% accuracy
+            # → 0.5 + 1.0 * 0.6 = 1.1
         """
         with self.db.get_connection("user_model") as conn:
             row = conn.execute(
@@ -1313,9 +1332,21 @@ class PredictionEngine:
 
         accuracy_rate = accurate / total
 
-        # Auto-suppress types with <20% accuracy after sufficient samples
+        # Apply a heavy penalty for types with <20% accuracy after sufficient samples,
+        # but use a floor of 0.3 rather than 0.0.  A 0.0 multiplier is a death switch:
+        # it permanently blocks all predictions of this type, so no new data can ever
+        # be collected and the accuracy can never recover.  With a 0.3 floor the type
+        # continues to generate predictions at reduced confidence, allowing the feedback
+        # loop to gradually rehabilitate genuinely useful types whose history was
+        # polluted by now-fixed bugs (e.g. marketing-sender predictions, broken
+        # deduplication, timezone errors in earlier iterations).
         if accuracy_rate < 0.2 and total >= 10:
-            return 0.0
+            print(
+                f"[prediction_engine] accuracy_multiplier: {prediction_type} has "
+                f"{accuracy_rate:.1%} accuracy over {total} samples — "
+                f"applying heavy-penalty floor (0.3)"
+            )
+            return 0.3
 
         # Scale: 50% accuracy = 1.0x, 0% = 0.5x, 100% = 1.1x
         return 0.5 + (accuracy_rate * 0.6)

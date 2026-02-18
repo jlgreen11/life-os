@@ -5,7 +5,8 @@ Verifies that prediction accuracy tracking works correctly:
 - Dismissed predictions reduce future confidence for that prediction type
 - Accurate predictions maintain or boost future confidence
 - Insufficient data returns a neutral multiplier (1.0)
-- Very low accuracy (<20% after 10+ samples) triggers auto-suppression (0.0)
+- Very low accuracy (<20% after 10+ samples) gets the 0.3 heavy-penalty floor
+  (NOT a hard 0.0, which would create a permanent death spiral)
 """
 
 import pytest
@@ -69,8 +70,14 @@ async def test_insufficient_data_returns_neutral_multiplier(db, user_model_store
 
 
 @pytest.mark.asyncio
-async def test_auto_suppress_below_20_percent_accuracy(db, user_model_store):
-    """Prediction types with <20% accuracy after 10+ samples should be suppressed."""
+async def test_heavy_penalty_floor_below_20_percent_accuracy(db, user_model_store):
+    """Prediction types with <20% accuracy after 10+ samples get the 0.3 heavy-penalty floor.
+
+    The floor is 0.3, not 0.0.  A hard 0.0 multiplier creates a permanent death spiral:
+    the type is blocked, no new predictions are generated, no new data enters the feedback
+    loop, and accuracy can never recover.  With 0.3 the type is heavily penalised but
+    remains active, allowing the learning loop to rehabilitate it naturally.
+    """
     engine = PredictionEngine(db, user_model_store)
 
     # 10 inaccurate + 1 accurate = ~9% accuracy
@@ -95,4 +102,5 @@ async def test_auto_suppress_below_20_percent_accuracy(db, user_model_store):
         )
 
     multiplier = engine._get_accuracy_multiplier("reminder")
-    assert multiplier == 0.0, f"Expected 0.0 for <20% accuracy, got {multiplier}"
+    # Heavy penalty but NOT a hard cutoff — 0.3 floor keeps the learning loop alive
+    assert multiplier == 0.3, f"Expected 0.3 penalty floor for <20% accuracy, got {multiplier}"
