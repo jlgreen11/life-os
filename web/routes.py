@@ -634,10 +634,30 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # -- 1. Relationship profile: contacts overdue vs their usual interval --
         try:
+            from services.signal_extractor.marketing_filter import is_marketing_or_noreply as _is_marketing
             rel_profile = life_os.user_model_store.get_signal_profile("relationships")
             if rel_profile and rel_profile.get("data"):
                 contacts = rel_profile["data"].get("contacts", {})
                 for address, profile in contacts.items():
+                    # Skip marketing/automated senders — the relationships profile contains
+                    # 170K+ samples from email and messaging, most of which are newsletters,
+                    # no-reply accounts, and brokerage alerts.  Surfacing overdue/dynamics
+                    # insights for automated mailers is structurally unfulfillable: the user
+                    # cannot "reach out" to noreply@example.com.  This mirrors the filter
+                    # applied to _contact_gap_insights (PR #207) and the prediction engine's
+                    # _check_relationship_maintenance (PR #204).
+                    if _is_marketing(address):
+                        continue
+
+                    # Skip inbound-only contacts (user has never sent them a message).
+                    # If outbound_count is 0, there is no established bidirectional
+                    # relationship — only one-sided inbound traffic from cold senders,
+                    # mailing lists, or automated notifications.  Flagging these as
+                    # "overdue" would be misleading.  Mirrors the inbound-only filter
+                    # added to _contact_gap_insights in PR #204.
+                    if profile.get("outbound_count", 0) == 0:
+                        continue
+
                     timestamps = profile.get("interaction_timestamps", [])
                     if len(timestamps) >= 2:
                         # Compute the average interval between interactions
