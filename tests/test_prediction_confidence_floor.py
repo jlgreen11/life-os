@@ -216,7 +216,7 @@ async def test_follow_up_reminder_prediction(prediction_engine, db):
                 "normal",
                 json.dumps({
                     "message_id": "test-message-123",
-                    "from": "boss@company.com",
+                    "from_address": "boss@company.com",
                     "subject": "Q4 Budget Review Needed",
                     "body": "Can you review this by EOD?",
                 }),
@@ -465,7 +465,7 @@ async def test_all_prediction_types_can_surface(prediction_engine, user_model_st
             (str(uuid.uuid4()), "email.received", "protonmail", received_time.isoformat(),
              "normal", json.dumps({
                  "message_id": "test-123",
-                 "from": "colleague@company.com",
+                 "from_address": "colleague@company.com",
                  "subject": "Quick question",
                  "body": "Can you help with this?",
              }), "{}"),
