@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 
 
 class RelationshipExtractor(BaseExtractor):
@@ -85,7 +86,7 @@ class RelationshipExtractor(BaseExtractor):
             # should never generate relationship maintenance predictions. Without this
             # filter, the system tracks marketing senders like callofduty@comms.activision.com
             # as legitimate contacts, wasting storage and breaking relationship predictions.
-            if self._is_marketing_or_noreply(address, payload):
+            if is_marketing_or_noreply(address, payload):
                 continue
 
             # Each signal captures a single interaction data point.  Downstream
@@ -266,7 +267,7 @@ class RelationshipExtractor(BaseExtractor):
 
             # Filter out marketing emails — don't learn communication templates
             # from bulk senders. Templates are only useful for human contacts.
-            if self._is_marketing_or_noreply(address, payload):
+            if is_marketing_or_noreply(address, payload):
                 continue
 
             # Generate deterministic template ID from contact + channel + direction
@@ -528,196 +529,59 @@ class RelationshipExtractor(BaseExtractor):
         # Return top N most common
         return [word for word, _ in word_counts.most_common(max_phrases)]
 
+    # Extractor-specific extra patterns applied in addition to the shared baseline.
+    # These were already present in the relationship extractor before this refactor
+    # but are intentionally NOT in the prediction engine (where they could cause
+    # false positives on legitimate human addresses like team@small-startup.io or
+    # ens@usgs.gov for users who actually work there).
+    _EXTRA_LOCALPARTS: tuple[str, ...] = (
+        "emails@",       # Extractor had "emails@" (engine only has "email@")
+        "acerewards@",   # Ace Hardware loyalty — extractor-specific
+        "sales@", "sale@", "shop@", "store@", "merchant@",
+        "concierge@",
+        "flyers@", "flyer@",
+        "partners@", "partner@",
+        "team@",         # Generic team addresses (e.g. team@kickstarter)
+        "ens@",          # Emergency Notification System (e.g. ens@usgs.gov)
+        "ouch@",
+        "events@", "event@",
+        "uber@", "lyft@", "doordash@", "grubhub@",
+        "spices@",
+    )
+    _EXTRA_DOMAIN_PATTERNS: tuple[str, ...] = (
+        # @mail. was removed from the prediction engine in iteration 160 because
+        # it incorrectly blocked Gmail/Hotmail/Protonmail users.  The relationship
+        # extractor keeps it because those providers never appear as @mail.*
+        # subdomains — only bulk-sender infrastructure does (mail.fidelity.com,
+        # mail.schwab.com, mail.instagram.com).
+        "@mail.",
+        # Extractor-specific e-commerce and connection subdomains
+        "@ecomm.", "@shop.", "@store.",
+        "@iemail.",
+        "@webstaurant",
+        "@e1.",
+        "@connect.",
+    )
+
     @staticmethod
     def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
-        """Check if an email is marketing/automated and shouldn't be tracked as a relationship.
+        """Marketing/automated-sender check for the relationship extractor.
 
-        Filters out:
-        - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
-        - Bulk/marketing email patterns (newsletter@, reply@, email@, service@, etc.)
-        - Transactional/automated senders (orders@, auto-confirm@, shipment-tracking@, etc.)
-        - Organizational bulk senders (communications@, development@, fundraising@)
-        - Loyalty/rewards programs (rewards@, loyalty@, etc.)
-        - Marketing domain patterns (news-*.com, email.*.com, etc.)
-        - Marketing service providers (@*.e2ma.net, @*.sendgrid.net, etc.)
-        - Embedded notification patterns (HOA-Notifications@, engage.ticketmaster.com)
-        - Emails containing unsubscribe links
+        Applies the shared baseline from
+        services.signal_extractor.marketing_filter.is_marketing_or_noreply()
+        PLUS additional extractor-specific patterns that are stricter than
+        what the prediction engine needs.
 
-        This prevents the relationship graph from being polluted with non-human "contacts"
-        that should never generate relationship maintenance predictions. Without this filter,
-        the system would track thousands of marketing senders as legitimate relationships,
-        wasting storage space and breaking relationship maintenance prediction accuracy.
-
-        Args:
-            from_addr: Email address to check
-            payload: Message payload (checked for unsubscribe links)
-
-        Returns:
-            True if this is a marketing/automated email, False if it's a human contact
+        The stricter patterns (team@, ens@, @mail., etc.) were deliberately
+        kept out of the shared module to preserve existing prediction-engine
+        behavior; they are applied here via extra_localparts /
+        extra_domain_patterns so the extractor continues to enforce them while
+        the shared module remains the single source of truth for all patterns
+        that both components share.
         """
-        addr_lower = from_addr.lower()
-
-        # No-reply and automated system senders
-        # Includes variations like noreply@, no-reply@, no_reply@, mailer-daemon@, postmaster@
-        # CRITICAL: Must catch all common separators (-, _, none) and handle + modifiers
-        # Examples: no-reply@, noreply@, no_reply@, no-reply+ID@
-        noreply_patterns = (
-            "no-reply@", "no_reply@", "noreply@",
-            "do-not-reply@", "do_not_reply@", "donotreply@",
-            "no-reply+", "no_reply+", "noreply+",  # Catches no-reply+ID@domain.com
-            "mailer-daemon@", "postmaster@", "daemon@",
-            "auto-reply@", "auto_reply@", "autoreply@",
-            "automated@", "automation@",
+        return is_marketing_or_noreply(
+            from_addr,
+            payload,
+            extra_localparts=RelationshipExtractor._EXTRA_LOCALPARTS,
+            extra_domain_patterns=RelationshipExtractor._EXTRA_DOMAIN_PATTERNS,
         )
-        if any(pattern in addr_lower for pattern in noreply_patterns):
-            return True
-
-        # Common bulk sender local-parts (the part before @)
-        # These patterns must match at the start of the email address to avoid
-        # false positives like john.email@company.com or sarah.reply@startup.io
-        # CRITICAL: Include both singular and plural forms (notification/notifications)
-        bulk_localpart_patterns = (
-            "newsletter@", "notifications@", "notification@",  # Both singular and plural
-            "updates@", "update@", "digest@",
-            "mailer@", "bulk@", "promo@", "marketing@",
-            "reply@", "email@", "emails@", "news@", "offers@", "offer@", "deals@",
-            "hello@", "info@", "support@", "help@",
-            "service@", "services@",  # PayPal, Stripe, etc. - mostly transactional but repetitive
-            "discover@",    # Common marketing pattern (Airbnb, etc.)
-            "alert@", "alerts@",
-            "contactus@",  # Contact forms (usually automated) - NOTE: not "contact@" or "team@" to avoid false positives
-            # Transactional/automated senders
-            "orders@", "order@", "receipts@", "receipt@",
-            "auto-confirm@", "autoconfirm@", "confirmation@", "confirm@",
-            "shipment-tracking@", "shipping@", "delivery@",
-            "accountservice@", "account-service@", "account@",
-            "yourhealth@", "youraccount@",  # Personalized automated senders
-            "smartoption@", "quickalert@",  # Financial/loan automated systems
-            # Organizational bulk senders
-            "communications@", "development@", "fundraising@",
-            # Loyalty/rewards programs (always automated)
-            "rewards@", "loyalty@", "acerewards@",  # Ace Hardware, etc.
-            # E-commerce/sales patterns (always marketing)
-            "sales@", "sale@", "shop@", "store@", "merchant@",
-            "concierge@",  # E-commerce customer service (TommyJohn, etc.)
-            "flyers@", "flyer@",  # Marketing flyers/circulars
-            "partners@", "partner@",  # Partnership/affiliate marketing
-            "team@",  # Generic team addresses (usually automated, e.g., team@kickstarter)
-            "ens@",  # Emergency Notification System (e.g., ens@usgs.gov)
-            "ouch@",  # Marketing (e.g., ouch@mymedic.com)
-            "events@", "event@",  # Event marketing/ticketing (SeatGeek, etc.)
-            "uber@", "lyft@", "doordash@", "grubhub@",  # Ride-share/delivery transactional
-            "spices@",  # Product marketing (e.g., spices@thespicehouse.com)
-        )
-        if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
-            return True
-
-        # Embedded notification patterns (middle or end of local-part)
-        # Catches: HOA-Notifications@, user-notifications@, system-alerts@, lafconews@
-        # Uses "in" check (not startswith) to catch patterns anywhere in local-part
-        embedded_notification_patterns = (
-            "-notification", "-notifications", "-alert", "-alerts",
-            "-update", "-updates", "-digest",
-            "news",  # Catches lafconews@, morningnews@, dailynews@, etc.
-        )
-        # Extract local-part (everything before @)
-        local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
-        if any(pattern in local_part for pattern in embedded_notification_patterns):
-            return True
-
-        # Marketing domain patterns (the part after @)
-        # These catch domains like news-us.hugoboss.com, email.d23.com, reply.*.com
-        # EXPANDED (iteration 152): Added @m., @notification., @marketing. patterns
-        # to catch starbucks@m.starbucks.com, capitalone@notification.capitalone.com, etc.
-        #
-        # NOTE: Keeping @mail. for RelationshipExtractor (stricter than PredictionEngine)
-        # to prevent marketing pollution. PredictionEngine removed it in iteration 160 to
-        # allow Gmail/Hotmail/Protonmail, but RelationshipExtractor should be more aggressive
-        # since we're building long-term contact profiles.
-        marketing_domain_patterns = (
-            "@news-", "@email.", "@reply.", "@mailing.",
-            "@newsletters.", "@promo.", "@marketing.",
-            "@em.", "@mg.", "@mail.",  # Common email service provider patterns
-            "@m.",  # Mobile/marketing subdomain (e.g., @m.starbucks.com, @m.facebook.com)
-            "@engage.", "@iluv.", "@e.", "@e2.",  # Engagement platforms (e.g., engage.ticketmaster.com)
-            "@comms.", "@communications.",  # Communications platforms (e.g., callofduty@comms.activision.com)
-            "@attn.",  # Attention/notification platforms
-            "@notification.", "@notifications.",  # Notification subdomains (e.g., notification.capitalone.com)
-            "@txn.", "@transactional.",  # Transaction notifications
-            "@deals.", "@offers.", "@promo-",  # Promotional campaigns
-            "@campaigns.", "@campaign.",  # Campaign management platforms
-            "@blast.", "@bulk.",  # Bulk sender platforms
-            "@lists.", "@list.",  # Mailing list managers
-            "@messages.", "@message.",  # Message notification platforms
-            "@care.",  # Customer care (e.g., care.kansashealthsystem.com)
-            "@mcmap.",  # Marketing campaign manager (e.g., mcmap.chase.com)
-            "@soslprospect.",  # Sales/prospect management (e.g., soslprospect.salliemae.com)
-            "@ecomm.", "@shop.", "@store.",  # E-commerce subdomains (e.g., ecomm.lenovo.com)
-            "@iemail.",  # Internal email/marketing (e.g., partners@iemail.moneylion.com)
-            "@webstaurant",  # WebstaurantStore marketing
-            "@e1.",  # E-commerce platform pattern (e.g., e1.acehardware.com)
-            "@connect.",  # Connection/notification platforms (e.g., connect.razer.com)
-        )
-        if any(pattern in addr_lower for pattern in marketing_domain_patterns):
-            return True
-
-        # Marketing service provider subdomains
-        # These are third-party email marketing platforms (e.g., @*.e2ma.net, @*.sendgrid.net)
-        # Check if domain ends with these patterns
-        # EXPANDED (iteration 152): Added more common transactional/marketing email platforms
-        domain = addr_lower.split("@")[1] if "@" in addr_lower else ""
-        marketing_service_patterns = (
-            ".e2ma.net",      # Emma email marketing
-            ".sendgrid.net",  # SendGrid
-            ".mailchimp.com", # Mailchimp
-            ".constantcontact.com",  # Constant Contact
-            ".hubspot.com",   # HubSpot
-            ".marketo.com",   # Marketo
-            ".pardot.com",    # Salesforce Pardot
-            ".eloqua.com",    # Oracle Eloqua
-            ".sailthru.com",  # Sailthru email platform
-            ".responsys.net", # Oracle Responsys
-            ".exacttarget.com",  # Salesforce Marketing Cloud
-            ".smtp2go.com",   # SMTP2GO transactional email
-            ".postmarkapp.com",  # Postmark transactional
-            ".mandrillapp.com",  # Mandrill by Mailchimp
-            ".amazonses.com",    # Amazon SES
-            ".sparkpostmail.com", # SparkPost
-            ".sendinblue.com",   # Sendinblue/Brevo
-            ".intercom-mail.com", # Intercom notifications
-            ".customer.io",       # Customer.io
-            ".iterable.com",      # Iterable
-            ".klaviyo.com",       # Klaviyo e-commerce marketing
-            ".substack.com",      # Substack newsletters (e.g., bytebytego@substack.com)
-            ".beehiiv.com",       # Beehiiv newsletter platform
-            ".ghost.io",          # Ghost newsletter platform
-            ".convertkit.com",    # ConvertKit creator marketing
-            ".buttondown.email",  # Buttondown newsletters
-        )
-        # Check both domain.endswith(pattern) and domain == pattern[1:] to catch both
-        # subdomains (e.g., newsletter@lists.substack.com) and apex domains (e.g., bytebytego@substack.com)
-        if any(domain.endswith(pattern) or domain == pattern[1:] for pattern in marketing_service_patterns):
-            return True
-
-        # Brand self-mailer pattern: company@company.com
-        # When the local-part matches the domain name, it's almost always marketing
-        # Examples: cutleryandmore@cutleryandmore.com, briggsriley@briggs-riley.com
-        # Normalize by removing hyphens, dots, and underscores for comparison
-        if "@" in addr_lower and "." in domain:
-            local_normalized = local_part.replace("-", "").replace("_", "").replace(".", "")
-            domain_base = domain.split(".")[0].replace("-", "").replace("_", "")
-            if local_normalized == domain_base and len(local_normalized) > 3:
-                # Length check avoids false positives like me@me.com (personal domain)
-                return True
-
-        # Check body and snippet for unsubscribe indicators
-        # Marketing emails are legally required to include unsubscribe links
-        text = " ".join(filter(None, [
-            payload.get("body_plain", ""),
-            payload.get("snippet", ""),
-            payload.get("body", ""),
-        ])).lower()
-        if "unsubscribe" in text:
-            return True
-
-        return False
