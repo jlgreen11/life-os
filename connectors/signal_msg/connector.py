@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,8 @@ from typing import Any, Optional
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 # How often to re-sync contacts/groups (seconds)
 CONTACT_SYNC_INTERVAL = 3600  # 1 hour
@@ -93,7 +96,7 @@ class SignalConnector(BaseConnector):
             try:
                 await self.sync_contacts()
             except Exception as e:
-                print(f"[signal] Contact sync error: {e}")
+                logger.error("Contact sync error: %s", e)
 
     # ------------------------------------------------------------------
     # Contact & Group Sync
@@ -214,7 +217,7 @@ class SignalConnector(BaseConnector):
                         )
                 group_count += 1
 
-        print(f"[signal] Synced {synced} contacts, {group_count} groups")
+        logger.info("Synced %d contacts, %d groups", synced, group_count)
 
     def _load_existing_phone_map(self) -> dict[str, str]:
         """Load phone→contact_id map from existing identifiers."""
@@ -255,7 +258,7 @@ class SignalConnector(BaseConnector):
             result = await self._rpc_call("listGroups")
             return isinstance(result, list)
         except Exception as e:
-            print(f"[signal] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     async def sync(self) -> int:
@@ -339,7 +342,7 @@ class SignalConnector(BaseConnector):
 
             return count
         except Exception as e:
-            print(f"[signal] Sync error: {e}")
+            logger.error("Sync error: %s", e)
             return 0
 
     async def execute(self, action: str, params: dict[str, Any]) -> dict[str, Any]:

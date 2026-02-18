@@ -29,6 +29,7 @@ from __future__ import annotations
 import email
 import email.utils
 import imaplib
+import logging
 import smtplib
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
@@ -38,6 +39,8 @@ from typing import Any, Optional
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class ProtonMailConnector(BaseConnector):
@@ -96,7 +99,7 @@ class ProtonMailConnector(BaseConnector):
 
             return True
         except Exception as e:
-            print(f"[proton_mail] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     async def sync(self) -> int:
@@ -154,10 +157,10 @@ class ProtonMailConnector(BaseConnector):
                     except Exception as e:
                         # Log and skip individual message failures so that one
                         # malformed email does not block the rest of the sync.
-                        print(f"[proton_mail] Error processing message {num}: {e}")
+                        logger.warning("Error processing message %s: %s", num, e)
 
             except Exception as e:
-                print(f"[proton_mail] Error syncing folder {folder}: {e}")
+                logger.error("Error syncing folder %s: %s", folder, e)
 
         # ---- Update Sync Cursor ----
         # Persist today's date so the next cycle only searches from this point.

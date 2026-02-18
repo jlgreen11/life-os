@@ -18,12 +18,15 @@ Configuration:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from connectors.base.connector import BaseConnector
 from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class CalDAVConnector(BaseConnector):
@@ -87,7 +90,7 @@ class CalDAVConnector(BaseConnector):
 
             return True
         except Exception as e:
-            print(f"[caldav] Auth failed: {e}")
+            logger.error("Auth failed: %s", e)
             return False
 
     async def sync(self) -> int:
@@ -199,11 +202,11 @@ class CalDAVConnector(BaseConnector):
                     except Exception as e:
                         # Log but skip individual event failures so the rest of
                         # the calendar still syncs.
-                        print(f"[caldav] Event parse error: {e}")
+                        logger.warning("Event parse error: %s", e)
 
             except Exception as e:
                 # Log per-calendar failures without aborting other calendars.
-                print(f"[caldav] Calendar sync error ({calendar.name}): {e}")
+                logger.error("Calendar sync error (%s): %s", calendar.name, e)
 
         # After ingesting all events, run conflict detection across the full
         # window to flag overlapping meetings.
@@ -351,7 +354,7 @@ END:VCALENDAR"""
                 except Exception as e:
                     # Log but skip individual parse errors — don't let one
                     # malformed event block conflict detection for the rest.
-                    print(f"[caldav] Event parse error in conflict detection: {e}")
+                    logger.warning("Event parse error in conflict detection: %s", e)
                     continue
 
             if len(parsed_events) < 2:
@@ -416,16 +419,23 @@ END:VCALENDAR"""
                                 priority="high",  # Conflicts are urgent
                             )
 
-                            print(f"[caldav] Conflict detected: '{payload1.get('title')}' overlaps with '{payload2.get('title')}'")
+                            logger.info(
+                                "Conflict detected: '%s' overlaps with '%s'",
+                                payload1.get("title"),
+                                payload2.get("title"),
+                            )
 
             # Diagnostic summary for observability
-            print(f"[caldav.conflict_detection] Scanned {len(calendar_events)} total events "
-                  f"→ {len(parsed_events)} in 48h window (non-all-day) "
-                  f"→ {len(conflicts_detected)} conflicts detected")
+            logger.debug(
+                "Conflict detection: scanned %d total events → %d in 48h window (non-all-day) → %d conflicts detected",
+                len(calendar_events),
+                len(parsed_events),
+                len(conflicts_detected),
+            )
 
         except Exception as e:
             # Fail-open: conflict detection errors should never crash the sync.
-            print(f"[caldav] Conflict detection error: {e}")
+            logger.error("Conflict detection error: %s", e)
 
     async def health_check(self) -> dict[str, Any]:
         """Verify the CalDAV connection is still alive.
