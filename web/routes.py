@@ -1042,6 +1042,173 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {"status": "recorded"}
 
     # -------------------------------------------------------------------
+    # Predictions
+    # -------------------------------------------------------------------
+
+    @app.get("/api/predictions")
+    async def list_predictions(
+        prediction_type: str = None,
+        min_confidence: float = 0.0,
+        include_resolved: bool = False,
+        limit: int = 50,
+    ):
+        """Return active predictions from the prediction engine.
+
+        Surfaces the system's forward-looking predictions — opportunity follow-ups,
+        reminders, calendar conflicts, routine deviations, and more — so that clients
+        can display them directly without parsing the morning briefing text.
+
+        Each prediction includes:
+          - ``id``: UUID for feedback and resolution calls
+          - ``prediction_type``: one of opportunity, reminder, conflict,
+            routine_deviation, preparation, spending_pattern
+          - ``description``: human-readable prediction summary
+          - ``confidence``: 0.0–1.0 gate-adjusted confidence score
+          - ``confidence_gate``: OBSERVE / SUGGEST / DEFAULT / AUTONOMOUS
+          - ``time_horizon``: optional ISO timestamp for when the event is expected
+          - ``suggested_action``: optional next action string
+          - ``supporting_signals``: dict of evidence used to generate the prediction
+          - ``created_at``: ISO timestamp of when the prediction was generated
+          - ``was_surfaced``: whether the prediction passed all gates and was shown
+
+        Query parameters:
+          - ``prediction_type``: filter to a single prediction type (optional)
+          - ``min_confidence``: exclude predictions below this threshold (default 0.0)
+          - ``include_resolved``: if True, also return resolved predictions (default False)
+          - ``limit``: max number of predictions to return (default 50, max 200)
+
+        Active predictions are defined as: ``was_surfaced=1``, ``resolved_at IS NULL``,
+        ``filter_reason IS NULL``, generated within the last 7 days.
+
+        Example::
+
+            GET /api/predictions
+            GET /api/predictions?prediction_type=opportunity&min_confidence=0.5
+            GET /api/predictions?include_resolved=true&limit=100
+        """
+        # Clamp limit to prevent unbounded queries
+        limit = min(limit, 200)
+
+        conditions = [
+            "filter_reason IS NULL",
+            "confidence >= ?",
+        ]
+        params: list = [min_confidence]
+
+        if prediction_type:
+            conditions.append("prediction_type = ?")
+            params.append(prediction_type)
+
+        if not include_resolved:
+            # Active-only: not yet resolved and generated within the last 7 days
+            conditions.append("resolved_at IS NULL")
+            conditions.append("datetime(created_at) > datetime('now', '-7 days')")
+        else:
+            # Include resolved, but still cap at 30 days to avoid huge result sets
+            conditions.append("datetime(created_at) > datetime('now', '-30 days')")
+
+        # Only surface predictions that passed the confidence gate (was_surfaced=1).
+        # Filtered predictions (was_surfaced=0) are internal telemetry and are not
+        # intended to be shown to the user.
+        conditions.append("was_surfaced = 1")
+
+        where_clause = " AND ".join(conditions)
+        params.append(limit)
+
+        with life_os.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                f"""SELECT id, prediction_type, description, confidence, confidence_gate,
+                           time_horizon, suggested_action, supporting_signals,
+                           was_surfaced, user_response, was_accurate,
+                           filter_reason, resolution_reason,
+                           created_at, resolved_at
+                    FROM predictions
+                    WHERE {where_clause}
+                    ORDER BY confidence DESC, created_at DESC
+                    LIMIT ?""",
+                params,
+            ).fetchall()
+
+        results = []
+        for row in rows:
+            d = dict(row)
+            # Deserialize supporting_signals from JSON string to dict.
+            # The store serializes this as JSON because SQLite has no native JSON column.
+            if isinstance(d.get("supporting_signals"), str):
+                try:
+                    d["supporting_signals"] = json.loads(d["supporting_signals"])
+                except (json.JSONDecodeError, TypeError):
+                    d["supporting_signals"] = {}
+            results.append(d)
+
+        return {
+            "predictions": results,
+            "count": len(results),
+            "filters": {
+                "prediction_type": prediction_type,
+                "min_confidence": min_confidence,
+                "include_resolved": include_resolved,
+            },
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.post("/api/predictions/{prediction_id}/feedback")
+    async def prediction_feedback(
+        prediction_id: str,
+        was_accurate: bool,
+        user_response: str = None,
+    ):
+        """Record user feedback on a prediction and mark it resolved.
+
+        Feedback is the primary signal for the prediction accuracy learning loop.
+        After resolving, the BehavioralAccuracyTracker and prediction engine use
+        ``was_accurate`` to adjust per-type and per-contact confidence multipliers
+        so that the system improves over time.
+
+        Path parameter:
+          - ``prediction_id``: UUID from the ``/api/predictions`` response
+
+        Query parameters:
+          - ``was_accurate``: True if the prediction was helpful/correct,
+            False if it was wrong or annoying
+          - ``user_response``: optional free-text label (e.g. "acted_on",
+            "not_relevant", "already_done")
+
+        Returns 404 when the prediction_id is not found.
+
+        Example::
+
+            POST /api/predictions/abc123/feedback?was_accurate=true
+            POST /api/predictions/abc123/feedback?was_accurate=false&user_response=not_relevant
+        """
+        # Verify the prediction exists before resolving to give a clear 404
+        with life_os.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                "SELECT id FROM predictions WHERE id = ?",
+                (prediction_id,),
+            ).fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Prediction '{prediction_id}' not found.",
+            )
+
+        # Delegate to UserModelStore to update was_accurate, user_response,
+        # resolved_at and emit telemetry in one atomic operation.
+        life_os.user_model_store.resolve_prediction(
+            prediction_id=prediction_id,
+            was_accurate=was_accurate,
+            user_response=user_response,
+        )
+
+        return {
+            "status": "recorded",
+            "prediction_id": prediction_id,
+            "was_accurate": was_accurate,
+        }
+
+    # -------------------------------------------------------------------
     # Source Weights (tunable insight engine)
     # -------------------------------------------------------------------
 
