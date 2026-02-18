@@ -76,6 +76,11 @@ class InsightEngine:
             logger.exception("communication_style correlator failed")
 
         try:
+            raw.extend(self._inbound_style_insights())
+        except Exception:
+            logger.exception("inbound_style correlator failed")
+
+        try:
             raw.extend(self._actionable_alert_insights())
         except Exception:
             logger.exception("actionable_alert correlator failed")
@@ -142,6 +147,10 @@ class InsightEngine:
             "contact_gap": "messaging.direct",
             "email_volume": "email.work",
             "communication_style": "messaging.direct",
+            # Inbound style mismatch insights derive from comparing received
+            # messages against the user's own outbound style baseline — weighted
+            # against the same messaging source as the outbound style insight.
+            "style_mismatch": "messaging.direct",
             # Temporal and mood insights derive from all communication signals,
             # so they are weighted against the broadest applicable source key.
             "chronotype": "email.work",
@@ -662,6 +671,137 @@ class InsightEngine:
         insight.compute_dedup_key()
         insights.append(insight)
 
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Inbound Style Mismatch
+    # ------------------------------------------------------------------
+
+    def _inbound_style_insights(self) -> list[Insight]:
+        """Surface formality-mismatch insights from inbound linguistic profiles.
+
+        The ``linguistic_inbound`` profile accumulates per-contact writing-style
+        averages from every inbound message the system has processed (100K+
+        samples).  By comparing each contact's average inbound formality against
+        the user's own outbound formality baseline, the system can flag contacts
+        whose communication style differs significantly from the user's own voice.
+
+        This makes 101K+ dormant inbound samples actionable: a contact who always
+        writes casually (formality ≤ 0.3) while the user's baseline is formal
+        (≥ 0.5) suggests the user could try a warmer tone; the reverse suggests
+        matching their professional register.
+
+        Filtering:
+            - Marketing/automated senders are excluded: the user cannot adjust
+              their style with a newsletter or a no-reply address.
+            - Contacts with fewer than 5 inbound samples are skipped (unreliable
+              style reading).
+            - Only fire when the formality gap exceeds 0.3 to avoid surfacing
+              trivial style differences.
+
+        Capping:
+            At most 10 insights are returned, ranked by gap size descending, so
+            the most actionable mismatches are surfaced first.
+
+        Generated insight type: ``communication_style``,
+        category ``style_mismatch``, entity = contact e-mail address.
+        Staleness TTL: 7 days (default) — re-fires weekly if gap persists.
+
+        Example:
+            >>> engine._inbound_style_insights()
+            [Insight(summary="alice@example.com writes casually (formality 0.20),
+             while your baseline is 0.72. Consider a warmer, more relaxed tone.")]
+        """
+        insights: list[Insight] = []
+
+        # Require both the inbound contact-style profile and the user's own
+        # outbound baseline to make a meaningful comparison.
+        inbound_profile = self.ums.get_signal_profile("linguistic_inbound")
+        if not inbound_profile:
+            return []
+
+        outbound_profile = self.ums.get_signal_profile("linguistic")
+        # Default to 0.5 (neutral baseline) if outbound profile is missing.
+        user_formality: float = (
+            outbound_profile["data"].get("averages", {}).get("formality", 0.5)
+            if outbound_profile
+            else 0.5
+        )
+
+        per_contact_avgs = inbound_profile["data"].get("per_contact_averages", {})
+
+        # Collect all qualifying mismatches before sorting so we can cap cleanly.
+        # Each tuple: (gap, contact_email, averages_dict)
+        mismatches: list[tuple[float, str, dict]] = []
+
+        for contact_email, avgs in per_contact_avgs.items():
+            samples_count = avgs.get("samples_count", 0)
+
+            # Skip contacts with too few samples for a reliable style reading.
+            if samples_count < 5:
+                continue
+
+            # Skip marketing/automated senders — the user cannot meaningfully
+            # adjust their communication style with an automated newsletter.
+            if is_marketing_or_noreply(contact_email):
+                continue
+
+            contact_formality = avgs.get("formality", 0.5)
+            gap = abs(user_formality - contact_formality)
+
+            # Only surface meaningful divergences (> 0.3 on the 0–1 scale).
+            if gap > 0.3:
+                mismatches.append((gap, contact_email, avgs))
+
+        # Sort by largest gap first so the most actionable insights appear first
+        # when the list is capped at 10.
+        mismatches.sort(reverse=True)
+
+        for gap, contact_email, avgs in mismatches[:10]:
+            contact_formality = avgs["formality"]
+            samples_count = avgs["samples_count"]
+
+            if contact_formality < user_formality:
+                # Contact writes more casually than the user's baseline.
+                direction = "casually"
+                advice = "Consider a warmer, more relaxed tone with them."
+            else:
+                # Contact writes more formally than the user's baseline.
+                direction = "formally"
+                advice = "Consider matching their professional register."
+
+            insight = Insight(
+                type="communication_style",
+                summary=(
+                    f"{contact_email} writes {direction} "
+                    f"(formality {contact_formality:.2f}), "
+                    f"while your baseline is {user_formality:.2f}. "
+                    f"{advice}"
+                ),
+                # Confidence scales with gap size: a 0.3 gap → 0.54, 0.7 gap → 0.8.
+                confidence=min(0.80, 0.40 + gap * 0.57),
+                evidence=[
+                    f"contact_formality={contact_formality:.2f}",
+                    f"user_formality={user_formality:.2f}",
+                    f"gap={gap:.2f}",
+                    f"samples_count={samples_count}",
+                ],
+                category="style_mismatch",
+                entity=contact_email,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        logger.debug(
+            "_inbound_style_insights: %d insights generated from %d qualifying contacts "
+            "(%d total contacts in inbound profile)",
+            len(insights),
+            len([
+                c for c, a in per_contact_avgs.items()
+                if a.get("samples_count", 0) >= 5 and not is_marketing_or_noreply(c)
+            ]),
+            len(per_contact_avgs),
+        )
         return insights
 
     # ------------------------------------------------------------------
