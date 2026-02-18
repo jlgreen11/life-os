@@ -57,12 +57,38 @@ def analyze(data_dir: str = "./data") -> dict:
     if um_conn:
         try:
             try:
+                # Compute accuracy excluding "automated_sender_fast_path" resolutions.
+                #
+                # Background: PR #197 introduced resolution_reason to tag predictions that
+                # were resolved as INACCURATE not because the prediction was wrong, but
+                # because the contact was an automated/marketing sender (e.g. noreply@).
+                # The user was never going to "reach out" to a no-reply address, so these
+                # predictions were structurally unfulfillable — counting them as inaccurate
+                # misleads the accuracy metric and depresses confidence in a prediction type
+                # that is actually performing well.
+                #
+                # The prediction engine's _get_accuracy_multiplier() already excludes these
+                # rows when adjusting confidence.  This script now uses the same exclusion so
+                # the reported accuracy matches what the engine actually acts on.
+                #
+                # Fields:
+                #   auto_excluded — predictions with resolution_reason='automated_sender_fast_path'
+                #                   (unfulfillable by design; excluded from numerator AND denominator)
+                #   real_inaccurate — inaccurate predictions with no fast-path exclusion
+                #                     (genuine misses that count against accuracy)
+                #   accuracy_rate  — accurate / (accurate + real_inaccurate)
+                #                    (same formula used by _get_accuracy_multiplier)
                 pred_stats = um_conn.execute(
                     """SELECT prediction_type,
                         COUNT(*) as total,
                         SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate,
-                        SUM(CASE WHEN was_accurate = 0 THEN 1 ELSE 0 END) as inaccurate,
-                        SUM(CASE WHEN was_accurate IS NULL THEN 1 ELSE 0 END) as unresolved
+                        SUM(CASE WHEN was_accurate = 0
+                                  AND (resolution_reason IS NULL
+                                       OR resolution_reason != 'automated_sender_fast_path')
+                             THEN 1 ELSE 0 END) as inaccurate,
+                        SUM(CASE WHEN was_accurate IS NULL THEN 1 ELSE 0 END) as unresolved,
+                        SUM(CASE WHEN resolution_reason = 'automated_sender_fast_path'
+                             THEN 1 ELSE 0 END) as auto_excluded
                        FROM predictions
                        WHERE was_surfaced = 1
                        GROUP BY prediction_type"""
@@ -72,9 +98,15 @@ def analyze(data_dir: str = "./data") -> dict:
                     r["prediction_type"]: {
                         "total": r["total"],
                         "accurate": r["accurate"],
+                        # Real misses (excludes automated-sender fast-path exclusions).
                         "inaccurate": r["inaccurate"],
                         "unresolved": r["unresolved"],
-                        "accuracy_rate": r["accurate"] / max(r["total"] - r["unresolved"], 1),
+                        # Structurally-unfulfillable predictions excluded from the rate
+                        # (automated senders that will never receive a reply by definition).
+                        "auto_excluded": r["auto_excluded"],
+                        # accuracy_rate = accurate / (accurate + real_inaccurate)
+                        # Matches _get_accuracy_multiplier() denominator logic.
+                        "accuracy_rate": r["accurate"] / max(r["accurate"] + r["inaccurate"], 1),
                     }
                     for r in pred_stats
                 }
