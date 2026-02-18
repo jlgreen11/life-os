@@ -25,9 +25,12 @@ Confidence Gates:
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from models.core import ConfidenceGate, Priority
 from models.user_model import MoodState, Prediction, ReactionPrediction
@@ -168,7 +171,10 @@ class PredictionEngine:
             generation_stats['follow_up_needs'] = '(skipped: no new events)'
             generation_stats['spending_patterns'] = '(skipped: no new events)'
 
-        print(f"[prediction_engine] Generated predictions by type: {generation_stats} (total={len(predictions)}) [triggers: events={has_new_events}, time={time_based_due}]")
+        logger.debug(
+            "Generated predictions by type: %s (total=%d) [triggers: events=%s, time=%s]",
+            generation_stats, len(predictions), has_new_events, time_based_due,
+        )
 
         # --- Accuracy-based confidence decay/boost ---
         # Adjust confidence based on historical accuracy for each prediction type.
@@ -238,8 +244,10 @@ class PredictionEngine:
         # Log filtering results for observability
         filtered_by_reaction = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("reaction:")])
         filtered_by_confidence = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("confidence:")])
-        print(f"[prediction_engine] Filtering: {len(predictions)} raw → {len(filtered)} surfaced "
-              f"(filtered: {filtered_by_reaction} by reaction, {filtered_by_confidence} by confidence)")
+        logger.debug(
+            "Filtering: %d raw → %d surfaced (filtered: %d by reaction, %d by confidence)",
+            len(predictions), len(filtered), filtered_by_reaction, filtered_by_confidence,
+        )
 
         # Store ALL predictions (including filtered-out ones) for accuracy
         # tracking. Mark which ones were actually surfaced so the feedback
@@ -330,7 +338,9 @@ class PredictionEngine:
 
         # Diagnostic logging for observability
         if len(events) < 2:
-            print(f"[prediction_engine.calendar_conflicts] No conflicts possible: {len(events)} calendar events found (need ≥2)")
+            logger.debug(
+                "calendar_conflicts: No conflicts possible: %d calendar events found (need ≥2)", len(events)
+            )
             return predictions  # Need at least two events to find conflicts
 
         # Parse event payloads and extract actual start/end times.
@@ -424,7 +434,11 @@ class PredictionEngine:
         timed_count = len(parsed_events) - all_day_count
 
         if len(parsed_events) < 2:
-            print(f"[prediction_engine.calendar_conflicts] No conflicts possible: {len(parsed_events)} events in 48h window (all_day={all_day_count}, timed={timed_count}, total_synced={len(events)})")
+            logger.debug(
+                "calendar_conflicts: No conflicts possible: %d events in 48h window "
+                "(all_day=%d, timed=%d, total_synced=%d)",
+                len(parsed_events), all_day_count, timed_count, len(events),
+            )
             return predictions
 
         # Sort by actual event start time (not sync timestamp)
@@ -518,10 +532,12 @@ class PredictionEngine:
                 ))
 
         # Diagnostic summary
-        print(f"[prediction_engine.calendar_conflicts] Analyzed {len(events)} synced events "
-              f"→ {len(parsed_events)} in 48h window (all_day={all_day_count}, timed={timed_count}) "
-              f"→ {comparisons_made} comparisons (skipped {skipped_all_day_pairs} all-day pairs) "
-              f"→ {len(predictions)} predictions")
+        logger.debug(
+            "calendar_conflicts: Analyzed %d synced events → %d in 48h window "
+            "(all_day=%d, timed=%d) → %d comparisons (skipped %d all-day pairs) → %d predictions",
+            len(events), len(parsed_events), all_day_count, timed_count,
+            comparisons_made, skipped_all_day_pairs, len(predictions),
+        )
 
         return predictions
 
@@ -773,7 +789,7 @@ class PredictionEngine:
             ).fetchall()
 
         if not routines:
-            print(f"[prediction_engine.routine_deviations] No predictions: 0 routines with consistency_score > 0.6")
+            logger.debug("routine_deviations: No predictions: 0 routines with consistency_score > 0.6")
             return predictions
 
         now = datetime.now(timezone.utc)
@@ -885,9 +901,10 @@ class PredictionEngine:
                 continue
 
         # Diagnostic summary
-        print(f"[prediction_engine.routine_deviations] Analyzed {len(routines)} routines "
-              f"(already_predicted_today={len(already_predicted_routines)}) "
-              f"→ {len(predictions)} predictions")
+        logger.debug(
+            "routine_deviations: Analyzed %d routines (already_predicted_today=%d) → %d predictions",
+            len(routines), len(already_predicted_routines), len(predictions),
+        )
 
         return predictions
 
@@ -906,7 +923,7 @@ class PredictionEngine:
         # Load the relationships signal profile from the user model
         rel_profile = self.ums.get_signal_profile("relationships")
         if not rel_profile:
-            print(f"[prediction_engine.relationship_maintenance] No predictions: relationships profile not found")
+            logger.debug("relationship_maintenance: No predictions: relationships profile not found")
             return predictions
 
         contacts = rel_profile["data"].get("contacts", {})
@@ -1021,10 +1038,11 @@ class PredictionEngine:
             and not self._is_marketing_or_noreply(addr, {})
             and data.get("outbound_count", 0) == 0
         )
-        print(f"[prediction_engine.relationship_maintenance] Analyzed {total_contacts} contacts "
-              f"(eligible={eligible}, marketing_filtered={marketing_filtered}, "
-              f"inbound_only_filtered={inbound_only_filtered}) "
-              f"→ {len(predictions)} predictions")
+        logger.debug(
+            "relationship_maintenance: Analyzed %d contacts "
+            "(eligible=%d, marketing_filtered=%d, inbound_only_filtered=%d) → %d predictions",
+            total_contacts, eligible, marketing_filtered, inbound_only_filtered, len(predictions),
+        )
 
         return predictions
 
@@ -1070,7 +1088,7 @@ class PredictionEngine:
             ).fetchall()
 
         if not events:
-            print(f"[prediction_engine.preparation_needs] No predictions: 0 calendar events found")
+            logger.debug("preparation_needs: No predictions: 0 calendar events found")
             return predictions
 
         # Parse event payloads and extract actual start times.
@@ -1190,10 +1208,11 @@ class PredictionEngine:
         # Diagnostic summary
         travel_events = sum(1 for e in parsed_events if any(kw in e["payload"].get("title", "").lower() for kw in ["flight", "airport", "hotel", "travel", "trip"]))
         large_meetings = sum(1 for e in parsed_events if len(e["payload"].get("attendees", [])) > 3)
-        print(f"[prediction_engine.preparation_needs] Analyzed {len(events)} synced events "
-              f"→ {len(parsed_events)} in 12-48h window "
-              f"(travel={travel_events}, large_meetings={large_meetings}) "
-              f"→ {len(predictions)} predictions")
+        logger.debug(
+            "preparation_needs: Analyzed %d synced events → %d in 12-48h window "
+            "(travel=%d, large_meetings=%d) → %d predictions",
+            len(events), len(parsed_events), travel_events, large_meetings, len(predictions),
+        )
 
         return predictions
 
@@ -1220,7 +1239,9 @@ class PredictionEngine:
             ).fetchall()
 
         if len(transactions) < 5:
-            print(f"[prediction_engine.spending_patterns] No predictions: {len(transactions)} transactions found (need ≥5)")
+            logger.debug(
+                "spending_patterns: No predictions: %d transactions found (need ≥5)", len(transactions)
+            )
             return predictions  # Not enough data for meaningful patterns
 
         # Aggregate spending by category from transaction payloads
@@ -1266,9 +1287,11 @@ class PredictionEngine:
 
         # Diagnostic summary
         high_spend_categories = sum(1 for cat, amt in by_category.items() if amt / total > 0.25 and amt > 200)
-        print(f"[prediction_engine.spending_patterns] Analyzed {len(transactions)} transactions "
-              f"(total=${total:.0f}, categories={len(by_category)}, high_spend={high_spend_categories}) "
-              f"→ {len(predictions)} predictions")
+        logger.debug(
+            "spending_patterns: Analyzed %d transactions "
+            "(total=$%.0f, categories=%d, high_spend=%d) → %d predictions",
+            len(transactions), total, len(by_category), high_spend_categories, len(predictions),
+        )
 
         return predictions
 
@@ -1535,11 +1558,10 @@ class PredictionEngine:
         # polluted by now-fixed bugs (e.g. marketing-sender predictions, broken
         # deduplication, timezone errors in earlier iterations).
         if accuracy_rate < 0.2 and total >= 10:
-            print(
-                f"[prediction_engine] accuracy_multiplier: {prediction_type} has "
-                f"{accuracy_rate:.1%} accuracy over {total} samples "
-                f"(excluding automated-sender fast-path) — "
-                f"applying heavy-penalty floor (0.3)"
+            logger.warning(
+                "accuracy_multiplier: %s has %.1f%% accuracy over %d samples "
+                "(excluding automated-sender fast-path) — applying heavy-penalty floor (0.3)",
+                prediction_type, accuracy_rate * 100, total,
             )
             return 0.3
 
@@ -1626,10 +1648,10 @@ class PredictionEngine:
         if accuracy_rate < 0.2:
             # Contact never responds to reach-out suggestions; reduce but don't
             # silence completely so we can detect when the relationship resumes.
-            print(
-                f"[prediction_engine] contact_accuracy_multiplier: {contact_email} has "
-                f"{accuracy_rate:.1%} accuracy over {total} resolved predictions "
-                f"— applying per-contact suppression floor (0.5)"
+            logger.warning(
+                "contact_accuracy_multiplier: %s has %.1f%% accuracy over %d resolved predictions "
+                "— applying per-contact suppression floor (0.5)",
+                contact_email, accuracy_rate * 100, total,
             )
             return 0.5
 
