@@ -153,6 +153,17 @@ class InsightEngine:
                 insight.evidence.append(f"source_weight={weight:.2f}")
                 insight.confidence = insight.confidence * weight
 
+                # Record that this source produced an insight so the interaction
+                # counter advances toward the MIN_INTERACTIONS gate.  Drift
+                # (record_engagement / record_dismissal) is only applied after
+                # the gate is crossed, preventing drift from wild-swinging on
+                # sparse data.  Without this call the counter stays at 0
+                # forever and AI drift never activates.
+                try:
+                    self.swm.record_interaction(source_key)
+                except Exception:
+                    pass  # Non-critical; never break insight delivery for this
+
             # Filter out insights that have been effectively silenced
             if insight.confidence >= 0.1:
                 weighted.append(insight)

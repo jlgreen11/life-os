@@ -955,17 +955,24 @@ def register_routes(app: FastAPI, life_os) -> None:
                 (feedback, insight_id),
             )
 
-        # Map insight category back to source_key for weight learning
+        # Map insight category back to source_key for weight learning.
+        # Must match the category_to_source dict in InsightEngine._apply_source_weights()
+        # exactly so that feedback adjusts the same source keys that were used
+        # to weight the insight at generation time.
         if row:
             category_to_source = {
                 "place": "location.visits",
                 "contact_gap": "messaging.direct",
                 "email_volume": "email.work",
                 "communication_style": "messaging.direct",
-                "relationships": "messaging.direct",
-                "cadence": "messaging.direct",
-                "activity_patterns": "email.work",
-                "location_patterns": "location.visits",
+                # Temporal pattern insight categories (from _temporal_pattern_insights)
+                "chronotype": "email.work",
+                "peak_hour": "email.work",
+                "busiest_day": "email.work",
+                # Mood trend insight category (from _mood_trend_insights)
+                "mood_trajectory": "messaging.direct",
+                # actionable_alert categories (overdue_task, upcoming_calendar) are
+                # intentionally absent: they bypass source-weight tuning entirely.
             }
             source_key = category_to_source.get(row["category"])
 
