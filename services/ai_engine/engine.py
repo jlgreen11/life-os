@@ -244,17 +244,34 @@ Respond with exactly one word: critical, high, normal, or low."""
                 # Convert vector store results into the common format expected by
                 # the LLM synthesis layer. Vector results include event_id which we
                 # use to fetch full event details from the database.
-                for vr in vector_results:
-                    # Each vector result contains: event_id, text, similarity_score
-                    # We fetch the full event from the DB to get type, source, timestamp
-                    with self.db.get_connection("events") as conn:
-                        row = conn.execute(
-                            """SELECT type, source, timestamp, payload FROM events
-                               WHERE id = ?""",
-                            (vr["event_id"],),
-                        ).fetchone()
+                #
+                # Batched IN query: fetch all matching event rows in a single
+                # round-trip rather than issuing one SELECT per result (N+1).
+                # This reduces SQLite overhead from O(N) queries to O(1).
+                if vector_results:
+                    # Build a lookup from event_id → similarity score so we can
+                    # re-attach relevance scores after the batched fetch.
+                    similarity_by_id = {
+                        vr["event_id"]: vr.get("similarity", 0.0)
+                        for vr in vector_results
+                    }
+                    event_ids = list(similarity_by_id.keys())
+                    placeholders = ",".join("?" * len(event_ids))
 
-                    if row:
+                    with self.db.get_connection("events") as conn:
+                        rows = conn.execute(
+                            f"""SELECT id, type, source, timestamp, payload
+                                FROM events
+                                WHERE id IN ({placeholders})""",
+                            event_ids,
+                        ).fetchall()
+
+                    # Re-order rows to match the vector store's similarity ranking
+                    # (the DB may return them in arbitrary insertion order).
+                    id_order = {eid: idx for idx, eid in enumerate(event_ids)}
+                    rows_sorted = sorted(rows, key=lambda r: id_order.get(r["id"], 999))
+
+                    for row in rows_sorted:
                         payload = json.loads(row["payload"])
                         results.append({
                             "type": row["type"],
@@ -264,7 +281,7 @@ Respond with exactly one word: critical, high, normal, or low."""
                             # extracted at indexing time) for consistency
                             "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
                             # Include similarity score for debugging/transparency
-                            "relevance": round(vr.get("similarity", 0.0), 3),
+                            "relevance": round(similarity_by_id.get(row["id"], 0.0), 3),
                         })
             except Exception as e:
                 # Graceful degradation: if vector search fails for any reason
