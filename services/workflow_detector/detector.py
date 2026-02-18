@@ -259,6 +259,13 @@ class WorkflowDetector:
                     workflows.append(workflow)
                     logger.debug(f"Detected email workflow for {sender}: {len(steps)} steps, {success_rate:.2f} success rate")
 
+        # Cap at top 20 senders by email volume to keep workflow storage manageable
+        # and focus on the most significant communication patterns.  On systems
+        # with hundreds of unique senders (mailing lists, newsletters, etc.) an
+        # unlimited result set wastes storage and dilutes signal.
+        workflows.sort(key=lambda w: w["times_observed"], reverse=True)
+        workflows = workflows[:20]
+
         return workflows
 
     def _detect_task_workflows(self, lookback_days: int) -> list[dict[str, Any]]:

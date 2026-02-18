@@ -94,12 +94,19 @@ async def test_routine_detection_12_hour_interval(db, event_bus, event_store, us
         app = LifeOS(config=config, db=db, event_bus=event_bus,
                      event_store=event_store, user_model_store=user_model_store)
 
-        # Patch detector to count invocations
+        # Patch detector to count invocations and return 3 stable routines so
+        # the loop takes the 12-hour sleep path (requires 3+ routines detected).
         original_detect = app.routine_detector.detect_routines
 
         def counting_detect(lookback_days=30):
             detection_count[0] += 1
-            return []
+            # Return 3 dummy routines so the loop enters the 12-hour sleep
+            # branch (the branch that fires when patterns are well-established).
+            return [
+                {"name": "morning_email", "consistency": 0.8},
+                {"name": "afternoon_review", "consistency": 0.7},
+                {"name": "evening_planning", "consistency": 0.75},
+            ]
 
         app.routine_detector.detect_routines = counting_detect
 
