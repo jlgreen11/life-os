@@ -424,7 +424,11 @@ def test_backfill_temporal_profile_tracks_advance_planning_horizon(db, user_mode
             },
             "metadata": {},
         },
-        # Same-day event (advance_days = 0, should be excluded)
+        # Same-day event (advance_days = 0, should be excluded).
+        # Using the event timestamp itself as the start_time guarantees
+        # advance_days = 0 regardless of the UTC hour.  Previously used
+        # "now + 2h", which crosses midnight after 22:00 UTC making
+        # advance_days = 1 and causing a spurious fourth entry.
         {
             "id": "evt-cal-4",
             "type": EventType.CALENDAR_EVENT_CREATED.value,
@@ -433,7 +437,7 @@ def test_backfill_temporal_profile_tracks_advance_planning_horizon(db, user_mode
             "priority": "normal",
             "payload": {
                 "summary": "Today's meeting",
-                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "start_time": now.isoformat(),  # Same moment → advance_days always 0
             },
             "metadata": {},
         },
