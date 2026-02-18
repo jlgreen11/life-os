@@ -161,17 +161,22 @@ class TaskCompletionDetector:
             if not title_words and not title_stems:
                 continue  # No meaningful keywords to match against
 
-            # Search for sent emails/messages after task creation
+            # Search for sent emails/messages after task creation.
+            # We only need a single ``timestamp > created_at`` guard here:
+            # events must come *after* the task was created so we don't
+            # attribute pre-existing emails to its completion.  The outer
+            # query already ensures tasks are within the 7-day window, so a
+            # redundant ``AND timestamp > cutoff`` clause is unnecessary and
+            # was previously confusing the intent of the filter.
             with self.db.get_connection("events") as conn:
                 cursor = conn.execute("""
                     SELECT id, type, payload, timestamp
                     FROM events
                     WHERE type IN ('email.sent', 'message.sent')
                       AND timestamp > ?
-                      AND timestamp > ?
                     ORDER BY timestamp ASC
                     LIMIT 50
-                """, (created_at, cutoff.isoformat()))
+                """, (created_at,))
 
                 sent_events = cursor.fetchall()
 
@@ -252,8 +257,13 @@ class TaskCompletionDetector:
             task_id = task['id']
             created_at = task['created_at']
 
-            # Check for any events that might reference this task
-            # (emails, messages, calendar events created after the task)
+            # Check for any *recent* events (within the 7-day inactivity window).
+            # We only need ``timestamp > cutoff`` here: tasks in this loop were
+            # all created *before* cutoff (that's the WHERE clause above), so
+            # passing ``created_at`` as well would be redundant — cutoff is
+            # always more restrictive.  Using a single clear param avoids the
+            # ambiguity of the previous two-param form and makes the intent
+            # explicit: "has there been any user activity in the last 7 days?".
             with self.db.get_connection("events") as conn:
                 cursor = conn.execute("""
                     SELECT COUNT(*)
@@ -261,8 +271,7 @@ class TaskCompletionDetector:
                     WHERE type IN ('email.sent', 'email.received', 'message.sent',
                                    'message.received', 'calendar.event.created')
                       AND timestamp > ?
-                      AND timestamp > ?
-                """, (created_at, cutoff.isoformat()))
+                """, (cutoff.isoformat(),))
 
                 recent_activity_count = cursor.fetchone()[0]
 
