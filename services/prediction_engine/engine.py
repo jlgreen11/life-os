@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
 
 from models.core import ConfidenceGate, Priority
@@ -1342,13 +1342,39 @@ class PredictionEngine:
         elif prediction.prediction_type == "opportunity":
             score -= 0.05  # REDUCED from −0.1 to allow opportunities through
 
-        # Time-of-day penalty: suppress non-urgent predictions during
-        # early morning (before 7) and late night (after 22).
-        # REDUCED from −0.3 to −0.2 to be less aggressive.
-        hour = datetime.now(timezone.utc).hour
-        if hour < 7 or hour > 22:
-            if prediction.prediction_type not in ("conflict", "risk"):
-                score -= 0.2
+        # Quiet hours check: suppress non-urgent predictions when the user is
+        # in their configured quiet hours (e.g., 22:00–07:00 on weeknights).
+        # Uses the same quiet_hours preference that NotificationManager uses,
+        # so the prediction gate and the delivery gate agree on "do not disturb".
+        #
+        # Falls back to a broad low-activity heuristic from the cadence profile
+        # when no explicit quiet hours are configured: if the current hour shows
+        # very low historical activity (< 5% of peak), treat it as a natural
+        # quiet period and apply the same penalty.
+        now = datetime.now(timezone.utc)
+        in_quiet_hours = self._is_quiet_hours(now)
+
+        # Secondary: check cadence profile for naturally observed low-activity hours.
+        # Only used when no explicit quiet hours are configured.
+        in_low_activity_hour = False
+        if not in_quiet_hours:
+            cadence_profile = self.ums.get_signal_profile("cadence")
+            if cadence_profile:
+                hourly_activity: dict = cadence_profile["data"].get("hourly_activity", {})
+                if hourly_activity:
+                    peak = max(hourly_activity.values(), default=0)
+                    current_hour_activity = hourly_activity.get(str(now.hour), 0)
+                    # Flag as low-activity if current hour is below 5% of peak.
+                    # This catches observed quiet periods (e.g., someone who never
+                    # messages before 8am or after 10pm) without requiring the
+                    # user to manually configure quiet hours.
+                    if peak > 0 and current_hour_activity < peak * 0.05:
+                        in_low_activity_hour = True
+
+        # Apply penalty for quiet or low-activity hours — but only for non-urgent
+        # prediction types. Conflicts and risks always get through.
+        if (in_quiet_hours or in_low_activity_hour) and prediction.prediction_type not in ("conflict", "risk"):
+            score -= 0.2
 
         # --- Classify the final score into a reaction label ---
         # RECALIBRATED: helpful >= 0.2, neutral > −0.1, else annoying.
@@ -1363,8 +1389,68 @@ class PredictionEngine:
             proposed_action=prediction.description,
             predicted_reaction=predicted,
             confidence=min(1.0, abs(score)),
-            reasoning=f"score={score:.2f}, dismissals={recent_dismissals}, stress_signals={stress_count}",
+            reasoning=(
+                f"score={score:.2f}, dismissals={recent_dismissals}, "
+                f"stress_signals={stress_count}, quiet_hours={in_quiet_hours}, "
+                f"low_activity={in_low_activity_hour}"
+            ),
         )
+
+    def _is_quiet_hours(self, now: datetime) -> bool:
+        """Check whether *now* falls within the user's configured quiet hours.
+
+        Quiet hours are stored in the ``preferences`` database under the key
+        ``quiet_hours`` as a JSON list of time-range objects::
+
+            [{"start": "22:00", "end": "07:00", "days": ["monday", ...]}, ...]
+
+        Multiple ranges are supported (e.g., different times on weekdays vs.
+        weekends).  Overnight ranges (start > end, e.g., 22:00–07:00) are
+        handled correctly.
+
+        Returns ``False`` (fail-open) when no quiet hours are configured or
+        when the stored data is malformed, so that a missing preference never
+        prevents a prediction from surfacing.
+
+        This mirrors the logic in ``NotificationManager._is_quiet_hours()`` so
+        that the prediction gate and the notification delivery gate always agree
+        on the user's "do not disturb" window.
+        """
+        try:
+            with self.db.get_connection("preferences") as conn:
+                row = conn.execute(
+                    "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
+                ).fetchone()
+
+            if not row:
+                return False
+
+            quiet_hours_list = json.loads(row["value"])
+            current_time = now.time()
+            current_day = now.strftime("%A").lower()
+
+            for qh in quiet_hours_list:
+                # Skip ranges that don't apply to today.
+                if current_day not in qh.get("days", []):
+                    continue
+
+                start = time.fromisoformat(qh["start"])
+                end = time.fromisoformat(qh["end"])
+
+                if start <= end:
+                    # Same-day range (e.g., 09:00–17:00)
+                    if start <= current_time <= end:
+                        return True
+                else:
+                    # Overnight range (e.g., 22:00–07:00 crosses midnight)
+                    if current_time >= start or current_time <= end:
+                        return True
+
+        except (json.JSONDecodeError, KeyError, ValueError, Exception):
+            # Malformed data or DB error — fail open.
+            pass
+
+        return False
 
     # -------------------------------------------------------------------
     # Helpers

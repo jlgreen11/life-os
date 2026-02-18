@@ -266,28 +266,36 @@ class TestReactionPredictionTimeOfDay:
         assert reaction.predicted_reaction in ["helpful", "neutral"]
 
     @pytest.mark.asyncio
-    async def test_early_morning_penalty_for_non_urgent(
+    async def test_early_morning_no_penalty_without_configured_quiet_hours(
         self, prediction_engine: PredictionEngine, base_prediction: Prediction, monkeypatch
     ):
         """
-        Early morning (before 7) should penalize non-urgent predictions.
+        Early morning (5am) without configured quiet hours should NOT be penalized.
 
-        Tests the reduced penalty from −0.3 to −0.2.
+        The old implementation used a hardcoded UTC hour check (before 7 or after 22)
+        which ignored the user's actual timezone and sleep schedule.  The new
+        implementation only applies a time-of-day penalty when the user has
+        explicitly configured quiet hours (stored in user_preferences) or when
+        the cadence profile shows very low activity in that hour.
+
+        Without either of those signals, 5am is treated the same as any other
+        hour — no penalty applied.
         """
 
         def mock_now():
-            # Mock 5am UTC
+            # Mock 5am UTC — no quiet hours configured
             return datetime(2026, 2, 16, 5, 0, 0, tzinfo=timezone.utc)
 
         monkeypatch.setattr("services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()}))
 
         reaction = await prediction_engine.predict_reaction(base_prediction, {})
 
-        # Extract score
-        score = float(reaction.reasoning.split("score=")[1].split(",")[0])
-
-        # Should be penalized but not as harshly as before
-        assert score < 0.3
+        # Without configured quiet hours, no time-of-day penalty should apply.
+        # The reasoning should show quiet_hours=False and low_activity=False.
+        assert "quiet_hours=False" in reaction.reasoning
+        assert "low_activity=False" in reaction.reasoning
+        # Prediction should still surface
+        assert reaction.predicted_reaction in ["helpful", "neutral"]
 
     @pytest.mark.asyncio
     async def test_late_night_no_penalty_for_urgent(
