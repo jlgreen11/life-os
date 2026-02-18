@@ -82,7 +82,18 @@ class ContextAssembler:
         if predictions_context:
             parts.append(predictions_context)
 
-        # Section 7: Semantic facts the system has learned about the user
+        # Section 7: Cross-signal insights discovered by the InsightEngine.
+        # Insights are pattern discoveries surfaced by correlating multiple
+        # signal profiles (cadence, mood, spatial, linguistic, topics, etc.).
+        # Unlike predictions (which say "do X soon"), insights say "you
+        # consistently do Y on Fridays" — they provide behavioral narrative that
+        # helps the LLM generate a richer, more personalised briefing. Ordered
+        # by confidence and capped at 10 to keep the context window focused.
+        insights_context = self._get_insights_context()
+        if insights_context:
+            parts.append(insights_context)
+
+        # Section 9: Semantic facts the system has learned about the user
         # (e.g., "preferred_language: English", "works_at: Acme Corp").
         # Only facts with confidence >= 0.6 are included to avoid noise.
         # Capped at 20 facts to respect the token budget.
@@ -91,7 +102,7 @@ class ContextAssembler:
             fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:20]]
             parts.append("Known facts about user:\n" + "\n".join(fact_lines))
 
-        # Section 8: Recent mood signals (last 3 data points). This allows
+        # Section 10: Recent mood signals (last 3 data points). This allows
         # the LLM to adjust its tone -- e.g., more encouraging if the user
         # has been stressed, more energetic if mood is positive.
         mood_profile = self.ums.get_signal_profile("mood_signals")
@@ -292,6 +303,54 @@ class ContextAssembler:
             lines.append(line)
 
         return "Active predictions from the system:\n" + "\n".join(lines)
+
+    def _get_insights_context(self) -> str:
+        """Fetch recent, high-confidence insights to surface in the briefing.
+
+        Queries the insights table for entries that are still within their
+        staleness TTL window.  The TTL is stored per-insight in
+        ``staleness_ttl_hours`` (default 168 h = 7 days) so each correlator
+        can tune its own freshness window without a shared constant.
+
+        Results are sorted by confidence descending so the most reliable
+        pattern discoveries appear first, capped at 10 to respect the token
+        budget.  Insights with explicit negative feedback (thumbs-down) are
+        excluded so the LLM does not repeat dismissed observations.
+
+        Returns an empty string when there are no active insights, which causes
+        the caller to skip this section entirely (no "none" noise).
+
+        Example output::
+
+            Behavioral patterns and insights:
+            - [relationship_intelligence] You haven't contacted Alice in 14 days — usual gap is 3 days (confidence: 0.87)
+            - [behavioral_pattern] You typically send emails on Tuesday and Thursday mornings (confidence: 0.81)
+            - [communication_style] Your writing to the marketing team is 30% more casual than average (confidence: 0.72)
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT type, summary, confidence, category, entity
+                   FROM insights
+                   WHERE feedback IS NOT 'negative'
+                     AND datetime(created_at) >
+                         datetime('now', '-' || staleness_ttl_hours || ' hours')
+                   ORDER BY confidence DESC
+                   LIMIT 10"""
+            ).fetchall()
+
+        if not rows:
+            return ""
+
+        lines = []
+        for row in rows:
+            # Use category as the display label when set; fall back to type.
+            # category is more human-readable (e.g. "behavioral_pattern"
+            # vs the generic "pattern" type string).
+            label = row["category"] if row["category"] else row["type"]
+            line = f"- [{label}] {row['summary']} (confidence: {row['confidence']:.2f})"
+            lines.append(line)
+
+        return "Behavioral patterns and insights:\n" + "\n".join(lines)
 
     def _get_preference_context(self) -> str:
         """Load all user preferences as a JSON object for the context window.
