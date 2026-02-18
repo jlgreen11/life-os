@@ -453,15 +453,82 @@ class ContextAssembler:
     def _get_unread_context(self) -> str:
         """Count recent inbound messages (emails + chat) from the last 12 hours.
 
-        This provides a simple "inbox pressure" signal for the briefing.
-        It counts both email.received and message.received event types.
-        A future enhancement could break this down by source/sender priority.
+        Breaks down messages by priority sender — contacts the user regularly
+        writes back to (outbound_count >= 3 in the relationships signal profile).
+        This helps the LLM distinguish which senders warrant immediate attention
+        from general inbox volume.
+
+        Priority threshold: outbound_count >= 3 means the user has replied to
+        this contact at least three times, indicating a genuine human relationship
+        rather than a marketing or automated sender.
+
+        Output format (when priority contacts exist):
+            Messages in last 12 hours: 8
+              From priority contacts: alice@example.com (3 messages), bob@work.com (1 message)
+              From other senders: 4
+
+        Output format (when no priority contacts have sent messages):
+            Messages in last 12 hours: 8
         """
         with self.db.get_connection("events") as conn:
-            row = conn.execute(
-                """SELECT COUNT(*) as cnt FROM events
+            rows = conn.execute(
+                """SELECT
+                       json_extract(payload, '$.from_address') AS from_address,
+                       COUNT(*) AS message_count
+                   FROM events
                    WHERE type IN ('email.received', 'message.received')
-                   AND timestamp > datetime('now', '-12 hours')"""
-            ).fetchone()
-            count = row["cnt"] if row else 0
-            return f"Messages in last 12 hours: {count}"
+                     AND timestamp > datetime('now', '-12 hours')
+                   GROUP BY json_extract(payload, '$.from_address')"""
+            ).fetchall()
+
+        if not rows:
+            return "Messages in last 12 hours: 0"
+
+        # Tally total and build a per-sender count dict (keyed by from_address).
+        # Rows with a NULL from_address still contribute to the total but are
+        # excluded from the priority-contact breakdown.
+        sender_counts: dict = {}
+        total = 0
+        for row in rows:
+            total += row["message_count"]
+            if row["from_address"]:
+                sender_counts[row["from_address"]] = row["message_count"]
+
+        lines = [f"Messages in last 12 hours: {total}"]
+
+        # Identify priority contacts — senders the user actively writes back to.
+        # Cross-reference sender addresses against the relationships signal profile.
+        # Only contacts with outbound_count >= 3 qualify; lower counts suggest
+        # automated mailers or one-time contacts that don't need to be called out.
+        try:
+            rel_profile = self.ums.get_signal_profile("relationships")
+            if rel_profile and sender_counts:
+                contacts = rel_profile["data"].get("contacts", {})
+                priority_messages: dict = {
+                    addr: sender_counts[addr]
+                    for addr, data in contacts.items()
+                    if data.get("outbound_count", 0) >= 3 and addr in sender_counts
+                }
+                if priority_messages:
+                    # Sort descending by message count so the most active sender
+                    # appears first, making the most urgent sender immediately visible.
+                    sorted_priority = sorted(
+                        priority_messages.items(), key=lambda x: -x[1]
+                    )
+                    contact_parts = [
+                        f"{addr} ({cnt} message{'s' if cnt != 1 else ''})"
+                        for addr, cnt in sorted_priority
+                    ]
+                    lines.append(
+                        f"  From priority contacts: {', '.join(contact_parts)}"
+                    )
+                    other_count = total - sum(priority_messages.values())
+                    if other_count > 0:
+                        lines.append(f"  From other senders: {other_count}")
+        except Exception:
+            # Fail-open: priority breakdown is a nice-to-have.
+            # If the relationships profile is missing or malformed, the basic
+            # count is still returned on the first line.
+            pass
+
+        return "\n".join(lines)

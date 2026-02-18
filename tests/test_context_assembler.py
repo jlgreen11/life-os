@@ -784,9 +784,241 @@ class TestPrivateHelpers:
 
         # Should only count the recent message
         assert "Messages in last 12 hours:" in result
-        # Extract the count and verify it's 1
-        count = int(result.split("Messages in last 12 hours: ")[1])
+        # Extract the count from the first line (may have additional breakdown lines)
+        first_line = result.split("\n")[0]
+        count = int(first_line.split("Messages in last 12 hours: ")[1])
         assert count == 1
+
+    def test_unread_context_shows_priority_contact_breakdown(
+        self, db, user_model_store, event_store
+    ):
+        """Should show priority contact breakdown when relationships profile exists.
+
+        A priority contact is one with outbound_count >= 3, meaning the user
+        regularly writes back to them. Their messages should be called out
+        explicitly in the unread context so the LLM can highlight them in
+        the morning briefing.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Seed relationship profile with one priority contact (outbound >= 3)
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 20,
+                        "inbound_count": 12,
+                        "outbound_count": 8,  # Priority contact: user writes back often
+                    },
+                    "noreply@automated.com": {
+                        "interaction_count": 50,
+                        "inbound_count": 50,
+                        "outbound_count": 0,  # Not a priority contact: never replied to
+                    },
+                }
+            },
+        )
+
+        # 3 emails from priority contact
+        for i in range(3):
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="gmail",
+                    priority="normal",
+                    payload={"subject": f"Hi {i}", "from_address": "alice@example.com"},
+                    timestamp=now,
+                )
+            )
+
+        # 5 emails from non-priority sender
+        for i in range(5):
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="gmail",
+                    priority="normal",
+                    payload={"subject": f"Promo {i}", "from_address": "noreply@automated.com"},
+                    timestamp=now,
+                )
+            )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        # First line must always show the total
+        assert "Messages in last 12 hours: 8" in result
+        # Should call out the priority contact with message count
+        assert "alice@example.com" in result
+        assert "3 messages" in result
+        # Should include "From priority contacts:" label
+        assert "From priority contacts:" in result
+        # Should show remaining "other senders" count
+        assert "From other senders: 5" in result
+        # Non-priority automated sender should NOT be called out as priority
+        assert "noreply@automated.com" not in result.split("From priority contacts:")[1]
+
+    def test_unread_context_no_breakdown_for_inbound_only_contacts(
+        self, db, user_model_store, event_store
+    ):
+        """Contacts with outbound_count < 3 should not appear in priority breakdown.
+
+        If the user has never written back to a contact (or has done so fewer
+        than 3 times), that contact is treated as non-priority and suppressed
+        from the breakdown to reduce noise.
+        """
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "sender@example.com": {
+                        "interaction_count": 100,
+                        "inbound_count": 100,
+                        "outbound_count": 1,  # Below threshold: not a priority contact
+                    }
+                }
+            },
+        )
+
+        for i in range(4):
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="gmail",
+                    priority="normal",
+                    payload={"subject": f"Email {i}", "from_address": "sender@example.com"},
+                    timestamp=now,
+                )
+            )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        # Total count must still be shown
+        assert "Messages in last 12 hours: 4" in result
+        # No priority breakdown should appear for below-threshold contacts
+        assert "From priority contacts:" not in result
+
+    def test_unread_context_multiple_priority_contacts_sorted_by_count(
+        self, db, user_model_store, event_store
+    ):
+        """Multiple priority contacts should appear sorted by message count (desc)."""
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "bob@work.com": {
+                        "interaction_count": 30,
+                        "inbound_count": 15,
+                        "outbound_count": 15,
+                    },
+                    "alice@example.com": {
+                        "interaction_count": 20,
+                        "inbound_count": 10,
+                        "outbound_count": 10,
+                    },
+                }
+            },
+        )
+
+        # 1 message from alice (lower count)
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="gmail",
+                priority="normal",
+                payload={"subject": "Hi", "from_address": "alice@example.com"},
+                timestamp=now,
+            )
+        )
+
+        # 3 messages from bob (higher count — should appear first)
+        for i in range(3):
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="gmail",
+                    priority="normal",
+                    payload={"subject": f"Update {i}", "from_address": "bob@work.com"},
+                    timestamp=now,
+                )
+            )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "Messages in last 12 hours: 4" in result
+        assert "bob@work.com" in result
+        assert "alice@example.com" in result
+        # Bob (3 messages) must appear before Alice (1 message) in the output
+        assert result.index("bob@work.com") < result.index("alice@example.com")
+        # No "other senders" line when all messages are from priority contacts
+        assert "From other senders:" not in result
+
+    def test_unread_context_no_breakdown_without_relationships_profile(
+        self, db, user_model_store, event_store
+    ):
+        """Should degrade gracefully to count-only when no relationships profile exists."""
+        now = datetime.now(timezone.utc)
+
+        for i in range(3):
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="gmail",
+                    priority="normal",
+                    payload={"subject": f"Email {i}", "from_address": f"sender{i}@test.com"},
+                    timestamp=now,
+                )
+            )
+
+        # No relationships profile seeded
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "Messages in last 12 hours: 3" in result
+        # Without a relationships profile, no priority breakdown
+        assert "From priority contacts:" not in result
+
+    def test_unread_context_single_message_grammar(
+        self, db, user_model_store, event_store
+    ):
+        """'1 message' should use singular grammar, not '1 messages'."""
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 10,
+                        "inbound_count": 5,
+                        "outbound_count": 5,
+                    }
+                }
+            },
+        )
+
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="gmail",
+                priority="normal",
+                payload={"subject": "Hello", "from_address": "alice@example.com"},
+                timestamp=now,
+            )
+        )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "1 message)" in result
+        assert "1 messages)" not in result
 
 
 class TestIntegration:
