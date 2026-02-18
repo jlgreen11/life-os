@@ -403,6 +403,10 @@ async def test_relationship_maintenance_detects_cold_contacts(db, user_model_sto
             "old-friend@example.com": {
                 "last_interaction": (now - timedelta(days=45)).isoformat(),
                 "interaction_count": 12,
+                # Include outbound_count > 0 so this contact is treated as a real
+                # bidirectional relationship (not filtered by the inbound-only guard).
+                "inbound_count": 9,
+                "outbound_count": 3,
                 "interaction_timestamps": [
                     (now - timedelta(days=45)).isoformat(),
                     (now - timedelta(days=60)).isoformat(),

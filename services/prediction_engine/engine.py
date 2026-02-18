@@ -929,6 +929,24 @@ class PredictionEngine:
             if self._is_marketing_or_noreply(addr, {}):
                 continue
 
+            # Skip purely inbound-only contacts — a "relationship" requires
+            # bidirectionality.  If the user has *never* sent anything to this
+            # address (outbound_count == 0), we have no evidence of an
+            # intentional relationship; generating an "opportunity" prediction
+            # would be a false positive.
+            #
+            # Common sources of inbound-only contacts that slip through the
+            # marketing filter:
+            #   - Low-volume mailing lists (1–3 emails/year) that look human
+            #   - HR/payroll system notifications addressed personally
+            #   - Automated alerts from SaaS tools using personal-looking names
+            #
+            # Once the user replies to any of these, outbound_count becomes ≥ 1
+            # and they are eligible for future opportunity predictions.
+            outbound_count = data.get("outbound_count", 0)
+            if outbound_count == 0:
+                continue
+
             try:
                 last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
                 days_since = (now - last_dt).days
@@ -990,12 +1008,22 @@ class PredictionEngine:
                         },
                     ))
 
-        # Diagnostic summary
+        # Diagnostic summary — includes breakdown of each filter stage so we can
+        # observe the data quality of the relationships profile over time.
         total_contacts = len(contacts)
         eligible = sum(1 for data in contacts.values() if data.get("interaction_count", 0) >= 5)
         marketing_filtered = sum(1 for addr in contacts.keys() if self._is_marketing_or_noreply(addr, {}))
+        # Count contacts that have 5+ interactions, passed marketing filter, but
+        # were skipped because the user has never sent them anything (pure inbound).
+        inbound_only_filtered = sum(
+            1 for addr, data in contacts.items()
+            if data.get("interaction_count", 0) >= 5
+            and not self._is_marketing_or_noreply(addr, {})
+            and data.get("outbound_count", 0) == 0
+        )
         print(f"[prediction_engine.relationship_maintenance] Analyzed {total_contacts} contacts "
-              f"(eligible={eligible}, marketing_filtered={marketing_filtered}) "
+              f"(eligible={eligible}, marketing_filtered={marketing_filtered}, "
+              f"inbound_only_filtered={inbound_only_filtered}) "
               f"→ {len(predictions)} predictions")
 
         return predictions

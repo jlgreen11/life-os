@@ -321,7 +321,27 @@ def test_relationship_maintenance_predictions_after_fix(
         },
     })
 
-    # Process all events
+    # Extract a single outbound event FIRST so Dave is marked as a bidirectional
+    # contact (passes the inbound-only filter added in iteration 187).  We process
+    # it before the inbound events so it lands at position 0 in the ring buffer;
+    # the last-10 slice used by the avg-gap assertion then contains only the
+    # regular 14-day inbound entries, preserving the expected gap pattern.
+    extractor.extract({
+        "id": "dave-outbound-0",
+        "type": "email.sent",
+        "source": "google",
+        "timestamp": sync_time,
+        "payload": {
+            "from_address": "user@example.com",
+            "to_addresses": ["dave@example.com"],
+            "subject": "Re: Earlier check-in",
+            "body": "Thanks Dave",
+            "channel": "google",
+            "email_date": (base_date - timedelta(days=30)).isoformat(),
+        },
+    })
+
+    # Process all inbound events
     for event in events:
         extractor.extract(event)
 
@@ -329,7 +349,7 @@ def test_relationship_maintenance_predictions_after_fix(
     profile = user_model_store.get_signal_profile("relationships")
     dave = profile["data"]["contacts"]["dave@example.com"]
 
-    assert dave["interaction_count"] == 11, "Should have 11 interactions"
+    assert dave["interaction_count"] == 12, "Should have 12 interactions (11 inbound + 1 outbound)"
 
     timestamps = dave["interaction_timestamps"]
     ts_dates = [
@@ -404,9 +424,11 @@ def test_multiple_contacts_different_frequencies(
             },
         })
 
-    # Bob: 5 weekly interactions, last one 14 days ago (2x overdue)
-    for i in range(5):
-        interaction_date = now - timedelta(days=14 + (4 - i) * 7)
+    # Bob: 5 weekly interactions (4 inbound + 1 outbound reply), last one 14 days ago (2x overdue).
+    # The outbound event is required so Bob registers as a bidirectional contact and
+    # passes the inbound-only filter added in iteration 187.
+    for i in range(4):
+        interaction_date = now - timedelta(days=14 + (3 - i) * 7)
         extractor.extract({
             "id": f"bob-{i}",
             "type": "email.received",
@@ -421,10 +443,26 @@ def test_multiple_contacts_different_frequencies(
                 "email_date": interaction_date.isoformat(),
             },
         })
+    # Bob outbound — user replied to Bob (establishes bidirectionality)
+    extractor.extract({
+        "id": "bob-outbound-0",
+        "type": "email.sent",
+        "source": "google",
+        "timestamp": sync_time,
+        "payload": {
+            "from_address": "user@example.com",
+            "to_addresses": ["bob@example.com"],
+            "subject": "Re: Weekly update",
+            "body": "Thanks Bob",
+            "channel": "google",
+            "email_date": (now - timedelta(days=35)).isoformat(),
+        },
+    })
 
-    # Carol: 5 monthly interactions, last one 60 days ago (2x overdue)
-    for i in range(5):
-        interaction_date = now - timedelta(days=60 + (4 - i) * 30)
+    # Carol: 5 monthly interactions (4 inbound + 1 outbound reply), last one 60 days ago (2x overdue).
+    # The outbound event establishes Carol as a bidirectional contact.
+    for i in range(4):
+        interaction_date = now - timedelta(days=60 + (3 - i) * 30)
         extractor.extract({
             "id": f"carol-{i}",
             "type": "email.received",
@@ -439,6 +477,21 @@ def test_multiple_contacts_different_frequencies(
                 "email_date": interaction_date.isoformat(),
             },
         })
+    # Carol outbound — user replied to Carol (establishes bidirectionality)
+    extractor.extract({
+        "id": "carol-outbound-0",
+        "type": "email.sent",
+        "source": "google",
+        "timestamp": sync_time,
+        "payload": {
+            "from_address": "user@example.com",
+            "to_addresses": ["carol@example.com"],
+            "subject": "Re: Monthly catch-up",
+            "body": "Great to hear from you",
+            "channel": "google",
+            "email_date": (now - timedelta(days=90)).isoformat(),
+        },
+    })
 
     # Run predictions
     import asyncio
