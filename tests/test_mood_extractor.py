@@ -506,7 +506,12 @@ class TestMoodInferenceEngine:
         assert mood.contributing_signals[-1].signal_type == "test_14"
 
     def test_compute_current_mood_sets_stable_trend(self, engine, user_model_store):
-        """Trend should default to 'stable' in current implementation."""
+        """Trend should be 'stable' when fewer than 5 mood_history rows exist.
+
+        With no prior history the trend detector lacks a baseline window, so it
+        conservatively returns "stable".  This test verifies the safe fallback
+        behaviour after the stub was replaced with real trend detection.
+        """
         signals = [
             {
                 "signal_type": "sleep_quality",
@@ -520,6 +525,7 @@ class TestMoodInferenceEngine:
 
         mood = engine.compute_current_mood()
 
+        # No mood_history rows → not enough data → defaults to "stable"
         assert mood.trend == "stable"
 
     def test_compute_current_mood_scales_confidence_with_signal_count(self, engine, user_model_store):
