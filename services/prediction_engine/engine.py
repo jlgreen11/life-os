@@ -452,6 +452,24 @@ class PredictionEngine:
                     confidence_gate=ConfidenceGate.DEFAULT,
                     time_horizon="24_hours",
                     suggested_action="Reschedule one of the conflicting events",
+                    # supporting_signals enables BehavioralAccuracyTracker._infer_conflict_accuracy()
+                    # to detect when the user resolved the conflict by checking whether either
+                    # conflicting_event_ids appears in calendar.event.updated/deleted events.
+                    # Without this, _infer_conflict_accuracy returns None immediately (line 327)
+                    # and conflict predictions remain unresolved indefinitely.
+                    supporting_signals={
+                        "conflicting_event_ids": [curr["event_id"], next_evt["event_id"]],
+                        "event_titles": [
+                            curr["payload"].get("title", "Event"),
+                            next_evt["payload"].get("title", "Event"),
+                        ],
+                        "event_start_times": [
+                            curr["start_dt"].isoformat(),
+                            next_evt["start_dt"].isoformat(),
+                        ],
+                        "overlap_minutes": abs(int(gap_minutes)),
+                        "is_all_day_conflict": is_all_day_conflict,
+                    },
                 ))
             elif gap_minutes < 15 and not (curr.get("is_all_day") or next_evt.get("is_all_day")):
                 # Very tight transition (only for timed events — all-day events
@@ -467,6 +485,22 @@ class PredictionEngine:
                     confidence_gate=ConfidenceGate.SUGGEST,
                     time_horizon="24_hours",
                     suggested_action="Consider adding buffer time",
+                    # supporting_signals enables BehavioralAccuracyTracker._infer_risk_accuracy()
+                    # to look up whether the user modified either event to add buffer time.
+                    # Without event IDs, the risk accuracy tracker cannot correlate this
+                    # prediction with calendar updates.
+                    supporting_signals={
+                        "conflicting_event_ids": [curr["event_id"], next_evt["event_id"]],
+                        "event_titles": [
+                            curr["payload"].get("title", "Event"),
+                            next_evt["payload"].get("title", "Event"),
+                        ],
+                        "event_start_times": [
+                            curr["start_dt"].isoformat(),
+                            next_evt["start_dt"].isoformat(),
+                        ],
+                        "gap_minutes": int(gap_minutes),
+                    },
                 ))
 
         # Diagnostic summary
@@ -886,6 +920,17 @@ class PredictionEngine:
                         time_horizon="this_week",
                         suggested_action=f"Reach out to {addr}",
                         relevant_contacts=[addr],
+                        # supporting_signals enables BehavioralAccuracyTracker._infer_opportunity_accuracy()
+                        # to reliably match this prediction to outbound emails/messages.
+                        # Without these fields, the tracker must regex-parse the description,
+                        # which can fail for email addresses with unusual formatting.
+                        # Also enables the automated-sender fast-path (PR #189) to fire correctly.
+                        supporting_signals={
+                            "contact_email": addr,
+                            "contact_name": addr.split("@")[0] if "@" in addr else addr,
+                            "days_since_last_contact": days_since,
+                            "avg_contact_gap_days": round(avg_gap, 1),
+                        },
                     ))
 
         # Diagnostic summary
@@ -989,7 +1034,12 @@ class PredictionEngine:
                 if in_window:
                     parsed_events.append({
                         "start_time": start_time,
-                        "payload": payload
+                        "payload": payload,
+                        # Include the event's database ID so supporting_signals can reference
+                        # it. _infer_need_accuracy() first tries exact event_id match before
+                        # falling back to fuzzy title matching, so providing this avoids
+                        # false positives when multiple events have similar titles.
+                        "event_id": payload.get("event_id") or event["id"],
                     })
             except (json.JSONDecodeError, ValueError, TypeError, KeyError):
                 # Skip events with malformed payloads or missing start_time
@@ -1016,6 +1066,16 @@ class PredictionEngine:
                     confidence_gate=ConfidenceGate.DEFAULT,
                     time_horizon="24_hours",
                     suggested_action="Check packing list and confirm reservations",
+                    # supporting_signals enables BehavioralAccuracyTracker._infer_need_accuracy()
+                    # to check if the event occurred or was cancelled/rescheduled.
+                    # Without event_start_time, _infer_need_accuracy() returns None immediately
+                    # (line 413) and the prediction can never be resolved.
+                    supporting_signals={
+                        "event_id": event["event_id"],
+                        "event_title": payload.get("title"),
+                        "event_start_time": start_time.isoformat(),
+                        "preparation_type": "travel",
+                    },
                 ))
 
             # --- Large meeting detection ---
@@ -1029,6 +1089,17 @@ class PredictionEngine:
                     confidence_gate=ConfidenceGate.SUGGEST,
                     time_horizon="24_hours",
                     suggested_action="Review agenda and prepare talking points",
+                    # supporting_signals enables BehavioralAccuracyTracker._infer_need_accuracy()
+                    # to check if the event occurred or was cancelled/rescheduled.
+                    # Without event_start_time, _infer_need_accuracy() returns None immediately
+                    # (line 413) and the prediction can never be resolved.
+                    supporting_signals={
+                        "event_id": event["event_id"],
+                        "event_title": payload.get("title"),
+                        "event_start_time": start_time.isoformat(),
+                        "preparation_type": "large_meeting",
+                        "attendee_count": len(attendees),
+                    },
                 ))
 
         # Diagnostic summary
