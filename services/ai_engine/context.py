@@ -176,8 +176,57 @@ class ContextAssembler:
             return "User preferences: not yet configured"
 
     def _get_calendar_context(self) -> str:
-        # Placeholder — in production this reads from calendar connector state
-        return "Calendar: (connect CalDAV to populate)"
+        """Fetch upcoming calendar events from the events database.
+
+        Queries the ``events`` table for ``calendar.event.created`` entries
+        whose ``start_time`` falls within the next 7 days.  All-day events
+        (birthdays, holidays) are included but formatted differently from
+        timed events so the LLM can distinguish between scheduled meetings
+        and informational date markers.
+
+        Deduplicates by (title, start_time) so recurring syncs that store
+        multiple copies of the same occurrence don't inflate the event list.
+
+        Returns a human-readable multi-line string capped at 20 events, or a
+        "no events" message if the calendar is empty for the period.
+        """
+        with self.db.get_connection("events") as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT
+                       json_extract(payload, '$.title')       AS title,
+                       json_extract(payload, '$.start_time')  AS start_time,
+                       json_extract(payload, '$.end_time')    AS end_time,
+                       json_extract(payload, '$.is_all_day')  AS is_all_day,
+                       json_extract(payload, '$.location')    AS location
+                   FROM events
+                   WHERE type = 'calendar.event.created'
+                     AND date(json_extract(payload, '$.start_time'))
+                         BETWEEN date('now') AND date('now', '+7 days')
+                   ORDER BY json_extract(payload, '$.start_time') ASC
+                   LIMIT 20"""
+            ).fetchall()
+
+        if not rows:
+            return "Upcoming calendar events (next 7 days): none"
+
+        lines: list[str] = []
+        for row in rows:
+            title = row["title"] or "(untitled)"
+            start = row["start_time"] or ""
+            location = row["location"]
+
+            if row["is_all_day"]:
+                # All-day entries: show date and title only; no time noise.
+                entry = f"- [all-day] {start}: {title}"
+            else:
+                # Timed entries: include location when available.
+                entry = f"- {start}: {title}"
+                if location:
+                    entry += f" @ {location}"
+
+            lines.append(entry)
+
+        return "Upcoming calendar events (next 7 days):\n" + "\n".join(lines)
 
     def _get_task_context(self) -> str:
         """Fetch pending tasks, sorted by priority then due date.
