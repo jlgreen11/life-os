@@ -568,8 +568,11 @@ class SemanticFactInferrer:
             return
 
         data = profile["data"]
-        hourly_activity = data.get("hourly_activity", {})
-        weekly_activity = data.get("weekly_activity", {})
+        # Keys match what TemporalExtractor._update_profile() actually stores:
+        # "activity_by_hour" and "activity_by_day" (not the old "hourly_activity" /
+        # "weekly_activity" names that were never used by the extractor).
+        hourly_activity = data.get("activity_by_hour", {})
+        weekly_activity = data.get("activity_by_day", {})
 
         # Get recent episodes to link as source evidence for temporal facts
         recent_episodes = self._get_recent_episodes(limit=5)

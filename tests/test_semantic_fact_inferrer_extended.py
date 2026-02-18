@@ -26,11 +26,11 @@ class TestTemporalInference:
         """Verify morning person chronotype inference from morning-heavy activity."""
         # Setup: temporal profile with 60% morning activity (6-10am)
         profile_data = {
-            "hourly_activity": {
+            "activity_by_hour": {
                 "6": 20, "7": 30, "8": 40, "9": 35, "10": 25,  # 150 morning
                 "14": 20, "15": 15, "16": 10, "20": 10, "21": 5,  # 60 other
             },
-            "weekly_activity": {
+            "activity_by_day": {
                 "monday": 30, "tuesday": 35, "wednesday": 40,
                 "thursday": 30, "friday": 25, "saturday": 5, "sunday": 5,
             },
@@ -52,11 +52,11 @@ class TestTemporalInference:
         """Verify night owl chronotype inference from evening-heavy activity."""
         # Setup: temporal profile with 50% evening activity (8pm-11pm)
         profile_data = {
-            "hourly_activity": {
+            "activity_by_hour": {
                 "9": 10, "10": 8, "14": 12,  # 30 daytime
                 "20": 25, "21": 30, "22": 20, "23": 15,  # 90 evening
             },
-            "weekly_activity": {
+            "activity_by_day": {
                 "monday": 15, "tuesday": 18, "wednesday": 20,
                 "thursday": 18, "friday": 20, "saturday": 12, "sunday": 10,
             },
@@ -78,12 +78,12 @@ class TestTemporalInference:
         """Verify peak productivity hour inference from activity spikes."""
         # Setup: clear peak at 2pm (hour 14)
         profile_data = {
-            "hourly_activity": {
+            "activity_by_hour": {
                 "9": 10, "10": 12, "11": 15,
                 "14": 60,  # Clear peak
                 "15": 20, "16": 18,
             },
-            "weekly_activity": {"monday": 20, "tuesday": 25},
+            "activity_by_day": {"monday": 20, "tuesday": 25},
         }
         user_model_store.update_signal_profile("temporal", profile_data)
         _set_samples(user_model_store, "temporal", 50)
@@ -102,8 +102,8 @@ class TestTemporalInference:
         """Verify weekday-only work boundary inference."""
         # Setup: 95% weekday activity, 5% weekend
         profile_data = {
-            "hourly_activity": {"9": 10, "10": 15, "14": 20},
-            "weekly_activity": {
+            "activity_by_hour": {"9": 10, "10": 15, "14": 20},
+            "activity_by_day": {
                 "monday": 20, "tuesday": 22, "wednesday": 25,
                 "thursday": 20, "friday": 18,
                 "saturday": 2, "sunday": 1,  # Minimal weekend activity
@@ -124,7 +124,7 @@ class TestTemporalInference:
 
     def test_insufficient_temporal_samples(self, user_model_store):
         """Verify no inference with <50 samples."""
-        profile_data = {"hourly_activity": {"9": 5, "10": 3}, "weekly_activity": {"monday": 8}}
+        profile_data = {"activity_by_hour": {"9": 5, "10": 3}, "activity_by_day": {"monday": 8}}
         user_model_store.update_signal_profile("temporal", profile_data)
         _set_samples(user_model_store, "temporal", 30)  # Below 50-sample threshold
 
@@ -477,8 +477,8 @@ class TestRunAllInferenceExtended:
         """Verify run_all_inference processes temporal, spatial, and decision profiles."""
         # Setup all three new profiles with valid data
         temporal_data = {
-            "hourly_activity": {"9": 20, "10": 25, "14": 30, "20": 15},
-            "weekly_activity": {"monday": 30, "tuesday": 35},
+            "activity_by_hour": {"9": 20, "10": 25, "14": 30, "20": 15},
+            "activity_by_day": {"monday": 30, "tuesday": 35},
         }
         user_model_store.update_signal_profile("temporal", temporal_data)
         _set_samples(user_model_store, "temporal", 60)
