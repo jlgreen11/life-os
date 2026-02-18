@@ -21,6 +21,7 @@ Insight Types:
     topic_interest              -- Dominant interests and trending topics from topic signal profile
     cadence_response            -- Reply-latency baseline, priority contacts, and peak hours from cadence profile
     routine_pattern             -- Recurring behavioral sequences detected in procedural memory (Layer 3)
+    spatial_location            -- Location-behavioral patterns from spatial signal profile (visit frequency, work/personal split)
 """
 
 from __future__ import annotations
@@ -174,6 +175,11 @@ class InsightEngine:
         except Exception:
             logger.exception("routine correlator failed")
 
+        try:
+            raw.extend(self._spatial_insights())
+        except Exception:
+            logger.exception("spatial_insights correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -256,6 +262,13 @@ class InsightEngine:
             # email events, location signals), weighted against the broadest applicable
             # source key.  Routines shift slowly, so a 7-day staleness TTL is appropriate.
             "routine_pattern": "email.work",
+            # Spatial insights derive from the spatial signal profile (calendar location
+            # fields, iOS context updates, explicit location events).  All three sub-types
+            # use the location.visits source key — the same key used by the
+            # _place_frequency_insights() correlator.
+            "spatial_top_location": "location.visits",
+            "spatial_work_location": "location.visits",
+            "spatial_location_diversity": "location.visits",
         }
 
         weighted: list[Insight] = []
@@ -2404,6 +2417,243 @@ class InsightEngine:
             len(insights),
             MIN_OBSERVATIONS,
             MIN_CONSISTENCY,
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Spatial Patterns (Location Behavioral Profile)
+    # ------------------------------------------------------------------
+
+    def _spatial_insights(self) -> list[Insight]:
+        """Surface location-behavioral patterns from the spatial signal profile.
+
+        Reads the ``spatial`` signal profile (built by ``SpatialExtractor``) and
+        translates per-place visit counts, domain distributions, and durations
+        into up to three human-readable insight sub-types.
+
+        The spatial profile accumulates signals from calendar events with location
+        fields, iOS context updates, and explicit location updates.  It stores a
+        ``place_behaviors`` dict keyed by normalized location name, with visit
+        counts, domain tallies, and average durations per place.
+
+        **1. Most-frequented location (``spatial_top_location``):**
+            Surfaces the single place with the highest overall visit count.
+            Includes average time-at-location when duration data is available.
+            Requires at least ``MIN_VISITS`` (3) visits for the top place.
+
+            Example::
+
+                "Your most-visited location is 'conference room' (18 visits, avg 55 min)."
+
+        **2. Primary work location (``spatial_work_location``):**
+            Finds the location with the most work-domain events (as recorded in
+            ``domain_counts["work"]``).  Only surfaces when at least one location
+            has >= ``MIN_WORK_VISITS`` (3) work-tagged events.  Detects the
+            home-office pattern when the normalized location name contains "home".
+
+            Example::
+
+                "You primarily work from home (23 work events recorded at 'home')."
+                "Your most frequent work location is 'office' (15 work events recorded)."
+
+        **3. Location diversity (``spatial_location_diversity``):**
+            Counts distinct locations with >= ``MIN_VISITS`` (3) visits and breaks
+            them down by dominant domain (work vs personal).  Only surfaces when
+            the user has >= 2 distinct frequent locations.
+
+            Example::
+
+                "You frequent 5 distinct locations: 3 work-related, 2 personal
+                (based on 678 location observations)."
+
+        **Staleness TTL:**
+            168 hours (7 days) for all sub-types.  Location patterns shift slowly
+            and weekly refresh is appropriate.
+
+        **Dedup strategy:**
+            Category + entity encode the specific pattern so the insight refreshes
+            only when the dominant place, work location, or split actually changes,
+            not just because a new calendar event arrived.
+
+        Returns:
+            list[Insight]: Zero to three location-behavioral insights.
+        """
+        # Minimum visits for a place to be considered "frequent enough" to surface.
+        MIN_VISITS = 3
+        # Minimum work-tagged visits before surfacing a primary work location insight.
+        MIN_WORK_VISITS = 3
+
+        profile = self.ums.get_signal_profile("spatial")
+        if not profile:
+            return []
+
+        data = profile.get("data", {})
+        total_samples = profile.get("samples_count", 0)
+
+        # Spatial profile stores place_behaviors as a JSON-encoded string inside
+        # the "data" blob (see SpatialExtractor._update_spatial_profile).
+        # Tolerate both pre-serialized string and a native dict (e.g. in tests).
+        place_behaviors_raw = data.get("place_behaviors", {})
+        if isinstance(place_behaviors_raw, str):
+            try:
+                place_behaviors = json.loads(place_behaviors_raw)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning("spatial_insights: could not parse place_behaviors JSON")
+                return []
+        else:
+            place_behaviors = place_behaviors_raw if place_behaviors_raw else {}
+
+        if not place_behaviors:
+            logger.debug("spatial_insights: place_behaviors is empty — skipping")
+            return []
+
+        insights: list[Insight] = []
+
+        # ----------------------------------------------------------------
+        # Sub-insight 1: Most-frequented location
+        # ----------------------------------------------------------------
+        # Find the single place with the highest recorded visit count.
+        top_name, top_data = max(
+            place_behaviors.items(),
+            key=lambda x: x[1].get("visit_count", 0),
+        )
+        top_visits = top_data.get("visit_count", 0)
+
+        if top_visits >= MIN_VISITS:
+            avg_dur = top_data.get("average_duration_minutes")
+            # Include average duration when the spatial extractor captured event times.
+            dur_str = f", avg {round(avg_dur)} min" if avg_dur and avg_dur > 0 else ""
+            # Truncate very long normalized location strings for readability.
+            display_name = top_name if len(top_name) <= 40 else top_name[:37] + "…"
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your most-visited location is '{display_name}' "
+                    f"({top_visits} visits{dur_str})."
+                ),
+                confidence=min(0.85, 0.45 + top_visits * 0.01),
+                evidence=[
+                    f"top_location={top_name}",
+                    f"visit_count={top_visits}",
+                    f"avg_duration_min={round(avg_dur, 1) if avg_dur else 'n/a'}",
+                    f"total_locations={len(place_behaviors)}",
+                ],
+                category="spatial_top_location",
+                # Entity is the location name — dedup key changes only when
+                # a different place becomes the most-visited location.
+                entity=top_name[:80],
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 2: Primary work location
+        # ----------------------------------------------------------------
+        # Identify the place with the highest count of work-domain events.
+        best_work_name: str | None = None
+        best_work_count = 0
+
+        for loc_name, loc_data in place_behaviors.items():
+            dc = loc_data.get("domain_counts", {})
+            work_count = dc.get("work", 0)
+            if work_count > best_work_count:
+                best_work_count = work_count
+                best_work_name = loc_name
+
+        if best_work_name and best_work_count >= MIN_WORK_VISITS:
+            display_work = (
+                best_work_name if len(best_work_name) <= 40 else best_work_name[:37] + "…"
+            )
+
+            # Detect home-office pattern: location name contains "home" or common
+            # residential keywords in the normalized string.
+            home_keywords = {"home", "house", "apartment", "residence", "flat"}
+            is_home_office = (
+                "home" in best_work_name.lower()
+                or best_work_name.lower() in home_keywords
+            )
+
+            if is_home_office:
+                summary = (
+                    f"You primarily work from home "
+                    f"({best_work_count} work events recorded at '{display_work}')."
+                )
+            else:
+                summary = (
+                    f"Your most frequent work location is '{display_work}' "
+                    f"({best_work_count} work events recorded)."
+                )
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=summary,
+                confidence=min(0.80, 0.40 + best_work_count * 0.02),
+                evidence=[
+                    f"work_location={best_work_name}",
+                    f"work_visit_count={best_work_count}",
+                    f"is_home_office={is_home_office}",
+                ],
+                category="spatial_work_location",
+                # Entity anchored to the location name; changes if a new work
+                # location accumulates more events than the current leader.
+                entity=best_work_name[:80],
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 3: Location diversity (work vs personal split)
+        # ----------------------------------------------------------------
+        # Count places the user visits frequently and split by dominant domain.
+        frequent_places = [
+            (name, d)
+            for name, d in place_behaviors.items()
+            if d.get("visit_count", 0) >= MIN_VISITS
+        ]
+
+        # Only surface when there are at least 2 frequent locations — a single
+        # place provides no meaningful "diversity" comparison.
+        if len(frequent_places) >= 2:
+            work_count = sum(
+                1 for _, d in frequent_places if d.get("dominant_domain") == "work"
+            )
+            personal_count = len(frequent_places) - work_count
+            n_total = len(frequent_places)
+
+            # Entity encodes the distribution; refreshes when the split changes.
+            entity_key = f"total{n_total}_work{work_count}_personal{personal_count}"
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"You frequent {n_total} distinct locations: "
+                    f"{work_count} work-related, {personal_count} personal "
+                    f"(based on {total_samples} location observations)."
+                ),
+                confidence=min(0.80, 0.40 + total_samples * 0.001),
+                evidence=[
+                    f"frequent_location_count={n_total}",
+                    f"work_locations={work_count}",
+                    f"personal_locations={personal_count}",
+                    f"total_samples={total_samples}",
+                ],
+                category="spatial_location_diversity",
+                entity=entity_key,
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        logger.debug(
+            "spatial_insights: %d insights generated "
+            "(total_locations=%d, frequent_locations=%d, total_samples=%d)",
+            len(insights),
+            len(place_behaviors),
+            len([d for d in place_behaviors.values() if d.get("visit_count", 0) >= MIN_VISITS]),
+            total_samples,
         )
         return insights
 
