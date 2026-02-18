@@ -173,8 +173,21 @@ class PredictionEngine:
         # Adjust confidence based on historical accuracy for each prediction type.
         # This closes the feedback loop: predictions that keep getting dismissed
         # have their confidence reduced, eventually suppressing them entirely.
+        #
+        # For opportunity predictions we apply a *second* per-contact multiplier
+        # on top of the global type multiplier.  Different contacts have very
+        # different response patterns: the user may reliably reach out to their
+        # mother but rarely act on suggestions to contact a distant acquaintance.
+        # Knowing this per-contact history lets the engine suppress low-value
+        # suggestions and surface high-value ones with boosted confidence.
         for pred in predictions:
             multiplier = self._get_accuracy_multiplier(pred.prediction_type)
+            # For opportunity predictions, additionally scale by per-contact accuracy
+            if pred.prediction_type == "opportunity" and pred.supporting_signals:
+                contact_email = pred.supporting_signals.get("contact_email")
+                if contact_email:
+                    contact_multiplier = self._get_contact_accuracy_multiplier(contact_email)
+                    multiplier *= contact_multiplier
             pred.confidence *= multiplier
             pred.confidence_gate = self._gate_from_confidence(pred.confidence)
 
@@ -1374,6 +1387,97 @@ class PredictionEngine:
 
         # Scale: 50% accuracy = 1.0x, 0% = 0.5x, 100% = 1.1x
         return 0.5 + (accuracy_rate * 0.6)
+
+    def _get_contact_accuracy_multiplier(self, contact_email: str) -> float:
+        """Compute a confidence multiplier for opportunity predictions targeting a specific contact.
+
+        The global ``_get_accuracy_multiplier`` treats all opportunity predictions
+        identically, but contact response rates vary enormously.  This method looks
+        at the resolved accuracy history for a specific contact and returns a
+        supplementary multiplier so the engine can:
+
+        - **Boost** confidence for contacts the user consistently reaches out to
+          (multiplier > 1.0): the pattern is reliable for this person.
+        - **Suppress** confidence for contacts the user never reaches out to despite
+          suggestions (multiplier < 1.0): stop nagging about this relationship.
+        - **Return 1.0** (no adjustment) when there isn't enough history yet (< 3
+          resolved predictions for this contact), so we don't over-fit on a single
+          data point.
+
+        The minimum floor is 0.5 (never fully suppress a contact — their behaviour
+        may change) and the ceiling is 1.2 (modest boost; we can't exceed the
+        ``_check_relationship_maintenance`` initial cap of 0.6 dramatically).
+
+        **Only fast-path-excluded resolutions are considered**, matching the same
+        exclusion logic used in ``_get_accuracy_multiplier``.  Automated-sender
+        resolutions are structural bugs in prediction generation, not real signal
+        about whether the user values this contact.
+
+        Args:
+            contact_email: Lowercase email address of the contact to look up.
+
+        Returns:
+            0.5  — contact has poor response rate (< 20% accuracy, 3+ samples).
+                   Still surfaces predictions at reduced confidence; behaviour can
+                   change and we don't want to miss it permanently.
+            0.5–1.2 — scaled by per-contact accuracy rate.
+                   Formula: 0.5 + (accuracy_rate * 0.7), capped at 1.2.
+                   50% accuracy → 0.85x, 100% accuracy → 1.2x.
+            1.0  — insufficient data (< 3 resolved predictions for this contact).
+
+        Examples:
+            _get_contact_accuracy_multiplier("alice@example.com")
+            # 8 accurate out of 10 resolved for alice = 80% accuracy
+            # → 0.5 + 0.8 * 0.7 = 1.06x  (modest boost)
+
+            _get_contact_accuracy_multiplier("distant@example.com")
+            # 0 accurate out of 5 resolved for distant = 0% accuracy
+            # → 0.5 floor  (suppressed but not blocked)
+
+            _get_contact_accuracy_multiplier("new@example.com")
+            # Only 2 resolved predictions → not enough data
+            # → 1.0  (no adjustment)
+        """
+        # Query resolved opportunity predictions where supporting_signals contains
+        # this contact's email.  We use JSON_EXTRACT when available (SQLite >= 3.38)
+        # with a string-contains fallback for older builds.
+        with self.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                """SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                   FROM predictions
+                   WHERE prediction_type = 'opportunity'
+                     AND was_surfaced = 1
+                     AND resolved_at IS NOT NULL
+                     AND (resolution_reason IS NULL
+                          OR resolution_reason != 'automated_sender_fast_path')
+                     AND supporting_signals LIKE ?""",
+                (f'%"contact_email": "{contact_email.lower()}"%',),
+            ).fetchone()
+
+        total = row["total"] if row else 0
+        accurate = row["accurate"] if row else 0
+
+        if total < 3:
+            # Not enough contact-specific history — defer to the type-level multiplier
+            return 1.0
+
+        accuracy_rate = accurate / total
+
+        if accuracy_rate < 0.2:
+            # Contact never responds to reach-out suggestions; reduce but don't
+            # silence completely so we can detect when the relationship resumes.
+            print(
+                f"[prediction_engine] contact_accuracy_multiplier: {contact_email} has "
+                f"{accuracy_rate:.1%} accuracy over {total} resolved predictions "
+                f"— applying per-contact suppression floor (0.5)"
+            )
+            return 0.5
+
+        # Scale: 50% accuracy → 0.85x, 100% accuracy → 1.2x
+        # Ceiling at 1.2 prevents runaway confidence amplification.
+        return min(1.2, 0.5 + (accuracy_rate * 0.7))
 
     @staticmethod
     def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
