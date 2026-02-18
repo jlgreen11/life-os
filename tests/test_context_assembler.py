@@ -608,13 +608,24 @@ class TestAssembleSearchContext:
         assert "User is searching" in context
         assert "meetings with Alice last week" in context
 
-    def test_search_context_minimal(self, db, user_model_store):
-        """Search context should be minimal (hook for future enrichment)."""
+    def test_search_context_enriched(self, db, user_model_store):
+        """Search context now includes timestamp and preferences for disambiguation.
+
+        The method was previously a one-liner stub.  It now assembles a
+        multi-section context (intent, timestamp, preferences) separated by
+        '---' delimiters — consistent with assemble_briefing_context().
+        """
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_search_context("test query")
 
-        # Should be a simple one-line context for now
-        assert context.count("\n") == 0
+        # Must span multiple sections (no longer a bare one-liner).
+        assert "---" in context
+        # The search intent section is always first.
+        assert context.startswith("User is searching")
+        # Current timestamp anchors relative time expressions.
+        assert "Current time:" in context
+        # User preferences are included for output calibration.
+        assert "User preferences:" in context
 
 
 class TestPrivateHelpers:
@@ -649,13 +660,17 @@ class TestPrivateHelpers:
         assert prefs["theme"] == "dark"
         assert prefs["timezone"] == "America/New_York"
 
-    def test_get_calendar_context_placeholder(self, db, user_model_store):
-        """Calendar context is a placeholder for now."""
+    def test_get_calendar_context_empty(self, db, user_model_store):
+        """Calendar context returns a 'none' message when no events are in the DB.
+
+        The method was updated (PR #195) from a hardcoded placeholder to a real
+        query of the events database; this test verifies the empty-DB code path.
+        """
         assembler = ContextAssembler(db, user_model_store)
         result = assembler._get_calendar_context()
 
-        assert "Calendar:" in result
-        assert "CalDAV" in result
+        assert "Upcoming calendar events" in result
+        assert "none" in result
 
     def test_get_task_context_empty(self, db, user_model_store):
         """Should return 'none' when no pending tasks exist."""
