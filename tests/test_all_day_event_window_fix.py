@@ -34,13 +34,19 @@ async def test_all_day_events_included_in_calendar_conflicts(db, user_model_stor
     """
     engine = PredictionEngine(db, user_model_store)
 
-    # Create two all-day events today that overlap (should conflict)
+    # Use tomorrow for the all-day event so the test is time-invariant.
+    # Previously used "today" + "now+2h" for the meeting, but after 22:00 UTC
+    # the meeting would start AFTER the all-day event's midnight end, yielding
+    # a positive gap and no conflict prediction.  Using tomorrow's all-day
+    # event + 10:00 AM tomorrow for the meeting guarantees the timed event
+    # always falls inside the all-day span (all-day ends at midnight of the
+    # following day, i.e. tomorrow+1).
     now = datetime.now(timezone.utc)
-    today_date_str = now.strftime("%Y-%m-%d")  # Date-only format like "2026-02-16"
     tomorrow_date_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    day_after_tomorrow_date_str = (now + timedelta(days=2)).strftime("%Y-%m-%d")
 
     with db.get_connection("events") as conn:
-        # Event 1: All-day event today (ends tomorrow at midnight, like real CalDAV data)
+        # Event 1: All-day event tomorrow (ends day-after-tomorrow at midnight)
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -52,17 +58,19 @@ async def test_all_day_events_included_in_calendar_conflicts(db, user_model_stor
                 "normal",
                 json.dumps({
                     "title": "All-Day Conference",
-                    "start_time": today_date_str,  # Date-only, parses as midnight today
-                    "end_time": tomorrow_date_str,  # Ends tomorrow at midnight (full day)
+                    "start_time": tomorrow_date_str,  # Date-only for tomorrow
+                    "end_time": day_after_tomorrow_date_str,  # Ends the following midnight
                     "is_all_day": True,
                 }),
                 json.dumps({}),
             ),
         )
 
-        # Event 2: Timed meeting later today (or tomorrow if it's late)
-        # that conflicts with the all-day event. Use current time + 2 hours to ensure it's in the future.
-        meeting_time = now + timedelta(hours=2)
+        # Event 2: Timed meeting at 10:00 AM tomorrow — this falls inside the all-day
+        # span (midnight→midnight) regardless of the current UTC hour.
+        meeting_time = (now + timedelta(days=1)).replace(
+            hour=10, minute=0, second=0, microsecond=0
+        )
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
