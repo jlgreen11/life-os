@@ -19,6 +19,7 @@ Insight Types:
     spending_pattern            -- Financial behavioral patterns from transaction history
     decision_pattern            -- Decision-making style from speed, delegation, and fatigue signals
     topic_interest              -- Dominant interests and trending topics from topic signal profile
+    cadence_response            -- Reply-latency baseline, priority contacts, and peak hours from cadence profile
 """
 
 from __future__ import annotations
@@ -112,6 +113,11 @@ class InsightEngine:
         except Exception:
             logger.exception("topic_interest correlator failed")
 
+        try:
+            raw.extend(self._cadence_response_insights())
+        except Exception:
+            logger.exception("cadence_response correlator failed")
+
         # Ensure every insight has a dedup key
         for insight in raw:
             if not insight.dedup_key:
@@ -183,6 +189,13 @@ class InsightEngine:
             # and messages), weighted against the broadest applicable source key.
             "top_interests": "email.work",
             "trending_topic": "email.work",
+            # Cadence insights derive from email and messaging response-time data.
+            # Baseline and peak-hours are weighted against email (broadest source);
+            # per-contact fast replies are weighted against direct messaging.
+            "response_time_baseline": "email.work",
+            "fastest_contacts": "messaging.direct",
+            "communication_peak_hours": "email.work",
+            "channel_cadence": "email.work",
         }
 
         weighted: list[Insight] = []
@@ -1919,6 +1932,299 @@ class InsightEngine:
             len(topic_counts),
             len(recent_topics),
             total_samples,
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Cadence Response Patterns
+    # ------------------------------------------------------------------
+
+    def _cadence_response_insights(self) -> list[Insight]:
+        """Surface communication-cadence insights from the cadence signal profile.
+
+        Reads the ``cadence`` signal profile (built by ``CadenceExtractor``) which
+        accumulates four running aggregates:
+
+          - ``response_times``:             global list of reply-latency deltas in
+            seconds (capped at 1,000 most-recent entries).
+          - ``per_contact_response_times``: dict mapping contact addresses to their
+            per-contact response-time lists.
+          - ``per_channel_response_times``: dict mapping channel names (e.g.
+            ``proton_mail``, ``imessage``) to their per-channel response-time lists.
+          - ``hourly_activity``:            histogram of communication events by
+            hour-of-day (string keys ``"0"``–``"23"``).
+
+        This correlator translates those raw numbers into up to four human-readable
+        insight sub-types.
+
+        **1. Response time baseline (``response_time_baseline``):**
+            Reports the user's overall average reply latency across all contacts
+            and channels.  Requires at least ``MIN_RT_SAMPLES`` (10) global
+            response-time observations.  Re-surfaces at most once every 7 days
+            since average response time shifts slowly.
+
+            Example::
+
+                "Your average reply time across all contacts is 3.2 hours.
+                Based on 427 response-time observations."
+
+        **2. Priority-contact fast replies (``fastest_contacts``):**
+            Identifies up to ``MAX_CONTACTS`` (3) contacts the user consistently
+            replies to faster than half the global average — a strong signal of
+            high priority or relationship closeness.  Requires ≥ ``MIN_CT_SAMPLES``
+            (3) samples per contact.  Marketing and no-reply addresses are excluded
+            via ``is_marketing_or_noreply()`` so automated senders never pollute
+            the priority list.
+
+            Example::
+
+                "You reply to alice@example.com notably faster than average
+                (0.5h vs 3.2h overall) — a strong priority signal."
+
+        **3. Peak communication hours (``communication_peak_hours``):**
+            Identifies the top three hours of day with the most communication
+            activity (both inbound and outbound).  Requires ≥ ``MIN_HOURLY`` (30)
+            total hourly counts.  Uses a 72-hour staleness TTL so it refreshes
+            more frequently than slowly-shifting structural patterns.
+
+            Example::
+
+                "Your most active communication hours are 9:00, 10:00, 14:00."
+
+        **4. Channel cadence comparison (``channel_cadence``):**
+            Compares average response times across communication channels to surface
+            the user's fastest and slowest-responding channel.  Only fires when at
+            least two channels each have ≥ ``MIN_CT_SAMPLES`` (3) response-time
+            samples and the fastest is at least 2× faster than the slowest.
+
+            Example::
+
+                "You respond fastest on imessage (18m avg) and slowest on
+                proton_mail (4.1h avg). 2 channels compared."
+
+        **Data requirements:**
+            All sub-types require the ``cadence`` profile to exist.  Each sub-type
+            has its own minimum sample threshold to prevent noise from sparse data.
+
+        **Staleness TTL:**
+            ``response_time_baseline``:   168 hours (7 days) — shifts slowly.
+            ``fastest_contacts``:         168 hours (7 days) — priority signals are stable.
+            ``communication_peak_hours``:  72 hours (3 days) — refreshes more often.
+            ``channel_cadence``:          168 hours (7 days) — channel habits are stable.
+
+        **Dedup strategy:**
+            ``response_time_baseline`` uses the fixed entity ``"global_avg"`` so only
+            one baseline insight exists at a time.  ``fastest_contacts`` uses the
+            contact address as entity.  ``communication_peak_hours`` uses the
+            concatenated top-hour strings so it re-surfaces when peak hours shift.
+            ``channel_cadence`` uses ``"fastest:slowest"`` channel names as entity.
+
+        **Marketing filter:**
+            ``fastest_contacts`` excludes automated senders, mailing lists, and
+            no-reply addresses via the shared ``is_marketing_or_noreply()`` helper.
+
+        Returns:
+            list[Insight]: Zero to four insights depending on data availability
+            and pattern strength.
+        """
+        # Minimum global response-time observations before surfacing baseline.
+        MIN_RT_SAMPLES = 10
+        # Minimum per-contact or per-channel samples for per-entity insights.
+        MIN_CT_SAMPLES = 3
+        # Fast-reply threshold: contact avg < this fraction of global avg.
+        FAST_RATIO = 0.5
+        # Minimum total hourly-activity counts for peak-hours insight.
+        MIN_HOURLY = 30
+        # Maximum priority-contact (fastest_contacts) insights to surface at once.
+        MAX_CONTACTS = 3
+
+        profile = self.ums.get_signal_profile("cadence")
+        if not profile:
+            return []
+
+        data = profile.get("data", {})
+        if not data:
+            return []
+
+        global_rts: list[float] = data.get("response_times", [])
+        per_contact: dict[str, list] = data.get("per_contact_response_times", {})
+        per_channel: dict[str, list] = data.get("per_channel_response_times", {})
+        hourly: dict[str, int] = data.get("hourly_activity", {})
+
+        insights: list[Insight] = []
+
+        # ----------------------------------------------------------------
+        # Sub-insight 1: Response time baseline
+        # ----------------------------------------------------------------
+        if len(global_rts) >= MIN_RT_SAMPLES:
+            avg_seconds = sum(global_rts) / len(global_rts)
+            avg_hours = avg_seconds / 3600.0
+            n = len(global_rts)
+
+            # Format a human-readable duration: show minutes for sub-hour averages.
+            if avg_hours < 1.0:
+                duration_str = f"{int(avg_seconds / 60)} minutes"
+            else:
+                duration_str = f"{avg_hours:.1f} hours"
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your average reply time across all contacts is {duration_str}. "
+                    f"Based on {n:,} response-time observations."
+                ),
+                confidence=min(0.85, 0.50 + n * 0.003),
+                evidence=[
+                    f"avg_response_hours={avg_hours:.2f}",
+                    f"n_samples={n}",
+                ],
+                category="response_time_baseline",
+                entity="global_avg",
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 2: Priority-contact fast replies
+        # ----------------------------------------------------------------
+        if global_rts and per_contact:
+            global_avg = sum(global_rts) / len(global_rts)
+
+            # Collect contacts that reply faster than FAST_RATIO × global avg.
+            fast_candidates: list[tuple[str, float, int]] = []
+            for contact_id, rts in per_contact.items():
+                if len(rts) < MIN_CT_SAMPLES:
+                    continue
+                # Exclude automated senders — only human contacts matter here.
+                if is_marketing_or_noreply(contact_id):
+                    continue
+                avg_ct = sum(rts) / len(rts)
+                if global_avg > 0 and (avg_ct / global_avg) < FAST_RATIO:
+                    fast_candidates.append((contact_id, avg_ct, len(rts)))
+
+            # Surface at most MAX_CONTACTS insights, ordered fastest-first.
+            fast_candidates.sort(key=lambda x: x[1])
+            for contact_id, avg_ct, n_rts in fast_candidates[:MAX_CONTACTS]:
+                ct_hours = avg_ct / 3600.0
+                global_hours = global_avg / 3600.0
+
+                if ct_hours < 1.0:
+                    ct_str = f"{int(avg_ct / 60)}m"
+                else:
+                    ct_str = f"{ct_hours:.1f}h"
+
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"You reply to {contact_id} notably faster than average "
+                        f"({ct_str} vs {global_hours:.1f}h overall) — a strong "
+                        f"priority signal."
+                    ),
+                    confidence=min(0.80, 0.45 + n_rts * 0.03),
+                    evidence=[
+                        f"contact={contact_id}",
+                        f"avg_response_hours={ct_hours:.2f}",
+                        f"global_avg_hours={global_hours:.2f}",
+                        f"n_samples={n_rts}",
+                    ],
+                    category="fastest_contacts",
+                    entity=contact_id,
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 3: Peak communication hours
+        # ----------------------------------------------------------------
+        if hourly:
+            total_counts = sum(hourly.values())
+            if total_counts >= MIN_HOURLY:
+                sorted_hours = sorted(hourly.items(), key=lambda x: x[1], reverse=True)
+                top_3 = sorted_hours[:3]
+                if top_3:
+                    hour_labels = [f"{int(h)}:00" for h, _ in top_3]
+                    # Entity fingerprint changes when the dominant hours shift.
+                    entity_key = "_".join(h for h, _ in top_3)
+
+                    insight = Insight(
+                        type="behavioral_pattern",
+                        summary=(
+                            f"Your most active communication hours are "
+                            f"{', '.join(hour_labels)}."
+                        ),
+                        confidence=min(0.85, 0.50 + total_counts * 0.002),
+                        evidence=[
+                            f"top_hours={','.join(h for h, _ in top_3)}",
+                            f"total_activity_events={total_counts}",
+                        ],
+                        category="communication_peak_hours",
+                        entity=entity_key,
+                        staleness_ttl_hours=72,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+        # ----------------------------------------------------------------
+        # Sub-insight 4: Channel cadence comparison
+        # ----------------------------------------------------------------
+        if per_channel:
+            # Build a list of (channel, avg_seconds, n_samples) for channels
+            # with enough data to be statistically meaningful.
+            channel_avgs: list[tuple[str, float, int]] = []
+            for channel, rts in per_channel.items():
+                if len(rts) >= MIN_CT_SAMPLES:
+                    channel_avgs.append((channel, sum(rts) / len(rts), len(rts)))
+
+            if len(channel_avgs) >= 2:
+                channel_avgs.sort(key=lambda x: x[1])
+                fastest_ch, fastest_avg, fastest_n = channel_avgs[0]
+                slowest_ch, slowest_avg, slowest_n = channel_avgs[-1]
+
+                # Only surface when the gap is substantial (fastest < 50% of slowest).
+                if slowest_avg > 0 and (fastest_avg / slowest_avg) < 0.5:
+                    fastest_hours = fastest_avg / 3600.0
+                    slowest_hours = slowest_avg / 3600.0
+
+                    if fastest_hours < 1.0:
+                        fastest_str = f"{int(fastest_avg / 60)}m"
+                    else:
+                        fastest_str = f"{fastest_hours:.1f}h"
+
+                    # Entity encodes both channel names so the dedup key changes
+                    # only when the relative ordering of fastest/slowest shifts.
+                    entity_key = f"{fastest_ch}:{slowest_ch}"
+
+                    insight = Insight(
+                        type="behavioral_pattern",
+                        summary=(
+                            f"You respond fastest on {fastest_ch} ({fastest_str} avg) "
+                            f"and slowest on {slowest_ch} ({slowest_hours:.1f}h avg). "
+                            f"{len(channel_avgs)} channels compared."
+                        ),
+                        confidence=min(0.75, 0.40 + (fastest_n + slowest_n) * 0.02),
+                        evidence=[
+                            f"fastest_channel={fastest_ch}",
+                            f"fastest_avg_hours={fastest_hours:.2f}",
+                            f"slowest_channel={slowest_ch}",
+                            f"slowest_avg_hours={slowest_hours:.2f}",
+                            f"channels_compared={len(channel_avgs)}",
+                        ],
+                        category="channel_cadence",
+                        entity=entity_key,
+                        staleness_ttl_hours=168,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+        logger.debug(
+            "cadence_response_insights: %d insights generated "
+            "(global_rt_samples=%d, per_contact=%d, hourly_total=%d)",
+            len(insights),
+            len(global_rts),
+            len(per_contact),
+            sum(hourly.values()) if hourly else 0,
         )
         return insights
 
