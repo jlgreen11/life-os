@@ -207,7 +207,15 @@ class RedditConnector(BrowserBaseConnector):
         """)
 
     def _get_seen_ids(self) -> set:
-        """Load previously seen Reddit post fullnames from the sync cursor."""
+        """Load previously seen Reddit post fullnames from the sync cursor.
+
+        Returns a set for O(1) membership testing. The underlying cursor stores
+        an ordered list (oldest → newest) so that the cap in _update_seen_ids
+        always drops the oldest entries, not arbitrary ones.
+
+        Returns:
+            set[str]: Fullnames of posts already processed (e.g. ``"t3_abc123"``).
+        """
         cursor = self.get_sync_cursor()
         if cursor:
             try:
@@ -218,12 +226,46 @@ class RedditConnector(BrowserBaseConnector):
         return set()
 
     def _update_seen_ids(self, new_ids: list[str]):
-        """Persist new post IDs to the sync cursor, capping at 1000 entries."""
+        """Persist new post fullnames to the sync cursor, capping at 1000 entries.
+
+        Maintains insertion order (oldest first, newest last) so that when the
+        cursor exceeds 1,000 entries the *oldest* IDs are dropped — never the
+        IDs that were just observed.  Using a bare ``set`` for this operation
+        loses insertion order: ``list(set)[-1000:]`` is ordered by hash value,
+        not by recency, which can silently discard brand-new entries.
+
+        Algorithm:
+            1. Load the existing ordered list from the cursor.
+            2. Append only IDs that haven't been seen before, preserving order.
+            3. Trim to the last 1,000 entries (most recent).
+            4. Persist the trimmed list back to the cursor.
+
+        Args:
+            new_ids: Post fullnames discovered in this sync cycle (e.g. ``["t3_abc"]``).
+
+        Example::
+
+            connector._update_seen_ids(["t3_abc123", "t3_def456"])
+        """
         import json
-        seen = self._get_seen_ids()
-        seen.update(new_ids)
-        # Keep last 1000 to prevent unbounded growth of the cursor
-        self.set_sync_cursor(json.dumps(list(seen)[-1000:]))
+        cursor = self.get_sync_cursor()
+        existing: list[str] = []
+        if cursor:
+            try:
+                existing = json.loads(cursor)
+            except Exception:
+                existing = []
+
+        # Append only genuinely new IDs to preserve insertion order.
+        # A set lookup guards against duplicates in O(1) per check.
+        existing_set = set(existing)
+        for nid in new_ids:
+            if nid not in existing_set:
+                existing.append(nid)
+                existing_set.add(nid)
+
+        # Keep the 1,000 most-recent entries (tail of the ordered list).
+        self.set_sync_cursor(json.dumps(existing[-1000:]))
 
     def _extract_topics(self, title: str) -> list[str]:
         """Quick keyword extraction from post title.

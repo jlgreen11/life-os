@@ -765,13 +765,19 @@ def test_update_seen_ids_persists_new_ids(reddit_connector, mock_db):
 
 
 def test_update_seen_ids_caps_at_1000_entries(reddit_connector, mock_db):
-    """Verify _update_seen_ids limits cursor size to last 1000 IDs."""
-    # Start with 999 existing IDs
+    """Verify _update_seen_ids limits cursor size to last 1000 IDs.
+
+    The cap must drop the *oldest* IDs (those loaded from the cursor before the
+    current sync), never the IDs that were just discovered.  The previous
+    set-based implementation broke this guarantee because ``list(set)[-1000:]``
+    orders by hash value rather than recency.
+    """
+    # Start with 999 existing IDs (these are "old")
     existing = [f"t3_old{i}" for i in range(999)]
     with mock_db.get_connection("state") as conn:
         conn.cursor_data["reddit"] = json.dumps(existing)
 
-    # Add 10 new IDs (total would be 1009)
+    # Add 10 new IDs — total would be 1,009, so 9 must be dropped
     new_ids = [f"t3_new{i}" for i in range(10)]
     reddit_connector._update_seen_ids(new_ids)
 
@@ -782,10 +788,53 @@ def test_update_seen_ids_caps_at_1000_entries(reddit_connector, mock_db):
     ids = json.loads(cursor)
     assert len(ids) == 1000
 
-    # Should keep the most recent (last 1000)
-    # New IDs should all be present
+    # All 10 *new* IDs must survive — the cap must drop old entries, not new ones
     for new_id in new_ids:
-        assert new_id in ids
+        assert new_id in ids, f"{new_id} was incorrectly dropped by the 1000-entry cap"
+
+    # The 9 dropped entries must be from the oldest end of the existing list
+    dropped_old = [f"t3_old{i}" for i in range(9)]
+    for dropped_id in dropped_old:
+        assert dropped_id not in ids, f"{dropped_id} should have been dropped as the oldest entry"
+
+
+def test_update_seen_ids_preserves_insertion_order(reddit_connector, mock_db):
+    """Verify _update_seen_ids maintains oldest-first insertion order.
+
+    The cursor must store IDs in the order they were first observed so that
+    the cap ``[-1000:]`` reliably discards the oldest, not arbitrary entries.
+    """
+    with mock_db.get_connection("state") as conn:
+        conn.cursor_data["reddit"] = json.dumps(["t3_first", "t3_second"])
+
+    reddit_connector._update_seen_ids(["t3_third", "t3_fourth"])
+
+    with mock_db.get_connection("state") as conn:
+        cursor = conn.cursor_data.get("reddit")
+
+    ids = json.loads(cursor)
+    # Original IDs must appear before the newly appended ones
+    assert ids.index("t3_first") < ids.index("t3_third")
+    assert ids.index("t3_second") < ids.index("t3_fourth")
+
+
+def test_update_seen_ids_skips_duplicates_without_reordering(reddit_connector, mock_db):
+    """Verify _update_seen_ids does not re-append IDs already in the cursor.
+
+    Duplicate new_ids must be silently dropped; their original position must
+    remain unchanged in the ordered list.
+    """
+    with mock_db.get_connection("state") as conn:
+        conn.cursor_data["reddit"] = json.dumps(["t3_a", "t3_b"])
+
+    # t3_a already exists — should NOT be moved to the end
+    reddit_connector._update_seen_ids(["t3_a", "t3_c"])
+
+    with mock_db.get_connection("state") as conn:
+        cursor = conn.cursor_data.get("reddit")
+
+    ids = json.loads(cursor)
+    assert ids == ["t3_a", "t3_b", "t3_c"], f"Unexpected order or duplicates: {ids}"
 
 
 def test_update_seen_ids_handles_empty_list(reddit_connector, mock_db):
