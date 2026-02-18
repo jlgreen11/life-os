@@ -268,11 +268,15 @@ async def test_inbound_only_filter_does_not_affect_marketing_contacts(db, user_m
 
 
 @pytest.mark.asyncio
-async def test_diagnostic_log_includes_inbound_only_filtered_count(db, user_model_store, engine, capsys):
-    """The diagnostic summary printed by _check_relationship_maintenance must
+async def test_diagnostic_log_includes_inbound_only_filtered_count(db, user_model_store, engine, caplog):
+    """The diagnostic summary logged by _check_relationship_maintenance must
     include the ``inbound_only_filtered`` count so operators can see how many
     contacts are being suppressed by this new filter.
+
+    Uses caplog (not capsys) because the engine logs via Python's logging module,
+    not via print() to stdout.
     """
+    import logging
     now = datetime.now(timezone.utc)
 
     profile = {
@@ -289,10 +293,10 @@ async def test_diagnostic_log_includes_inbound_only_filtered_count(db, user_mode
     }
     user_model_store.update_signal_profile("relationships", profile)
 
-    await engine._check_relationship_maintenance({})
+    with caplog.at_level(logging.DEBUG):
+        await engine._check_relationship_maintenance({})
 
-    captured = capsys.readouterr()
-    assert "inbound_only_filtered=1" in captured.out, (
+    assert "inbound_only_filtered=1" in caplog.text, (
         "Diagnostic log must include 'inbound_only_filtered=1' when one contact is filtered"
     )
 

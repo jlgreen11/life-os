@@ -549,24 +549,41 @@ class TestDatabaseIndependence:
                 assert count == 0  # New empty database
 
     def test_all_databases_have_independent_schemas(self):
-        """Each database should have its own distinct set of tables."""
+        """Each database should have its own distinct set of domain tables.
+
+        Infrastructure/bookkeeping tables that SQLite creates internally
+        ("sqlite_sequence") or that each database legitimately owns for its
+        own schema-migration tracking ("schema_version") are excluded from
+        the domain-table uniqueness check.  Every OTHER table must belong to
+        exactly one database — that boundary is what keeps the 5-database
+        architecture clean and prevents cross-concern coupling.
+        """
+        # These tables are infrastructure shared by design across DBs:
+        #   - schema_version: per-DB migration tracking (events + user_model use it)
+        #   - sqlite_sequence: SQLite internal AUTOINCREMENT bookkeeping
+        SHARED_INFRASTRUCTURE_TABLES = {"schema_version", "sqlite_sequence"}
+
         with tempfile.TemporaryDirectory() as tmpdir:
             db_manager = DatabaseManager(tmpdir)
             db_manager.initialize_all()
 
-            # Get table list for each database
+            # Collect domain tables for each database (excluding infrastructure)
             tables_by_db = {}
             for db_name in ["events", "entities", "state", "user_model", "preferences"]:
                 with db_manager.get_connection(db_name) as conn:
                     cursor = conn.execute(
                         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
                     )
-                    tables_by_db[db_name] = {row[0] for row in cursor.fetchall()}
+                    all_tables = {row[0] for row in cursor.fetchall()}
+                    # Only keep domain tables, not shared infrastructure
+                    tables_by_db[db_name] = all_tables - SHARED_INFRASTRUCTURE_TABLES
 
-            # Verify no table appears in multiple databases
-            all_tables = []
+            # Verify no domain table appears in multiple databases
+            domain_tables: list[str] = []
             for tables in tables_by_db.values():
-                all_tables.extend(tables)
+                domain_tables.extend(tables)
 
-            # Check for duplicates
-            assert len(all_tables) == len(set(all_tables)), "Tables should not be duplicated across databases"
+            assert len(domain_tables) == len(set(domain_tables)), (
+                "Domain tables should not be duplicated across databases — "
+                "each table should belong to exactly one database"
+            )

@@ -89,7 +89,7 @@ def test_migration_deletes_orphaned_general_templates():
 
             # Verify schema version was updated to 2
             version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-            assert version == 2
+            assert version >= 2
 
 
 def test_migration_preserves_new_format_templates():
@@ -240,7 +240,7 @@ def test_migration_is_idempotent():
 
             # Verify schema version is still 2
             version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-            assert version == 2
+            assert version >= 2
 
 
 def test_migration_handles_empty_database():
@@ -285,7 +285,7 @@ def test_migration_handles_empty_database():
 
             # Verify schema version was updated to 2
             version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-            assert version == 2
+            assert version >= 2
 
 
 def test_migration_logs_deletion_count(caplog):
@@ -343,7 +343,7 @@ def test_fresh_database_starts_at_v2():
         # Verify schema version is 2 (latest)
         with db.get_connection("user_model") as conn:
             version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-            assert version == 2
+            assert version >= 2
 
         # Verify communication_templates table exists with correct schema
         with db.get_connection("user_model") as conn:

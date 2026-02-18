@@ -428,7 +428,14 @@ class TestSemanticFactInferenceThresholds:
         """Relationship inference requires 10+ samples."""
         user_model_store.update_signal_profile("relationships", {
             "contacts": {
-                "alice@example.com": {"interaction_count": 50, "channels_used": ["email", "signal"]},
+                # outbound_count must be >0 or the inferrer skips this contact as a
+                # one-way/marketing relationship (added in inbound-only filter, PR #204).
+                "alice@example.com": {
+                    "interaction_count": 50,
+                    "inbound_count": 20,
+                    "outbound_count": 30,
+                    "channels_used": ["email", "signal"],
+                },
             }
         })
 

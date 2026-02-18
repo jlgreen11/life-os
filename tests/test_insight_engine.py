@@ -279,6 +279,10 @@ async def test_contact_gap_overdue_contact(db, user_model_store):
         "contacts": {
             "charlie@example.com": {
                 "interaction_count": 10,
+                # outbound_count > 0 required: the inbound-only filter (PR #204)
+                # skips contacts the user has never sent to, as those are likely
+                # automated senders rather than real relationships to maintain.
+                "outbound_count": 5,
                 "last_interaction": (now - timedelta(days=overdue_days)).isoformat(),
                 "interaction_timestamps": [
                     (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat()
@@ -309,6 +313,8 @@ async def test_contact_gap_confidence_scaling(db, user_model_store):
         "contacts": {
             "low_gap@example.com": {
                 "interaction_count": 10,
+                # outbound_count > 0 required by the inbound-only filter (PR #204)
+                "outbound_count": 4,
                 "last_interaction": (now - timedelta(days=16)).isoformat(),  # 1.6x average
                 "interaction_timestamps": [
                     (now - timedelta(days=16 + i * avg_gap_days)).isoformat()
@@ -317,6 +323,7 @@ async def test_contact_gap_confidence_scaling(db, user_model_store):
             },
             "high_gap@example.com": {
                 "interaction_count": 10,
+                "outbound_count": 4,  # bidirectional
                 "last_interaction": (now - timedelta(days=40)).isoformat(),  # 4x average
                 "interaction_timestamps": [
                     (now - timedelta(days=40 + i * avg_gap_days)).isoformat()

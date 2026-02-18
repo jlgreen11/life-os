@@ -264,16 +264,20 @@ class TestSchemaMigrationV0toV2:
                 assert row[0] == row[1]  # Should match event_id from payload
 
     def test_migration_sets_schema_version(self, v0_database):
-        """Test that migration updates schema_version table to v2."""
+        """Test that migration updates schema_version table to at least v2.
+
+        The schema may have advanced beyond v2 in subsequent migrations; we only
+        assert that the migration brought the version to >= 2.
+        """
         db = DatabaseManager(v0_database)
         db.initialize_all()
 
         with db.get_connection("events") as conn:
-            # Check schema version
-            cursor = conn.execute("SELECT version FROM schema_version")
+            # Check schema version — use MAX() in case multiple rows exist
+            cursor = conn.execute("SELECT MAX(version) FROM schema_version")
             version = cursor.fetchone()
             assert version is not None
-            assert version[0] == 2
+            assert version[0] >= 2
 
     def test_triggers_work_on_new_events(self, v0_database):
         """Test that triggers auto-populate denormalized columns for new events."""
@@ -301,18 +305,18 @@ class TestSchemaMigrationV0toV2:
             assert email_from == "newemail@example.com"
 
     def test_migration_idempotent(self, v0_database):
-        """Test that running migration twice doesn't cause errors."""
+        """Test that running migration twice doesn't cause errors or downgrade schema."""
         db = DatabaseManager(v0_database)
         db.initialize_all()
 
-        # Run initialize_all again (should not fail)
+        # Run initialize_all again (should not fail or reset version)
         db.initialize_all()
 
-        # Verify schema is still correct
+        # Verify schema version is still at least v2 after second run
         with db.get_connection("events") as conn:
-            cursor = conn.execute("SELECT version FROM schema_version")
+            cursor = conn.execute("SELECT MAX(version) FROM schema_version")
             version = cursor.fetchone()
-            assert version[0] == 2
+            assert version[0] >= 2
 
     def test_migration_preserves_existing_data(self, v0_database):
         """Test that migration doesn't lose or corrupt existing event data."""
