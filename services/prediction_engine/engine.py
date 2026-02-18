@@ -537,6 +537,31 @@ class PredictionEngine:
             2. Check if we've already created a prediction for this message
             3. Create new predictions only for messages we haven't alerted about yet
 
+        Priority Contact Detection:
+            A "priority contact" is someone the user has sent outbound messages to
+            (bidirectional relationship). These contacts receive boosted confidence
+            (0.7 vs 0.4 baseline) because the user has an established communication
+            relationship with them, not just a passive inbound-only contact.
+
+            Priority detection uses the "relationships" signal profile, which tracks
+            per-contact interaction history including outbound_count. A contact with
+            outbound_count > 0 is someone the user has actively reached out to.
+
+            CRITICAL FIX (iteration 183):
+                The previous implementation checked metadata.get("related_contacts", [])
+                from the event envelope. This field contains only the sending address
+                itself (the email's own from_address), so the check:
+                    any(from_addr in contacts for contacts in [metadata.get(...)])
+                ... was structurally impossible to trigger: it was checking if the
+                sender was in a list that only contained the sender themselves, not
+                a curated list of priority contacts. This meant is_priority was always
+                False and the 0.3 confidence boost for priority contacts NEVER fired —
+                even when receiving an email from a close collaborator who the user
+                consistently replies to.
+
+                The fix loads the relationships signal profile once per prediction
+                cycle and checks outbound_count > 0 for each sender.
+
         CRITICAL FIX (iteration 62):
             Previously, this method processed ALL emails from the last 48 hours on
             EVERY prediction cycle (every 15 min). This caused:
@@ -561,6 +586,25 @@ class PredictionEngine:
             - Only fetch message IDs first, then details for new predictions
         """
         predictions = []
+
+        # Load the relationships signal profile ONCE per cycle (not per email).
+        # We use this to identify "priority contacts" — people the user has sent
+        # outbound messages to (outbound_count > 0), meaning there is an established
+        # bidirectional communication relationship. Emails from these contacts get
+        # a higher confidence boost because the user is more likely to need to reply.
+        rel_profile = self.ums.get_signal_profile("relationships")
+        rel_contacts = rel_profile["data"].get("contacts", {}) if rel_profile else {}
+
+        # Build a fast-lookup set of priority contact addresses.
+        # A contact is "priority" if the user has sent at least one outbound message
+        # to them, establishing a real two-way communication pattern.
+        # We normalize to lowercase for case-insensitive matching.
+        priority_contacts: set[str] = {
+            addr.lower()
+            for addr, data in rel_contacts.items()
+            if data.get("outbound_count", 0) > 0
+            and not self._is_marketing_or_noreply(addr, {})
+        }
 
         # First, quickly check what messages we've already created predictions for
         # in the last 48 hours (wider than scan window to catch stragglers)
@@ -591,7 +635,7 @@ class PredictionEngine:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
             inbound = conn.execute(
-                """SELECT id, payload, metadata, timestamp FROM events
+                """SELECT id, payload, timestamp FROM events
                    WHERE type IN ('email.received', 'message.received')
                    AND timestamp > ?
                    ORDER BY timestamp DESC""",
@@ -617,7 +661,6 @@ class PredictionEngine:
         # Find unreplied inbound messages
         for msg in inbound:
             payload = json.loads(msg["payload"])
-            metadata = json.loads(msg["metadata"])
             message_id = payload.get("message_id", "")
 
             # Skip if already replied
@@ -645,10 +688,10 @@ class PredictionEngine:
             if self._is_marketing_or_noreply(from_addr, payload):
                 continue
 
-            is_priority = any(
-                from_addr in contacts
-                for contacts in [metadata.get("related_contacts", [])]
-            )
+            # Priority detection: check if this sender is in our bidirectional
+            # contacts set (someone the user has actively sent messages to).
+            # Normalize to lowercase for case-insensitive matching.
+            is_priority = from_addr.lower() in priority_contacts
 
             # Calculate how long it's been
             try:
