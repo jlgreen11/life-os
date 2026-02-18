@@ -621,6 +621,55 @@ def register_routes(app: FastAPI, life_os) -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    @app.get("/api/user-model/routines")
+    async def get_routines(trigger: Optional[str] = None, min_consistency: float = 0.0, min_observations: int = 0):
+        """Return detected routines from Layer 3 (procedural memory).
+
+        Routines are time- or location-triggered behavioral patterns learned
+        from repeated event sequences. Unlike workflows (goal-driven processes),
+        routines are habitual and occur automatically at predictable times or
+        locations.
+
+        Examples:
+        - "morning_routine" (wake up → check email → calendar review → coffee)
+        - "arrive_home" (unlock door → check messages → start dinner)
+        - "weekly_review" (every Sunday evening: review tasks → plan ahead)
+
+        Query params:
+            trigger: Optional filter by trigger type (e.g., "morning", "arrive_home").
+                     If omitted, all routines are returned.
+            min_consistency: Filter by minimum consistency score (0.0–1.0).
+                             Higher scores mean the routine fires more reliably.
+            min_observations: Filter by minimum number of times observed.
+                              Use to exclude one-off patterns.
+
+        Returns:
+            List of routines with their steps, consistency scores, and typical
+            durations. Empty list if no routines have been detected yet.
+        """
+        routines = []
+        try:
+            # Delegate to UserModelStore which owns the routines schema and
+            # handles JSON deserialization of the steps and variations fields.
+            all_routines = life_os.user_model_store.get_routines(trigger=trigger)
+
+            # Apply additional post-query filters that the store method doesn't
+            # support natively (consistency threshold and min observations).
+            for r in all_routines:
+                if r["consistency_score"] >= min_consistency and r["times_observed"] >= min_observations:
+                    routines.append(r)
+        except Exception as e:
+            # Gracefully handle if the routines table doesn't exist yet or the
+            # query fails (e.g., during first-time startup before detection runs).
+            logger.warning("Failed to fetch routines: %s", e)
+            routines = []
+
+        return {
+            "routines": routines,
+            "count": len(routines),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     # -------------------------------------------------------------------
     # Insights (aggregated signal profiles → human-readable summaries)
     # -------------------------------------------------------------------
