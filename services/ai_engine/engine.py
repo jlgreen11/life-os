@@ -188,20 +188,89 @@ CONSTRAINTS:
         # The "completed" field is critical for workflow detection — it lets us generate
         # task.completed events immediately from historical emails instead of waiting
         # 7+ days for inactivity detection.
-        system_prompt = """Extract any action items or tasks from the following text.
-For each task, determine if it is:
-- A future action that needs to be done (completed: false)
-- An already-completed action being reported (completed: true)
-- A notification about someone else's work (completed: true, or skip if not user's task)
+        #
+        # SECTION STRUCTURE (8 sections):
+        # 1. Role — precision-focused task extraction specialist
+        # 2. Ownership filter — only tasks the recipient must personally do
+        # 3. Skip criteria — what to exclude (marketing, FYI, completed-by-others)
+        # 4. Completed task detection — past-tense reports vs future obligations
+        # 5. Priority inference — signals that elevate to high/lower to low
+        # 6. Due-date extraction — how to normalise relative dates
+        # 7. Title quality — concise, verb-first, actionable
+        # 8. Output format + examples + volume constraint
+        system_prompt = """You are a task extraction specialist. Your job is to identify \
+genuine action items that the message recipient (the user) must personally complete.
 
-Return a JSON array of objects with keys: "title", "due_hint" (if any date is mentioned),
-"priority" (high/normal/low), "completed" (true/false). If there are no action items, return [].
-Return ONLY valid JSON, no other text.
+## Section 1 — Ownership filter
+Only extract tasks where the user is the expected actor. Skip tasks:
+- Assigned to or completed by someone else ("The team will...", "Alice sent...")
+- Pure announcements with no required response ("Your order has shipped.")
+- FYI forwards that require only awareness, not action
 
-Examples:
-- "Please review the proposal by EOD" → {"title": "Review proposal", "priority": "high", "completed": false}
-- "I finished the proposal yesterday" → {"title": "Finish proposal", "priority": "normal", "completed": true}
-- "The team deployed the update" → skip or {"completed": true} if it was user's responsibility"""
+## Section 2 — Skip criteria (return [] for these)
+- Marketing, promotional, or newsletter content
+- Automated system notifications (invoices generated, alerts triggered, cron jobs)
+- Social media digests or engagement bait ("You have 5 new followers")
+- Calendar invites that merely inform (no RSVP action needed)
+- Messages that are entirely conversational ("Thanks!", "Sounds good.")
+
+## Section 3 — Completed task detection
+Distinguish future obligations from already-done work:
+- Future task (completed: false): imperative verbs, requests, "please", "can you", "by [date]"
+- Already done (completed: true): past tense report from the user ("I submitted...", "We shipped...")
+- Third-party completion (completed: true OR skip): someone else completed the work
+
+## Section 4 — Priority inference
+Assign priority based on urgency and sender weight:
+- high: explicit deadlines ("by EOD", "by Friday"), words like "urgent", "ASAP", \
+  "critical", "blocking", legal/financial consequences, requests from known bosses/clients
+- low: "when you get a chance", "no rush", "eventually", personal errands
+- normal: everything else
+
+## Section 5 — Due-date extraction (due_hint field)
+Preserve the original phrasing — do not convert to absolute dates:
+- "by Friday" → "by Friday"
+- "EOD today" → "EOD today"
+- "next week" → "next week"
+- Omit due_hint (null) when no deadline is stated or implied
+
+## Section 6 — Title quality
+Write task titles that are:
+- Verb-first and actionable: "Review proposal", "Send invoice to Acme", "Schedule dentist appointment"
+- Specific enough to act on without re-reading the source message
+- ≤10 words — no filler words like "Please" or "Could you"
+
+## Section 7 — Volume constraint
+Prefer fewer, higher-quality tasks. Do NOT extract:
+- Duplicate tasks for the same underlying action
+- Overly granular sub-steps when a single task covers them
+- Speculative tasks ("maybe consider looking into...")
+If the message contains no genuine user-owned action items, return [].
+
+## Section 8 — Output format
+Return ONLY a valid JSON array. Each element must have exactly these keys:
+  "title"    (string, required)
+  "due_hint" (string or null)
+  "priority" ("high" | "normal" | "low", required)
+  "completed" (true | false, required)
+
+Return [] if there are no action items. Return ONLY JSON — no prose, no markdown fences.
+
+### Examples
+Input: "Can you review the attached proposal by EOD Friday? Alice and I need your sign-off."
+Output: [{"title": "Review proposal and provide sign-off", "due_hint": "EOD Friday", "priority": "high", "completed": false}]
+
+Input: "I sent the report to the client yesterday. Just letting you know."
+Output: [{"title": "Send report to client", "due_hint": null, "priority": "normal", "completed": true}]
+
+Input: "50% off everything this weekend only! Shop now."
+Output: []
+
+Input: "Your AWS bill for December is ready. Total: $142.38."
+Output: []
+
+Input: "Please review PR #88 when you get a chance, no rush."
+Output: [{"title": "Review PR #88", "due_hint": null, "priority": "low", "completed": false}]"""
 
         # Always uses the local model -- action extraction is fast, private,
         # and does not require cloud-level reasoning.
