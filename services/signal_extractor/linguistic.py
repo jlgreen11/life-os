@@ -313,6 +313,15 @@ class LinguisticExtractor(BaseExtractor):
             "hedge_rate": statistics.mean(s["hedge_rate"] for s in samples),
             "assertion_rate": statistics.mean(s["assertion_rate"] for s in samples),
             "exclamation_rate": statistics.mean(s["exclamation_rate"] for s in samples),
+            # Sentence-ending question marks per sentence — distinguishes inquisitive
+            # communicators ("Do you think we should X?") from declarative ones.
+            "question_rate": statistics.mean(s["question_rate"] for s in samples),
+            # Ellipsis usage ("I was thinking...") signals trailing thoughts,
+            # informality, or hesitation; notable when consistently high.
+            "ellipsis_rate": statistics.mean(s["ellipsis_rate"] for s in samples),
+            # Type-token ratio across all messages reveals vocabulary diversity;
+            # higher values indicate richer word choice.
+            "unique_word_ratio": statistics.mean(s["unique_word_ratio"] for s in samples),
             # Emoji and profanity rates are normalised by word count so longer
             # messages don't inflate the averages.
             "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
