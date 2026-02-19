@@ -794,6 +794,161 @@ def register_routes(app: FastAPI, life_os) -> None:
         }
 
     # -------------------------------------------------------------------
+    # Contacts (entities database — people the system has learned about)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/contacts")
+    async def get_contacts(
+        is_priority: Optional[bool] = None,
+        name: Optional[str] = None,
+        has_metrics: Optional[bool] = None,
+        limit: int = 100,
+    ):
+        """Return contacts from the entities database with relationship metrics.
+
+        Exposes the ``contacts`` table from ``entities.db``, including the three
+        denormalized relationship metrics written by
+        ``RelationshipExtractor._sync_contact_metrics()``:
+
+        - **typical_response_time** — median response latency in seconds
+          (how quickly the user typically replies to this contact)
+        - **last_contact** — ISO-8601 timestamp of the most recent two-way
+          interaction (either an outbound email or a reply received)
+        - **contact_frequency_days** — average gap in days between interactions
+          (lower = more frequent contact)
+
+        These metrics are derived from the ``relationships`` signal profile and
+        are updated incrementally as new emails and messages are processed.
+
+        Query params:
+            is_priority: Optional bool.  ``true`` returns only contacts marked
+                         as priority (``is_priority = 1``); ``false`` returns
+                         non-priority contacts only.  Omit to return all.
+            name: Optional string.  Case-insensitive substring match against
+                  the contact's display name (``LIKE %name%``).
+            has_metrics: Optional bool.  ``true`` returns only contacts that
+                         have at least one denormalized metric populated
+                         (i.e. ``contact_frequency_days IS NOT NULL``).
+                         ``false`` returns contacts with no metrics yet.
+                         Omit to return all.
+            limit: Maximum number of contacts to return (default 100, max 500).
+                   Contacts are ordered by priority first, then by most-recently
+                   contacted.
+
+        Returns:
+            ``{"contacts": [...], "total": N, "generated_at": "..."}``
+
+            Each contact object mirrors the DB schema.  JSON arrays
+            (``aliases``, ``emails``, ``phones``, ``notes``) are deserialized
+            from their stored JSON strings.  Numeric metrics are returned as
+            floats (``null`` when not yet computed).
+
+        Example::
+
+            GET /api/contacts?is_priority=true
+            → {
+                "contacts": [
+                    {
+                        "id": "abc123",
+                        "name": "Alice Smith",
+                        "emails": ["alice@example.com"],
+                        "relationship": "colleague",
+                        "is_priority": true,
+                        "typical_response_time": 7200.0,
+                        "last_contact": "2026-02-18T14:30:00.000Z",
+                        "contact_frequency_days": 3.5,
+                        ...
+                    }
+                ],
+                "total": 1,
+                "generated_at": "2026-02-19T05:00:00.000000+00:00"
+            }
+
+            GET /api/contacts?has_metrics=true&limit=20
+            → contacts that have interaction frequency data, up to 20 results
+        """
+        import json as _json
+
+        # Hard cap to prevent accidental full-table dumps.
+        effective_limit = min(limit, 500)
+
+        # Build the WHERE clause dynamically based on provided filters.
+        conditions: list[str] = []
+        params: list = []
+
+        if is_priority is not None:
+            conditions.append("is_priority = ?")
+            params.append(1 if is_priority else 0)
+
+        if name is not None:
+            conditions.append("LOWER(name) LIKE ?")
+            params.append(f"%{name.lower()}%")
+
+        if has_metrics is True:
+            # At least one of the relationship metrics is populated.
+            conditions.append("contact_frequency_days IS NOT NULL")
+        elif has_metrics is False:
+            conditions.append("contact_frequency_days IS NULL")
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        # ORDER BY: priority contacts first, then most-recently contacted,
+        # then alphabetically for contacts with no last_contact date.
+        order_clause = (
+            "ORDER BY is_priority DESC, "
+            "last_contact DESC NULLS LAST, "
+            "name ASC"
+        )
+
+        query = f"""
+            SELECT id, name, aliases, emails, phones, channels, relationship,
+                   domains, is_priority, preferred_channel, always_surface,
+                   typical_response_time, communication_style, last_contact,
+                   contact_frequency_days, notes, created_at, updated_at
+            FROM contacts
+            {where_clause}
+            {order_clause}
+            LIMIT ?
+        """
+        params.append(effective_limit)
+
+        # Separate count query (uses same conditions but no LIMIT).
+        count_query = f"SELECT COUNT(*) FROM contacts {where_clause}"
+
+        with life_os.db.get_connection("entities") as conn:
+            total = conn.execute(count_query, params[:-1]).fetchone()[0]
+            rows = conn.execute(query, params).fetchall()
+
+        # Deserialize stored JSON strings into native Python lists/dicts so
+        # the response payload is clean JSON rather than stringified arrays.
+        contacts = []
+        for row in rows:
+            contact = dict(row)
+            for json_field in ("aliases", "emails", "phones", "notes", "domains"):
+                raw = contact.get(json_field)
+                if isinstance(raw, str):
+                    try:
+                        contact[json_field] = _json.loads(raw)
+                    except (_json.JSONDecodeError, ValueError):
+                        contact[json_field] = []
+            raw_channels = contact.get("channels")
+            if isinstance(raw_channels, str):
+                try:
+                    contact["channels"] = _json.loads(raw_channels)
+                except (_json.JSONDecodeError, ValueError):
+                    contact["channels"] = {}
+            # Coerce SQLite integers to booleans for cleaner JSON output.
+            contact["is_priority"] = bool(contact.get("is_priority", 0))
+            contact["always_surface"] = bool(contact.get("always_surface", 0))
+            contacts.append(contact)
+
+        return {
+            "contacts": contacts,
+            "total": total,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # -------------------------------------------------------------------
     # Insights (aggregated signal profiles → human-readable summaries)
     # -------------------------------------------------------------------
 
