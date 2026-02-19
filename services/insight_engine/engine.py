@@ -12,7 +12,7 @@ until evidence changes or the staleness TTL expires.
 Insight Types:
     behavioral_pattern          -- Repeated behaviors (e.g. "You visit Cafe X 5x/week")
     actionable_alert            -- Something the user should act on now
-    relationship_intelligence   -- Social-graph discoveries
+    relationship_intelligence   -- Social-graph discoveries (contact_gap, reciprocity_imbalance, fast_responder)
     communication_style         -- Writing-style observations from linguistic profile
     temporal_pattern            -- Chronotype and productive-hour insights from temporal profile
     mood_trend                  -- Mood trajectory insights derived from mood_history
@@ -121,6 +121,11 @@ class InsightEngine:
             logger.exception("contact_gap correlator failed")
 
         try:
+            raw.extend(self._relationship_intelligence_insights())
+        except Exception:
+            logger.exception("relationship_intelligence correlator failed")
+
+        try:
             raw.extend(self._email_volume_insights())
         except Exception:
             logger.exception("email_volume correlator failed")
@@ -225,6 +230,12 @@ class InsightEngine:
         category_to_source = {
             "place": "location.visits",
             "contact_gap": "messaging.direct",
+            # Relationship intelligence insights derive from the relationships
+            # signal profile (inbound/outbound counts, response time ring buffers).
+            # Weighted against direct messaging — the source with the most relationship
+            # signal data.
+            "reciprocity_imbalance": "messaging.direct",
+            "fast_responder": "messaging.direct",
             "email_volume": "email.work",
             "communication_style": "messaging.direct",
             # Inbound style mismatch insights derive from comparing received
@@ -603,6 +614,172 @@ class InsightEngine:
             return [str(t) for t in topics if t and str(t).strip()][:limit]
         except (json.JSONDecodeError, TypeError):
             return []
+
+    # ------------------------------------------------------------------
+    # Correlator: Relationship Intelligence (reciprocity & fast responders)
+    # ------------------------------------------------------------------
+
+    def _relationship_intelligence_insights(self) -> list[Insight]:
+        """Surface social-graph discoveries from the relationships signal profile.
+
+        Produces two sub-categories of ``relationship_intelligence`` insights:
+
+        **reciprocity_imbalance** — flags relationships with a strong directional
+        asymmetry in who initiates conversations.  When the user sends ≥ 85% of
+        all messages with a contact (outbound/(inbound+outbound) ≥ 0.85), the
+        relationship is one-sided: the user always reaches out but the contact
+        rarely reciprocates.  The inverse (≤ 15% outbound) flags contacts who
+        consistently reach out but rarely hear back from the user.
+
+        **fast_responder** — identifies contacts the user responds to unusually
+        quickly (avg response time < 30 minutes across ≥ 5 measured replies).
+        Fast response time is an implicit signal of high relationship priority
+        even when the contact has not been explicitly tagged as important.
+
+        Filtering:
+            - Marketing/automated senders are excluded via
+              ``is_marketing_or_noreply``.  These have structural outbound==0
+              patterns that would otherwise flood the reciprocity list.
+            - Contacts with fewer than 10 total interactions are skipped for
+              reciprocity (not enough data to establish a pattern).
+            - Contacts with fewer than 5 measured response times are skipped
+              for fast_responder (one quick reply doesn't establish a pattern).
+
+        Deduplication:
+            Each insight uses ``type:category:entity`` as its dedup key, so
+            the same contact cannot generate duplicate insights within the
+            staleness window (default 7 days / 168 hours).
+
+        Examples::
+
+            # Alice always emails first — user rarely initiates
+            "Almost all messages from Alice Smith go unanswered — she reaches
+             out first 92% of the time. Consider initiating contact."
+
+            # Bob gets very fast replies
+            "You respond to Bob Jones in under 8 minutes on average — he may
+             be a high-priority contact."
+        """
+        insights: list[Insight] = []
+
+        rel_profile = self.ums.get_signal_profile("relationships")
+        if not rel_profile:
+            return []
+
+        contacts = rel_profile["data"].get("contacts", {})
+        if not contacts:
+            return []
+
+        # Build name map once for all contacts in this pass.
+        name_map = self._load_contact_name_map()
+
+        for addr, data in contacts.items():
+            # Skip marketing/automated senders — they always have outbound==0
+            # patterns that would pollute the reciprocity insight with
+            # "newsletter@company.com always initiates" false alarms.
+            if is_marketing_or_noreply(addr):
+                continue
+
+            inbound = data.get("inbound_count", 0)
+            outbound = data.get("outbound_count", 0)
+            total = inbound + outbound
+            label = self._display_name(addr, name_map)
+
+            # --- Sub-insight 1: Reciprocity imbalance ---
+            # Only fire when there is enough evidence to establish a pattern
+            # (10+ interactions) and the imbalance is clear (≥ 85% one-sided).
+            if total >= 10:
+                ratio = outbound / total  # fraction of messages the user sent
+                if ratio >= 0.85:
+                    # User initiates ≥ 85% of conversations — one-sided relationship.
+                    pct = int(round(ratio * 100))
+                    confidence = min(0.8, 0.5 + (ratio - 0.85) * 2.0)
+                    insight = Insight(
+                        type="relationship_intelligence",
+                        summary=(
+                            f"You initiate {pct}% of conversations with {label}. "
+                            f"They rarely reach out first — consider whether this "
+                            f"relationship is balanced."
+                        ),
+                        confidence=confidence,
+                        evidence=[
+                            f"outbound_count={outbound}",
+                            f"inbound_count={inbound}",
+                            f"outbound_ratio={ratio:.2f}",
+                            f"total_interactions={total}",
+                        ],
+                        category="reciprocity_imbalance",
+                        entity=addr,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+                elif ratio <= 0.15 and outbound > 0:
+                    # Contact initiates ≥ 85% of conversations — user is mostly
+                    # a responder.  Only surface when the user has sent at least
+                    # one message (outbound > 0) to confirm it is a real two-way
+                    # channel, not just a mailing list the filter missed.
+                    pct = int(round((1 - ratio) * 100))
+                    confidence = min(0.75, 0.45 + (0.15 - ratio) * 2.0)
+                    insight = Insight(
+                        type="relationship_intelligence",
+                        summary=(
+                            f"{label} initiates {pct}% of your conversations. "
+                            f"You rarely reach out first — they may value this "
+                            f"relationship more than your message history suggests."
+                        ),
+                        confidence=confidence,
+                        evidence=[
+                            f"outbound_count={outbound}",
+                            f"inbound_count={inbound}",
+                            f"outbound_ratio={ratio:.2f}",
+                            f"total_interactions={total}",
+                        ],
+                        category="reciprocity_imbalance",
+                        entity=addr,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+            # --- Sub-insight 2: Fast responder ---
+            # Surface when the user has at least 5 measured response times and
+            # their average response to this contact is under 30 minutes.
+            # A 30-minute threshold is conservative: it captures genuine
+            # high-priority responders while filtering out contacts the user
+            # responds to "fairly quickly" (1–2 hours).
+            resp_times = data.get("response_times_seconds", [])
+            if len(resp_times) >= 5:
+                avg_seconds = sum(resp_times) / len(resp_times)
+                fast_threshold_seconds = 1800  # 30 minutes
+                if avg_seconds < fast_threshold_seconds:
+                    avg_minutes = int(avg_seconds / 60)
+                    # Higher confidence when the average is very fast (< 5 min)
+                    # vs. merely fast (< 30 min).
+                    confidence = min(0.8, 0.55 + (1 - avg_seconds / fast_threshold_seconds) * 0.25)
+                    insight = Insight(
+                        type="relationship_intelligence",
+                        summary=(
+                            f"You respond to {label} in under {max(1, avg_minutes)} minutes "
+                            f"on average — they appear to be a high-priority contact."
+                        ),
+                        confidence=confidence,
+                        evidence=[
+                            f"avg_response_time_seconds={int(avg_seconds)}",
+                            f"response_time_samples={len(resp_times)}",
+                            f"avg_response_minutes={avg_minutes}",
+                        ],
+                        category="fast_responder",
+                        entity=addr,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+        logger.debug(
+            "relationship_intelligence_insights: %d insights generated "
+            "(reciprocity + fast_responder)",
+            len(insights),
+        )
+        return insights
 
     # ------------------------------------------------------------------
     # Correlator: Email Volume by Day of Week
