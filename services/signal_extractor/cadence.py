@@ -194,4 +194,198 @@ class CadenceExtractor(BaseExtractor):
         if len(data.get("response_times", [])) > 1000:
             data["response_times"] = data["response_times"][-1000:]
 
+        # Recompute derived metrics from the updated raw histograms so that
+        # CadenceProfile fields (peak_hours, quiet_hours_observed,
+        # avg_response_time_by_domain) always reflect the latest data.
+        self._compute_derived_metrics(data)
+
         self.ums.update_signal_profile("cadence", data)
+
+    # ------------------------------------------------------------------
+    # Derived-metric computation — run after every profile update
+    # ------------------------------------------------------------------
+
+    def _compute_derived_metrics(self, data: dict) -> None:
+        """Recompute all derived CadenceProfile fields from raw histogram data.
+
+        Called at the end of every ``_update_profile`` invocation so that the
+        three aggregate fields defined in ``CadenceProfile`` but not produced
+        by the incremental signal collection stay in sync with the raw data:
+
+          - ``peak_hours``               — hours of highest communication activity
+          - ``quiet_hours_observed``     — naturally quiet (typically sleep) windows
+          - ``avg_response_time_by_domain`` — reply latency grouped by email domain
+
+        This is a pure recomputation (no I/O): it mutates *data* in place and
+        the caller is responsible for persisting to the store.
+
+        Requires a minimum of 50 total activity samples before producing any
+        derived output, so early-lifecycle profiles don't generate noisy results.
+        """
+        self._compute_peak_hours(data)
+        self._compute_quiet_hours(data)
+        self._compute_domain_response_times(data)
+
+    def _compute_peak_hours(self, data: dict) -> None:
+        """Derive peak activity hours from the hourly_activity histogram.
+
+        Peak hours are those where the activity count exceeds the mean by at
+        least half a standard deviation.  Using 0.5σ (rather than 1σ) keeps
+        broad active windows (e.g., a user active 9 AM–5 PM) fully labelled
+        rather than only capturing the single busiest hour.
+
+        Requires at least 50 total samples across all hour buckets to produce a
+        statistically meaningful result; silently skips if insufficient data.
+
+        Stores results in ``data["peak_hours"]`` as a sorted list of ints
+        in the range 0–23 (UTC hours).
+
+        Example:
+            If a user sends most messages between 9 and 17:
+            >>> data["peak_hours"]
+            [9, 10, 11, 12, 13, 14, 15, 16, 17]
+        """
+        hourly = data.get("hourly_activity", {})
+        if not hourly:
+            return
+
+        # Convert string keys ("0"–"23") to int counts, filling missing hours
+        # with 0 so that the mean and standard deviation are computed across
+        # all 24 hour buckets — not just the ones that have observed activity.
+        # This prevents inflated thresholds when only a few hours have data.
+        counts = {int(h): v for h, v in hourly.items()}
+        total_samples = sum(counts.values())
+
+        # Need at least 50 samples for a reliable estimate.
+        if total_samples < 50:
+            return
+
+        # Full 24-element array including hours with zero activity.
+        values = [counts.get(h, 0) for h in range(24)]
+        mean = sum(values) / len(values)
+        # Population standard deviation across all known hour buckets.
+        variance = sum((v - mean) ** 2 for v in values) / len(values)
+        std_dev = variance ** 0.5
+
+        # Threshold: mean + 0.5 * σ so broad active windows are fully captured.
+        threshold = mean + 0.5 * std_dev
+        data["peak_hours"] = sorted(h for h, v in counts.items() if v > threshold)
+
+    def _compute_quiet_hours(self, data: dict) -> None:
+        """Derive quiet (typically sleep) windows from the hourly_activity histogram.
+
+        A quiet window is a contiguous span of hours whose activity count falls
+        at or below 10% of the peak hour's count.  The algorithm handles
+        midnight-wrapping windows correctly (e.g., 22:00–06:00) by using an
+        active (non-quiet) hour as the scan anchor rather than always starting
+        at 00:00.
+
+        Requires at least 50 total samples and a minimum span of 3 contiguous
+        hours to qualify as a quiet window.
+
+        Stores results in ``data["quiet_hours_observed"]`` as a list of
+        ``(start_hour, end_hour)`` tuples where both values are in 0–23.
+        When a span crosses midnight, ``end_hour < start_hour``
+        (e.g., ``(22, 6)`` means 22:00 to 06:00).
+
+        Example:
+            >>> data["quiet_hours_observed"]
+            [(22, 6)]   # sleep window from 10 PM to 6 AM
+        """
+        hourly = data.get("hourly_activity", {})
+        if not hourly:
+            return
+
+        counts = {int(h): v for h, v in hourly.items()}
+        total_samples = sum(counts.values())
+
+        if total_samples < 50:
+            return
+
+        # Build a full 24-element list filling missing hours with 0.
+        full = [counts.get(h, 0) for h in range(24)]
+        peak = max(full)
+        if peak == 0:
+            return
+
+        # Threshold: ≤10% of peak count qualifies as "quiet".
+        threshold = peak * 0.10
+        quiet_set = {h for h in range(24) if full[h] <= threshold}
+
+        if not quiet_set:
+            return
+
+        # Use the first non-quiet hour as the scan anchor so that spans which
+        # cross midnight (e.g., 22–06) are detected as a single contiguous run.
+        non_quiet_anchor = next(
+            (h for h in range(24) if full[h] > threshold), None
+        )
+        if non_quiet_anchor is None:
+            # Pathological case: every hour is quiet — store as single 24-h span.
+            data["quiet_hours_observed"] = [(0, 0)]
+            return
+
+        spans: list[tuple[int, int]] = []
+        i = 0
+        while i < 24:
+            hour = (non_quiet_anchor + i) % 24
+            if hour in quiet_set:
+                # Entering a new quiet span — extend until the span ends.
+                span_start_offset = i
+                while i < 24 and (non_quiet_anchor + i) % 24 in quiet_set:
+                    i += 1
+                length = i - span_start_offset
+                if length >= 3:
+                    start_h = (non_quiet_anchor + span_start_offset) % 24
+                    end_h = (non_quiet_anchor + i) % 24
+                    spans.append((start_h, end_h))
+            else:
+                i += 1
+
+        if spans:
+            data["quiet_hours_observed"] = spans
+
+    def _compute_domain_response_times(self, data: dict) -> None:
+        """Derive average response times grouped by email domain.
+
+        Iterates over the raw ``per_contact_response_times`` dict (contact →
+        list[float seconds]) and groups entries by the domain portion of each
+        email address (the part after ``@``).  Phone numbers and other
+        non-email identifiers are skipped.
+
+        Domains with fewer than 3 data points are excluded to avoid
+        single-sample noise (e.g., one email from an unusual domain).
+
+        Stores results in ``data["avg_response_time_by_domain"]`` as a dict
+        mapping domain string → average response time in seconds.
+
+        Example:
+            If the user replies to gmail.com addresses in ~30 min and to
+            corp.example.com addresses in ~4 hours:
+            >>> data["avg_response_time_by_domain"]
+            {"gmail.com": 1820.0, "corp.example.com": 14400.0}
+        """
+        per_contact = data.get("per_contact_response_times", {})
+        if not per_contact:
+            return
+
+        # Accumulate per-domain response time lists.
+        domain_times: dict[str, list[float]] = {}
+        for contact, times in per_contact.items():
+            if "@" not in contact:
+                # Skip phone numbers and other non-email identifiers.
+                continue
+            domain = contact.split("@")[-1].lower()
+            if domain not in domain_times:
+                domain_times[domain] = []
+            domain_times[domain].extend(times)
+
+        # Compute average per domain; require ≥3 samples for reliability.
+        avg_by_domain = {
+            domain: sum(times) / len(times)
+            for domain, times in domain_times.items()
+            if len(times) >= 3
+        }
+
+        if avg_by_domain:
+            data["avg_response_time_by_domain"] = avg_by_domain
