@@ -218,5 +218,8 @@ def test_logging_when_no_bidirectional_contacts(user_model_store, caplog):
     with caplog.at_level(logging.DEBUG):
         inferrer.infer_from_relationship_profile()
 
-    assert "No bidirectional contacts found" in caplog.text, \
+    # Log message was updated in the marketing-filter PR to reflect the new
+    # two-stage filtering (outbound_count > 0, then is_marketing_or_noreply).
+    assert ("No human bidirectional contacts found" in caplog.text or
+            "No bidirectional contacts found" in caplog.text), \
         "Should log when all contacts are filtered out"
