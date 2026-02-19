@@ -263,8 +263,10 @@ class TestAssembleBriefingContext:
         assert "Messages in last 12 hours: 8" in context
 
     def test_briefing_includes_semantic_facts(self, db, user_model_store):
-        """Should include high-confidence semantic facts."""
-        # Seed semantic facts with different confidence levels
+        """Should include high-confidence semantic facts with new categorized format."""
+        # Seed semantic facts with different confidence levels.
+        # The new _get_semantic_facts_context() groups facts by category and
+        # formats them with human-readable labels and confidence scores.
         user_model_store.update_semantic_fact(
             key="preferred_language",
             category="preference",
@@ -277,7 +279,7 @@ class TestAssembleBriefingContext:
             value="Acme Corp",
             confidence=0.8,
         )
-        # Low confidence fact (should not appear - below 0.6 threshold)
+        # Low confidence fact (should not appear — below 0.6 threshold)
         user_model_store.update_semantic_fact(
             key="hobby",
             category="preference",
@@ -288,16 +290,18 @@ class TestAssembleBriefingContext:
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_briefing_context()
 
-        assert "Known facts about user:" in context
-        # Values are stored as JSON, so they appear with quotes
-        assert 'preferred_language: "English"' in context or "preferred_language: English" in context
-        assert 'works_at: "Acme Corp"' in context or "works_at: Acme Corp" in context
+        # New header from _get_semantic_facts_context()
+        assert "Layer 2 Semantic Memory" in context
+        # Values appear with human-readable label and confidence
+        assert "English" in context
+        assert "Acme" in context
         # Low confidence fact should be filtered out
         assert "painting" not in context
 
     def test_briefing_semantic_facts_limit_20(self, db, user_model_store):
-        """Should limit semantic facts to 20."""
-        # Seed 25 high-confidence facts
+        """Should limit semantic facts to at most 18 (values≤5 + behavioral≤5 + prefs≤8)."""
+        # Seed 25 high-confidence preference facts.  The per-group caps are
+        # values ≤ 5, behavioral ≤ 5, preferences ≤ 8 — so at most 18 total.
         for i in range(25):
             user_model_store.update_semantic_fact(
                 key=f"fact_{i}",
@@ -309,10 +313,13 @@ class TestAssembleBriefingContext:
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_briefing_context()
 
-        # Count fact lines (each starts with "- ")
-        facts_section = context[context.find("Known facts"):]
-        fact_lines = [line for line in facts_section.split("\n") if line.strip().startswith("- fact_")]
-        assert len(fact_lines) <= 20
+        # Count fact lines in the semantic section (each starts with "  - ")
+        facts_section = context[context.find("Layer 2 Semantic Memory"):]
+        fact_lines = [
+            line for line in facts_section.split("\n")
+            if line.strip().startswith("- fact_")
+        ]
+        assert len(fact_lines) <= 18
 
     def test_briefing_includes_mood_signals(self, db, user_model_store):
         """Should include recent mood context."""
@@ -1334,8 +1341,10 @@ class TestIntegration:
         assert "Current time:" in context  # Timestamp
         assert "Review PR" in context  # Tasks
         assert "Messages in last 12 hours: 1" in context  # Unread count
-        # Semantic facts values are stored as JSON
-        assert 'role: "software_engineer"' in context or "role: software_engineer" in context
+        # Semantic facts: new categorized format shows the value without JSON quotes
+        # and with a capitalized label and confidence score (PR #265).
+        assert "software_engineer" in context  # value present regardless of format
+        assert "Layer 2 Semantic Memory" in context  # new section header
         assert "valence" in context  # Mood signals
 
     def test_full_draft_integration(self, db, user_model_store):
@@ -1776,7 +1785,8 @@ class TestRecentEpisodesContext:
         briefing = assembler.assemble_briefing_context()
 
         episodes_pos = briefing.find("Recent activity (last 24h):")
-        facts_pos = briefing.find("Known facts about user:")
+        # New header from _get_semantic_facts_context() (PR #265)
+        facts_pos = briefing.find("Layer 2 Semantic Memory")
 
         assert episodes_pos != -1, "Episodes section must be present"
         assert facts_pos != -1, "Semantic facts section must be present"

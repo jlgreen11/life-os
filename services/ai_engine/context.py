@@ -116,14 +116,16 @@ class ContextAssembler:
         if episodes_context:
             parts.append(episodes_context)
 
-        # Section 10: Semantic facts the system has learned about the user
-        # (e.g., "preferred_language: English", "works_at: Acme Corp").
-        # Only facts with confidence >= 0.6 are included to avoid noise.
-        # Capped at 20 facts to respect the token budget.
-        facts = self.ums.get_semantic_facts(min_confidence=0.6)
-        if facts:
-            fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:20]]
-            parts.append("Known facts about user:\n" + "\n".join(fact_lines))
+        # Section 10: Semantic facts (Layer 2 — Semantic Memory) learned about
+        # the user, organized into human-readable categories: values, behavioral
+        # patterns, and preferences.  The helper method filters out low-signal
+        # noise (generic topic words, per-contact relationship entries already
+        # covered by the relationships profile) and groups remaining facts so
+        # the LLM receives a coherent portrait of *who the user is* rather than
+        # a raw key-value dump.
+        semantic_context = self._get_semantic_facts_context()
+        if semantic_context:
+            parts.append(semantic_context)
 
         # Section 11: Habitual behavioral routines (Layer 3 Procedural Memory).
         # Routines are time- or location-triggered behavioral patterns detected
@@ -790,6 +792,178 @@ class ContextAssembler:
             # Fail-open: missing routines degrade the briefing slightly but
             # must never prevent it from generating a response.
             return ""
+
+    def _get_semantic_facts_context(self) -> str:
+        """Build a categorized Layer 2 (Semantic Memory) section for the briefing.
+
+        The raw semantic_facts table stores hundreds of inferred key-value pairs
+        that span multiple conceptual categories: explicitly-stated values
+        ("work_life_boundaries"), behavioral observations ("most_productive_day"),
+        inferred preferences ("communication_style_directness"), and lower-signal
+        interest tokens ("interest_lspace").  Dumping them all flat makes it
+        impossible for the LLM to weight them correctly.
+
+        This method organises high-confidence facts (>= 0.6) into three
+        human-readable groups:
+
+          values        — Explicitly-inferred value judgements (e.g. "weekday_only_work")
+          behavioral    — Observable patterns keyed on known prefixes
+                          (communication_style_*, peak_*, stress_*, most_productive_*)
+          preferences   — Remaining implicit preferences, minus per-contact
+                          relationship entries (already covered by the relationships
+                          signal profile) and generic noise tokens (interest_* facts
+                          whose value is a single common word).
+
+        Relationship-specific facts (relationship_balance_*, relationship_priority_*)
+        are excluded because 53+ such entries would dominate the section while
+        adding little new information beyond what the unread/priority-contact
+        breakdown already shows.
+
+        Generic interest noise tokens (interest_lspace, interest_here, interest_more,
+        interest_please, etc.) are excluded because they are HTML artefacts or
+        stop-words that do not represent real interests.  A token is classified
+        as noise when the ``interest_*`` key's value is a single word of six
+        characters or fewer — short strings that match the stop-word profile.
+
+        Results are capped per group (values ≤ 5, behavioral ≤ 5, preferences ≤ 8)
+        and sorted by confidence descending within each group so the most reliable
+        signals appear first.
+
+        Returns an empty string when no qualifying facts exist, which causes the
+        caller to omit this section entirely (no "none" noise in the briefing).
+
+        Example output::
+
+            What the system knows about you (Layer 2 Semantic Memory):
+              Values:
+              - Work-life boundaries: weekday_only_work (confidence: 0.95)
+              - Flexible work boundaries: flexible_boundaries (confidence: 0.95)
+              Behavioral patterns:
+              - Communication directness: direct (confidence: 1.00)
+              - Peak communication hour: 5 (confidence: 1.00)
+              - Stress baseline: low_stress (confidence: 1.00)
+              - Most productive day: tuesday (confidence: 0.85)
+              Preferences:
+              - Work location type: home_office (confidence: 1.00)
+              - Primary work location: Residence Inn Clayton (confidence: 1.00)
+        """
+        try:
+            facts = self.ums.get_semantic_facts(min_confidence=0.6)
+        except Exception:
+            # Fail-open: missing semantic facts degrade context quality slightly
+            # but must never prevent the briefing from generating.
+            return ""
+
+        if not facts:
+            return ""
+
+        # ------------------------------------------------------------------ #
+        # Known-noise prefixes for relationship-specific keys.  These 53+     #
+        # facts are per-contact signals that belong in the relationships       #
+        # profile view, not the semantic identity section.                     #
+        # ------------------------------------------------------------------ #
+        _RELATIONSHIP_PREFIXES = ("relationship_balance_", "relationship_priority_")
+
+        # ------------------------------------------------------------------ #
+        # Behavioral-pattern key prefixes that deserve their own named group. #
+        # Sorted from most specific to least so the correct prefix matches.   #
+        # ------------------------------------------------------------------ #
+        _BEHAVIORAL_PREFIXES = (
+            "communication_style_",
+            "peak_communication_",
+            "stress_baseline",
+            "most_productive_",
+            "incoming_pressure_",
+            "chronotype",
+        )
+
+        values_facts: list[dict] = []
+        behavioral_facts: list[dict] = []
+        preference_facts: list[dict] = []
+
+        for fact in facts:
+            key: str = fact["key"]
+            category: str = fact.get("category") or ""
+            value = fact["value"]
+            confidence: float = fact.get("confidence", 0.0)
+
+            # Skip per-contact relationship entries — too numerous and already
+            # represented in the unread/priority-contact breakdown.
+            if any(key.startswith(p) for p in _RELATIONSHIP_PREFIXES):
+                continue
+
+            # Skip repetitive location entries that duplicate primary_work_location.
+            # The "frequent_location_*" and "location_domain_*" keys repeat the
+            # same place name as the primary_work_location fact.
+            if key.startswith("frequent_location_") or key.startswith("location_domain_"):
+                continue
+
+            # Skip generic interest noise tokens.  An ``interest_*`` fact whose
+            # value is a single word of ≤ 6 characters is almost certainly an
+            # HTML artefact or stop-word (lspace, rspace, here, please, more,
+            # free, shop, line) rather than a genuine topic of interest.
+            if key.startswith("interest_"):
+                val_str = str(value).strip('"').strip()
+                if len(val_str) <= 6:
+                    continue
+
+            # Route to the correct bucket.
+            if category == "values":
+                values_facts.append(fact)
+            elif any(key.startswith(p) for p in _BEHAVIORAL_PREFIXES) or key == "stress_baseline":
+                behavioral_facts.append(fact)
+            else:
+                preference_facts.append(fact)
+
+        # Sort each group by confidence descending and apply per-group caps.
+        values_facts = sorted(values_facts, key=lambda f: -f.get("confidence", 0))[:5]
+        behavioral_facts = sorted(behavioral_facts, key=lambda f: -f.get("confidence", 0))[:5]
+        preference_facts = sorted(preference_facts, key=lambda f: -f.get("confidence", 0))[:8]
+
+        if not any([values_facts, behavioral_facts, preference_facts]):
+            return ""
+
+        lines: list[str] = ["What the system knows about you (Layer 2 Semantic Memory):"]
+
+        def _label(key: str) -> str:
+            """Convert a snake_case key to a human-readable label.
+
+            Example::
+                _label("most_productive_day")  → "Most productive day"
+                _label("communication_style_directness")  → "Communication style directness"
+            """
+            return key.replace("_", " ").capitalize()
+
+        def _fmt_value(value: object) -> str:
+            """Strip JSON-encoding quotes from string values for clean display."""
+            s = str(value).strip('"').strip()
+            return s
+
+        if values_facts:
+            lines.append("  Values:")
+            for f in values_facts:
+                lines.append(
+                    f"  - {_label(f['key'])}: {_fmt_value(f['value'])}"
+                    f" (confidence: {f['confidence']:.2f})"
+                )
+
+        if behavioral_facts:
+            lines.append("  Behavioral patterns:")
+            for f in behavioral_facts:
+                lines.append(
+                    f"  - {_label(f['key'])}: {_fmt_value(f['value'])}"
+                    f" (confidence: {f['confidence']:.2f})"
+                )
+
+        if preference_facts:
+            lines.append("  Preferences:")
+            for f in preference_facts:
+                lines.append(
+                    f"  - {_label(f['key'])}: {_fmt_value(f['value'])}"
+                    f" (confidence: {f['confidence']:.2f})"
+                )
+
+        return "\n".join(lines)
 
     def _get_unread_context(self) -> str:
         """Count recent inbound messages (emails + chat) from the last 12 hours.
