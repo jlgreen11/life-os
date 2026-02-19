@@ -319,7 +319,10 @@ async def test_generate_briefing_uses_local_model(db, user_model_store):
             mock_local.assert_called_once()
             call_args = mock_local.call_args[0]
             assert "personal assistant" in call_args[0].lower()
-            assert "concise" in call_args[0].lower()
+            # "concise" was in the old 4-line prompt; the new prompt uses "briefing"
+            # and a structured synthesis guide — check for an invariant that must
+            # always be in any valid briefing system prompt.
+            assert "morning briefing" in call_args[0].lower()
             assert call_args[1] == "context data"
 
             assert result == "Good morning! Here's your briefing."
