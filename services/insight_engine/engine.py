@@ -298,6 +298,76 @@ class InsightEngine:
         return weighted
 
     # ------------------------------------------------------------------
+    # Contact name resolution helpers
+    # ------------------------------------------------------------------
+
+    def _load_contact_name_map(self) -> dict[str, str]:
+        """Load all email-to-contact-name mappings from the entities database.
+
+        Performs a single JOIN across ``contact_identifiers`` and ``contacts``
+        to build a complete email → display-name dictionary.  Called once per
+        correlator that needs to humanize e-mail addresses in insight summaries
+        (``_contact_gap_insights``, ``_inbound_style_insights``, and
+        ``_cadence_response_insights``).
+
+        The query is intentionally a full scan: the contacts table typically
+        has < 1 000 rows and we amortise the cost across all contacts processed
+        in a single correlator pass.
+
+        Returns:
+            Dict mapping **lowercase** e-mail addresses to their contact
+            display names.  Returns an empty dict if the entities database is
+            unavailable or the tables do not yet exist (e.g. first-run before
+            any connector has synced contacts).
+
+        Examples::
+
+            >>> engine._load_contact_name_map()
+            {'alice@example.com': 'Alice Smith', 'bob@example.com': 'Bob Jones'}
+        """
+        try:
+            with self.db.get_connection("entities") as conn:
+                rows = conn.execute(
+                    """SELECT ci.identifier, c.name
+                       FROM contact_identifiers ci
+                       JOIN contacts c ON c.id = ci.contact_id
+                       WHERE ci.identifier_type = 'email'"""
+                ).fetchall()
+                return {row["identifier"].lower(): row["name"] for row in rows}
+        except Exception:
+            logger.debug("Could not load contact name map from entities DB")
+            return {}
+
+    def _display_name(self, email: str, name_map: dict[str, str]) -> str:
+        """Resolve an e-mail address to a human-readable contact name.
+
+        Looks up *email* (case-insensitive) in *name_map*, which should be the
+        dict returned by ``_load_contact_name_map()``.  Falls back to the raw
+        e-mail address when no contact record exists, so insight summaries
+        remain informative even when the contacts table is sparse.
+
+        Args:
+            email:    E-mail address key used in the signal profiles.
+            name_map: Dict from ``_load_contact_name_map()``, mapping lowercase
+                      e-mail addresses to display names.
+
+        Returns:
+            Display name string (e.g. ``"Alice Smith"``) or, on a miss, the
+            original e-mail address (e.g. ``"alice@example.com"``).
+
+        Examples::
+
+            >>> engine._display_name(
+            ...     "alice@example.com",
+            ...     {"alice@example.com": "Alice Smith"},
+            ... )
+            'Alice Smith'
+            >>> engine._display_name("unknown@example.com", {})
+            'unknown@example.com'
+        """
+        return name_map.get(email.lower(), email)
+
+    # ------------------------------------------------------------------
     # Correlator: Place Frequency
     # ------------------------------------------------------------------
 
@@ -378,6 +448,8 @@ class InsightEngine:
 
         contacts = rel_profile["data"].get("contacts", {})
         now = datetime.now(timezone.utc)
+        # Load email → display-name map once; correlator iterates many contacts.
+        name_map = self._load_contact_name_map()
         skipped_marketing = 0
         skipped_inbound_only = 0
 
@@ -432,10 +504,14 @@ class InsightEngine:
 
             if days_since > avg_gap * 1.5 and days_since > 7:
                 confidence = min(0.8, 0.4 + (days_since / max(avg_gap, 1) - 1.5) * 0.15)
+                # Use display name when a contact record exists; fall back to
+                # the raw email address so the insight remains actionable when
+                # the contacts table hasn't been populated yet.
+                label = self._display_name(addr, name_map)
                 insight = Insight(
                     type="relationship_intelligence",
                     summary=(
-                        f"It has been {int(days_since)} days since you last contacted {addr} "
+                        f"It has been {int(days_since)} days since you last contacted {label} "
                         f"(usual interval ~{int(avg_gap)} days)."
                     ),
                     confidence=confidence,
@@ -445,6 +521,8 @@ class InsightEngine:
                         f"interaction_count={count}",
                     ],
                     category="contact_gap",
+                    # Keep the email address as the entity so the dedup key
+                    # is stable even if the display name changes in contacts.
                     entity=addr,
                 )
                 insight.compute_dedup_key()
@@ -986,6 +1064,9 @@ class InsightEngine:
 
         per_contact_avgs = inbound_profile["data"].get("per_contact_averages", {})
 
+        # Load email → display-name map once for the entire correlator pass.
+        name_map = self._load_contact_name_map()
+
         # Collect all qualifying mismatches before sorting so we can cap cleanly.
         # Each tuple: (gap, contact_email, averages_dict)
         mismatches: list[tuple[float, str, dict]] = []
@@ -1026,10 +1107,13 @@ class InsightEngine:
                 direction = "formally"
                 advice = "Consider matching their professional register."
 
+            # Resolve email to display name; fall back to raw address on miss.
+            label = self._display_name(contact_email, name_map)
+
             insight = Insight(
                 type="communication_style",
                 summary=(
-                    f"{contact_email} writes {direction} "
+                    f"{label} writes {direction} "
                     f"(formality {contact_formality:.2f}), "
                     f"while your baseline is {user_formality:.2f}. "
                     f"{advice}"
@@ -2275,6 +2359,10 @@ class InsightEngine:
 
         insights: list[Insight] = []
 
+        # Load email → display-name map once; used in Sub-insight 2 to replace
+        # raw email addresses with human-readable contact names in summaries.
+        name_map = self._load_contact_name_map()
+
         # ----------------------------------------------------------------
         # Sub-insight 1: Response time baseline
         # ----------------------------------------------------------------
@@ -2336,10 +2424,15 @@ class InsightEngine:
                 else:
                     ct_str = f"{ct_hours:.1f}h"
 
+                # Resolve the email to a display name when a contact record
+                # exists; fall back to the raw address so the insight remains
+                # actionable in sparse-contacts deployments.
+                label = self._display_name(contact_id, name_map)
+
                 insight = Insight(
                     type="behavioral_pattern",
                     summary=(
-                        f"You reply to {contact_id} notably faster than average "
+                        f"You reply to {label} notably faster than average "
                         f"({ct_str} vs {global_hours:.1f}h overall) — a strong "
                         f"priority signal."
                     ),
@@ -2351,6 +2444,8 @@ class InsightEngine:
                         f"n_samples={n_rts}",
                     ],
                     category="fastest_contacts",
+                    # Preserve the email as the entity so the dedup key is
+                    # stable even if the contact name changes.
                     entity=contact_id,
                     staleness_ttl_hours=168,
                 )
