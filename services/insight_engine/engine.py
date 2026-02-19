@@ -286,6 +286,14 @@ class InsightEngine:
             "spatial_top_location": "location.visits",
             "spatial_work_location": "location.visits",
             "spatial_location_diversity": "location.visits",
+            # Workflow pattern insights (from _workflow_pattern_insights).  Email and task
+            # workflow patterns are derived from email-processing behavior; calendar workflow
+            # patterns from meeting-prep signals; interaction patterns from direct messaging
+            # cadence (batch replies, quick responses).
+            "workflow_pattern_email": "email.work",
+            "workflow_pattern_task": "email.work",
+            "workflow_pattern_calendar": "email.work",
+            "workflow_pattern_interaction": "messaging.direct",
         }
 
         weighted: list[Insight] = []
