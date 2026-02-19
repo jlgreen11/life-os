@@ -8,6 +8,7 @@ and the dynamics of each relationship.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -15,6 +16,65 @@ from datetime import datetime, timezone
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
+
+logger = logging.getLogger(__name__)
+
+
+def _compute_frequency_days(timestamps: list[str]) -> float | None:
+    """Compute the average number of days between consecutive interactions.
+
+    Used to populate ``contacts.contact_frequency_days`` — a convenience
+    metric that tells the system (and the LLM) how often the user typically
+    interacts with a given contact, without requiring a traversal of the
+    signal profile ring buffer.
+
+    Args:
+        timestamps: List of ISO 8601 timestamp strings in insertion order
+            (the ring buffer stored in the relationship signal profile).
+
+    Returns:
+        Average gap in days between consecutive interactions, or ``None``
+        if fewer than two timestamps are present (can't compute a gap from
+        a single data point).
+
+    Example::
+
+        >>> _compute_frequency_days([
+        ...     "2026-02-01T10:00:00Z",
+        ...     "2026-02-08T10:00:00Z",   # +7 days
+        ...     "2026-02-15T10:00:00Z",   # +7 days
+        ... ])
+        7.0
+    """
+    if len(timestamps) < 2:
+        return None
+
+    try:
+        # Parse and sort the ring-buffer entries; in practice they arrive
+        # in chronological order, but sorting guards against edge cases.
+        parsed = sorted(
+            datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            for ts in timestamps
+            if ts
+        )
+        if len(parsed) < 2:
+            return None
+
+        # Compute gaps between every pair of consecutive timestamps and
+        # filter out negative/zero gaps (clock skew or duplicate entries).
+        gaps_seconds = [
+            (parsed[i] - parsed[i - 1]).total_seconds()
+            for i in range(1, len(parsed))
+            if (parsed[i] - parsed[i - 1]).total_seconds() > 0
+        ]
+        if not gaps_seconds:
+            return None
+
+        # Convert from seconds to days.
+        return sum(gaps_seconds) / len(gaps_seconds) / 86_400.0
+
+    except Exception:
+        return None
 
 
 class RelationshipExtractor(BaseExtractor):
@@ -223,6 +283,92 @@ class RelationshipExtractor(BaseExtractor):
             )
 
         self.ums.update_signal_profile("relationships", data)
+
+        # Denormalize key metrics back to the contacts table so that contact
+        # records are self-contained and fast to query without joining signal
+        # profiles.  See _sync_contact_metrics() for details.
+        self._sync_contact_metrics(data["contacts"])
+
+    def _sync_contact_metrics(self, contacts_data: dict) -> None:
+        """Denormalize relationship metrics into the contacts table.
+
+        The relationship signal profile (stored in ``user_model.db``) is the
+        authoritative source for per-contact interaction data.  However, the
+        ``contacts`` table in ``entities.db`` exposes three columns that mirror
+        a subset of this data for convenience:
+
+          - ``typical_response_time`` — user's average reply latency in seconds
+          - ``last_contact`` — ISO timestamp of the most recent interaction
+          - ``contact_frequency_days`` — average days between interactions
+
+        These columns were defined in the schema but were never populated,
+        making contact records incomplete.  This method closes that gap by
+        writing the computed values back after every signal-profile update.
+
+        The lookup from email address → ``contact_id`` is performed in a single
+        batch query via ``contact_identifiers`` to avoid N+1 database
+        round-trips.  Addresses with no matching contact record are silently
+        skipped (they are typically unrecognised senders or marketing addresses
+        that slipped past the filter before reaching this layer).
+
+        Fail-open: any exception here is logged and swallowed.  The signal
+        profile remains the authoritative source; the contacts-table columns
+        are a best-effort cache only.
+
+        Args:
+            contacts_data: Mapping of email address → profile dict, as held
+                in ``relationships_profile["data"]["contacts"]``.
+        """
+        if not contacts_data:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        try:
+            with self.db.get_connection("entities") as conn:
+                # Fetch all matching contact IDs in one round-trip.
+                placeholders = ",".join("?" * len(contacts_data))
+                rows = conn.execute(
+                    f"""SELECT lower(identifier), contact_id
+                          FROM contact_identifiers
+                         WHERE identifier_type = 'email'
+                           AND lower(identifier) IN ({placeholders})""",
+                    [addr.lower() for addr in contacts_data.keys()],
+                ).fetchall()
+
+                email_to_contact_id = {row[0]: row[1] for row in rows}
+
+                for addr, profile in contacts_data.items():
+                    contact_id = email_to_contact_id.get(addr.lower())
+                    if not contact_id:
+                        continue  # No matching entity — skip silently.
+
+                    freq_days = _compute_frequency_days(
+                        profile.get("interaction_timestamps", [])
+                    )
+
+                    conn.execute(
+                        """UPDATE contacts
+                              SET typical_response_time  = ?,
+                                  last_contact           = ?,
+                                  contact_frequency_days = ?,
+                                  updated_at             = ?
+                            WHERE id = ?""",
+                        (
+                            profile.get("avg_response_time_seconds"),
+                            profile.get("last_interaction"),
+                            freq_days,
+                            now,
+                            contact_id,
+                        ),
+                    )
+
+        except Exception:
+            # Metric sync is best-effort; never crash the extraction pipeline.
+            logger.exception(
+                "Failed to sync relationship metrics to contacts table; "
+                "signal profile remains authoritative"
+            )
 
     def _extract_communication_templates(self, event: dict, addresses: list[str], is_outbound: bool):
         """Extract communication style templates from messages (both directions).
