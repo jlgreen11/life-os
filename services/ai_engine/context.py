@@ -93,6 +93,15 @@ class ContextAssembler:
         if insights_context:
             parts.append(insights_context)
 
+        # Section 8: Tasks completed in the last 24 hours.
+        # Surfaces recent wins so the LLM can acknowledge accomplishments and
+        # distinguish work-in-progress from already-finished items. Without
+        # this, the LLM has no visibility into what the user finished yesterday
+        # and may incorrectly imply those items are still outstanding.
+        completions_context = self._get_recent_completions_context()
+        if completions_context:
+            parts.append(completions_context)
+
         # Section 9: Semantic facts the system has learned about the user
         # (e.g., "preferred_language: English", "works_at: Acme Corp").
         # Only facts with confidence >= 0.6 are included to avoid noise.
@@ -449,6 +458,54 @@ class ContextAssembler:
                          for t in tasks]
                 return "Pending tasks:\n" + "\n".join(lines)
             return "Pending tasks: none"
+
+    def _get_recent_completions_context(self) -> str:
+        """Fetch tasks completed in the last 24 hours.
+
+        Surfaces recent accomplishments so the LLM can:
+          - Acknowledge the user's wins when generating the morning briefing
+          - Distinguish completed work from still-pending items
+          - Reference finished tasks when discussing related follow-ups
+
+        Without this section the LLM only sees pending work, making it
+        impossible to say "Yesterday you finished X — here's what remains."
+
+        Results are ordered most-recently-completed first and capped at 10 to
+        keep the context window focused. Domains are included so the LLM can
+        group completions by life area ("you wrapped up three work tasks").
+
+        Returns an empty string when no tasks were completed in the window,
+        which causes the caller to skip this section entirely.
+
+        Example output::
+
+            Recently completed tasks (last 24h):
+            - [high] Submit Q1 expense report (work)
+            - [normal] Call dentist for appointment (health)
+            - [low] Update reading list (personal)
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+        with self.db.get_connection("state") as conn:
+            tasks = conn.execute(
+                """SELECT title, priority, domain, completed_at
+                   FROM tasks
+                   WHERE status = 'completed'
+                     AND completed_at >= ?
+                   ORDER BY completed_at DESC
+                   LIMIT 10""",
+                (cutoff,),
+            ).fetchall()
+
+        if not tasks:
+            return ""
+
+        lines = []
+        for t in tasks:
+            domain = t["domain"] or "general"
+            lines.append(f"- [{t['priority']}] {t['title']} ({domain})")
+
+        return "Recently completed tasks (last 24h):\n" + "\n".join(lines)
 
     def _get_unread_context(self) -> str:
         """Count recent inbound messages (emails + chat) from the last 12 hours.
