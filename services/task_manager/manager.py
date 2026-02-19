@@ -327,6 +327,94 @@ class TaskManager:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
 
+    # Valid task status values accepted by get_tasks() and the /api/tasks route.
+    VALID_STATUSES = frozenset({"pending", "completed", "in_progress", "archived", "cancelled"})
+
+    def get_tasks(
+        self,
+        status: str = "pending",
+        domain: Optional[str] = None,
+        priority: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """
+        Get tasks filtered by status, optionally narrowed by domain and/or priority.
+
+        This is the general-purpose task query method.  It replaces the old
+        ``get_pending_tasks()`` stub (which hard-coded ``status='pending'``) and
+        correctly honours any recognised status value, enabling clients to query
+        completed, in-progress, or archived tasks through the same API endpoint.
+
+        Valid status values: ``pending``, ``completed``, ``in_progress``,
+        ``archived``, ``cancelled``.  Unknown values are silently normalised to
+        ``pending`` so the route never raises a 500 error on a bad query-string.
+
+        Results are sorted by:
+          1. Priority rank (critical → high → normal → low)
+          2. Due date ascending, NULLs last (for pending/in_progress)
+          3. completed_at descending (for completed tasks, most-recent first)
+
+        Args:
+            status:   Task status to filter on (default: ``"pending"``).
+            domain:   Optional domain filter (e.g. ``"work"``, ``"health"``).
+            priority: Optional priority filter (e.g. ``"high"``).
+            limit:    Maximum number of rows to return (default: 50).
+
+        Returns:
+            List of task dicts with all columns populated.
+
+        Example usage::
+
+            # All pending tasks (default behaviour, backward-compatible)
+            tasks = manager.get_tasks()
+
+            # Last 20 completed tasks
+            tasks = manager.get_tasks(status="completed", limit=20)
+
+            # High-priority work tasks in progress
+            tasks = manager.get_tasks(status="in_progress", domain="work", priority="high")
+        """
+        # Normalise unknown statuses to "pending" to avoid SQL injection and
+        # prevent 500 errors from bad query-string inputs.
+        if status not in self.VALID_STATUSES:
+            logger.warning("Unknown task status %r requested; defaulting to 'pending'", status)
+            status = "pending"
+
+        query = "SELECT * FROM tasks WHERE status = ?"
+        params: list[Any] = [status]
+
+        # Optional filters — dynamically appended to the WHERE clause.
+        # Both use parameterised placeholders (never f-strings) to prevent
+        # SQL injection even though values come from internal callers.
+        if domain:
+            query += " AND domain = ?"
+            params.append(domain)
+        if priority:
+            query += " AND priority = ?"
+            params.append(priority)
+
+        # Sorting strategy depends on status:
+        #   - pending / in_progress: surface urgent items first via priority rank,
+        #     then by due date so the most time-critical task appears at the top.
+        #   - completed: most-recently-completed first so callers see fresh wins.
+        #   - All others (archived, cancelled): stable priority-then-date ordering.
+        if status == "completed":
+            query += " ORDER BY completed_at DESC NULLS LAST LIMIT ?"
+        else:
+            query += """
+                ORDER BY
+                    CASE priority
+                        WHEN 'critical' THEN 1 WHEN 'high' THEN 2
+                        WHEN 'normal' THEN 3 ELSE 4
+                    END,
+                    due_date ASC NULLS LAST
+                LIMIT ?"""
+        params.append(limit)
+
+        with self.db.get_connection("state") as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [self._row_to_dict(row) for row in rows]
+
     def get_pending_tasks(
         self,
         domain: Optional[str] = None,
@@ -336,38 +424,15 @@ class TaskManager:
         """
         Get pending tasks, optionally filtered by domain and/or priority.
 
+        .. deprecated::
+            Use ``get_tasks(status='pending', ...)`` instead.  This thin
+            wrapper is kept for backward compatibility with callers (e.g. the
+            TaskCompletionDetector and tests) that still call it by name.
+
         Results are sorted by priority ordering (critical > high > normal > low)
         with a secondary sort by due date (earliest first, NULL dates last).
-        This ensures the most urgent and time-sensitive tasks appear at the top.
         """
-        query = "SELECT * FROM tasks WHERE status = 'pending'"
-        params: list[Any] = []
-
-        # Optional filters — dynamically appended to the WHERE clause
-        if domain:
-            query += " AND domain = ?"
-            params.append(domain)
-        if priority:
-            query += " AND priority = ?"
-            params.append(priority)
-
-        # --- Priority ordering in queries ---
-        # Tasks are sorted by: (1) priority rank, (2) due date.
-        # NULLS LAST ensures tasks without a due date don't crowd out
-        # tasks with upcoming deadlines.
-        query += """
-            ORDER BY
-                CASE priority
-                    WHEN 'critical' THEN 1 WHEN 'high' THEN 2
-                    WHEN 'normal' THEN 3 ELSE 4
-                END,
-                due_date ASC NULLS LAST
-            LIMIT ?"""
-        params.append(limit)
-
-        with self.db.get_connection("state") as conn:
-            rows = conn.execute(query, params).fetchall()
-            return [self._row_to_dict(row) for row in rows]
+        return self.get_tasks(status="pending", domain=domain, priority=priority, limit=limit)
 
     def get_overdue_tasks(self) -> list[dict]:
         """Get tasks past their due date."""
