@@ -455,17 +455,25 @@ class ContextAssembler:
 
         Breaks down messages by priority sender — contacts the user regularly
         writes back to (outbound_count >= 3 in the relationships signal profile).
-        This helps the LLM distinguish which senders warrant immediate attention
-        from general inbox volume.
+        For priority senders, also surfaces up to 3 recent email subject lines
+        so the LLM can reference specific messages in the morning briefing.
 
         Priority threshold: outbound_count >= 3 means the user has replied to
         this contact at least three times, indicating a genuine human relationship
         rather than a marketing or automated sender.
 
-        Output format (when priority contacts exist):
+        Output format (when priority contacts exist with subjects):
             Messages in last 12 hours: 8
-              From priority contacts: alice@example.com (3 messages), bob@work.com (1 message)
+              From priority contacts:
+                - alice@example.com (3 messages): "Project deadline", "Can we meet?"
+                - bob@work.com (1 message): "Lunch tomorrow?"
               From other senders: 4
+
+        Output format (when priority contacts have no subjects):
+            Messages in last 12 hours: 8
+              From priority contacts:
+                - alice@example.com (3 messages)
+              From other senders: 5
 
         Output format (when no priority contacts have sent messages):
             Messages in last 12 hours: 8
@@ -481,29 +489,43 @@ class ContextAssembler:
         # the same format so string comparison is semantically correct.
         cutoff_12h = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
         with self.db.get_connection("events") as conn:
+            # Fetch all recent messages with subjects, sorted newest-first.
+            # We group per-sender and collect subjects in Python rather than
+            # using a GROUP BY + LIMIT per-sender SQL pattern, which would
+            # require complex correlated subqueries.  The row count is bounded
+            # by the 12-hour window, so loading all rows into Python is safe.
             rows = conn.execute(
                 """SELECT
                        json_extract(payload, '$.from_address') AS from_address,
-                       COUNT(*) AS message_count
+                       json_extract(payload, '$.subject') AS subject
                    FROM events
                    WHERE type IN ('email.received', 'message.received')
                      AND timestamp > ?
-                   GROUP BY json_extract(payload, '$.from_address')""",
+                   ORDER BY timestamp DESC""",
                 (cutoff_12h,),
             ).fetchall()
 
         if not rows:
             return "Messages in last 12 hours: 0"
 
-        # Tally total and build a per-sender count dict (keyed by from_address).
-        # Rows with a NULL from_address still contribute to the total but are
-        # excluded from the priority-contact breakdown.
-        sender_counts: dict = {}
+        # Group by sender: tally message counts and collect up to 3 recent subjects.
+        # Rows are newest-first so the first 3 subjects collected per sender are
+        # the most recent 3, which are most actionable in the briefing.
+        # Rows with a NULL from_address still contribute to the total count but
+        # are excluded from the priority-contact breakdown.
+        sender_data: dict[str, dict] = {}
         total = 0
         for row in rows:
-            total += row["message_count"]
-            if row["from_address"]:
-                sender_counts[row["from_address"]] = row["message_count"]
+            total += 1
+            addr = row["from_address"]
+            if addr:
+                if addr not in sender_data:
+                    sender_data[addr] = {"count": 0, "subjects": []}
+                sender_data[addr]["count"] += 1
+                # Collect up to 3 non-empty subjects per sender.
+                subject = (row["subject"] or "").strip()
+                if subject and len(sender_data[addr]["subjects"]) < 3:
+                    sender_data[addr]["subjects"].append(subject)
 
         lines = [f"Messages in last 12 hours: {total}"]
 
@@ -513,27 +535,35 @@ class ContextAssembler:
         # automated mailers or one-time contacts that don't need to be called out.
         try:
             rel_profile = self.ums.get_signal_profile("relationships")
-            if rel_profile and sender_counts:
+            if rel_profile and sender_data:
                 contacts = rel_profile["data"].get("contacts", {})
-                priority_messages: dict = {
-                    addr: sender_counts[addr]
+                priority_senders: dict[str, dict] = {
+                    addr: sender_data[addr]
                     for addr, data in contacts.items()
-                    if data.get("outbound_count", 0) >= 3 and addr in sender_counts
+                    if data.get("outbound_count", 0) >= 3 and addr in sender_data
                 }
-                if priority_messages:
+                if priority_senders:
                     # Sort descending by message count so the most active sender
                     # appears first, making the most urgent sender immediately visible.
                     sorted_priority = sorted(
-                        priority_messages.items(), key=lambda x: -x[1]
+                        priority_senders.items(), key=lambda x: -x[1]["count"]
                     )
-                    contact_parts = [
-                        f"{addr} ({cnt} message{'s' if cnt != 1 else ''})"
-                        for addr, cnt in sorted_priority
-                    ]
-                    lines.append(
-                        f"  From priority contacts: {', '.join(contact_parts)}"
+                    lines.append("  From priority contacts:")
+                    for addr, info in sorted_priority:
+                        count = info["count"]
+                        subjects = info["subjects"]
+                        cnt_str = f"{count} message{'s' if count != 1 else ''}"
+                        if subjects:
+                            # Quote each subject so the LLM can reference them
+                            # directly in the briefing (e.g. "Alice sent 'Project
+                            # deadline' — you may want to prioritise that reply").
+                            subjects_str = ", ".join(f'"{s}"' for s in subjects)
+                            lines.append(f"    - {addr} ({cnt_str}): {subjects_str}")
+                        else:
+                            lines.append(f"    - {addr} ({cnt_str})")
+                    other_count = total - sum(
+                        info["count"] for info in priority_senders.values()
                     )
-                    other_count = total - sum(priority_messages.values())
                     if other_count > 0:
                         lines.append(f"  From other senders: {other_count}")
         except Exception:
