@@ -1514,3 +1514,273 @@ class TestRecentCompletionsContext:
         briefing = assembler.assemble_briefing_context()
 
         assert "Recently completed tasks" not in briefing
+
+
+class TestRecentEpisodesContext:
+    """Tests for _get_recent_episodes_context().
+
+    The recent-episodes section surfaces Layer 1 episodic memories from the
+    last 24 hours so the LLM has concrete narrative context about the user's
+    recent digital activity — emails exchanged, calendar events attended, etc.
+    """
+
+    def _insert_episode(
+        self,
+        conn,
+        interaction_type: str,
+        content_summary: str,
+        timestamp: str,
+        contacts_involved: list = None,
+        topics: list = None,
+        active_domain: str = None,
+    ):
+        """Helper: insert an episode row into the user_model DB."""
+        import uuid as _uuid
+        conn.execute(
+            """INSERT INTO episodes
+               (id, timestamp, event_id, interaction_type, content_summary,
+                contacts_involved, topics, active_domain)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(_uuid.uuid4()),
+                timestamp,
+                str(_uuid.uuid4()),
+                interaction_type,
+                content_summary,
+                json.dumps(contacts_involved or []),
+                json.dumps(topics or []),
+                active_domain,
+            ),
+        )
+
+    def test_returns_empty_when_no_recent_episodes(self, db, user_model_store):
+        """Should return empty string when no episodes exist in the last 24 hours."""
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert result == ""
+
+    def test_returns_empty_when_episodes_older_than_24h(self, db, user_model_store):
+        """Should exclude episodes from more than 24 hours ago."""
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(conn, "email_received", "Old email summary", old_ts)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert result == ""
+
+    def test_includes_recent_episodes(self, db, user_model_store):
+        """Should include episodes from the last 24 hours."""
+        recent_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "email_sent", "Replied to Alice about Q1 budget", recent_ts,
+                contacts_involved=["alice@example.com"],
+                topics=["finance", "planning"],
+                active_domain="work",
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert "Recent activity (last 24h):" in result
+        assert "[email_sent]" in result
+        assert "Replied to Alice about Q1 budget" in result
+
+    def test_shows_domain_when_present(self, db, user_model_store):
+        """Should annotate episodes with their active domain."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "calendar_event", "Attended team standup", ts,
+                active_domain="work",
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert "(work)" in result
+
+    def test_shows_contacts_when_present(self, db, user_model_store):
+        """Should annotate episodes with contacts involved (up to 2)."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "email_received", "Email about the project",
+                ts,
+                contacts_involved=["bob@work.com", "carol@work.com", "dave@work.com"],
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        # Should show first 2 contacts but not the 3rd (truncated at 2)
+        assert "bob@work.com" in result
+        assert "carol@work.com" in result
+        assert "dave@work.com" not in result
+        assert "[contacts:" in result
+
+    def test_shows_topics_when_present(self, db, user_model_store):
+        """Should annotate episodes with topics (up to 3)."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "email_sent", "Sent update",
+                ts,
+                topics=["budget", "timeline", "risk", "stakeholders"],
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        # Should show first 3 topics, not the 4th
+        assert "budget" in result
+        assert "timeline" in result
+        assert "risk" in result
+        assert "stakeholders" not in result
+        assert "[topics:" in result
+
+    def test_excludes_empty_summary_episodes(self, db, user_model_store):
+        """Episodes with empty content_summary should not appear."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            # Episode with empty summary (should be excluded)
+            self._insert_episode(conn, "email_received", "", ts)
+            # Episode with real summary (should be included)
+            self._insert_episode(conn, "email_sent", "Sent reply to Bob", ts)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert "Sent reply to Bob" in result
+        # The empty-summary episode should be filtered out entirely, so only
+        # one bullet should appear (the email_sent episode).
+        bullet_count = result.count("- [")
+        assert bullet_count == 1
+
+    def test_orders_by_most_recent_first(self, db, user_model_store):
+        """Episodes should appear newest first."""
+        t1 = (datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()
+        t2 = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(conn, "email_received", "Older email", t1)
+            self._insert_episode(conn, "email_sent", "Newer reply", t2)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert result.index("Newer reply") < result.index("Older email")
+
+    def test_caps_at_8_episodes(self, db, user_model_store):
+        """Should limit output to 8 episodes to respect token budget."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            for i in range(12):
+                self._insert_episode(
+                    conn, "email_received", f"Email {i} summary", ts
+                )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        # Count bullet points
+        bullet_count = result.count("- [")
+        assert bullet_count == 8
+
+    def test_handles_null_contacts_gracefully(self, db, user_model_store):
+        """Should not crash when contacts_involved is NULL or empty JSON."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "email_received", "Email with no contacts", ts,
+                contacts_involved=[],  # Empty list
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert "Email with no contacts" in result
+        # No contacts annotation when list is empty
+        assert "[contacts:" not in result
+
+    def test_handles_null_topics_gracefully(self, db, user_model_store):
+        """Should not crash when topics is NULL or empty JSON."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "calendar_event", "Meeting with no topics", ts,
+                topics=[],
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_episodes_context()
+
+        assert "Meeting with no topics" in result
+        assert "[topics:" not in result
+
+    def test_briefing_includes_episodes_section(self, db, user_model_store):
+        """assemble_briefing_context() should include recent episodes when present."""
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(
+                conn, "email_sent", "Sent weekly report to manager", ts,
+                active_domain="work",
+            )
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        briefing = assembler.assemble_briefing_context()
+
+        assert "Recent activity (last 24h):" in briefing
+        assert "Sent weekly report to manager" in briefing
+
+    def test_briefing_omits_episodes_when_none(self, db, user_model_store):
+        """assemble_briefing_context() should not add the section when no recent episodes exist."""
+        assembler = ContextAssembler(db, user_model_store)
+        briefing = assembler.assemble_briefing_context()
+
+        assert "Recent activity (last 24h):" not in briefing
+
+    def test_episodes_section_precedes_semantic_facts(self, db, user_model_store):
+        """Episodes section should appear before semantic facts in the briefing.
+
+        The ordering is: recent activity (Layer 1 episodic) before abstract
+        knowledge (Layer 2 semantic). This keeps the context window structured
+        from most-recent-and-concrete to most-general-and-abstract.
+        """
+        ts = datetime.now(timezone.utc).isoformat()
+        with db.get_connection("user_model") as conn:
+            self._insert_episode(conn, "email_sent", "Sent a message", ts)
+            conn.commit()
+
+        user_model_store.update_semantic_fact(
+            key="works_at",
+            category="fact",
+            value="Acme Corp",
+            confidence=0.9,
+        )
+
+        assembler = ContextAssembler(db, user_model_store)
+        briefing = assembler.assemble_briefing_context()
+
+        episodes_pos = briefing.find("Recent activity (last 24h):")
+        facts_pos = briefing.find("Known facts about user:")
+
+        assert episodes_pos != -1, "Episodes section must be present"
+        assert facts_pos != -1, "Semantic facts section must be present"
+        assert episodes_pos < facts_pos, (
+            "Episodes (Layer 1) should appear before semantic facts (Layer 2)"
+        )
+
