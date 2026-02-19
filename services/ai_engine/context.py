@@ -138,16 +138,119 @@ class ContextAssembler:
         if routines_context:
             parts.append(routines_context)
 
-        # Section 12: Recent mood signals (last 3 data points). This allows
-        # the LLM to adjust its tone -- e.g., more encouraging if the user
-        # has been stressed, more energetic if mood is positive.
-        mood_profile = self.ums.get_signal_profile("mood_signals")
-        if mood_profile:
-            parts.append(f"User mood context: {json.dumps(mood_profile['data'].get('recent_signals', [])[-3:])}")
+        # Section 12: Computed mood snapshot from mood_history.  Using the
+        # pre-aggregated row from mood_history (written every 15 min by
+        # SignalExtractorPipeline.get_current_mood) is far more useful than
+        # the raw recent_signals array: the LLM receives human-readable
+        # dimension labels (energy, stress, valence, trend) rather than
+        # typed signal dicts it must interpret itself.
+        mood_context = self._get_mood_context()
+        if mood_context:
+            parts.append(mood_context)
 
         # Join all sections with delimiter lines for clear visual separation
         # in the prompt. The LLM can parse these as distinct context blocks.
         return "\n\n---\n\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Mood context helper
+    # ------------------------------------------------------------------
+
+    def _get_mood_context(self) -> str:
+        """Return a human-readable mood summary from the most recent mood_history snapshot.
+
+        Queries the ``mood_history`` table (written every 15 minutes by
+        ``SignalExtractorPipeline.get_current_mood()``) for the most recent
+        row within the last 24 hours.  Each row already contains pre-aggregated
+        mood dimensions (energy_level, stress_level, emotional_valence, trend,
+        social_battery, cognitive_load) so the LLM receives clean, named values
+        rather than raw signal dicts it has to interpret.
+
+        Why this is better than the previous approach (raw recent_signals JSON):
+
+        - **Old**: ``[{"signal_type": "circadian_energy", "value": 0.8, ...}, ...]``
+          The LLM had to know that ``circadian_energy`` maps to energy and that
+          ``calendar_density`` maps to stress — an implicit, brittle mapping.
+        - **New**: ``energy_level=0.82 (high), stress_level=0.25 (low), ...``
+          The LLM reads the dimension name directly, making tone calibration
+          reliable even when signal types change or new extractors are added.
+
+        Label thresholds used for each dimension:
+
+        - energy_level:     ≥0.65 → "high", 0.35–0.65 → "moderate", <0.35 → "low"
+        - stress_level:     ≥0.65 → "high", 0.35–0.65 → "moderate", <0.35 → "low"
+        - emotional_valence:≥0.65 → "positive", 0.35–0.65 → "neutral", <0.35 → "negative"
+
+        Falls back gracefully to an empty string (which causes the caller to
+        skip this section) when:
+        - The mood_history table does not exist (pre-migration instances).
+        - No snapshots exist within the last 24 hours (system just started).
+
+        Example output::
+
+            User mood context: energy_level=0.82 (high), stress_level=0.25 (low),
+            emotional_valence=0.73 (positive), social_battery=0.60, trend=stable
+            (confidence: 0.90)
+        """
+        def _label(value: float, dim: str) -> str:
+            """Convert a 0-1 scalar to a human-readable label.
+
+            Thresholds are intentionally coarse (3 buckets) so the LLM does
+            not over-index on small numerical differences.  The dimension name
+            is provided so context-sensitive labels can be returned (e.g.,
+            'positive' instead of 'high' for emotional_valence).
+            """
+            if dim == "emotional_valence":
+                if value >= 0.65:
+                    return "positive"
+                if value >= 0.35:
+                    return "neutral"
+                return "negative"
+            # energy and stress use the same generic scale
+            if value >= 0.65:
+                return "high"
+            if value >= 0.35:
+                return "moderate"
+            return "low"
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    """SELECT energy_level, stress_level, emotional_valence,
+                              social_battery, cognitive_load, confidence, trend
+                       FROM mood_history
+                       WHERE datetime(timestamp) > datetime('now', '-24 hours')
+                       ORDER BY timestamp DESC
+                       LIMIT 1"""
+                ).fetchone()
+        except Exception:
+            # mood_history table may not exist on older deployments — fail open
+            # and skip the section rather than crashing the briefing assembly.
+            return ""
+
+        if not row:
+            return ""
+
+        energy = row["energy_level"]
+        stress = row["stress_level"]
+        valence = row["emotional_valence"]
+        social = row["social_battery"]
+        confidence = row["confidence"]
+        trend = row["trend"] or "stable"
+
+        parts = [
+            f"energy_level={energy:.2f} ({_label(energy, 'energy_level')})",
+            f"stress_level={stress:.2f} ({_label(stress, 'stress_level')})",
+            f"emotional_valence={valence:.2f} ({_label(valence, 'emotional_valence')})",
+            f"social_battery={social:.2f}",
+            f"trend={trend}",
+        ]
+        # Only include confidence when it is non-trivial (≥0.3) — low-confidence
+        # mood readings add noise rather than signal to the tone calibration.
+        if confidence >= 0.3:
+            parts.append(f"confidence={confidence:.2f}")
+
+        return "User mood context: " + ", ".join(parts)
 
     def assemble_draft_context(self, contact_id: str, channel: str,
                                incoming_message: str) -> str:

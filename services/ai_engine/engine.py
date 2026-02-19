@@ -81,8 +81,9 @@ class AIEngine:
         system_prompt = """You are a private personal assistant generating a personalized morning briefing.
 
 TONE CALIBRATION — check the "User mood context" section:
-- If recent_signals show low valence or high stress: be warm, encouraging, compassionate.
-- If positive/high energy: be upbeat and forward-looking.
+- If emotional_valence is "negative" or stress_level is "high": be warm, encouraging, compassionate.
+- If energy_level is "high" and emotional_valence is "positive": be upbeat and forward-looking.
+- If trend is "declining": add one brief supportive note; if "improving": acknowledge the upturn.
 - Default to warm but businesslike when mood data is absent.
 
 SYNTHESIS GUIDE — use each context section as follows:

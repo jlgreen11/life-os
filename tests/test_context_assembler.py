@@ -322,48 +322,87 @@ class TestAssembleBriefingContext:
         assert len(fact_lines) <= 18
 
     def test_briefing_includes_mood_signals(self, db, user_model_store):
-        """Should include recent mood context."""
-        # Create mood signal profile with recent signals
-        user_model_store.update_signal_profile(
-            profile_type="mood_signals",
-            data={
-                "recent_signals": [
-                    {"timestamp": "2026-02-15T08:00:00Z", "valence": 0.7, "arousal": 0.5},
-                    {"timestamp": "2026-02-15T12:00:00Z", "valence": 0.6, "arousal": 0.4},
-                    {"timestamp": "2026-02-15T18:00:00Z", "valence": 0.8, "arousal": 0.6},
-                ]
-            },
-        )
+        """Should include computed mood context from mood_history (not raw signals).
+
+        Updated for PR #251 (iteration 251): _get_mood_context() now queries the
+        mood_history table instead of reading raw recent_signals JSON, so the
+        LLM receives labelled dimension values (energy, stress, valence, trend)
+        rather than uninterpreted signal dicts.
+        """
+        from datetime import datetime, timezone
+
+        # Insert a mood_history snapshot directly (as the pipeline does every 15 min).
+        with db.get_connection("user_model") as conn:
+            conn.execute(
+                """INSERT INTO mood_history
+                   (timestamp, energy_level, stress_level, emotional_valence,
+                    social_battery, cognitive_load, confidence, trend)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    0.80,  # high energy
+                    0.25,  # low stress
+                    0.70,  # positive valence
+                    0.60,  # social battery
+                    0.30,  # cognitive load
+                    0.80,  # confidence
+                    "stable",
+                ),
+            )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_briefing_context()
 
         assert "User mood context:" in context
-        # Should only include last 3 signals (all of them in this case)
-        assert "valence" in context
-        assert "0.8" in context  # Most recent valence
+        # New format: labelled dimension values, not raw JSON
+        assert "energy_level=0.80" in context
+        assert "stress_level=0.25" in context
+        assert "emotional_valence=0.70" in context
+        assert "trend=stable" in context
+        # Old raw format should NOT appear
+        assert '"signal_type"' not in context
 
     def test_briefing_mood_signals_limit_last_3(self, db, user_model_store):
-        """Should only include last 3 mood signals."""
-        # Create profile with 10 signals
-        signals = [
-            {"timestamp": f"2026-02-15T{i:02d}:00:00Z", "valence": 0.5 + i * 0.05}
-            for i in range(10)
-        ]
-        user_model_store.update_signal_profile(
-            profile_type="mood_signals",
-            data={"recent_signals": signals},
-        )
+        """Mood context uses the single most recent mood_history snapshot.
+
+        Updated for PR #251 (iteration 251): the old test checked that only the
+        last 3 raw signal dicts were included in a JSON array.  The new
+        implementation queries mood_history for the most recent row, so the
+        test now inserts two mood_history rows (old and new) and verifies that
+        only the newer row's values appear in the briefing.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        older_ts = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        newer_ts = datetime.now(timezone.utc).isoformat()
+
+        with db.get_connection("user_model") as conn:
+            # Older snapshot: low energy
+            conn.execute(
+                """INSERT INTO mood_history
+                   (timestamp, energy_level, stress_level, emotional_valence,
+                    social_battery, cognitive_load, confidence, trend)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (older_ts, 0.20, 0.80, 0.30, 0.40, 0.70, 0.50, "declining"),
+            )
+            # Newer snapshot: high energy
+            conn.execute(
+                """INSERT INTO mood_history
+                   (timestamp, energy_level, stress_level, emotional_valence,
+                    social_battery, cognitive_load, confidence, trend)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (newer_ts, 0.90, 0.15, 0.85, 0.75, 0.20, 0.90, "improving"),
+            )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_briefing_context()
 
-        # Parse the mood context section
-        mood_section = context[context.find("User mood context:"):]
-        mood_data = json.loads(mood_section.split("\n")[0].split("User mood context: ")[1])
-        assert len(mood_data) == 3
-        # Should be the last 3 signals (indices 7, 8, 9)
-        assert mood_data[0]["timestamp"] == "2026-02-15T07:00:00Z"
+        # Must reflect the newer row
+        assert "energy_level=0.90" in context
+        assert "trend=improving" in context
+        # Older row values must NOT appear
+        assert "energy_level=0.20" not in context
+        assert "trend=declining" not in context
 
     def test_briefing_with_no_tasks(self, db, user_model_store):
         """Should handle empty task list gracefully."""
@@ -1327,11 +1366,20 @@ class TestIntegration:
             confidence=0.9,
         )
 
-        # Seed mood signals
-        user_model_store.update_signal_profile(
-            profile_type="mood_signals",
-            data={"recent_signals": [{"valence": 0.7, "arousal": 0.5}]},
-        )
+        # Seed mood history snapshot (mood_history, not raw signal profile).
+        # Updated for PR #251 (iteration 251): mood context now comes from the
+        # mood_history table rather than the mood_signals signal profile.
+        with db.get_connection("user_model") as conn:
+            conn.execute(
+                """INSERT INTO mood_history
+                   (timestamp, energy_level, stress_level, emotional_valence,
+                    social_battery, cognitive_load, confidence, trend)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    0.75, 0.30, 0.70, 0.60, 0.35, 0.80, "stable",
+                ),
+            )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_briefing_context()
@@ -1345,7 +1393,7 @@ class TestIntegration:
         # and with a capitalized label and confidence score (PR #265).
         assert "software_engineer" in context  # value present regardless of format
         assert "Layer 2 Semantic Memory" in context  # new section header
-        assert "valence" in context  # Mood signals
+        assert "emotional_valence" in context  # Mood context (computed dimensions)
 
     def test_full_draft_integration(self, db, user_model_store):
         """Test full draft context with all layers populated."""
