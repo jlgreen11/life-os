@@ -601,40 +601,43 @@ class SemanticFactInferrer:
 
         # --- Infer work-life boundaries from hourly activity ---
         # If 90%+ of messages are sent during business hours (9-17),
-        # infer a preference for work-life separation.
+        # infer a preference for work-life separation.  Guard on total_messages
+        # rather than returning early so the pre-computed derived-metric
+        # inferences below (peak_hours, quiet_hours, domain response times) can
+        # still run even when hourly_activity is empty.
         total_messages = sum(hourly_activity.values())
-        if total_messages == 0:
-            return
-
-        business_hours_count = sum(
-            count for hour, count in hourly_activity.items()
-            if 9 <= int(hour) <= 17
-        )
-        business_hours_ratio = business_hours_count / total_messages
-
-        if business_hours_ratio > 0.9:
-            # Strong work-life boundaries — rarely messages outside business hours
-            self.ums.update_semantic_fact(
-                key="work_life_boundaries",
-                category="values",
-                value="strict_boundaries",
-                confidence=min(0.95, 0.5 + (business_hours_ratio - 0.9) * 5),
-                episode_id=episode_id,
+        if total_messages > 0:
+            business_hours_count = sum(
+                count for hour, count in hourly_activity.items()
+                if 9 <= int(hour) <= 17
             )
-        elif business_hours_ratio < 0.3:
-            # Messages at all hours — flexible schedule or always-on work style
-            self.ums.update_semantic_fact(
-                key="work_life_boundaries",
-                category="values",
-                value="flexible_boundaries",
-                confidence=min(0.85, 0.5 + (0.3 - business_hours_ratio) * 2),
-                episode_id=episode_id,
-            )
+            business_hours_ratio = business_hours_count / total_messages
 
-        # --- Infer peak communication hours ---
-        # Find the hour with the highest message count — this is the user's
-        # most active communication time.
-        if hourly_activity:
+            if business_hours_ratio > 0.9:
+                # Strong work-life boundaries — rarely messages outside business hours
+                self.ums.update_semantic_fact(
+                    key="work_life_boundaries",
+                    category="values",
+                    value="strict_boundaries",
+                    confidence=min(0.95, 0.5 + (business_hours_ratio - 0.9) * 5),
+                    episode_id=episode_id,
+                )
+            elif business_hours_ratio < 0.3:
+                # Messages at all hours — flexible schedule or always-on work style
+                self.ums.update_semantic_fact(
+                    key="work_life_boundaries",
+                    category="values",
+                    value="flexible_boundaries",
+                    confidence=min(0.85, 0.5 + (0.3 - business_hours_ratio) * 2),
+                    episode_id=episode_id,
+                )
+
+            # --- Infer peak communication hours (single-hour legacy) ---
+            # Find the hour with the highest message count — this is the user's
+            # most active communication time.  The peak_hours multi-hour fact
+            # below supersedes this for cases where multiple hours are active,
+            # but keeping it ensures backward compatibility with downstream
+            # code that may read peak_communication_hour directly.
             peak_hour = max(hourly_activity, key=hourly_activity.get)
             peak_count = hourly_activity[peak_hour]
             peak_ratio = peak_count / total_messages
@@ -647,6 +650,82 @@ class SemanticFactInferrer:
                     confidence=min(0.9, 0.5 + peak_ratio * 2),
                     episode_id=episode_id,
                 )
+
+        # --- Infer peak communication hours from pre-computed peak_hours list ---
+        # PR #276 added _compute_peak_hours() to the CadenceExtractor, which
+        # produces a sorted list of hours (UTC) that exceed mean + 0.5σ activity.
+        # This is more reliable than the single-hour approach above because it
+        # captures a broad active window (e.g., [9,10,11,12,13]) rather than
+        # just the single busiest hour, giving the LLM a richer picture.
+        peak_hours = data.get("peak_hours", [])
+        if len(peak_hours) >= 2:
+            # Require at least 2 peak hours before storing — single-hour lists
+            # mean the threshold was barely crossed and are too noisy to trust.
+            self.ums.update_semantic_fact(
+                key="peak_communication_hours",
+                category="implicit_preference",
+                value=peak_hours,  # Stored as a JSON-serialisable list, e.g. [9, 10, 11]
+                confidence=min(0.9, 0.5 + len(peak_hours) * 0.04),
+                episode_id=episode_id,
+            )
+
+        # --- Infer sleep / offline window from pre-computed quiet_hours_observed ---
+        # PR #276 added _compute_quiet_hours() which finds contiguous spans of
+        # near-zero activity (≤10% of peak hour).  The primary window (longest
+        # or first detected span) is the most reliable proxy for the user's
+        # typical sleep or offline period.  Knowing this helps the prediction
+        # engine and briefing generator respect actual offline times rather than
+        # relying solely on the configured quiet_hours setting.
+        quiet_windows = data.get("quiet_hours_observed", [])
+        if quiet_windows:
+            # Take the first window — _compute_quiet_hours anchors on the first
+            # non-quiet hour, so the first span is typically the largest one
+            # (sleep window that crosses midnight, e.g., (22, 6)).
+            start_h, end_h = quiet_windows[0]
+            # Compute the span length (hours), accounting for midnight crossing.
+            span_len = (end_h - start_h) % 24 if end_h != start_h else 24
+            if span_len >= 3:
+                # Require ≥3-hour span before treating it as a meaningful
+                # offline window (< 3 hours is a gap in data, not sleep).
+                self.ums.update_semantic_fact(
+                    key="observed_quiet_window",
+                    category="implicit_preference",
+                    value=f"{start_h:02d}:00-{end_h:02d}:00 UTC",
+                    confidence=min(0.85, 0.5 + min(span_len, 10) * 0.035),
+                    episode_id=episode_id,
+                )
+
+        # --- Infer domain-level response priorities from avg_response_time_by_domain ---
+        # PR #276 added _compute_domain_response_times() which groups per-contact
+        # response times by email domain.  Domains the user consistently replies
+        # to within 1 hour indicate high-priority communication relationships
+        # (e.g., primary work domain, close family domain).  We store the top 3
+        # fastest-reply domains so the prediction engine can weight them higher
+        # when deciding whether to surface a follow-up prediction.
+        domain_response_times = data.get("avg_response_time_by_domain", {})
+        if len(domain_response_times) >= 2:
+            # Sort ascending by average response time (seconds) — fastest first.
+            sorted_domains = sorted(domain_response_times.items(), key=lambda x: x[1])
+            fast_domains_stored = 0
+            for domain, avg_seconds in sorted_domains:
+                if fast_domains_stored >= 3:
+                    # Cap at 3 domain facts to avoid polluting semantic memory
+                    # with low-signal domains that happen to have fast responses.
+                    break
+                if avg_seconds > 3600:
+                    # >1 hour average response = not a priority domain; stop
+                    # adding facts since the list is sorted fastest-first.
+                    break
+                # Scale confidence: 0.7 at exactly 1 h, up to 0.9 for <6 min.
+                confidence = min(0.9, 0.7 + max(0.0, (3600 - avg_seconds) / 3600) * 0.2)
+                self.ums.update_semantic_fact(
+                    key=f"high_priority_domain_{domain}",
+                    category="implicit_preference",
+                    value=f"avg_reply={int(avg_seconds // 60)}min",
+                    confidence=confidence,
+                    episode_id=episode_id,
+                )
+                fast_domains_stored += 1
 
         logger.info(f"Inferred semantic facts from cadence profile (samples={profile.get('samples_count')})")
 
