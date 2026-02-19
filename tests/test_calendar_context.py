@@ -21,7 +21,7 @@ Coverage areas:
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -72,8 +72,13 @@ def _make_assembler(db) -> ContextAssembler:
 
 
 def _today(offset: int = 0) -> str:
-    """Return date string for today + offset days, formatted YYYY-MM-DD."""
-    return (date.today() + timedelta(days=offset)).isoformat()
+    """Return date string for today + offset days in UTC, formatted YYYY-MM-DD.
+
+    Uses UTC (matching SQLite's ``date('now')``) rather than the local system
+    clock so that tests are time-zone invariant and do not fail near midnight
+    UTC when the local date lags the UTC date by one day.
+    """
+    return (datetime.now(timezone.utc).date() + timedelta(days=offset)).isoformat()
 
 
 # ---------------------------------------------------------------------------
