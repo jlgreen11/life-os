@@ -2,12 +2,13 @@
 Life OS — Shared Marketing/Automated-Sender Filter
 
 Single authoritative implementation of the marketing/automated-sender detection
-logic used across the system.  Previously, three separate copies of this logic
+logic used across the system.  Previously, separate copies of this logic
 existed in:
 
   - services/signal_extractor/relationship.py  (_is_marketing_or_noreply)
   - services/prediction_engine/engine.py       (_is_marketing_or_noreply)
   - services/behavioral_accuracy_tracker/tracker.py (_is_automated_sender)
+  - services/task_manager/manager.py           (_is_marketing_email, iter 253)
 
 Because those copies evolved independently, they diverged: the relationship
 extractor was missing the financial (Fidelity, Schwab, PayPal …) and
