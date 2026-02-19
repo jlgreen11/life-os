@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Optional
 
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.user_model_store import UserModelStore
 
 logger = logging.getLogger(__name__)
@@ -198,9 +199,20 @@ class SemanticFactInferrer:
         Filtering:
           - Skip contacts with zero outbound messages (one-way relationships)
             to avoid treating marketing emails as "high priority" relationships
-          - Semantic facts should reflect the user's actual communication
-            patterns, not the volume of spam they receive
+          - Apply the shared marketing filter to exclude automated/newsletter
+            senders even if the user has replied to them once.  A user may
+            occasionally reply to a Royal Caribbean promotion or an Amazon
+            store notification, but those senders should never appear as
+            "high_priority" contacts in semantic memory.
+          - Semantic facts should reflect the user's actual human communication
+            patterns, not the volume of commercial email they receive.
         """
+        # --- Purge stale marketing relationship facts ---
+        # Marketing-sender relationship facts created by prior inference runs
+        # (before this filter was applied) must be removed so they do not
+        # persist in the semantic memory between inference cycles.
+        self._purge_marketing_relationship_facts()
+
         profile = self.ums.get_signal_profile("relationships")
         if not profile or profile.get("samples_count", 0) < 10:
             logger.debug("Relationship profile has insufficient samples (<10), skipping inference")
@@ -215,28 +227,45 @@ class SemanticFactInferrer:
         if not contacts:
             return
 
-        # Filter out one-way relationships (zero outbound) to avoid polluting
-        # semantic facts with marketing email senders. Only consider contacts
-        # the user actually communicates with bidirectionally.
+        # Filter 1: Skip contacts with zero outbound messages.
+        # These are pure inbound senders (newsletters, automated receipts, etc.)
+        # that the user has never replied to.
         bidirectional_contacts = {
             contact_id: contact_data
             for contact_id, contact_data in contacts.items()
             if contact_data.get("outbound_count", 0) > 0
         }
 
-        if not bidirectional_contacts:
-            logger.debug("No bidirectional contacts found, skipping relationship inference")
+        # Filter 2: Apply the shared marketing filter to remove automated/commercial
+        # senders that the user may have occasionally replied to.  Examples:
+        #   - no-reply@accounts.google.com  (automated Google notifications)
+        #   - store-news@amazon.com          (Amazon marketing)
+        #   - SouthwestAirlines@iluv.southwest.com (airline promotions)
+        # Without this filter, senders that appear frequently in the inbox push
+        # up the average interaction count, causing them to cross the
+        # high_priority_threshold and pollute semantic memory.
+        human_contacts = {
+            contact_id: contact_data
+            for contact_id, contact_data in bidirectional_contacts.items()
+            if not is_marketing_or_noreply(contact_id)
+        }
+
+        if not human_contacts:
+            logger.debug("No human bidirectional contacts found after marketing filter, skipping relationship inference")
             return
 
-        # Calculate average interaction count across bidirectional contacts only
-        interaction_counts = [c.get("interaction_count", 0) for c in bidirectional_contacts.values()]
+        # Calculate average interaction count across human contacts only.
+        # Previously this was computed over all bidirectional contacts, which
+        # inflated the average with high-volume marketing senders and raised
+        # the high_priority_threshold so high that real contacts rarely qualified.
+        interaction_counts = [c.get("interaction_count", 0) for c in human_contacts.values()]
         if not interaction_counts:
             return
 
         avg_interactions = sum(interaction_counts) / len(interaction_counts)
         high_priority_threshold = avg_interactions * 2  # 2x average = high priority
 
-        for contact_id, contact_data in bidirectional_contacts.items():
+        for contact_id, contact_data in human_contacts.items():
             interaction_count = contact_data.get("interaction_count", 0)
             if interaction_count < 5:
                 continue  # Not enough data
@@ -346,6 +375,67 @@ class SemanticFactInferrer:
             logger.info(
                 f"Purged {deleted} stale noise topic facts (expertise_*/interest_* "
                 f"whose topic word is in the updated blocklist)"
+            )
+        return deleted
+
+    def _purge_marketing_relationship_facts(self) -> int:
+        """
+        Remove previously-stored relationship facts for marketing/automated senders.
+
+        When the marketing filter is first applied (or improved), stale facts from
+        prior inference runs may already exist in the database for senders like
+        ``no-reply@accounts.google.com`` or ``store-news@amazon.com``.  This method
+        deletes those relationship facts so semantic memory reflects only genuine
+        human contacts.
+
+        Safety: Only facts with ``is_user_corrected = 0`` are removed.  User-corrected
+        facts are never touched.
+
+        Returns:
+            Number of stale marketing relationship facts deleted.
+
+        Example::
+
+            purged = self._purge_marketing_relationship_facts()
+            # Removes "relationship_priority_no-reply@accounts.google.com",
+            # "relationship_balance_store-news@amazon.com", etc.
+        """
+        deleted = 0
+        # Fetch all relationship_priority_* and relationship_balance_* and
+        # relationship_multichannel_* facts that are not user-corrected.
+        # The contact_id is everything after the first underscore-separated prefix.
+        with self.ums.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                "SELECT key FROM semantic_facts "
+                "WHERE (key LIKE 'relationship_priority_%' "
+                "   OR key LIKE 'relationship_balance_%' "
+                "   OR key LIKE 'relationship_multichannel_%') "
+                "AND is_user_corrected = 0"
+            ).fetchall()
+
+            for row in rows:
+                key = row["key"]
+                # Extract contact_id: everything after the prefix and its underscore.
+                # e.g. "relationship_priority_no-reply@accounts.google.com"
+                #        → prefix="relationship_priority", contact_id="no-reply@accounts.google.com"
+                # We split on the second underscore (after "relationship_<type>_").
+                parts = key.split("_", 2)  # ["relationship", "priority", "no-reply@..."]
+                if len(parts) < 3:
+                    continue
+                contact_id = parts[2]
+
+                if is_marketing_or_noreply(contact_id):
+                    conn.execute(
+                        "DELETE FROM semantic_facts WHERE key = ? AND is_user_corrected = 0",
+                        (key,)
+                    )
+                    deleted += 1
+
+        if deleted > 0:
+            logger.info(
+                "Purged %d stale marketing relationship facts "
+                "(relationship_priority/balance/multichannel for automated senders)",
+                deleted,
             )
         return deleted
 
