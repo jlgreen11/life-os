@@ -732,10 +732,26 @@ class InsightEngine:
     # ------------------------------------------------------------------
 
     def _communication_style_insights(self) -> list[Insight]:
-        """Surface formality observations from the linguistic signal profile.
+        """Surface communication-style observations from the linguistic signal profile.
 
-        Reads the linguistic profile's ``averages.formality`` score and
-        translates it into a human-readable insight.
+        Reads ``averages`` from the ``linguistic`` profile and generates up to five
+        complementary insight types:
+
+        1. **Formality** — formal / balanced / casual writing register.
+        2. **Question rate** — inquisitive (question-heavy) vs. declarative style.
+        3. **Hedge rate** — tentative ("maybe", "I think") vs. confident phrasing.
+        4. **Emoji rate** — expressive emoji-using style vs. plain-text communication.
+        5. **Vocabulary diversity** — rich word choice (high TTR) vs. simple/repetitive.
+
+        Minimum 5 samples required for all insights; formality fires at 3.
+        Confidence scales with sample count, capped at 0.85.
+
+        Example::
+
+            # With 200 outbound messages analysed, may return:
+            # - "Your overall writing style is balanced (formality 0.48, 200 msgs)"
+            # - "You frequently pepper messages with questions (rate 0.42/sentence)"
+            # - "You tend to hedge often ('maybe', 'I think') — tentative phrasing"
         """
         insights: list[Insight] = []
 
@@ -745,10 +761,12 @@ class InsightEngine:
 
         averages = profile["data"].get("averages", {})
         formality = averages.get("formality")
+        samples_count = profile.get("samples_count", 0)
 
-        if formality is None:
+        if formality is None or samples_count < 3:
             return []
 
+        # --- Insight 1: Formality ---
         if formality >= 0.7:
             style_label = "formal"
         elif formality <= 0.3:
@@ -756,9 +774,7 @@ class InsightEngine:
         else:
             style_label = "balanced"
 
-        samples_count = profile.get("samples_count", 0)
-        if samples_count < 3:
-            return []  # Not enough data for a meaningful observation
+        confidence = min(0.85, 0.4 + samples_count * 0.02)
 
         insight = Insight(
             type="communication_style",
@@ -766,7 +782,7 @@ class InsightEngine:
                 f"Your overall writing style is {style_label} "
                 f"(formality score {formality:.2f}, based on {samples_count} messages)."
             ),
-            confidence=min(0.85, 0.4 + samples_count * 0.02),
+            confidence=confidence,
             evidence=[
                 f"formality={formality:.2f}",
                 f"samples_count={samples_count}",
@@ -777,6 +793,139 @@ class InsightEngine:
         )
         insight.compute_dedup_key()
         insights.append(insight)
+
+        # The remaining insights require at least 5 samples to be meaningful.
+        if samples_count < 5:
+            return insights
+
+        # --- Insight 2: Question rate ---
+        # A rate ≥ 0.35 means at least 1 question per 3 sentences on average,
+        # which marks a clearly inquisitive style. ≤ 0.05 marks an assertive,
+        # declarative communicator.
+        question_rate = averages.get("question_rate")
+        if question_rate is not None:
+            if question_rate >= 0.35:
+                insight = Insight(
+                    type="communication_style",
+                    summary=(
+                        f"You frequently ask questions in your messages "
+                        f"({question_rate:.2f} questions/sentence). "
+                        "Your communication style is inquisitive and dialogue-oriented."
+                    ),
+                    confidence=confidence,
+                    evidence=[f"question_rate={question_rate:.3f}"],
+                    category="communication_style",
+                    entity="inquisitive",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            elif question_rate <= 0.05:
+                insight = Insight(
+                    type="communication_style",
+                    summary=(
+                        f"You rarely phrase things as questions "
+                        f"({question_rate:.2f} questions/sentence). "
+                        "Your communication style is direct and declarative."
+                    ),
+                    confidence=confidence,
+                    evidence=[f"question_rate={question_rate:.3f}"],
+                    category="communication_style",
+                    entity="declarative",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # --- Insight 3: Hedge rate ---
+        # ≥ 0.5 hedges/sentence ("maybe", "I think", "sort of") indicates
+        # a consistently tentative style; ≤ 0.05 marks confident, direct writing.
+        hedge_rate = averages.get("hedge_rate")
+        if hedge_rate is not None:
+            if hedge_rate >= 0.5:
+                insight = Insight(
+                    type="communication_style",
+                    summary=(
+                        f"You frequently use hedge words like 'maybe', 'I think', "
+                        f"or 'sort of' ({hedge_rate:.2f}/sentence). "
+                        "Your writing comes across as thoughtful but sometimes tentative."
+                    ),
+                    confidence=confidence,
+                    evidence=[f"hedge_rate={hedge_rate:.3f}"],
+                    category="communication_style",
+                    entity="tentative",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            elif hedge_rate <= 0.05:
+                insight = Insight(
+                    type="communication_style",
+                    summary=(
+                        f"You rarely hedge in your messages "
+                        f"({hedge_rate:.2f} hedges/sentence). "
+                        "Your writing style is confident and direct."
+                    ),
+                    confidence=confidence,
+                    evidence=[f"hedge_rate={hedge_rate:.3f}"],
+                    category="communication_style",
+                    entity="confident",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # --- Insight 4: Emoji rate ---
+        # ≥ 0.05 emojis per word means roughly 1 emoji per 20 words, which
+        # is a noticeably expressive pattern.
+        emoji_rate = averages.get("emoji_rate")
+        if emoji_rate is not None and emoji_rate >= 0.05:
+            insight = Insight(
+                type="communication_style",
+                summary=(
+                    f"You use emojis frequently in your messages "
+                    f"({emoji_rate:.3f} emojis/word). "
+                    "Your writing style is visually expressive."
+                ),
+                confidence=confidence,
+                evidence=[f"emoji_rate={emoji_rate:.3f}"],
+                category="communication_style",
+                entity="expressive",
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # --- Insight 5: Vocabulary diversity (type-token ratio) ---
+        # TTR ≥ 0.75 indicates a notably rich, varied vocabulary across messages.
+        # TTR ≤ 0.40 indicates repetitive or simple word choice.
+        unique_word_ratio = averages.get("unique_word_ratio")
+        if unique_word_ratio is not None:
+            if unique_word_ratio >= 0.75:
+                insight = Insight(
+                    type="communication_style",
+                    summary=(
+                        f"Your vocabulary is notably diverse "
+                        f"(type-token ratio {unique_word_ratio:.2f}). "
+                        "You use a wide range of words across your messages."
+                    ),
+                    confidence=confidence,
+                    evidence=[f"unique_word_ratio={unique_word_ratio:.3f}"],
+                    category="communication_style",
+                    entity="rich_vocabulary",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            elif unique_word_ratio <= 0.40:
+                insight = Insight(
+                    type="communication_style",
+                    summary=(
+                        f"Your writing uses a consistent, focused vocabulary "
+                        f"(type-token ratio {unique_word_ratio:.2f}). "
+                        "You tend to use the same words reliably across messages."
+                    ),
+                    confidence=confidence,
+                    evidence=[f"unique_word_ratio={unique_word_ratio:.3f}"],
+                    category="communication_style",
+                    entity="focused_vocabulary",
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
 
         return insights
 
