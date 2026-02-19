@@ -22,6 +22,7 @@ Insight Types:
     cadence_response            -- Reply-latency baseline, priority contacts, and peak hours from cadence profile
     routine_pattern             -- Recurring behavioral sequences detected in procedural memory (Layer 3)
     spatial_location            -- Location-behavioral patterns from spatial signal profile (visit frequency, work/personal split)
+    workflow_pattern            -- Goal-driven multi-step processes detected by WorkflowDetector (email response, task completion, meeting prep)
 """
 
 from __future__ import annotations
@@ -184,6 +185,11 @@ class InsightEngine:
             raw.extend(self._spatial_insights())
         except Exception:
             logger.exception("spatial_insights correlator failed")
+
+        try:
+            raw.extend(self._workflow_pattern_insights())
+        except Exception:
+            logger.exception("workflow_pattern correlator failed")
 
         # Ensure every insight has a dedup key
         for insight in raw:
@@ -3142,6 +3148,201 @@ class InsightEngine:
             len(place_behaviors),
             len([d for d in place_behaviors.values() if d.get("visit_count", 0) >= MIN_VISITS]),
             total_samples,
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Workflow Patterns (Procedural Memory — Layer 3)
+    # ------------------------------------------------------------------
+
+    def _workflow_pattern_insights(self) -> list[Insight]:
+        """Surface goal-driven workflow patterns detected by WorkflowDetector.
+
+        Reads the ``workflows`` table (populated by ``WorkflowDetector``) and
+        generates one insight per qualifying workflow.  A workflow qualifies when
+        it has been observed at least ``MIN_OBSERVATIONS`` times **and** its
+        ``success_rate`` meets ``MIN_SUCCESS_RATE``.
+
+        Three workflow sub-types are surfaced with tailored summaries:
+
+        **Email workflows** (name starts with "Responding to"):
+            "You consistently respond to emails from <sender>: seen N times,
+             X% reply rate."  Marketing/automated senders are filtered out
+             using the shared ``is_marketing_or_noreply()`` helper so the
+             correlator only surfaces genuine human communication patterns.
+
+        **Task workflows** (name contains "Task completion"):
+            "Your task management workflow spans N steps across M tools,
+             with X% completion rate (seen K times)."  Surfaces the user's
+             productivity pattern around task handling.
+
+        **Calendar workflows** (name contains "Calendar"):
+            "Your meetings consistently trigger prep/follow-up actions:
+             N calendar events observed, with X% follow-up rate."
+
+        **Interaction workflows** (any other trigger-based workflow):
+            "You have a recurring <trigger> workflow pattern:
+             N steps, seen K times, X% success rate."
+
+        Confidence formula::
+
+            confidence = min(0.85, 0.50
+                            + min(observations, 50) / 50 * 0.20
+                            + success_rate * 0.15)
+
+        - 0.50 base  — all qualifying workflows carry at least moderate signal
+        - 0.20 bonus — scales linearly with observation count, capping at 50 obs
+        - 0.15 bonus — scales with success_rate (0=no bonus, 1=full bonus)
+        - 0.85 cap   — leaves headroom for source-weight modulation
+
+        **Dedup strategy:**
+            Entity encodes the workflow name so the dedup key is stable across
+            runs.  Staleness TTL is 7 days (168 h) — workflows are re-detected
+            weekly by the WorkflowDetector.
+
+        Returns:
+            list[Insight]: One ``behavioral_pattern`` insight per qualifying
+            workflow, ordered by times_observed descending.
+
+        Example outputs::
+
+            "You consistently respond to emails from alice@work.com
+             (seen 47 times, 92% reply rate)."
+
+            "Your task management workflow spans 4 steps across email + calendar
+             (seen 7,232 times, 25% completion rate)."
+
+            "Your meetings consistently trigger email follow-ups
+             (seen 2,638 calendar events, 68% follow-up rate)."
+        """
+        # Minimum times a workflow must be observed before surfacing it.
+        # Set to 3 to match WorkflowDetector.min_occurrences — if the detector
+        # stored it, it already met this bar, but guard defensively.
+        MIN_OBSERVATIONS = 3
+        # Minimum success rate: 1% (same as WorkflowDetector.success_threshold).
+        # We use 1% because email workflows are inherently low-rate (most emails
+        # don't get replies), and the interesting signal is the *pattern*, not
+        # the frequency.
+        MIN_SUCCESS_RATE = 0.01
+
+        try:
+            workflows = self.ums.get_workflows()
+        except Exception:
+            logger.exception("workflow_pattern_insights: failed to fetch workflows")
+            return []
+
+        if not workflows:
+            logger.debug("workflow_pattern_insights: no workflows stored — skipping")
+            return []
+
+        insights: list[Insight] = []
+
+        for workflow in workflows:
+            name: str = workflow.get("name", "")
+            observed: int = workflow.get("times_observed", 0)
+            success_rate: float = workflow.get("success_rate", 0.0)
+            steps: list = workflow.get("steps", [])
+            tools: list = workflow.get("tools_used", [])
+            duration_min: float = workflow.get("typical_duration_minutes") or 0.0
+
+            if not name or observed < MIN_OBSERVATIONS or success_rate < MIN_SUCCESS_RATE:
+                continue
+
+            # --- Build summary and classify workflow type ---
+            if name.startswith("Responding to "):
+                # Extract the sender address from the workflow name.
+                # WorkflowDetector formats these as "Responding to <addr>".
+                sender = name[len("Responding to "):]
+
+                # Skip automated/marketing senders — these workflows are
+                # noise (e.g., "Responding to newsletter@company.com" with
+                # success_rate=0.001 because the user never replies).
+                if is_marketing_or_noreply(sender, {}):
+                    logger.debug(
+                        "workflow_pattern_insights: skipping marketing workflow '%s'", name
+                    )
+                    continue
+
+                reply_pct = round(success_rate * 100)
+                summary = (
+                    f"You consistently respond to emails from {sender} "
+                    f"(seen {observed} times, {reply_pct}% reply rate)."
+                )
+                category = "workflow_pattern_email"
+
+            elif "Task completion" in name or "task" in name.lower():
+                step_count = len(steps)
+                tools_str = " + ".join(tools[:3]) if tools else "multiple tools"
+                completion_pct = round(success_rate * 100)
+                summary = (
+                    f"Your task management workflow spans {step_count} steps "
+                    f"across {tools_str} "
+                    f"(seen {observed} times, {completion_pct}% completion rate)."
+                )
+                category = "workflow_pattern_task"
+
+            elif "Calendar" in name or "calendar" in name.lower():
+                followup_pct = round(success_rate * 100)
+                summary = (
+                    f"Your meetings consistently trigger prep or follow-up actions "
+                    f"(seen {observed} calendar events, {followup_pct}% follow-up rate)."
+                )
+                category = "workflow_pattern_calendar"
+
+            else:
+                # Generic interaction-based workflow (e.g., "Email Received Workflow")
+                step_count = len(steps)
+                success_pct = round(success_rate * 100)
+                duration_str = f", ~{round(duration_min)} min avg" if duration_min > 0 else ""
+                summary = (
+                    f"You have a recurring workflow: {name} "
+                    f"({step_count} steps, seen {observed} times, "
+                    f"{success_pct}% success rate{duration_str})."
+                )
+                category = "workflow_pattern_interaction"
+
+            # Confidence formula: base 0.50, up to 0.20 bonus from observations
+            # (capped at 50 to avoid over-confidence on high-volume marketing),
+            # up to 0.15 bonus from success_rate.
+            confidence = min(
+                0.85,
+                0.50
+                + min(observed, 50) / 50 * 0.20
+                + success_rate * 0.15,
+            )
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=summary,
+                confidence=confidence,
+                evidence=[
+                    f"workflow_name={name}",
+                    f"times_observed={observed}",
+                    f"success_rate={success_rate:.3f}",
+                    f"steps_count={len(steps)}",
+                    f"tools_used={','.join(tools[:3])}",
+                    f"typical_duration_min={round(duration_min, 1)}",
+                ],
+                category=category,
+                # Entity is the workflow name — stable dedup key across runs.
+                entity=name,
+                staleness_ttl_hours=168,  # 7 days — matches WorkflowDetector cadence
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        # Sort descending by times_observed so the most-seen workflows
+        # appear first in the briefing context.
+        insights.sort(key=lambda i: -(i.evidence and
+                                       int(next((e.split("=")[1] for e in i.evidence
+                                                 if e.startswith("times_observed=")), "0"))))
+
+        logger.debug(
+            "workflow_pattern_insights: %d insights generated "
+            "(total_workflows=%d, qualifying=%d)",
+            len(insights),
+            len(workflows),
+            len(insights),
         )
         return insights
 
