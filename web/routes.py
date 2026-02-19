@@ -808,11 +808,16 @@ def register_routes(app: FastAPI, life_os) -> None:
         # exactly so that feedback adjusts the same source keys that were used
         # to weight the insight at generation time.
         if row:
+            # This dict MUST mirror InsightEngine._apply_source_weights() exactly so
+            # that feedback adjusts the same source weights used at generation time.
+            # When a new correlator is added to engine.py, add its categories here too.
             category_to_source = {
                 "place": "location.visits",
                 "contact_gap": "messaging.direct",
                 "email_volume": "email.work",
                 "communication_style": "messaging.direct",
+                # Inbound style mismatch — weighted against outbound messaging source
+                "style_mismatch": "messaging.direct",
                 # Temporal pattern insight categories (from _temporal_pattern_insights)
                 "chronotype": "email.work",
                 "peak_hour": "email.work",
@@ -824,6 +829,24 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "spending_increase": "finance.transactions",
                 "spending_decrease": "finance.transactions",
                 "recurring_subscription": "finance.transactions",
+                # Decision pattern insights (from _decision_pattern_insights)
+                "decision_speed": "email.work",
+                "delegation_tendency": "messaging.direct",
+                "decision_fatigue": "messaging.direct",
+                # Topic interest insights (from _topic_interest_insights)
+                "top_interests": "email.work",
+                "trending_topic": "email.work",
+                # Cadence / response-time insights (from _cadence_response_insights)
+                "response_time_baseline": "email.work",
+                "fastest_contacts": "messaging.direct",
+                "communication_peak_hours": "email.work",
+                "channel_cadence": "email.work",
+                # Routine pattern insights (from _routine_insights)
+                "routine_pattern": "email.work",
+                # Spatial insights (from _spatial_insights)
+                "spatial_top_location": "location.visits",
+                "spatial_work_location": "location.visits",
+                "spatial_location_diversity": "location.visits",
                 # actionable_alert categories (overdue_task, upcoming_calendar) are
                 # intentionally absent: they bypass source-weight tuning entirely.
             }
