@@ -682,6 +682,117 @@ def register_routes(app: FastAPI, life_os) -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    # Known signal profile types maintained by the SignalPipeline.  This
+    # constant serves as both documentation and the canonical list for the
+    # signal-profiles endpoint so neither the route nor the tests need to
+    # hard-code the profile names themselves.
+    _SIGNAL_PROFILE_TYPES = [
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "topics",
+        "temporal",
+        "spatial",
+        "decision",
+    ]
+
+    @app.get("/api/user-model/signal-profiles")
+    async def get_signal_profiles(profile_type: Optional[str] = None):
+        """Return behavioral signal profiles from Layer 1 (episodic signals).
+
+        Signal profiles are the raw aggregated behavioral data collected by the
+        SignalPipeline from every event processed by Life OS.  Each profile type
+        captures a different dimension of behavior:
+
+        - **linguistic** — outbound writing style (formality, sentence length,
+          punctuation patterns, vocabulary richness)
+        - **linguistic_inbound** — aggregated writing style of contacts who email
+          the user (formality mismatches trigger inbound_style insights)
+        - **cadence** — response latency patterns per contact and per channel
+          (who gets fast replies, who gets slow ones, and when)
+        - **mood_signals** — valence, energy, and stress signals extracted from
+          email/message content and timestamps
+        - **relationships** — contact interaction graph: outbound count, inbound
+          count, gap-days since last contact, and priority flags
+        - **topics** — interest topic frequencies extracted from email subjects
+          and message bodies (powers topic_interest insights)
+        - **temporal** — chronotype (early bird vs. night owl), peak productive
+          hours, and work-boundary adherence patterns
+        - **spatial** — location visit frequencies and typical work locations
+          extracted from calendar event metadata
+        - **decision** — decision speed, delegation frequency, and recency of
+          decision-making activity
+
+        These profiles are aggregated by the SignalPipeline on every inbound event
+        and are used internally by the InsightEngine, SemanticFactInferrer, and
+        PredictionEngine.  This endpoint exposes the raw profiles directly so
+        users and developers can inspect what the system has learned.
+
+        Query params:
+            profile_type: Optional.  If provided, return only the named profile
+                          (e.g. ``?profile_type=linguistic``).  Raises 404 if
+                          the profile type is unknown or has no data yet.
+                          If omitted, all known profile types are returned.
+
+        Returns:
+            ``{"profiles": {<type>: {data, samples_count, updated_at}, ...},
+               "types_with_data": [...], "generated_at": "..."}``
+
+        Example (single profile)::
+
+            GET /api/user-model/signal-profiles?profile_type=temporal
+            → {
+                "profiles": {
+                    "temporal": {
+                        "data": {"chronotype": "early_bird", ...},
+                        "samples_count": 13814,
+                        "updated_at": "2026-02-19T04:19:45.693Z"
+                    }
+                },
+                "types_with_data": ["temporal"],
+                "generated_at": "2026-02-19T04:20:00.000000+00:00"
+            }
+        """
+        # Validate the requested profile_type before querying.
+        if profile_type is not None and profile_type not in _SIGNAL_PROFILE_TYPES:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Unknown profile type {profile_type!r}. "
+                    f"Valid types: {_SIGNAL_PROFILE_TYPES}"
+                ),
+            )
+
+        # Determine which types to fetch: a specific one or all known types.
+        types_to_fetch = [profile_type] if profile_type else _SIGNAL_PROFILE_TYPES
+
+        profiles = {}
+        for ptype in types_to_fetch:
+            try:
+                row = life_os.user_model_store.get_signal_profile(ptype)
+                if row:
+                    # Return the full profile including the deserialized data
+                    # blob (not just the summary counts surfaced by pipeline
+                    # snapshots) so callers can inspect raw signals.
+                    profiles[ptype] = {
+                        "data": row["data"],
+                        "samples_count": row["samples_count"],
+                        "updated_at": row["updated_at"],
+                    }
+            except Exception as e:
+                # Never let a single broken profile abort the entire request —
+                # return the other profiles and log the failure.
+                logger.warning("Failed to fetch signal profile %r: %s", ptype, e)
+
+        return {
+            "profiles": profiles,
+            # Convenience list so callers can quickly see which types have data.
+            "types_with_data": list(profiles.keys()),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     # -------------------------------------------------------------------
     # Insights (aggregated signal profiles → human-readable summaries)
     # -------------------------------------------------------------------
