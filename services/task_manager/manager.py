@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 from models.core import Priority, Task
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.database import DatabaseManager
 
 
@@ -584,68 +585,44 @@ class TaskManager:
 
     @staticmethod
     def _is_marketing_email(payload: dict) -> bool:
-        """
-        Check if an email is marketing/promotional and unlikely to contain action items.
+        """Delegate to the shared marketing filter module.
 
-        Marketing emails (newsletters, promotions, automated notifications) almost
-        never contain genuine action items for the user. Filtering them out before
-        AI processing dramatically improves throughput (skips ~99% of emails in
-        typical inboxes) and reduces API costs.
+        This method is a backward-compatible wrapper around the single source
+        of truth: ``services.signal_extractor.marketing_filter.is_marketing_or_noreply``.
 
-        Filters out:
-        - No-reply and automated system senders (mailer-daemon, postmaster, etc.)
-        - Bulk/marketing email patterns (newsletter@, reply@, email@, etc.)
-        - Marketing domain patterns (news-*.com, email.*.com, etc.)
-        - Emails containing unsubscribe links (legally required for marketing)
+        Prior to iteration 253, this method contained a hand-rolled duplicate
+        of the shared filter that had diverged from the canonical implementation
+        (PR #185 extracted the shared module but the task manager was missed).
+        Delegating here ensures that every improvement to the shared filter —
+        new no-reply stems, financial-domain patterns, brand self-mailer detection,
+        etc. — automatically benefits task extraction without any additional changes.
+
+        The shared filter checks:
+          - No-reply and automated system senders (noreply@, mailer-daemon@, …)
+          - Bulk-sender local-parts (newsletter@, notifications@, promo@, …)
+          - Financial/brokerage automated systems (fidelity@, schwab@, paypal@, …)
+          - Retail/hospitality transactional senders (customerservice@, reservations@, …)
+          - Marketing subdomain patterns (@email., @comms., @alerts., …)
+          - Third-party ESP platform domains (sendgrid.net, mailchimp.com, …)
+          - Brand self-mailer pattern (company@company.com)
+          - Emails whose body/snippet contains an "Unsubscribe" link
 
         Args:
             payload: Email payload dict with from_address, body, snippet, etc.
 
         Returns:
-            True if the email is marketing/promotional, False otherwise
+            True if the email is marketing/promotional, False otherwise.
+
+        Example::
+
+            payload = {"from_address": "newsletter@deals.example.com", "body": "..."}
+            TaskManager._is_marketing_email(payload)  # → True
+
+            payload = {"from_address": "alice@gmail.com", "body": "Can you send the report?"}
+            TaskManager._is_marketing_email(payload)  # → False
         """
-        from_addr = payload.get("from_address", "").lower()
-
-        # No-reply and automated system senders
-        noreply_patterns = (
-            "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
-            "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
-            "autoreply@", "automated@",
-        )
-        if any(pattern in from_addr for pattern in noreply_patterns):
-            return True
-
-        # Common bulk sender local-parts (the part before @)
-        # These patterns must match at the start to avoid false positives
-        bulk_localpart_patterns = (
-            "newsletter@", "notifications@", "updates@", "digest@",
-            "mailer@", "bulk@", "promo@", "marketing@",
-            "reply@", "email@", "news@", "offers@", "deals@",
-            "hello@", "info@", "support@", "help@",
-        )
-        if any(from_addr.startswith(pattern) for pattern in bulk_localpart_patterns):
-            return True
-
-        # Marketing domain patterns (the part after @)
-        marketing_domain_patterns = (
-            "@news-", "@email.", "@reply.", "@mailing.",
-            "@newsletters.", "@promo.", "@marketing.",
-            "@em.", "@mg.", "@mail.",  # Common ESP patterns
-        )
-        if any(pattern in from_addr for pattern in marketing_domain_patterns):
-            return True
-
-        # Check body and snippet for unsubscribe indicators
-        # Marketing emails are legally required to include unsubscribe links
-        text = " ".join(filter(None, [
-            payload.get("body_plain", ""),
-            payload.get("snippet", ""),
-            payload.get("body", ""),
-        ])).lower()
-        if "unsubscribe" in text:
-            return True
-
-        return False
+        from_addr = payload.get("from_address", "")
+        return is_marketing_or_noreply(from_addr, payload)
 
     @staticmethod
     def _row_to_dict(row) -> dict:
