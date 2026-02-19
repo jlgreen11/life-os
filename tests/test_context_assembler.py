@@ -1382,3 +1382,135 @@ class TestIntegration:
         assert "300 total interactions" in context  # Relationship
         assert "formality=" in context  # Linguistic fallback
         assert "Can you send the report?" in context  # Incoming message
+
+
+class TestRecentCompletionsContext:
+    """Tests for _get_recent_completions_context().
+
+    The recent-completions section surfaces tasks finished in the last 24 hours
+    so the LLM can acknowledge wins and avoid treating completed work as pending.
+    """
+
+    def _insert_task(self, conn, title: str, priority: str, domain: str,
+                     status: str, completed_at: str | None = None):
+        """Helper: insert a task row into the state DB."""
+        conn.execute(
+            """INSERT INTO tasks (id, title, priority, status, domain, completed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (str(uuid.uuid4()), title, priority, status, domain, completed_at),
+        )
+
+    def test_returns_empty_when_no_completed_tasks(self, db, user_model_store):
+        """Should return empty string when no tasks have been completed."""
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        assert result == ""
+
+    def test_returns_empty_when_completions_older_than_24h(self, db, user_model_store):
+        """Should exclude tasks completed more than 24 hours ago."""
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        with db.get_connection("state") as conn:
+            self._insert_task(conn, "Old task", "normal", "work",
+                              "completed", completed_at=old_time)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        assert result == ""
+
+    def test_includes_recently_completed_tasks(self, db, user_model_store):
+        """Should include tasks completed within the last 24 hours."""
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        with db.get_connection("state") as conn:
+            self._insert_task(conn, "Submit expense report", "high", "work",
+                              "completed", completed_at=recent_time)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        assert "Recently completed tasks (last 24h):" in result
+        assert "Submit expense report" in result
+        assert "[high]" in result
+        assert "(work)" in result
+
+    def test_excludes_pending_tasks(self, db, user_model_store):
+        """Should not show tasks that are still pending."""
+        with db.get_connection("state") as conn:
+            self._insert_task(conn, "Pending task", "normal", "work", "pending")
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        assert result == ""
+
+    def test_uses_general_when_domain_is_null(self, db, user_model_store):
+        """Should display 'general' when a completed task has no domain."""
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        with db.get_connection("state") as conn:
+            self._insert_task(conn, "No domain task", "low", None,
+                              "completed", completed_at=recent_time)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        assert "(general)" in result
+
+    def test_orders_by_most_recently_completed(self, db, user_model_store):
+        """Most recent completions should appear before older ones."""
+        t1 = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+        t2 = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        with db.get_connection("state") as conn:
+            self._insert_task(conn, "Older task", "normal", "work",
+                              "completed", completed_at=t1)
+            self._insert_task(conn, "Newer task", "high", "work",
+                              "completed", completed_at=t2)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        newer_pos = result.index("Newer task")
+        older_pos = result.index("Older task")
+        assert newer_pos < older_pos, "Most recent completion should appear first"
+
+    def test_caps_at_10_tasks(self, db, user_model_store):
+        """Should cap at 10 tasks to respect token budget."""
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        with db.get_connection("state") as conn:
+            for i in range(15):
+                self._insert_task(conn, f"Task {i}", "normal", "work",
+                                  "completed", completed_at=recent_time)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_recent_completions_context()
+
+        # Count bullet points — each task produces exactly one "- [" line
+        bullet_count = result.count("- [")
+        assert bullet_count == 10, f"Expected 10 tasks, got {bullet_count}"
+
+    def test_briefing_includes_completions_section(self, db, user_model_store):
+        """assemble_briefing_context() should include recent completions when present."""
+        recent_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        with db.get_connection("state") as conn:
+            self._insert_task(conn, "Shipped the feature", "high", "work",
+                              "completed", completed_at=recent_time)
+            conn.commit()
+
+        assembler = ContextAssembler(db, user_model_store)
+        briefing = assembler.assemble_briefing_context()
+
+        assert "Recently completed tasks (last 24h):" in briefing
+        assert "Shipped the feature" in briefing
+
+    def test_briefing_omits_completions_when_none(self, db, user_model_store):
+        """assemble_briefing_context() should not add the section when no completions exist."""
+        assembler = ContextAssembler(db, user_model_store)
+        briefing = assembler.assemble_briefing_context()
+
+        assert "Recently completed tasks" not in briefing
