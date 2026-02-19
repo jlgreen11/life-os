@@ -75,8 +75,10 @@ def mock_life_os():
     life_os.ai_engine.draft_reply = AsyncMock(return_value="Draft message")
     life_os.ai_engine.search_life = AsyncMock(return_value="Search result")
 
-    # Mock task manager
+    # Mock task manager — get_tasks() is the method the route now calls;
+    # get_pending_tasks() is kept for backward-compat shim tests.
     life_os.task_manager = Mock()
+    life_os.task_manager.get_tasks = Mock(return_value=[])
     life_os.task_manager.get_pending_tasks = Mock(return_value=[])
     life_os.task_manager.create_task = AsyncMock(return_value="task-123")
     life_os.task_manager.update_task = AsyncMock()
@@ -418,8 +420,9 @@ def test_search_with_filters(client, mock_life_os):
 # ---------------------------------------------------------------------------
 
 def test_list_tasks(client, mock_life_os):
-    """Test GET /api/tasks lists pending tasks."""
-    mock_life_os.task_manager.get_pending_tasks.return_value = [
+    """Test GET /api/tasks lists pending tasks via get_tasks(status='pending')."""
+    # The route now calls get_tasks() instead of the old get_pending_tasks() stub.
+    mock_life_os.task_manager.get_tasks.return_value = [
         {"id": "t1", "title": "Task 1"}
     ]
 
@@ -428,6 +431,9 @@ def test_list_tasks(client, mock_life_os):
     data = response.json()
     assert len(data["tasks"]) == 1
     assert data["count"] == 1
+    mock_life_os.task_manager.get_tasks.assert_called_once_with(
+        status="pending", limit=50
+    )
 
 
 def test_create_task(client, mock_life_os):

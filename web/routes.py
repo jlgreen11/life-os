@@ -328,7 +328,19 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/tasks")
     async def list_tasks(status: str = "pending", limit: int = 50):
-        tasks = life_os.task_manager.get_pending_tasks(limit=limit)
+        """List tasks filtered by status.
+
+        Query parameters:
+            status: Task status to filter on. One of ``pending`` (default),
+                    ``completed``, ``in_progress``, ``archived``, ``cancelled``.
+            limit:  Maximum number of results to return (default: 50).
+
+        Previously this route accepted a ``status`` parameter but silently
+        ignored it, always returning pending tasks regardless of what was
+        requested.  It now delegates to ``get_tasks()`` so callers can retrieve
+        completed, in-progress, or archived tasks through the same endpoint.
+        """
+        tasks = life_os.task_manager.get_tasks(status=status, limit=limit)
         return {"tasks": tasks, "count": len(tasks)}
 
     @app.post("/api/tasks")
