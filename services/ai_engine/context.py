@@ -171,14 +171,107 @@ class ContextAssembler:
             contact_data = rel_profile["data"]["contacts"][contact_id]
             parts.append(f"Relationship: {contact_data.get('interaction_count', 0)} total interactions")
 
-        # --- Layer 3: General linguistic profile (least specific, broadest) ---
-        # Falls back to the user's overall writing style if no contact-specific
-        # template exists. Provides a baseline formality score (0.0 = very
-        # casual, 1.0 = very formal).
+        # --- Layer 3: Full outbound linguistic profile ---
+        # Surfaces all key averages from the user's linguistic fingerprint so
+        # the LLM can match not just formality but also question-asking tendency,
+        # hedging, emoji use, and vocabulary richness.  PR #261 added these
+        # metrics to LinguisticExtractor but assemble_draft_context() previously
+        # exposed only ``formality``, wasting the other nine computed dimensions.
         ling_profile = self.ums.get_signal_profile("linguistic")
         if ling_profile and "averages" in ling_profile["data"]:
             avg = ling_profile["data"]["averages"]
-            parts.append(f"User's general style: formality={avg.get('formality', 0.5):.1f}")
+            style_parts = [f"formality={avg.get('formality', 0.5):.2f}"]
+
+            # Append non-trivial signal dimensions only when they carry useful
+            # signal (i.e. above a noise threshold).  This avoids cluttering the
+            # context with zeros for metrics the user simply never exhibits.
+            question_rate = avg.get("question_rate", 0.0)
+            if question_rate > 0.05:
+                # > 0.05 questions-per-sentence means the user regularly asks
+                # questions — the LLM should mirror this inquisitive tone.
+                style_parts.append(f"question_rate={question_rate:.2f}")
+
+            hedge_rate = avg.get("hedge_rate", 0.0)
+            if hedge_rate > 0.05:
+                # High hedge_rate means the user typically softens statements
+                # ("I think", "maybe") — avoid overly assertive drafts.
+                style_parts.append(f"hedge_rate={hedge_rate:.2f}")
+
+            emoji_rate = avg.get("emoji_rate", 0.0)
+            if emoji_rate > 0.01:
+                # User frequently uses emoji — include them in the draft.
+                style_parts.append(f"emoji_rate={emoji_rate:.3f}")
+
+            vocab_diversity = avg.get("unique_word_ratio", 0.0)
+            if vocab_diversity > 0:
+                # High ratio → rich vocabulary; low ratio → simpler repetitive
+                # word choice.  Helps the LLM calibrate lexical complexity.
+                style_parts.append(f"vocabulary_diversity={vocab_diversity:.2f}")
+
+            avg_sentence_length = avg.get("avg_sentence_length", 0.0)
+            if avg_sentence_length > 0:
+                # Typical sentence length guides draft verbosity.
+                style_parts.append(f"avg_sentence_length={avg_sentence_length:.0f}w")
+
+            parts.append("User's general style: " + ", ".join(style_parts))
+
+            # Surface common greetings/closings as a fallback when no
+            # contact-specific template was found (template section is Layer 1).
+            # These are the user's most-used openers and sign-offs, extracted
+            # across all outbound messages.
+            common_greetings = ling_profile["data"].get("common_greetings", [])
+            common_closings = ling_profile["data"].get("common_closings", [])
+            if common_greetings:
+                parts.append(
+                    "User's typical greetings: " + ", ".join(common_greetings[:3])
+                )
+            if common_closings:
+                parts.append(
+                    "User's typical closings: " + ", ".join(common_closings[:3])
+                )
+
+        # --- Layer 4: Contact's inbound writing style ---
+        # Shows how *this specific contact* writes to the user (formality, hedge
+        # rate, emoji usage, sentence length).  Knowing the contact's style lets
+        # the LLM craft a response that naturally mirrors or acknowledges their
+        # register — e.g., if they write casually with many questions, the draft
+        # can be warmer and more directly responsive.
+        # Data source: ``linguistic_inbound`` signal profile, which stores
+        # per-contact averages built from 104K+ inbound message samples.
+        try:
+            inbound_profile = self.ums.get_signal_profile("linguistic_inbound")
+            if inbound_profile:
+                contact_avg = (
+                    inbound_profile["data"]
+                    .get("per_contact_averages", {})
+                    .get(contact_id)
+                )
+                if contact_avg:
+                    contact_parts = [
+                        f"formality={contact_avg.get('formality', 0.5):.2f}"
+                    ]
+                    c_question = contact_avg.get("question_rate", 0.0)
+                    if c_question > 0.05:
+                        contact_parts.append(f"question_rate={c_question:.2f}")
+                    c_hedge = contact_avg.get("hedge_rate", 0.0)
+                    if c_hedge > 0.05:
+                        contact_parts.append(f"hedge_rate={c_hedge:.2f}")
+                    c_emoji = contact_avg.get("emoji_rate", 0.0)
+                    if c_emoji > 0.01:
+                        contact_parts.append(f"emoji_rate={c_emoji:.3f}")
+                    c_sentence = contact_avg.get("avg_sentence_length", 0.0)
+                    if c_sentence > 0:
+                        contact_parts.append(
+                            f"avg_sentence_length={c_sentence:.0f}w"
+                        )
+                    parts.append(
+                        f"Contact's writing style ({contact_id}): "
+                        + ", ".join(contact_parts)
+                    )
+        except Exception:
+            # Fail-open: inbound style is a nice-to-have.  If the profile is
+            # missing or malformed, the draft still has all outbound style data.
+            pass
 
         # Finally, append the incoming message that the user needs to reply to.
         # This is the last section so all style context is available first.
