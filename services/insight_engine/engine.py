@@ -508,17 +508,28 @@ class InsightEngine:
                 # the raw email address so the insight remains actionable when
                 # the contacts table hasn't been populated yet.
                 label = self._display_name(addr, name_map)
+                # Enrich with last-discussed topics from episodic memory.
+                # Transforms "12 days since last contact" → "12 days since
+                # last contact. Last topics: budget-review, q1-planning."
+                # giving the user concrete context about what to follow up on.
+                last_topics = self._get_contact_last_topics(addr)
+                topic_suffix = (
+                    f" Last topics: {', '.join(last_topics)}."
+                    if last_topics
+                    else ""
+                )
                 insight = Insight(
                     type="relationship_intelligence",
                     summary=(
                         f"It has been {int(days_since)} days since you last contacted {label} "
-                        f"(usual interval ~{int(avg_gap)} days)."
+                        f"(usual interval ~{int(avg_gap)} days).{topic_suffix}"
                     ),
                     confidence=confidence,
                     evidence=[
                         f"days_since_last={int(days_since)}",
                         f"avg_gap_days={int(avg_gap)}",
                         f"interaction_count={count}",
+                        *(f"last_topic={t}" for t in last_topics),
                     ],
                     category="contact_gap",
                     # Keep the email address as the entity so the dedup key
@@ -536,6 +547,62 @@ class InsightEngine:
             skipped_inbound_only,
         )
         return insights
+
+    def _get_contact_last_topics(self, email_addr: str, limit: int = 3) -> list[str]:
+        """Return the most-recently-discussed topics for a given contact.
+
+        Queries the episodes table for the most recent episode that includes
+        ``email_addr`` in its ``contacts_involved`` JSON array and has at
+        least one topic tag.  Returns an empty list on any error so callers
+        treat missing episode data as a no-op.
+
+        The LIKE pattern ``'%' || email_addr || '%'`` is an approximation of
+        JSON-array membership that works across all SQLite versions without
+        the json1 extension.  It can produce false positives only when one
+        email address is a substring of another (extremely unlikely given
+        RFC 5321 format), so the trade-off is acceptable here.
+
+        Args:
+            email_addr: The contact's email address to search for.
+            limit: Maximum number of topic strings to return (default 3).
+
+        Returns:
+            A list of topic strings from the most recent episode, or an
+            empty list if no matching episode with topic data is found.
+
+        Examples::
+
+            engine._get_contact_last_topics("alice@example.com", limit=3)
+            # → ["budget-review", "q1-planning", "headcount"]
+
+            engine._get_contact_last_topics("nobody@example.com")
+            # → []  (no episodes involving this address)
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    """SELECT topics
+                       FROM episodes
+                       WHERE contacts_involved LIKE '%' || ? || '%'
+                         AND topics IS NOT NULL
+                         AND topics != '[]'
+                       ORDER BY timestamp DESC
+                       LIMIT 1""",
+                    (email_addr,),
+                ).fetchone()
+        except Exception:
+            # Fail-open: topic enrichment is best-effort, never fatal.
+            return []
+
+        if not row:
+            return []
+
+        try:
+            topics = json.loads(row["topics"])
+            # Filter empty / whitespace-only strings before capping.
+            return [str(t) for t in topics if t and str(t).strip()][:limit]
+        except (json.JSONDecodeError, TypeError):
+            return []
 
     # ------------------------------------------------------------------
     # Correlator: Email Volume by Day of Week
