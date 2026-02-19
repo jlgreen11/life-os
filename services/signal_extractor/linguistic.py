@@ -370,6 +370,14 @@ class LinguisticExtractor(BaseExtractor):
         # Recompute running averages for this contact so downstream consumers
         # can quickly characterise a contact's communication style without
         # iterating the raw samples.
+        #
+        # IMPORTANT: All metrics must mirror what the signal dict stores (see
+        # the ``extract()`` method above) so that downstream consumers like
+        # ContextAssembler.assemble_draft_context() can reliably read them.
+        # Previously ``question_rate``, ``ellipsis_rate``, and
+        # ``unique_word_ratio`` were computed per-signal but never included
+        # here, causing the draft context to always read 0.0 for every contact
+        # despite 100K+ inbound samples.
         samples = data["per_contact"][contact]
         data["per_contact_averages"][contact] = {
             "avg_sentence_length": statistics.mean(s["avg_sentence_length"] for s in samples),
@@ -377,6 +385,15 @@ class LinguisticExtractor(BaseExtractor):
             "hedge_rate": statistics.mean(s["hedge_rate"] for s in samples),
             "assertion_rate": statistics.mean(s["assertion_rate"] for s in samples),
             "exclamation_rate": statistics.mean(s["exclamation_rate"] for s in samples),
+            # question_rate was computed per-signal but missing from averages —
+            # the draft-context assembler reads this to detect inquisitive contacts.
+            "question_rate": statistics.mean(s["question_rate"] for s in samples),
+            # ellipsis_rate signals trailing thoughts and informality; helps
+            # the draft context detect casual contacts who trail off with "...".
+            "ellipsis_rate": statistics.mean(s["ellipsis_rate"] for s in samples),
+            # unique_word_ratio (type-token ratio) measures vocabulary richness;
+            # lets the system detect contacts with elaborate vs. simple word choice.
+            "unique_word_ratio": statistics.mean(s["unique_word_ratio"] for s in samples),
             "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
             "samples_count": len(samples),
         }
