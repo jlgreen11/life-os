@@ -301,15 +301,38 @@ class ContextAssembler:
             contact_data = rel_profile["data"]["contacts"][contact_id]
             parts.append(f"Relationship: {contact_data.get('interaction_count', 0)} total interactions")
 
-        # --- Layer 3: Full outbound linguistic profile ---
-        # Surfaces all key averages from the user's linguistic fingerprint so
-        # the LLM can match not just formality but also question-asking tendency,
-        # hedging, emoji use, and vocabulary richness.  PR #261 added these
-        # metrics to LinguisticExtractor but assemble_draft_context() previously
-        # exposed only ``formality``, wasting the other nine computed dimensions.
+        # --- Layer 3: Outbound linguistic profile (per-contact when available) ---
+        # Surfaces style averages from the user's linguistic fingerprint so the
+        # LLM can match formality, question-asking tendency, hedging, emoji use,
+        # and vocabulary richness.
+        #
+        # Since PR #281 the ``linguistic`` profile stores ``per_contact_averages``
+        # — running style summaries derived from the per-contact ring buffer —
+        # alongside the global ``averages``.  We prefer per-contact data when it
+        # exists and has enough samples (>= 3) because "how you write to Alice"
+        # is more useful for drafting a reply to Alice than "how you write in
+        # general".  When per-contact data is absent (new/rare contact) we fall
+        # back to the global averages so the draft is never left with no style
+        # guidance.
         ling_profile = self.ums.get_signal_profile("linguistic")
         if ling_profile and "averages" in ling_profile["data"]:
-            avg = ling_profile["data"]["averages"]
+            global_avg = ling_profile["data"]["averages"]
+
+            # Prefer per-contact averages when the contact has enough samples.
+            per_contact_avgs = ling_profile["data"].get("per_contact_averages", {})
+            contact_avg = per_contact_avgs.get(contact_id)
+            if contact_avg and contact_avg.get("samples_count", 0) >= 3:
+                # Use per-contact style — more specific than global average.
+                avg = contact_avg
+                style_label = (
+                    f"User's style with this contact "
+                    f"({contact_avg['samples_count']} msgs)"
+                )
+            else:
+                # No per-contact data yet — fall back to global baseline.
+                avg = global_avg
+                style_label = "User's general style"
+
             style_parts = [f"formality={avg.get('formality', 0.5):.2f}"]
 
             # Append non-trivial signal dimensions only when they carry useful
@@ -343,7 +366,21 @@ class ContextAssembler:
                 # Typical sentence length guides draft verbosity.
                 style_parts.append(f"avg_sentence_length={avg_sentence_length:.0f}w")
 
-            parts.append("User's general style: " + ", ".join(style_parts))
+            parts.append(style_label + ": " + ", ".join(style_parts))
+
+            # If per-contact style is notably different from the global baseline
+            # (formality delta > 0.15), surface the comparison so the LLM knows
+            # this contact gets a distinctly different register.
+            if contact_avg and contact_avg.get("samples_count", 0) >= 3:
+                global_formality = global_avg.get("formality", 0.5)
+                contact_formality = contact_avg.get("formality", 0.5)
+                delta = contact_formality - global_formality
+                if abs(delta) > 0.15:
+                    direction = "more formal" if delta > 0 else "more casual"
+                    parts.append(
+                        f"Note: you write {direction} with this contact than usual "
+                        f"(Δ{abs(delta):.2f} vs global avg {global_formality:.2f})."
+                    )
 
             # Surface common greetings/closings as a fallback when no
             # contact-specific template was found (template section is Layer 1).

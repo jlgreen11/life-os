@@ -266,10 +266,15 @@ class LinguisticExtractor(BaseExtractor):
                 return label
         return None
 
+    # Minimum samples required before per-contact averages are computed.
+    # Below this threshold, a single atypical message would dominate the
+    # average, producing misleading per-contact style guidance.
+    _MIN_PER_CONTACT_SAMPLES = 3
+
     def _update_profile(self, signal: dict):
         """Incrementally update the stored linguistic profile.
 
-        The profile grows in three ways with every new sample:
+        The profile grows in four ways with every new sample:
           1. The raw ``samples`` ring buffer (capped at 500) stores per-message
              metric snapshots for computing running statistics.
           2. The ``per_contact`` dict maintains a separate ring buffer (capped
@@ -277,6 +282,30 @@ class LinguisticExtractor(BaseExtractor):
           3. Derived ``averages`` and ``common_greetings`` / ``common_closings``
              are recomputed from the full sample window on every update, keeping
              the profile always up-to-date for downstream consumers.
+          4. ``per_contact_averages`` stores derived per-contact style summaries
+             (mirroring what ``_update_inbound_profile`` does for inbound) so
+             that ``ContextAssembler.assemble_draft_context()`` can tell the LLM
+             "you write to Alice at formality 0.8" rather than "your global
+             average formality is 0.4".  Only contacts with at least
+             ``_MIN_PER_CONTACT_SAMPLES`` samples are included to avoid
+             single-message noise.
+
+        Example of per_contact_averages entry::
+
+            {
+                "alice@example.com": {
+                    "formality": 0.78,
+                    "avg_sentence_length": 14.2,
+                    "hedge_rate": 0.05,
+                    "assertion_rate": 0.12,
+                    "exclamation_rate": 0.03,
+                    "question_rate": 0.18,
+                    "ellipsis_rate": 0.01,
+                    "unique_word_ratio": 0.62,
+                    "emoji_rate": 0.0,
+                    "samples_count": 23,
+                }
+            }
         """
         existing = self.ums.get_signal_profile("linguistic")
         if existing:
@@ -335,6 +364,50 @@ class LinguisticExtractor(BaseExtractor):
         all_closings = [s["closing_detected"] for s in samples if s["closing_detected"]]
         data["common_greetings"] = [g for g, _ in Counter(all_greetings).most_common(3)]
         data["common_closings"] = [c for c, _ in Counter(all_closings).most_common(3)]
+
+        # Compute per-contact style averages from the per-contact ring buffers.
+        # Only contacts with enough samples (_MIN_PER_CONTACT_SAMPLES) get an
+        # entry — thin contacts fall back to the global averages in the draft
+        # context rather than producing noisy single-message "averages".
+        #
+        # All metric keys mirror _update_inbound_profile() and the signal dict
+        # so that ContextAssembler.assemble_draft_context() can read them with
+        # the same field names regardless of direction.
+        per_contact_avgs: dict = {}
+        for cid, csamples in data["per_contact"].items():
+            if len(csamples) < self._MIN_PER_CONTACT_SAMPLES:
+                # Insufficient data — skip this contact entirely.
+                continue
+            per_contact_avgs[cid] = {
+                "avg_sentence_length": statistics.mean(
+                    s["avg_sentence_length"] for s in csamples
+                ),
+                "formality": statistics.mean(s["formality"] for s in csamples),
+                "hedge_rate": statistics.mean(s["hedge_rate"] for s in csamples),
+                "assertion_rate": statistics.mean(
+                    s["assertion_rate"] for s in csamples
+                ),
+                "exclamation_rate": statistics.mean(
+                    s["exclamation_rate"] for s in csamples
+                ),
+                "question_rate": statistics.mean(
+                    s["question_rate"] for s in csamples
+                ),
+                "ellipsis_rate": statistics.mean(
+                    s["ellipsis_rate"] for s in csamples
+                ),
+                "unique_word_ratio": statistics.mean(
+                    s["unique_word_ratio"] for s in csamples
+                ),
+                # Normalise emoji by word count so shorter messages don't skew
+                # the rate upward.
+                "emoji_rate": statistics.mean(
+                    s["emoji_count"] / max(s["word_count"], 1) for s in csamples
+                ),
+                # sample count lets callers gauge confidence (more = more reliable).
+                "samples_count": len(csamples),
+            }
+        data["per_contact_averages"] = per_contact_avgs
 
         self.ums.update_signal_profile("linguistic", data)
 
