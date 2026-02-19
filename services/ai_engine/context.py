@@ -256,10 +256,20 @@ class ContextAssembler:
                                incoming_message: str) -> str:
         """Build context for drafting a reply.
 
-        Combines three layers of style information to help the LLM match the
-        user's voice: (1) contact/channel-specific communication templates,
-        (2) relationship history with this contact, and (3) general linguistic
-        profile. The most specific data (templates) takes priority.
+        Combines five layers of information to help the LLM write a reply that
+        sounds like the user and references the real relationship:
+
+        1. Communication template — how the user typically writes to this
+           contact/channel (formality, greeting, closing, common phrases).
+        2. Relationship depth — total interaction count for tone calibration.
+        3. Outbound linguistic profile — per-contact (or global) style metrics.
+        4. Contact's inbound style — how *they* write, so the draft can mirror
+           their register naturally.
+        5. Recent conversation history — the last N episodes shared with this
+           contact, so the LLM can reference prior topics, avoid repetition, and
+           continue ongoing threads coherently.
+
+        The incoming message is appended last so all context precedes it.
         """
         parts = []
 
@@ -438,6 +448,58 @@ class ContextAssembler:
         except Exception:
             # Fail-open: inbound style is a nice-to-have.  If the profile is
             # missing or malformed, the draft still has all outbound style data.
+            pass
+
+        # --- Layer 5: Recent conversation history with this contact ---
+        # Query the last 5 episodes where the contact appears in
+        # contacts_involved.  This gives the LLM concrete knowledge of what was
+        # recently discussed so it can:
+        #   • Continue ongoing threads naturally (e.g. "Following up on the Q3
+        #     roadmap we discussed last week…")
+        #   • Avoid re-introducing topics already covered
+        #   • Reference the correct relationship context
+        # The LIKE-based JSON search is safe for email addresses: they contain
+        # no SQL special characters and contacts_involved is always valid JSON
+        # written by our own code.  A full-text or JSON-path query would be more
+        # precise but SQLite JSON functions are not available in all deployments,
+        # so LIKE is the portable fallback.
+        try:
+            with self.db.get_connection("user_model") as conn:
+                recent_episodes = conn.execute(
+                    """SELECT timestamp, interaction_type, content_summary, topics
+                       FROM episodes
+                       WHERE contacts_involved LIKE ?
+                       ORDER BY timestamp DESC
+                       LIMIT 5""",
+                    (f"%{contact_id}%",),
+                ).fetchall()
+
+            if recent_episodes:
+                history_lines = ["Recent conversation history with this contact:"]
+                for ep in recent_episodes:
+                    # Format date as YYYY-MM-DD for brevity.
+                    ts_raw = ep["timestamp"] or ""
+                    ts_short = ts_raw[:10] if len(ts_raw) >= 10 else ts_raw
+
+                    # Include topics when present (non-empty JSON array).
+                    try:
+                        topic_list = json.loads(ep["topics"] or "[]")
+                    except (ValueError, TypeError):
+                        topic_list = []
+                    topic_str = (
+                        " [topics: " + ", ".join(topic_list[:3]) + "]"
+                        if topic_list else ""
+                    )
+
+                    interaction = ep["interaction_type"] or "unknown"
+                    summary = ep["content_summary"] or ""
+                    history_lines.append(
+                        f"  {ts_short} ({interaction}): {summary}{topic_str}"
+                    )
+                parts.append("\n".join(history_lines))
+        except Exception:
+            # Fail-open: conversation history is enrichment, not critical path.
+            # If the user_model DB is unavailable the draft still has style data.
             pass
 
         # Finally, append the incoming message that the user needs to reply to.
