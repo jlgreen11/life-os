@@ -102,7 +102,21 @@ class ContextAssembler:
         if completions_context:
             parts.append(completions_context)
 
-        # Section 9: Semantic facts the system has learned about the user
+        # Section 9: Recent episodic memories (Layer 1 of the user model).
+        # Each episode records a specific interaction (email read, message sent,
+        # calendar event attended) with a content summary, contacts involved,
+        # topics discussed, and inferred domain. Including recent episodes gives
+        # the LLM concrete narrative material: "Yesterday you exchanged emails
+        # with Alice about the Q1 budget and attended a planning meeting." This
+        # is distinct from the unread count (section 5, which counts INBOUND
+        # messages) and completed tasks (section 8, which lists task completions)
+        # — episodes cover ALL recent interactions, giving the LLM awareness of
+        # what the user was actually doing in their digital life.
+        episodes_context = self._get_recent_episodes_context()
+        if episodes_context:
+            parts.append(episodes_context)
+
+        # Section 10: Semantic facts the system has learned about the user
         # (e.g., "preferred_language: English", "works_at: Acme Corp").
         # Only facts with confidence >= 0.6 are included to avoid noise.
         # Capped at 20 facts to respect the token budget.
@@ -111,7 +125,7 @@ class ContextAssembler:
             fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:20]]
             parts.append("Known facts about user:\n" + "\n".join(fact_lines))
 
-        # Section 10: Recent mood signals (last 3 data points). This allows
+        # Section 11: Recent mood signals (last 3 data points). This allows
         # the LLM to adjust its tone -- e.g., more encouraging if the user
         # has been stressed, more energetic if mood is positive.
         mood_profile = self.ums.get_signal_profile("mood_signals")
@@ -551,6 +565,98 @@ class ContextAssembler:
                          for t in tasks]
                 return "Pending tasks:\n" + "\n".join(lines)
             return "Pending tasks: none"
+
+    def _get_recent_episodes_context(self) -> str:
+        """Fetch recent episodic memories to surface in the morning briefing.
+
+        Queries the episodes table for entries from the last 24 hours.
+        Episodes are Layer 1 of the user model — individual interactions with
+        full context. Each episode records a specific interaction (email read,
+        message sent, calendar event attended, etc.) with a text summary,
+        the contacts involved, and the topics discussed.
+
+        Including recent episodes in the briefing gives the LLM concrete
+        narrative material about what the user was actually doing in their
+        digital life — distinct from the unread message count (which only
+        counts INBOUND messages) and completed tasks (which only list task
+        completions). Episodic context enables briefing lines like:
+        "Yesterday you exchanged emails with Alice about Q1 planning and
+        attended a 1-hour standup."
+
+        Results are sorted by timestamp descending (most recent first) and
+        capped at 8 to respect the token budget. Only episodes with a
+        non-empty content_summary are returned — summaryless episodes are
+        noise. JSON fields (contacts_involved, topics) are parsed and
+        truncated to keep each line concise.
+
+        Returns an empty string when no recent episodes exist, which causes
+        the caller to skip this section entirely (no "none" noise).
+
+        Example output::
+
+            Recent activity (last 24h):
+            - [email_sent] Replied to alice@example.com about Q1 budget (work) [topics: finance, planning]
+            - [email_received] Message from bob@work.com: "Re: Project deadline" (work) [topics: project]
+            - [calendar_event] Attended "Team Standup" for 60 min (work)
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT interaction_type, content_summary, contacts_involved,
+                              topics, active_domain
+                       FROM episodes
+                       WHERE timestamp >= ?
+                         AND content_summary IS NOT NULL
+                         AND content_summary != ''
+                       ORDER BY timestamp DESC
+                       LIMIT 8""",
+                    (cutoff,),
+                ).fetchall()
+        except Exception:
+            # Fail-open: if the episodes table is missing or malformed, skip
+            # the section entirely rather than crashing the briefing.
+            return ""
+
+        if not rows:
+            return ""
+
+        lines = []
+        for row in rows:
+            interaction_type = row["interaction_type"] or "interaction"
+            summary = row["content_summary"]
+            domain = row["active_domain"]
+
+            # Build the primary line: [type] summary (domain)
+            line = f"- [{interaction_type}] {summary}"
+            if domain:
+                line += f" ({domain})"
+
+            # Parse contacts from JSON array and annotate with up to 2 names.
+            # Contacts are email addresses or display names; we show at most 2
+            # to keep the line readable while still conveying social context.
+            try:
+                contacts = json.loads(row["contacts_involved"] or "[]")
+                if contacts:
+                    contact_str = ", ".join(str(c) for c in contacts[:2])
+                    line += f" [contacts: {contact_str}]"
+            except (json.JSONDecodeError, TypeError):
+                pass  # Missing contacts field is not an error
+
+            # Parse topics and annotate with up to 3 tags.
+            # Topics are single words or short phrases extracted by the signal
+            # pipeline; they provide fast keyword context to the LLM.
+            try:
+                topics = json.loads(row["topics"] or "[]")
+                if topics:
+                    topic_str = ", ".join(str(t) for t in topics[:3])
+                    line += f" [topics: {topic_str}]"
+            except (json.JSONDecodeError, TypeError):
+                pass  # Missing topics field is not an error
+
+            lines.append(line)
+
+        return "Recent activity (last 24h):\n" + "\n".join(lines)
 
     def _get_recent_completions_context(self) -> str:
         """Fetch tasks completed in the last 24 hours.
