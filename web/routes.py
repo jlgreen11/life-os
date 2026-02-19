@@ -1113,6 +1113,17 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "spatial_top_location": "location.visits",
                 "spatial_work_location": "location.visits",
                 "spatial_location_diversity": "location.visits",
+                # Relationship intelligence insights (from _relationship_intelligence_insights, PR #278)
+                # Reciprocity and response-time patterns come from email/messaging cadence data.
+                "reciprocity_imbalance": "messaging.direct",
+                "fast_responder": "messaging.direct",
+                # Workflow pattern insights (from _workflow_pattern_insights, PR #279)
+                # Email and task workflow patterns are primarily surfaced from email metadata;
+                # calendar and interaction patterns map to messaging channels.
+                "workflow_pattern_email": "email.work",
+                "workflow_pattern_task": "email.work",
+                "workflow_pattern_calendar": "email.work",
+                "workflow_pattern_interaction": "messaging.direct",
                 # actionable_alert categories (overdue_task, upcoming_calendar) are
                 # intentionally absent: they bypass source-weight tuning entirely.
             }
