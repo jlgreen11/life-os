@@ -372,7 +372,7 @@ async def test_draft_reply_uses_cloud_when_enabled(db, user_model_store):
                     # Verify cloud model was called
                     mock_cloud.assert_called_once()
                     call_args = mock_cloud.call_args[0]
-                    assert "drafting a reply" in call_args[0].lower()
+                    assert "reply" in call_args[0].lower()  # Updated: prompt now says "ghostwriting a reply"
                     assert "stripped context" in call_args[1]
 
                     # Verify PII restoration with merged mapping
@@ -406,7 +406,7 @@ async def test_draft_reply_falls_back_to_local_when_cloud_disabled(db, user_mode
             # Verify local model was called (no PII stripping)
             mock_local.assert_called_once()
             call_args = mock_local.call_args[0]
-            assert "drafting a reply" in call_args[0].lower()
+            assert "reply" in call_args[0].lower()  # Updated: prompt now says "ghostwriting a reply"
             assert call_args[1] == "style: formal"
 
             assert result == "Dear colleague, thank you for reaching out."
