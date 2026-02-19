@@ -125,7 +125,18 @@ class ContextAssembler:
             fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:20]]
             parts.append("Known facts about user:\n" + "\n".join(fact_lines))
 
-        # Section 11: Recent mood signals (last 3 data points). This allows
+        # Section 11: Habitual behavioral routines (Layer 3 Procedural Memory).
+        # Routines are time- or location-triggered behavioral patterns detected
+        # by the RoutineDetector (e.g., "morning email review", "evening wind-down").
+        # Including them here lets the LLM give time-appropriate advice, reference
+        # familiar patterns, and anticipate what the user typically does next.
+        # Only routines with consistency_score >= 0.5 are surfaced to avoid
+        # misleading the LLM with poorly-observed one-off patterns.
+        routines_context = self._get_routines_context()
+        if routines_context:
+            parts.append(routines_context)
+
+        # Section 12: Recent mood signals (last 3 data points). This allows
         # the LLM to adjust its tone -- e.g., more encouraging if the user
         # has been stressed, more energetic if mood is positive.
         mood_profile = self.ums.get_signal_profile("mood_signals")
@@ -705,6 +716,80 @@ class ContextAssembler:
             lines.append(f"- [{t['priority']}] {t['title']} ({domain})")
 
         return "Recently completed tasks (last 24h):\n" + "\n".join(lines)
+
+    def _get_routines_context(self) -> str:
+        """Fetch the user's top behavioral routines from Layer 3 Procedural Memory.
+
+        Routines are habitual, time- or location-triggered behavioral patterns
+        detected by the RoutineDetector (e.g., "morning_email_review",
+        "evening_wind_down", "arrive_home"). Including them in the morning
+        briefing allows the LLM to:
+
+          - Give time-appropriate advice ("This is your typical focused-work window")
+          - Reference familiar patterns ("It's your usual morning email review time")
+          - Anticipate next steps ("You typically move to deep work after 9 am")
+
+        Only routines with consistency_score >= 0.5 are surfaced.  Poorly-
+        observed one-off patterns (low consistency) would mislead the LLM into
+        describing uncertain habits as reliable facts.
+
+        Results are sorted by consistency_score descending (most reliable first)
+        and capped at 5 to respect the token budget.  Returns empty string when
+        no qualifying routines have been detected yet (new user or sparse data).
+
+        Example output::
+
+            Observed behavioral routines (Layer 3 Procedural Memory):
+            - morning_email_review (8 steps, ~35 min, seen 28x, consistency: 0.88)
+            - evening_wind_down (4 steps, ~20 min, seen 19x, consistency: 0.74)
+            - arrive_home (3 steps, ~10 min, seen 31x, consistency: 0.91)
+        """
+        try:
+            routines = self.ums.get_routines()
+            if not routines:
+                return ""
+
+            # Filter to reliable patterns only.  The consistency_score is a
+            # fraction of how often the routine fires in the expected window;
+            # 0.5 means it triggers at least half the time, which is enough
+            # to describe it as a genuine habit.
+            quality_routines = [
+                r for r in routines if (r.get("consistency_score") or 0.0) >= 0.5
+            ][:5]
+
+            if not quality_routines:
+                return ""
+
+            lines = []
+            for r in quality_routines:
+                step_count = len(r.get("steps") or [])
+                duration = r.get("typical_duration_minutes")
+                times = r.get("times_observed") or 0
+                score = r.get("consistency_score") or 0.0
+                # Use trigger_condition as the label; fall back to name when absent.
+                label = r.get("trigger") or r.get("name") or "unknown"
+
+                # Build a concise one-line summary per routine so the LLM has
+                # both the label and key statistics without verbose JSON.
+                parts_inner = []
+                if step_count:
+                    parts_inner.append(f"{step_count} steps")
+                if duration:
+                    parts_inner.append(f"~{duration:.0f} min")
+                parts_inner.append(f"seen {times}x")
+                parts_inner.append(f"consistency: {score:.2f}")
+
+                line = f"- {label} ({', '.join(parts_inner)})"
+                lines.append(line)
+
+            return (
+                "Observed behavioral routines (Layer 3 Procedural Memory):\n"
+                + "\n".join(lines)
+            )
+        except Exception:
+            # Fail-open: missing routines degrade the briefing slightly but
+            # must never prevent it from generating a response.
+            return ""
 
     def _get_unread_context(self) -> str:
         """Count recent inbound messages (emails + chat) from the last 12 hours.
