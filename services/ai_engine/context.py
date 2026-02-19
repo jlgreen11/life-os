@@ -14,7 +14,7 @@ Pulls from:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
@@ -470,6 +470,16 @@ class ContextAssembler:
         Output format (when no priority contacts have sent messages):
             Messages in last 12 hours: 8
         """
+        # Use a parameterized Python timestamp rather than SQLite's datetime('now')
+        # function.  SQLite's datetime() returns space-separated strings like
+        # "2026-02-18 12:04:12", but events are stored in ISO-8601 format with a
+        # 'T' separator ("2026-02-18T00:04:12+00:00").  SQLite compares TEXT
+        # fields lexicographically, so 'T' (ASCII 84) > ' ' (ASCII 32), meaning
+        # any T-format timestamp would incorrectly compare as GREATER THAN the
+        # space-format cutoff — effectively disabling the 12-hour filter entirely.
+        # Passing a Python isoformat() string as a parameter keeps both sides in
+        # the same format so string comparison is semantically correct.
+        cutoff_12h = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
         with self.db.get_connection("events") as conn:
             rows = conn.execute(
                 """SELECT
@@ -477,8 +487,9 @@ class ContextAssembler:
                        COUNT(*) AS message_count
                    FROM events
                    WHERE type IN ('email.received', 'message.received')
-                     AND timestamp > datetime('now', '-12 hours')
-                   GROUP BY json_extract(payload, '$.from_address')"""
+                     AND timestamp > ?
+                   GROUP BY json_extract(payload, '$.from_address')""",
+                (cutoff_12h,),
             ).fetchall()
 
         if not rows:

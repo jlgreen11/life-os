@@ -448,9 +448,14 @@ async def test_email_volume_busiest_day_detected(db, user_model_store, event_sto
 
     base_time = datetime.now(timezone.utc)
 
-    # Create Monday as busiest day (10 emails), other days 2 each
-    # Monday = weekday 0
-    monday = base_time - timedelta(days=base_time.weekday())
+    # Anchor Monday at noon UTC so that subtracting up to 9 hours in the loop
+    # below never crosses midnight into Sunday.  Using the raw "now" time as the
+    # anchor causes the test to fail whenever it runs in the first 9 hours of
+    # Monday UTC (the emails would spill into Sunday and the insight would say
+    # "Sunday" instead of "Monday").
+    monday = (
+        base_time - timedelta(days=base_time.weekday())
+    ).replace(hour=12, minute=0, second=0, microsecond=0)
 
     for i in range(10):
         event_store.store_event({
@@ -490,7 +495,11 @@ async def test_email_volume_sent_and_received(db, user_model_store, event_store)
     engine = InsightEngine(db, user_model_store)
 
     base_time = datetime.now(timezone.utc)
-    tuesday = base_time - timedelta(days=(base_time.weekday() - 1) % 7)
+    # Anchor Tuesday at noon UTC so that subtracting up to 5 hours in the loop
+    # below never crosses midnight into Monday.
+    tuesday = (
+        base_time - timedelta(days=(base_time.weekday() - 1) % 7)
+    ).replace(hour=12, minute=0, second=0, microsecond=0)
 
     # Create Tuesday as busiest (5 received + 5 sent = 10 total)
     for i in range(5):

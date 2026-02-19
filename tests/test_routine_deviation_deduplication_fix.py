@@ -73,7 +73,14 @@ def test_deduplication_query_uses_correct_prediction_type(db, user_model_store, 
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Create a routine_deviation prediction from earlier today
+    # Use today_start + 1 hour as the creation time so the existing prediction
+    # is always within "today" regardless of when the test runs.
+    # Using (now - timedelta(hours=2)) causes a failure when the test runs in
+    # the first 2 UTC hours of the day (the prediction lands on the previous UTC
+    # day and the deduplication query misses it).
+    created_today = today_start + timedelta(hours=1)
+
+    # Create a routine_deviation prediction from 1 hour into today (UTC)
     with db.get_connection("user_model") as conn:
         conn.execute(
             """INSERT INTO predictions (
@@ -91,12 +98,14 @@ def test_deduplication_query_uses_correct_prediction_type(db, user_model_store, 
                 "Start Morning email check",
                 json.dumps({"routine_name": "Morning email check"}),
                 0,
-                (now - timedelta(hours=2)).isoformat(),
+                created_today.isoformat(),
             ),
         )
         conn.commit()
 
-    # Also create an 'opportunity' prediction to verify it's NOT matched
+    # Also create an 'opportunity' prediction to verify it's NOT matched.
+    # Both predictions share the same routine_name in supporting_signals; only
+    # the routine_deviation one should block deduplication.
     with db.get_connection("user_model") as conn:
         conn.execute(
             """INSERT INTO predictions (
@@ -105,12 +114,12 @@ def test_deduplication_query_uses_correct_prediction_type(db, user_model_store, 
             ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 "test-opportunity-1",
-                "opportunity",  # Different prediction type
+                "opportunity",  # Different prediction type — must NOT block dedup
                 "Good time to contact someone",
                 0.6,
                 "DEFAULT",
                 json.dumps({"routine_name": "Morning email check"}),  # Same routine_name
-                (now - timedelta(hours=1)).isoformat(),
+                (created_today + timedelta(minutes=30)).isoformat(),
             ),
         )
         conn.commit()
