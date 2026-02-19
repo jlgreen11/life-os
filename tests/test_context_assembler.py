@@ -1020,6 +1020,263 @@ class TestPrivateHelpers:
         assert "1 message)" in result
         assert "1 messages)" not in result
 
+    def test_unread_context_subjects_shown_for_priority_sender(
+        self, db, user_model_store, event_store
+    ):
+        """Subject lines should appear alongside count for priority senders.
+
+        When a priority contact sends emails with subject lines, those subjects
+        are surfaced in the unread context so the LLM can reference them
+        directly in the morning briefing.
+        """
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 10,
+                        "inbound_count": 4,
+                        "outbound_count": 6,  # Priority: outbound >= 3
+                    }
+                }
+            },
+        )
+
+        subjects = ["Project deadline moved", "Can we meet Friday?", "Quick question"]
+        for subject in subjects:
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="proton",
+                    priority="normal",
+                    payload={"from_address": "alice@example.com", "subject": subject},
+                    timestamp=now,
+                )
+            )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        # All three subjects should appear in the output
+        assert '"Project deadline moved"' in result
+        assert '"Can we meet Friday?"' in result
+        assert '"Quick question"' in result
+        # Priority contact line should use the per-line dash format
+        assert "- alice@example.com (3 messages):" in result
+
+    def test_unread_context_subjects_capped_at_three(
+        self, db, user_model_store, event_store
+    ):
+        """No more than 3 subjects should be shown per priority sender.
+
+        Capping at 3 prevents the context window from being overwhelmed by
+        a high-volume sender.  Only the 3 most recent subjects are shown.
+        """
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 10,
+                        "inbound_count": 4,
+                        "outbound_count": 6,
+                    }
+                }
+            },
+        )
+
+        # Store 5 emails — only the 3 most recent subjects should appear.
+        subjects_newest_first = [
+            "Email 5 — newest",
+            "Email 4",
+            "Email 3",
+            "Email 2",
+            "Email 1 — oldest",
+        ]
+        for i, subject in enumerate(reversed(subjects_newest_first)):
+            event_store.store_event(
+                create_test_event(
+                    event_type="email.received",
+                    source="proton",
+                    priority="normal",
+                    payload={"from_address": "alice@example.com", "subject": subject},
+                    # Increment by 1 second so ORDER BY timestamp DESC is deterministic
+                    timestamp=now + timedelta(seconds=i),
+                )
+            )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "5 messages" in result
+        # 3 most recent subjects should appear
+        assert '"Email 5 — newest"' in result
+        assert '"Email 4"' in result
+        assert '"Email 3"' in result
+        # Older subjects (4th and 5th most recent) should NOT appear
+        assert '"Email 1 — oldest"' not in result
+        assert '"Email 2"' not in result
+
+    def test_unread_context_empty_subjects_excluded(
+        self, db, user_model_store, event_store
+    ):
+        """Empty or whitespace-only subjects should not appear in output.
+
+        Some email clients send messages with blank subjects.  These should
+        not pollute the subject list with empty quoted strings.
+        """
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 10,
+                        "inbound_count": 4,
+                        "outbound_count": 6,
+                    }
+                }
+            },
+        )
+
+        # One email with a real subject, two with empty/whitespace subjects
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="proton",
+                payload={"from_address": "alice@example.com", "subject": "Real subject"},
+                timestamp=now,
+            )
+        )
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="proton",
+                payload={"from_address": "alice@example.com", "subject": ""},
+                timestamp=now + timedelta(seconds=1),
+            )
+        )
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="proton",
+                payload={"from_address": "alice@example.com", "subject": "   "},
+                timestamp=now + timedelta(seconds=2),
+            )
+        )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "3 messages" in result
+        # Real subject should appear
+        assert '"Real subject"' in result
+        # Empty/whitespace subjects should not produce empty quoted strings
+        assert '""' not in result
+        assert '"   "' not in result
+
+    def test_unread_context_no_subjects_if_field_missing(
+        self, db, user_model_store, event_store
+    ):
+        """When emails have no subject field, count is shown without subjects section.
+
+        Graceful fallback: if no subjects are available, the format degrades
+        to just showing the count (no colon or subject list).
+        """
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 5,
+                        "inbound_count": 2,
+                        "outbound_count": 3,
+                    }
+                }
+            },
+        )
+
+        # Event payload without subject field
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="proton",
+                payload={"from_address": "alice@example.com"},
+                timestamp=now,
+            )
+        )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "alice@example.com" in result
+        assert "1 message)" in result
+        # No colon+subjects section when there are no subjects
+        assert "alice@example.com (1 message):" not in result
+
+    def test_unread_context_non_priority_subjects_not_shown(
+        self, db, user_model_store, event_store
+    ):
+        """Non-priority sender subjects must not appear in the output.
+
+        Only priority senders (outbound_count >= 3) should have their subjects
+        surfaced.  Subjects from marketing or low-interaction senders would
+        dilute the signal and increase context noise.
+        """
+        now = datetime.now(timezone.utc)
+
+        user_model_store.update_signal_profile(
+            profile_type="relationships",
+            data={
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 10,
+                        "inbound_count": 4,
+                        "outbound_count": 6,  # Priority
+                    },
+                    "marketing@shop.com": {
+                        "interaction_count": 50,
+                        "inbound_count": 50,
+                        "outbound_count": 0,  # Not priority
+                    },
+                }
+            },
+        )
+
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="proton",
+                payload={"from_address": "alice@example.com", "subject": "Priority email"},
+                timestamp=now,
+            )
+        )
+        event_store.store_event(
+            create_test_event(
+                event_type="email.received",
+                source="proton",
+                payload={"from_address": "marketing@shop.com", "subject": "50% off everything"},
+                timestamp=now,
+            )
+        )
+
+        assembler = ContextAssembler(db, user_model_store)
+        result = assembler._get_unread_context()
+
+        assert "Messages in last 12 hours: 2" in result
+        # Priority sender subject should appear
+        assert '"Priority email"' in result
+        # Non-priority sender and its subject should not appear in breakdown
+        assert '"50% off everything"' not in result
+        assert "marketing@shop.com" not in result
+
 
 class TestIntegration:
     """Integration tests combining multiple data sources."""
