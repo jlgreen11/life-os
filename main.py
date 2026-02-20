@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
 import uuid
@@ -84,7 +85,8 @@ class LifeOS:
         # Allow dependency injection for testing
         self.db = db if db is not None else DatabaseManager(data_dir)
         self.event_store = event_store if event_store is not None else EventStore(self.db)
-        self.event_bus = event_bus if event_bus is not None else EventBus(self.config.get("nats_url", "nats://localhost:4222"))
+        nats_url = os.environ.get("NATS_URL") or self.config.get("nats_url", "nats://localhost:4222")
+        self.event_bus = event_bus if event_bus is not None else EventBus(nats_url)
         self.user_model_store = user_model_store if user_model_store is not None else UserModelStore(
             self.db,
             event_bus=self.event_bus,
