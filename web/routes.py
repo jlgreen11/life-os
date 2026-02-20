@@ -248,44 +248,6 @@ def register_routes(app: FastAPI, life_os) -> None:
             except Exception:
                 pass
 
-        # --- Recent events (email, messages, calendar) ---
-        if topic in (None, "inbox", "messages", "email", "calendar"):
-            try:
-                event_types = []
-                if topic in (None, "inbox", "email"):
-                    event_types.append("email.received")
-                if topic in (None, "inbox", "messages"):
-                    event_types.append("message.received")
-                if topic in (None, "inbox", "calendar"):
-                    event_types.extend(["calendar.event.created", "calendar.event.updated", "calendar.event.reminder"])
-
-                for et in event_types:
-                    events = life_os.event_store.get_events(event_type=et, limit=20)
-                    for ev in events:
-                        payload = ev.get("payload", {}) if isinstance(ev.get("payload"), dict) else {}
-                        channel = "email" if "email" in et else "message" if "message" in et else "calendar"
-                        items.append({
-                            "id": ev.get("id"),
-                            "kind": "event",
-                            "channel": channel,
-                            "title": payload.get("subject", payload.get("title", et)),
-                            "body": payload.get("snippet", payload.get("body", payload.get("description", "")))[:200],
-                            "priority": "high" if payload.get("urgency", 0) > 0.7 else "normal",
-                            "timestamp": ev.get("timestamp", ""),
-                            "source": ev.get("source", ""),
-                            "metadata": {
-                                "sender": payload.get("sender", payload.get("from", "")),
-                                "sentiment": payload.get("sentiment"),
-                                "action_items": payload.get("action_items", []),
-                                "attendees": payload.get("attendees", []),
-                                "location": payload.get("location", ""),
-                                "start_time": payload.get("start_time", payload.get("start", "")),
-                                "end_time": payload.get("end_time", payload.get("end", "")),
-                            },
-                        })
-            except Exception:
-                pass
-
         # --- Sort by priority (critical > high > normal > low), then newest first ---
         priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
         items.sort(key=lambda x: (

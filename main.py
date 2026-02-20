@@ -1318,7 +1318,7 @@ class LifeOS:
             await asyncio.sleep(900)  # 15 minutes
 
     async def _insight_loop(self):
-        """Run the insight engine every hour.
+        """Run the insight engine every 15 minutes.
 
         Also runs the source weight bulk drift recalculation once per
         cycle so that AI drift adjusts based on aggregate engagement
@@ -1338,18 +1338,18 @@ class LifeOS:
             except Exception as e:
                 logger.error("Source weight drift recalc error: %s", e)
 
-            await asyncio.sleep(3600)  # 1 hour
+            await asyncio.sleep(900)  # 15 minutes
 
     async def _semantic_inference_loop(self):
-        """Run semantic fact inference every 6 hours.
+        """Run semantic fact inference every hour.
 
         The semantic fact inferrer analyzes accumulated signal profiles
         (linguistic, relationship, topic, cadence, mood) and derives high-level
         facts about the user's preferences, expertise, and values.
 
         This bridges Layer 0/1 (raw signals and episodes) to Layer 2 (semantic
-        memory). It runs less frequently than prediction generation because
-        semantic facts are long-term patterns that don't change minute-to-minute.
+        memory). It runs more frequently than the default to keep the user model
+        current and ensure the My Profile feedback loop has fresh data.
 
         Examples of derived facts:
           - "User prefers casual communication" (from linguistic formality < 0.3)
@@ -1357,10 +1357,9 @@ class LifeOS:
           - "Contact X is high priority" (from response time consistently < 1hr)
           - "User values work-life boundaries" (from cadence showing no work emails after 6pm)
 
-        Interval: 6 hours (21600 seconds)
-          - Balances freshness against compute cost
-          - Allows sufficient new data to accumulate between runs
-          - Semantic patterns are stable, so frequent re-inference is unnecessary
+        Interval: 1 hour (3600 seconds)
+          - Keeps the user model current with recent activity
+          - Ensures My Profile tab has fresh data for the feedback loop
         """
         while not self.shutdown_event.is_set():
             try:
@@ -1372,10 +1371,7 @@ class LifeOS:
             except Exception as e:
                 logger.error("Semantic fact inferrer error: %s", e)
 
-            # 21600 seconds = 6 hours. Semantic facts are long-term patterns,
-            # so this interval provides a good balance between staying current
-            # and avoiding unnecessary compute on stable patterns.
-            await asyncio.sleep(21600)  # 6 hours
+            await asyncio.sleep(3600)  # 1 hour
 
     async def _routine_detection_loop(self):
         """Run routine detection with adaptive retry intervals.
