@@ -400,6 +400,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .card-actions button.btn-danger:hover {
             background: rgba(255,53,53,0.1);
         }
+        .card-actions button.btn-small {
+            padding: 3px 10px;
+            font-size: 11px;
+        }
+        .card-actions button.btn-warn {
+            border-color: var(--accent-yellow, #f0a020);
+            color: var(--accent-yellow, #f0a020);
+        }
+        .card-actions button.btn-warn:hover {
+            background: rgba(240,160,32,0.1);
+        }
 
         /* Sentiment dots */
         .sentiment-dot {
@@ -722,6 +733,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 <span class="topic-label">Insights</span>
                 <span class="topic-badge" id="badge-insights"></span>
             </div>
+            <div class="topic-item" data-topic="profile">
+                <span class="topic-icon">&#128100;</span>
+                <span class="topic-label">My Profile</span>
+                <span class="topic-badge" id="badge-profile"></span>
+            </div>
             <div class="topic-item" data-topic="system">
                 <span class="topic-icon">&#9881;</span>
                 <span class="topic-label">System</span>
@@ -840,6 +856,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         {id: 'calendar', icon: '\uD83D\uDCC5', label: 'Calendar'},
         {id: 'tasks',    icon: '\u2611', label: 'Tasks'},
         {id: 'insights', icon: '\u2605', label: 'Insights'},
+        {id: 'profile',  icon: '\uD83D\uDC64', label: 'My Profile'},
         {id: 'system',   icon: '\u2699', label: 'System'}
     ];
 
@@ -1052,6 +1069,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     // --- Feed Loading ---
     function loadFeed() {
         if (currentTopic === 'insights') { loadInsightsFeed(); return; }
+        if (currentTopic === 'profile') { loadFactsFeed(); return; }
         if (currentTopic === 'system') { loadSystemFeed(); return; }
 
         var el = document.getElementById('feedContent');
@@ -1092,13 +1110,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             var html = '';
             for (var i = 0; i < insights.length; i++) {
                 var ins = insights[i];
-                html += '<div class="card">';
+                html += '<div class="card" id="insight-' + escAttr(ins.id || i) + '">';
                 html += '<div class="card-row"><div class="card-channel">\u2605</div>';
                 html += '<div class="card-content">';
                 html += '<div class="card-title">' + escHtml(ins.type || ins.category || 'Insight') + '</div>';
-                html += '<div class="card-body">' + escHtml(ins.description || ins.content || ins.text || JSON.stringify(ins)) + '</div>';
+                html += '<div class="card-body">' + escHtml(ins.summary || ins.description || ins.content || ins.text || JSON.stringify(ins)) + '</div>';
                 if (ins.confidence !== undefined) {
                     html += '<div class="card-meta" style="margin-top:4px">Confidence: ' + escHtml(String(Math.round(ins.confidence * 100))) + '%</div>';
+                }
+                if (ins.id) {
+                    html += '<div class="card-actions" style="margin-top:8px;display:flex;gap:6px">';
+                    html += '<button class="btn-small" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'useful\')">Useful</button>';
+                    html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'dismissed\')">Dismiss</button>';
+                    html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'not_relevant\')">Not About Me</button>';
+                    html += '</div>';
                 }
                 html += '</div></div></div>';
             }
@@ -1107,6 +1132,115 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .catch(function(err) {
             safeSetContent(el, '<div class="card"><div class="card-meta" style="color:var(--accent-red)">Failed to load insights: ' + escHtml(err.message) + '</div></div>');
         });
+    }
+
+    function loadFactsFeed() {
+        var el = document.getElementById('feedContent');
+        safeSetContent(el, '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>');
+
+        fetch(API + '/api/user-model/facts')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var facts = data.facts || [];
+            if (facts.length === 0) {
+                safeSetContent(el, '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No facts learned yet</div></div>');
+                return;
+            }
+            // Group facts by category
+            var groups = {};
+            for (var i = 0; i < facts.length; i++) {
+                var f = facts[i];
+                var cat = f.category || 'general';
+                if (!groups[cat]) groups[cat] = [];
+                groups[cat].push(f);
+            }
+            var html = '';
+            var cats = Object.keys(groups).sort();
+            for (var c = 0; c < cats.length; c++) {
+                var category = cats[c];
+                var items = groups[category];
+                html += '<div class="card">';
+                html += '<div class="card-row"><div class="card-channel">\uD83D\uDC64</div>';
+                html += '<div class="card-content">';
+                html += '<div class="card-title" style="text-transform:capitalize">' + escHtml(category.replace(/_/g, ' ')) + '</div>';
+                for (var j = 0; j < items.length; j++) {
+                    var fact = items[j];
+                    html += '<div id="fact-' + escAttr(fact.key) + '" style="padding:6px 0;border-bottom:1px solid var(--border-color)">';
+                    html += '<div class="card-body"><strong>' + escHtml(fact.key.replace(/_/g, ' ')) + ':</strong> ' + escHtml(String(fact.value || '')) + '</div>';
+                    html += '<div class="card-meta" style="margin-top:2px">';
+                    html += 'Confidence: ' + escHtml(String(Math.round((fact.confidence || 0) * 100))) + '%';
+                    if (fact.times_confirmed > 0) html += ' &middot; Confirmed ' + escHtml(String(fact.times_confirmed)) + 'x';
+                    if (fact.is_user_corrected) html += ' &middot; <span style="color:var(--accent-yellow,#f0a020);font-weight:600">CORRECTED</span>';
+                    html += '</div>';
+                    html += '<div class="card-actions" style="margin-top:4px;display:flex;gap:4px">';
+                    html += '<button class="btn-small" onclick="event.stopPropagation();correctFact(\'' + escAttr(fact.key) + '\')">Correct</button>';
+                    html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();deleteFact(\'' + escAttr(fact.key) + '\')">Delete</button>';
+                    html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();notAboutMeFact(\'' + escAttr(fact.key) + '\')">Not About Me</button>';
+                    html += '</div>';
+                    html += '</div>';
+                }
+                html += '</div></div></div>';
+            }
+            safeSetContent(el, html);
+        })
+        .catch(function(err) {
+            safeSetContent(el, '<div class="card"><div class="card-meta" style="color:var(--accent-red)">Failed to load facts: ' + escHtml(err.message) + '</div></div>');
+        });
+    }
+
+    function deleteFact(key) {
+        if (!confirm('Delete this fact?')) return;
+        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {method: 'DELETE'})
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            var card = document.getElementById('fact-' + key);
+            if (card) card.style.display = 'none';
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = 'Fact deleted';
+            setTimeout(function() { resp.className = ''; }, 3000);
+        })
+        .catch(function(err) { console.error('Delete fact failed:', err); });
+    }
+
+    function correctFact(key) {
+        var reason = prompt('What is incorrect about this fact? (optional reason)');
+        if (reason === null) return; // cancelled
+        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reason: reason || 'User correction'})
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = 'Fact corrected — confidence reduced';
+            setTimeout(function() { resp.className = ''; }, 3000);
+            loadFactsFeed(); // Refresh to show updated state
+        })
+        .catch(function(err) { console.error('Correct fact failed:', err); });
+    }
+
+    function notAboutMeFact(key) {
+        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reason: 'Not about me — attributed to wrong person'})
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            return fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {method: 'DELETE'});
+        })
+        .then(function() {
+            var card = document.getElementById('fact-' + key);
+            if (card) card.style.display = 'none';
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = 'Marked as not about you — fact removed';
+            setTimeout(function() { resp.className = ''; }, 3000);
+        })
+        .catch(function(err) { console.error('Not about me failed:', err); });
     }
 
     function loadSystemFeed() {
@@ -1213,6 +1347,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
     }
 
+    function insightFeedback(id, feedback) {
+        fetch(API + '/api/insights/' + encodeURIComponent(id) + '/feedback?feedback=' + encodeURIComponent(feedback), {method: 'POST'})
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            var card = document.getElementById('insight-' + id);
+            if (card) card.style.display = 'none';
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = feedback === 'useful' ? 'Marked as useful' : feedback === 'not_relevant' ? 'Marked as not about you' : 'Insight dismissed';
+            setTimeout(function() { resp.className = ''; }, 3000);
+        })
+        .catch(function(err) { console.error('Insight feedback failed:', err); });
+    }
+
     function draftReply(id, context) {
         var draftEl = document.getElementById('draft-' + id);
         if (!draftEl) return;
@@ -1303,25 +1451,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     function loadPredictions() {
         var el = document.getElementById('predictionsContent');
 
-        fetch(API + '/api/insights/summary')
+        fetch(API + '/api/predictions?limit=5')
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var insights = data.insights || data.predictions || [];
-            if (!Array.isArray(insights)) insights = [];
-            var preds = insights.filter(function(ins) {
-                var t = (ins.type || ins.category || '').toLowerCase();
-                return t.indexOf('cadence') >= 0 || t.indexOf('relationship') >= 0 || t.indexOf('predict') >= 0;
-            });
+            var preds = data.predictions || [];
+            if (!Array.isArray(preds)) preds = [];
             if (preds.length === 0) {
                 safeSetContent(el, '<div style="color:var(--text-muted)">No predictions yet</div>');
                 return;
             }
             var html = '';
-            for (var i = 0; i < Math.min(preds.length, 3); i++) {
+            for (var i = 0; i < Math.min(preds.length, 5); i++) {
                 var p = preds[i];
-                html += '<div class="prediction-card">';
-                html += '<div class="pred-label">' + escHtml(p.type || p.category || 'Prediction') + '</div>';
-                html += '<div>' + escHtml(p.description || p.content || p.text || '') + '</div>';
+                html += '<div class="prediction-card" id="pred-' + escAttr(p.id) + '">';
+                html += '<div class="pred-label">' + escHtml(p.prediction_type || 'Prediction') + '</div>';
+                html += '<div>' + escHtml(p.description || '') + '</div>';
+                if (p.confidence !== undefined) {
+                    html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + escHtml(String(Math.round(p.confidence * 100))) + '% confidence</div>';
+                }
+                html += '<div class="card-actions" style="margin-top:6px;display:flex;gap:4px">';
+                html += '<button class="btn-small" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',true,null)">Accurate</button>';
+                html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',false,null)">Inaccurate</button>';
+                html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',false,\'not_relevant\')">Not About Me</button>';
+                html += '</div>';
                 html += '</div>';
             }
             safeSetContent(el, html);
@@ -1329,6 +1481,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .catch(function() {
             safeSetContent(el, '<div style="color:var(--text-muted)">Predictions unavailable</div>');
         });
+    }
+
+    function predictionFeedback(id, wasAccurate, userResponse) {
+        var url = API + '/api/predictions/' + encodeURIComponent(id) + '/feedback?was_accurate=' + wasAccurate;
+        if (userResponse) url += '&user_response=' + encodeURIComponent(userResponse);
+        fetch(url, {method: 'POST'})
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            var card = document.getElementById('pred-' + id);
+            if (card) card.style.display = 'none';
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = wasAccurate ? 'Marked as accurate' : userResponse === 'not_relevant' ? 'Marked as not about you' : 'Marked as inaccurate';
+            setTimeout(function() { resp.className = ''; }, 3000);
+        })
+        .catch(function(err) { console.error('Prediction feedback failed:', err); });
     }
 
     function loadPeopleRadar() {
