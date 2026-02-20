@@ -1001,7 +1001,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                     """SELECT id, type, summary, confidence, category, entity,
                               evidence, feedback, created_at
                        FROM insights
-                       WHERE feedback IS NOT 'negative'
+                       WHERE (feedback IS NULL OR feedback NOT IN ('negative', 'dismissed', 'not_relevant'))
                          AND datetime(created_at) >
                              datetime('now', '-' || staleness_ttl_hours || ' hours')
                        ORDER BY confidence DESC"""
@@ -1049,13 +1049,13 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/insights/{insight_id}/feedback")
     async def insight_feedback(insight_id: str, feedback: str = "dismissed"):
-        """Record user feedback on an insight (useful/dismissed).
+        """Record user feedback on an insight (useful/dismissed/not_relevant).
 
         Also updates source weight engagement/dismissal counters so the
         AI drift can learn from the user's response patterns.
         """
-        if feedback not in ("useful", "dismissed"):
-            raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful' or 'dismissed'.")
+        if feedback not in ("useful", "dismissed", "not_relevant", "negative"):
+            raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful', 'dismissed', or 'not_relevant'.")
 
         # Look up the insight to find its source category for weight feedback
         source_key = None
@@ -1138,6 +1138,27 @@ def register_routes(app: FastAPI, life_os) -> None:
                     life_os.source_weight_manager.record_dismissal(source_key)
             except Exception:
                 pass  # Source weight feedback is non-critical
+
+        # When user marks an insight as "not about me", create a suppression fact
+        # so the system learns not to regenerate similar insights.
+        if feedback == "not_relevant" and row:
+            try:
+                suppression_key = f"relevance_suppression:{row['category']}:{row['entity'] or 'general'}"
+                suppression_value = json.dumps({
+                    "insight_id": insight_id,
+                    "category": row["category"],
+                    "entity": row["entity"],
+                    "reason": "User indicated this insight is not about them",
+                })
+                with life_os.db.get_connection("user_model") as conn:
+                    conn.execute(
+                        """INSERT OR REPLACE INTO semantic_facts
+                           (key, category, value, confidence, is_user_corrected, source_episodes)
+                           VALUES (?, 'relevance_suppression', ?, 1.0, 1, '[]')""",
+                        (suppression_key, suppression_value),
+                    )
+            except Exception:
+                logger.exception("Failed to create relevance suppression fact")
 
         return {"status": "recorded"}
 
