@@ -142,7 +142,16 @@ while true; do
     RECENT_COMMITS=$(git log --oneline -30 2>/dev/null || echo "no commits")
 
     # ------------------------------------------------------------------
-    # 4. Build the prompt with all context
+    # 4. List design docs for discovery context
+    # ------------------------------------------------------------------
+    DESIGN_DOCS=$(ls -1 docs/plans/*.md 2>/dev/null | head -20 || echo "none")
+    AUDIT_SUMMARY=""
+    if [[ -f "docs/unused-capability-audit.md" ]]; then
+        AUDIT_SUMMARY=$(head -60 docs/unused-capability-audit.md 2>/dev/null || echo "")
+    fi
+
+    # ------------------------------------------------------------------
+    # 5. Build the prompt with all context
     # ------------------------------------------------------------------
     PROMPT="$(cat <<PROMPT_EOF
 You are on iteration $ITERATION of the continuous improvement loop.
@@ -162,14 +171,48 @@ $RECENT_COMMITS
 $STATE
 \`\`\`
 
+## Design Docs Available
+\`\`\`
+$DESIGN_DOCS
+\`\`\`
+
+## Unused Capability Audit (excerpt)
+\`\`\`
+$AUDIT_SUMMARY
+\`\`\`
+
 Analyze the codebase, identify the single highest-impact improvement, implement
 it with full comments and documentation, write tests, and ship it as a merged PR.
+
+IMPORTANT: Prefer substantial work over trivial fixes. Read the design docs and
+unused capability audit to find big, meaningful improvements. A well-implemented
+feature is worth far more than a docstring or dead code cleanup.
+
+IMPORTANT: Verify your PR was created and merged successfully. Use 'gh pr view'
+to confirm. If any git or gh command fails, log the error and exit cleanly.
+
 Follow the workflow in your system prompt exactly. Update the state file when done.
 PROMPT_EOF
 )"
 
     # ------------------------------------------------------------------
-    # 5. Run Claude Code
+    # 6. Verify gh CLI is authenticated before running
+    # ------------------------------------------------------------------
+    if ! gh auth status >> "$ITER_LOG" 2>&1; then
+        log "WARNING: gh CLI not authenticated. PRs cannot be created/merged."
+        log "Run 'gh auth login' to fix. Skipping this iteration."
+        CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
+        if [[ $CONSECUTIVE_FAILURES -ge $MAX_CONSECUTIVE_FAILURES ]]; then
+            log "Backing off: $CONSECUTIVE_FAILURES consecutive failures. Sleeping 5 minutes."
+            sleep 300
+            CONSECUTIVE_FAILURES=0
+        fi
+        sleep "$COOLDOWN"
+        continue
+    fi
+
+    # ------------------------------------------------------------------
+    # 7. Run Claude Code
     # ------------------------------------------------------------------
     log "Invoking Claude ($MODEL, budget \$$MAX_BUDGET, timeout ${CLAUDE_TIMEOUT}s)..."
     # Note: set -e is NOT active (script uses set -uo pipefail only).
@@ -206,11 +249,19 @@ PROMPT_EOF
     fi
 
     # ------------------------------------------------------------------
-    # 6. Evaluate result
+    # 8. Evaluate result
     # ------------------------------------------------------------------
     if [[ $EXIT_CODE -eq 0 ]]; then
         log "Iteration $ITERATION completed successfully."
         CONSECUTIVE_FAILURES=0
+
+        # Check if a PR was created and merged during this iteration
+        # by looking for the most recent merged PR in the log
+        if grep -q "PR merged successfully\|Merging pull request\|merged" "$ITER_LOG" 2>/dev/null; then
+            log "PR appears to have been merged in this iteration."
+        else
+            log "NOTE: No PR merge detected in output. Claude may have found nothing to improve or failed to ship."
+        fi
     else
         CONSECUTIVE_FAILURES=$((CONSECUTIVE_FAILURES + 1))
         log "WARNING: Iteration $ITERATION failed (exit code $EXIT_CODE, streak: $CONSECUTIVE_FAILURES)"
@@ -240,7 +291,7 @@ PROMPT_EOF
     git pull --ff-only >> "$ITER_LOG" 2>&1 || true
 
     # ------------------------------------------------------------------
-    # 6.5. Ensure Life OS is running (restart if code updated)
+    # 9. Restart Life OS if code was updated
     # ------------------------------------------------------------------
     # Check if Life OS is running on EVERY iteration (not just when code changes).
     # This ensures the service stays up even if it crashes, is stopped manually,
@@ -378,12 +429,12 @@ PROMPT_EOF
     fi
 
     # ------------------------------------------------------------------
-    # 7. Housekeeping: keep only last 100 iteration logs
+    # 10. Housekeeping: keep only last 100 iteration logs
     # ------------------------------------------------------------------
     find "$LOG_DIR" -name "iter-*.log" -type f | sort -r | tail -n +101 | xargs rm -f 2>/dev/null || true
 
     # ------------------------------------------------------------------
-    # 8. Cooldown
+    # 11. Cooldown
     # ------------------------------------------------------------------
     if [[ $COOLDOWN -gt 0 ]]; then
         sleep "$COOLDOWN"

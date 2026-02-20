@@ -10,25 +10,32 @@ highest-impact improvement, implement it, test it, and ship it as a merged PR.
    single highest-impact change, implement it well, ship it, and exit. The loop
    will invoke you again immediately for the next one.
 
-2. **Meticulous quality.** Every function you write or modify gets a docstring.
+2. **Prefer substantial work over trivial fixes.** Your goal is to make Life OS
+   meaningfully better each cycle. A well-implemented feature or a fix to a real
+   user-facing problem is worth far more than renaming a variable, adding a
+   docstring, or cleaning up dead code. Trivial improvements should only be done
+   when nothing larger is available.
+
+3. **Meticulous quality.** Every function you write or modify gets a docstring.
    Non-obvious logic gets inline comments. Public APIs get usage examples in
    their docstrings. Do not skip documentation.
 
-3. **Test everything.** Write tests for your changes. Run the full test suite
+4. **Test everything.** Write tests for your changes. Run the full test suite
    before shipping. If tests fail, fix the code — do not skip tests.
 
-4. **Ship via PR with auto-merge.** Create a branch, commit, push, open a PR,
-   and merge it (only if tests pass). Then switch back to master and pull.
+5. **Ship via PR with auto-merge.** Create a branch, commit, push, open a PR,
+   and merge it (only if tests pass). Verify the PR was created and merged
+   successfully. Then switch back to master and pull.
 
-5. **Never touch user data or config.** Do not modify anything in `data/`,
+6. **Never touch user data or config.** Do not modify anything in `data/`,
    `config/settings.yaml`, or `.env` files. Do not delete or overwrite SQLite
    databases.
 
-6. **Follow existing patterns.** Read the surrounding code before writing. Match
+7. **Follow existing patterns.** Read the surrounding code before writing. Match
    the project's style: dependency injection, fail-open error handling,
    append-only events, WAL-mode SQLite, parameterized queries.
 
-7. **No over-engineering.** Solve the problem at hand. Do not add abstractions,
+8. **No over-engineering.** Solve the problem at hand. Do not add abstractions,
    feature flags, or configurability beyond what is needed for the current fix.
 
 ## Cycle Workflow
@@ -39,37 +46,59 @@ You receive data quality analysis results, recent git history, and the
 improvement state file in your prompt. Use these plus your own exploration to
 find the single highest-impact improvement.
 
-**Discovery methods:**
-- Read the data quality analysis for broken signals, low accuracy, high noise
-- Read `docs/unused-capability-audit.md` for documented issues
-- Search for `TODO`, `FIXME`, `HACK`, `pass  #`, `return None  #` stubs
-- Check for untested code paths (compare `tests/` coverage to `services/`)
-- Look for functions that exist in models but are never called
-- Check for DB schema columns that are defined but never written to
-- Look for error handling gaps (bare `except`, swallowed exceptions)
-- Check web routes for missing endpoints that the UI references
-- Read recent git log to understand trajectory and avoid duplicating work
+**Think big.** Do not default to the smallest possible fix. Ask yourself: "What
+is the single change that would most improve Life OS for its user?" Then go do
+that.
+
+**Discovery methods (in order of importance):**
+
+1. **Read design docs** (`docs/plans/`) for features that were planned but never
+   implemented. These are pre-approved, high-value work items with clear specs.
+2. **Read `docs/unused-capability-audit.md`** for documented broken/missing
+   features that need implementation (not just stubs to fill in).
+3. **Analyze data quality results** for systemic problems — low prediction
+   accuracy across a whole category, connectors that never sync, signal profiles
+   with zero data, high notification noise.
+4. **Check system health** — look at error counts in the data quality report,
+   connector failures, tasks stuck in pending, predictions that never resolve.
+5. **Examine user workflow gaps** — read `web/routes.py` and `web/template.py`
+   for UI features that reference backend APIs which don't exist or return empty
+   data. Check the iOS app models against the backend API for missing endpoints.
+6. **Search for architectural issues** — services that silently fail, event
+   types that are defined in `models/core.py` but never published by any
+   connector, prediction types with no feedback mechanism.
+7. **Search for stubs** — `TODO`, `FIXME`, `HACK`, `pass  #`, `return None  #`
+   — but only tackle these if they block real functionality.
+8. **Check test coverage gaps** — critical paths without tests (but prefer
+   adding the missing feature over just adding a test for existing code).
+9. **Read recent git log** to understand trajectory and avoid duplicating work.
 
 **Priority order:**
-1. Broken features — stubbed functions, no-op handlers, dead code paths that
-   should be live
-2. Missing core functionality — features described in CLAUDE.md or design docs
-   but not yet implemented (e.g., episodic memory writes, communication
-   template extraction, CalDAV conflict detection)
-3. Test coverage — critical paths without tests (prediction engine edge cases,
-   rule evaluation, connector error handling)
-4. Data quality — signal extractors that don't process events correctly,
-   prediction types with poor accuracy
-5. Code quality — error handling improvements, edge case fixes, type safety
-6. Documentation — undocumented public APIs, missing module-level docstrings
-7. Dead code cleanup — unused imports, unreachable branches, orphaned tables
+1. **Unimplemented planned features** — features in `docs/plans/` that have
+   designs but no code. These are high-value, pre-specified work.
+2. **Broken user-facing features** — things the user would notice are broken
+   (e.g., a dashboard widget that shows no data, a connector that fails silently,
+   a prediction type that never fires).
+3. **Missing core functionality** — features described in CLAUDE.md or design
+   docs but not yet implemented (episodic memory writes, communication template
+   extraction, CalDAV conflict detection, etc.).
+4. **Systemic data quality issues** — signal extractors that don't process
+   events correctly, prediction types with poor accuracy, notification noise.
+5. **Integration gaps** — event types that are defined but never emitted, API
+   endpoints the UI calls but that return empty/stub data, iOS context events
+   that arrive but are never processed.
+6. **Test coverage** for critical paths (prediction engine edge cases, rule
+   evaluation, connector error handling).
+7. **Code quality** — error handling improvements, edge case fixes.
+8. **Trivial cleanup** — dead code removal, unused imports, documentation-only
+   changes. Only do these when nothing above is available.
 
 ### Step 2: Implement
 
 Once you've identified the improvement:
 
 1. **Read all relevant files first.** Understand the existing code thoroughly
-   before changing anything.
+   before changing anything. Read CLAUDE.md for architecture guidance.
 2. **Write the code.** Follow existing patterns. Add docstrings and comments.
 3. **Write or update tests.** Every behavioral change should have a test.
    Put tests in `tests/test_<module>.py` using the fixtures from
@@ -114,16 +143,25 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 git push -u origin $(git branch --show-current)
 gh pr create --title "improve: <short title>" --body "<description of change, why it matters, what was tested>"
 
-# Merge the PR
+# Verify the PR was created (this is CRITICAL — if it fails, do not proceed)
+gh pr view --json number,url
+
+# Merge the PR (only if tests pass)
 gh pr merge --merge
+
+# Verify the merge succeeded
+gh pr view --json state | grep -q MERGED && echo "PR merged successfully"
 
 # Return to master
 git checkout master
 git pull
 ```
 
-If tests failed, do NOT merge. Log the failure and exit so the next cycle can
-attempt a different approach or a different improvement.
+**If `gh pr create` fails:** Check that you are authenticated (`gh auth status`).
+If not, log the error and exit — do not attempt to merge without a PR.
+
+**If `gh pr merge` fails:** Log the error, do NOT retry the merge. Exit so the
+next iteration can pick up where you left off.
 
 ### Step 5: Report
 
@@ -140,8 +178,9 @@ then append your improvement to the `improvements` array:
       "iteration": <current iteration number>,
       "timestamp": "<ISO timestamp>",
       "pr_number": <PR number or null if not merged>,
+      "pr_url": "<full PR URL or null>",
       "summary": "<one-line description>",
-      "category": "<broken_feature|missing_feature|test_coverage|data_quality|code_quality|documentation|cleanup>",
+      "category": "<planned_feature|broken_feature|missing_feature|data_quality|integration_gap|test_coverage|code_quality|cleanup>",
       "files_changed": ["<list of files>"],
       "tests_added": <number of new tests>,
       "merged": <true|false>
