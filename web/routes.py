@@ -355,6 +355,68 @@ def register_routes(app: FastAPI, life_os) -> None:
         digest = await life_os.notification_manager.get_digest()
         return {"digest": digest}
 
+    @app.get("/api/notifications/human")
+    async def list_human_notifications(limit: int = 50):
+        """Get only human-to-human notifications (company noise filtered out)."""
+        notifications = life_os.notification_manager.get_pending_human_notifications(limit=limit)
+        return {"notifications": notifications}
+
+    # -------------------------------------------------------------------
+    # Company Digests (weekly transactional / monthly marketing)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/company-digest/{digest_type}")
+    async def get_company_digest(digest_type: str, limit: int = 200):
+        """Get pending company digest items.
+
+        Args:
+            digest_type: "weekly" (bills/receipts/alerts) or "monthly" (marketing/promos).
+        """
+        if digest_type not in ("weekly", "monthly"):
+            return {"error": "digest_type must be 'weekly' or 'monthly'"}
+        items = life_os.notification_manager.get_company_digest(digest_type, limit=limit)
+        return {"digest_type": digest_type, "items": items, "count": len(items)}
+
+    @app.post("/api/company-digest/{digest_type}/review")
+    async def review_company_digest(digest_type: str):
+        """Mark all pending items in a company digest as reviewed."""
+        if digest_type not in ("weekly", "monthly"):
+            return {"error": "digest_type must be 'weekly' or 'monthly'"}
+        count = life_os.notification_manager.mark_digest_reviewed(digest_type)
+        return {"status": "reviewed", "items_reviewed": count}
+
+    @app.post("/api/company-digest/item/{item_id}/review")
+    async def review_digest_item(item_id: str):
+        """Mark a single company digest item as reviewed."""
+        life_os.notification_manager.mark_digest_item_reviewed(item_id)
+        return {"status": "reviewed"}
+
+    @app.get("/api/company-digest/stats")
+    async def company_digest_stats():
+        """Get company digest statistics (pending/reviewed counts)."""
+        stats = life_os.notification_manager.get_digest_stats()
+        return {"stats": stats}
+
+    @app.get("/api/sender-classification/stats")
+    async def sender_classification_stats():
+        """Get sender classification statistics."""
+        stats = life_os.sender_classifier.get_classification_stats()
+        return {"stats": stats}
+
+    @app.post("/api/sender-classification/reclassify")
+    async def reclassify_sender(req: dict):
+        """Manually reclassify a sender address.
+
+        Body: {"address": "...", "sender_type": "human|company_transactional|company_marketing"}
+        """
+        from models.core import SenderType
+        address = req.get("address", "")
+        sender_type_str = req.get("sender_type", "")
+        if not address or sender_type_str not in ("human", "company_transactional", "company_marketing"):
+            return {"error": "Provide 'address' and valid 'sender_type'"}
+        life_os.sender_classifier.reclassify_address(address, SenderType(sender_type_str))
+        return {"status": "reclassified", "address": address, "sender_type": sender_type_str}
+
     # -------------------------------------------------------------------
     # Draft Messages
     # -------------------------------------------------------------------

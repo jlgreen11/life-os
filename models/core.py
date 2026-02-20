@@ -112,6 +112,21 @@ class Priority(str, Enum):
     SILENT = "silent"           # Log but never notify
 
 
+class SenderType(str, Enum):
+    """Classifies who is sending a communication event.
+
+    This drives the notification routing strategy:
+      - HUMAN: real person-to-person → delivered in real-time
+      - COMPANY_TRANSACTIONAL: bills, receipts, account alerts → weekly digest
+      - COMPANY_MARKETING: newsletters, promos, marketing → monthly digest
+      - UNKNOWN: not yet classified (treated as HUMAN to fail-open)
+    """
+    HUMAN = "human"
+    COMPANY_TRANSACTIONAL = "company_transactional"
+    COMPANY_MARKETING = "company_marketing"
+    UNKNOWN = "unknown"
+
+
 class SourceType(str, Enum):
     """Where this event originated."""
     PROTON_MAIL = "proton_mail"
@@ -241,7 +256,7 @@ class EventMetadata(BaseModel):
 # ---------------------------------------------------------------------------
 
 class Contact(BaseModel):
-    """A person in the user's life."""
+    """A person or entity in the user's life."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     aliases: list[str] = Field(default_factory=list)         # Nicknames, variations
@@ -254,6 +269,10 @@ class Contact(BaseModel):
     is_priority: bool = False
     preferred_channel: Optional[str] = None                   # How they prefer to be reached
     always_surface: bool = False                              # Always show their messages
+
+    # Sender classification: human, company_transactional, company_marketing
+    # Drives notification routing: human=real-time, transactional=weekly, marketing=monthly
+    sender_type: Optional[SenderType] = None
 
     # Learned over time
     typical_response_time: Optional[float] = None             # seconds

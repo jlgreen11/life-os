@@ -219,8 +219,11 @@ class DatabaseManager:
         - ``entity_relationships`` is a generic graph-edge table connecting any
           entity to any other entity with a typed relationship and weight,
           supporting queries like "who is related to this project?".
+        - ``sender_type`` classifies contacts as human, company_transactional,
+          or company_marketing to drive notification routing (real-time vs
+          weekly vs monthly digest).
         - Indexes target the primary query paths: name search, priority contacts,
-          and relationship traversal from either side.
+          sender type filtering, and relationship traversal from either side.
         """
         with self.get_connection("entities") as conn:
             conn.executescript("""
@@ -242,12 +245,14 @@ class DatabaseManager:
                     last_contact            TEXT,
                     contact_frequency_days  REAL,
                     notes                   TEXT DEFAULT '[]',
+                    sender_type             TEXT,
                     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
                 CREATE INDEX IF NOT EXISTS idx_contacts_priority ON contacts(is_priority);
+                CREATE INDEX IF NOT EXISTS idx_contacts_sender_type ON contacts(sender_type);
 
                 -- Contact identifiers (for quick lookup by email/phone/handle)
                 CREATE TABLE IF NOT EXISTS contact_identifiers (
@@ -312,6 +317,45 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_rel_b ON entity_relationships(entity_b_type, entity_b_id);
             """)
 
+        # Run migrations after base schema exists. For fresh databases, the
+        # CREATE TABLE already includes new columns, so migrations are no-ops.
+        # For existing databases with older schemas, migrations add the columns.
+        ENTITIES_VERSION = 1
+        with self.get_connection("entities") as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                )
+            """)
+            result = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+            current_version = result[0] if result[0] is not None else 0
+            if current_version < ENTITIES_VERSION:
+                self._migrate_entities_db(conn, current_version, ENTITIES_VERSION)
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (ENTITIES_VERSION,))
+
+    def _migrate_entities_db(self, conn, from_version: int, to_version: int):
+        """Apply schema migrations to entities.db.
+
+        Migration 0 → 1: Add sender_type column to contacts table.
+        This column classifies contacts as human, company_transactional,
+        or company_marketing to drive notification routing (real-time vs
+        weekly vs monthly digest).
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        if from_version == 0 and to_version >= 1:
+            _logger.info("Migrating entities.db from v0 to v1: adding sender_type column")
+
+            # Check if column already exists (migration may have been run partially)
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()]
+            if "sender_type" not in columns:
+                conn.execute("ALTER TABLE contacts ADD COLUMN sender_type TEXT")
+                _logger.info("Added sender_type column to contacts table")
+
+            _logger.info("Entities.db migration to v1 complete")
+
     # -----------------------------------------------------------------------
     # state.db — Current state of the world
     # -----------------------------------------------------------------------
@@ -329,6 +373,10 @@ class DatabaseManager:
         - ``notifications`` track a full lifecycle (pending -> delivered ->
           read -> acted_on / dismissed) with separate timestamp columns for
           each transition, enabling response-latency analytics.
+        - ``sender_type`` on notifications enables routing company emails to
+          weekly/monthly digests while human messages flow in real-time.
+        - ``company_digest_items`` accumulates company notifications until
+          the user is ready to review them on their schedule.
         - ``connector_state`` persists sync cursors and error counts so that
           connectors can resume from where they left off after a restart and
           implement exponential back-off on repeated failures.
@@ -373,6 +421,7 @@ class DatabaseManager:
                     priority        TEXT DEFAULT 'normal',
                     source_event_id TEXT,
                     domain          TEXT,
+                    sender_type     TEXT,
                     status          TEXT DEFAULT 'pending',
                     delivered_at    TEXT,
                     read_at         TEXT,
@@ -383,6 +432,28 @@ class DatabaseManager:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_notif_status ON notifications(status);
+                CREATE INDEX IF NOT EXISTS idx_notif_sender_type ON notifications(sender_type);
+
+                -- Company digest items: holds notifications routed to weekly/monthly
+                -- digests until the user reviews them. Separates company noise from
+                -- human-to-human communication.
+                CREATE TABLE IF NOT EXISTS company_digest_items (
+                    id              TEXT PRIMARY KEY,
+                    notification_id TEXT NOT NULL,
+                    sender_type     TEXT NOT NULL,
+                    title           TEXT NOT NULL,
+                    body            TEXT,
+                    from_address    TEXT,
+                    source_event_id TEXT,
+                    digest_type     TEXT NOT NULL,
+                    status          TEXT DEFAULT 'pending',
+                    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    reviewed_at     TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_digest_type ON company_digest_items(digest_type);
+                CREATE INDEX IF NOT EXISTS idx_digest_status ON company_digest_items(status);
+                CREATE INDEX IF NOT EXISTS idx_digest_sender_type ON company_digest_items(sender_type);
 
                 -- Connector state (sync cursors, auth tokens, health)
                 CREATE TABLE IF NOT EXISTS connector_state (
@@ -404,6 +475,45 @@ class DatabaseManager:
                     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
             """)
+
+        # Run migrations after base schema exists.
+        STATE_VERSION = 1
+        with self.get_connection("state") as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                )
+            """)
+            result = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+            current_version = result[0] if result[0] is not None else 0
+            if current_version < STATE_VERSION:
+                self._migrate_state_db(conn, current_version, STATE_VERSION)
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (STATE_VERSION,))
+
+    def _migrate_state_db(self, conn, from_version: int, to_version: int):
+        """Apply schema migrations to state.db.
+
+        Migration 0 → 1: Add sender_type column to notifications table and
+        create company_digest_items table for accumulating company notifications
+        into weekly/monthly digests.
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        if from_version == 0 and to_version >= 1:
+            _logger.info("Migrating state.db from v0 to v1: adding sender_type and digest tables")
+
+            # Add sender_type column to notifications
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(notifications)").fetchall()]
+            if "sender_type" not in columns:
+                conn.execute("ALTER TABLE notifications ADD COLUMN sender_type TEXT")
+                _logger.info("Added sender_type column to notifications table")
+
+            # company_digest_items table will be created by CREATE TABLE IF NOT EXISTS
+            # in the main schema block, so no need to create it here.
+
+            _logger.info("State.db migration to v1 complete")
 
     # -----------------------------------------------------------------------
     # user_model.db — The user model and all memory layers

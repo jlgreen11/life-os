@@ -3,25 +3,43 @@ Life OS — Notification Manager
 
 Intelligent notification routing. Doesn't just forward alerts blindly —
 considers the user's current mood, location, activity, quiet hours,
-and notification preferences before delivering.
+notification preferences, and SENDER TYPE before delivering.
+
+Core routing strategy for sender types:
+  HUMAN                  → Real-time delivery (immediate)
+  COMPANY_TRANSACTIONAL  → Weekly digest (bills, receipts, account alerts)
+  COMPANY_MARKETING      → Monthly digest (newsletters, promos, marketing)
 
 This is where the "the AI protected my attention" magic happens.
-Batches low-priority items, escalates genuinely urgent ones, and
-suppresses noise the user has trained the system to ignore.
+Company noise is materially segregated from human interaction so
+you deal with people in real-time, bills weekly, and marketing monthly.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, time, timezone
 from typing import Any, Optional
 
 from storage.database import DatabaseManager
 
+logger = logging.getLogger(__name__)
+
 
 class NotificationManager:
-    """Routes, batches, and delivers notifications intelligently."""
+    """Routes, batches, and delivers notifications intelligently.
+
+    Sender-type routing:
+      - HUMAN → normal priority-based delivery (immediate/batched/suppressed)
+      - COMPANY_TRANSACTIONAL → routed to weekly digest
+      - COMPANY_MARKETING → routed to monthly digest
+
+    The user reviews company digests on their own schedule:
+      - Weekly digest: bills, receipts, account alerts
+      - Monthly digest: newsletters, marketing, promos
+    """
 
     def __init__(self, db: DatabaseManager, event_bus: Any, config: dict):
         self.db = db          # Database access for notifications and preferences tables
@@ -79,16 +97,23 @@ class NotificationManager:
         source_event_id: Optional[str] = None,
         domain: Optional[str] = None,
         action_url: Optional[str] = None,
+        sender_type: Optional[str] = None,
+        from_address: Optional[str] = None,
     ) -> Optional[str]:
         """
         Create a notification. Doesn't necessarily deliver it immediately.
 
         Flow:
-            1. Check quiet hours → suppress or queue
-            2. Check priority → critical bypasses everything
-            3. Check notification mode → immediate, batched, or minimal
-            4. Check recent dismissal patterns → should we even bother?
+            1. Check sender_type → company stuff goes to weekly/monthly digest
+            2. Check quiet hours → suppress or queue
+            3. Check priority → critical bypasses everything
+            4. Check notification mode → immediate, batched, or minimal
             5. Deliver or queue for batch digest
+
+        Args:
+            sender_type: One of "human", "company_transactional",
+                        "company_marketing", or None (treated as human).
+            from_address: Sender email address (stored on digest items for display).
         """
         notif_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -98,9 +123,11 @@ class NotificationManager:
         with self.db.get_connection("state") as conn:
             conn.execute(
                 """INSERT INTO notifications
-                   (id, title, body, priority, source_event_id, domain, status, action_url)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
-                (notif_id, title, body, priority, source_event_id, domain, action_url),
+                   (id, title, body, priority, source_event_id, domain,
+                    sender_type, status, action_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                (notif_id, title, body, priority, source_event_id, domain,
+                 sender_type, action_url),
             )
 
         # Publish creation telemetry event
@@ -113,13 +140,35 @@ class NotificationManager:
                     "priority": priority,
                     "source_event_id": source_event_id,
                     "domain": domain,
+                    "sender_type": sender_type,
                     "created_at": now.isoformat(),
                 },
                 source="notification_manager",
                 priority=priority,
             )
 
-        # --- Delivery decision flow ---
+        # --- Sender-type routing ---
+        # Company communications are routed to their respective digest
+        # queues instead of flowing through the normal priority-based path.
+        # This keeps the user's real-time notification stream focused on
+        # human-to-human interaction.
+        if sender_type == "company_marketing":
+            self._add_to_company_digest(
+                notif_id, title, body, from_address,
+                source_event_id, sender_type, "monthly",
+            )
+            self._mark_status(notif_id, "digest_queued")
+            return notif_id
+
+        if sender_type == "company_transactional":
+            self._add_to_company_digest(
+                notif_id, title, body, from_address,
+                source_event_id, sender_type, "weekly",
+            )
+            self._mark_status(notif_id, "digest_queued")
+            return notif_id
+
+        # --- Normal delivery decision flow (human senders) ---
         # Three possible outcomes:
         #   "immediate" -> push to the user right now (via event bus)
         #   "batch"     -> hold in memory until the next digest window
@@ -129,10 +178,6 @@ class NotificationManager:
         if delivery == "immediate":
             await self._deliver_notification(notif_id, title, body, priority)
             # Mark prediction as surfaced only when notification is actually delivered.
-            # This fixes a critical bug where predictions were marked as surfaced even
-            # when their notifications were suppressed, causing them to never be
-            # auto-resolved by auto_resolve_stale_predictions() (which only looks for
-            # delivered notifications with status='delivered').
             if domain == "prediction" and source_event_id:
                 self._mark_prediction_surfaced(source_event_id)
         elif delivery == "batch":
@@ -140,14 +185,11 @@ class NotificationManager:
             self._pending_batch.append({
                 "id": notif_id, "title": title, "body": body,
                 "priority": priority, "domain": domain,
-                "source_event_id": source_event_id,  # Preserve for later surfacing
+                "source_event_id": source_event_id,
             })
         elif delivery == "suppress":
             # Mark as suppressed in DB so it shows up in audit logs but is
-            # never delivered to the user. Return None to signal suppression.
-            # IMPORTANT: Do NOT mark the prediction as surfaced here — suppressed
-            # predictions should be filtered (was_surfaced=0) since the user never
-            # saw them.
+            # never delivered to the user.
             self._mark_status(notif_id, "suppressed")
             return None
 
@@ -662,3 +704,151 @@ class NotificationManager:
             resolved_count = result.rowcount
 
         return resolved_count
+
+    # -------------------------------------------------------------------
+    # Company Digest System
+    #
+    # Company notifications are segregated from human interaction and
+    # accumulated into weekly (transactional) or monthly (marketing)
+    # digests that the user reviews on their own schedule.
+    # -------------------------------------------------------------------
+
+    def _add_to_company_digest(
+        self,
+        notif_id: str,
+        title: str,
+        body: Optional[str],
+        from_address: Optional[str],
+        source_event_id: Optional[str],
+        sender_type: str,
+        digest_type: str,
+    ) -> None:
+        """Add a notification to the company digest queue.
+
+        Args:
+            notif_id: The notification ID.
+            title: Notification title.
+            body: Notification body.
+            from_address: Sender email address.
+            source_event_id: Source event ID.
+            sender_type: "company_transactional" or "company_marketing".
+            digest_type: "weekly" or "monthly".
+        """
+        item_id = str(uuid.uuid4())
+        with self.db.get_connection("state") as conn:
+            conn.execute(
+                """INSERT INTO company_digest_items
+                   (id, notification_id, sender_type, title, body,
+                    from_address, source_event_id, digest_type, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                (item_id, notif_id, sender_type, title, body,
+                 from_address, source_event_id, digest_type),
+            )
+
+    def get_company_digest(
+        self,
+        digest_type: str,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Get pending company digest items for review.
+
+        Args:
+            digest_type: "weekly" (transactional) or "monthly" (marketing).
+            limit: Maximum items to return.
+
+        Returns:
+            List of digest items sorted by recency.
+        """
+        with self.db.get_connection("state") as conn:
+            rows = conn.execute(
+                """SELECT * FROM company_digest_items
+                   WHERE digest_type = ? AND status = 'pending'
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (digest_type, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_digest_reviewed(self, digest_type: str) -> int:
+        """Mark all pending items in a digest as reviewed.
+
+        Called when the user opens and reviews their weekly or monthly
+        company digest. Returns the number of items marked.
+
+        Args:
+            digest_type: "weekly" or "monthly".
+
+        Returns:
+            Number of items marked as reviewed.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection("state") as conn:
+            result = conn.execute(
+                """UPDATE company_digest_items
+                   SET status = 'reviewed', reviewed_at = ?
+                   WHERE digest_type = ? AND status = 'pending'""",
+                (now, digest_type),
+            )
+            return result.rowcount
+
+    def mark_digest_item_reviewed(self, item_id: str) -> None:
+        """Mark a single digest item as reviewed."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db.get_connection("state") as conn:
+            conn.execute(
+                """UPDATE company_digest_items
+                   SET status = 'reviewed', reviewed_at = ?
+                   WHERE id = ?""",
+                (now, item_id),
+            )
+
+    def get_digest_stats(self) -> dict:
+        """Get company digest statistics.
+
+        Returns:
+            Dict with counts per digest type and status, e.g.:
+            {
+                "weekly": {"pending": 12, "reviewed": 45},
+                "monthly": {"pending": 83, "reviewed": 200},
+            }
+        """
+        with self.db.get_connection("state") as conn:
+            rows = conn.execute(
+                """SELECT digest_type, status, COUNT(*) as cnt
+                   FROM company_digest_items
+                   GROUP BY digest_type, status"""
+            ).fetchall()
+
+        stats: dict[str, dict[str, int]] = {}
+        for row in rows:
+            dtype = row["digest_type"]
+            if dtype not in stats:
+                stats[dtype] = {}
+            stats[dtype][row["status"]] = row["cnt"]
+        return stats
+
+    def get_pending_human_notifications(self, limit: int = 50) -> list[dict]:
+        """Get only human-to-human notifications (excludes company digests).
+
+        This is the primary notification view — clean, focused, personal.
+        Company noise is filtered out and available separately via the
+        digest endpoints.
+        """
+        with self.db.get_connection("state") as conn:
+            rows = conn.execute(
+                """SELECT * FROM notifications
+                   WHERE status IN ('pending', 'delivered')
+                     AND (sender_type IS NULL OR sender_type = 'human'
+                          OR sender_type = 'unknown')
+                   ORDER BY
+                       CASE priority
+                           WHEN 'critical' THEN 1
+                           WHEN 'high' THEN 2
+                           WHEN 'normal' THEN 3
+                           ELSE 4
+                       END,
+                       created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]

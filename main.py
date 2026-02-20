@@ -50,6 +50,7 @@ from services.workflow_detector.detector import WorkflowDetector
 from services.insight_engine.source_weights import SourceWeightManager
 from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
 from services.task_completion_detector.detector import TaskCompletionDetector
+from services.sender_classifier.classifier import SenderClassifier
 
 
 class LifeOS:
@@ -126,6 +127,10 @@ class LifeOS:
         self.workflow_detector = WorkflowDetector(self.db, self.user_model_store)
         # BehavioralAccuracyTracker infers prediction accuracy from user behavior
         self.behavioral_tracker = BehavioralAccuracyTracker(self.db)
+        # SenderClassifier classifies communication senders as human vs company
+        # to route company noise to weekly/monthly digests and keep the real-time
+        # notification stream focused on human-to-human interaction.
+        self.sender_classifier = SenderClassifier(self.db)
         # NotificationManager needs the event_bus so it can publish notification events
         self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
         # TaskManager needs the ai_engine to extract action items from events
@@ -782,6 +787,19 @@ class LifeOS:
             except Exception as e:
                 logger.error("Source weight tracking error (event_id=%s): %s", event.get("id"), e)
 
+            # Stage 1.4 — Sender Classification: classify the sender as
+            # human, company_transactional, or company_marketing.  This tag
+            # is attached to the event dict so downstream stages (notification
+            # creation, task extraction) can route accordingly.  Company
+            # notifications are diverted to weekly/monthly digests to keep
+            # the real-time stream focused on human-to-human interaction.
+            try:
+                sender_type = self.sender_classifier.classify_event(event)
+                event["_sender_type"] = sender_type.value
+            except Exception as e:
+                event["_sender_type"] = "unknown"
+                logger.error("Sender classification error (event_id=%s): %s", event.get("id"), e)
+
             # Stage 1.5 — Episodic Memory: convert each event into a memory
             # episode for the user model's Layer 1 (Episodic) storage.
             # This provides the raw interaction history that feeds semantic
@@ -892,6 +910,8 @@ class LifeOS:
                 priority=action.get("priority", "normal"),
                 source_event_id=event.get("id"),
                 domain=domain,
+                sender_type=event.get("_sender_type"),
+                from_address=event.get("payload", {}).get("from_address"),
             )
         elif action_type == "tag":
             # Persist the tag in the event_tags table (separate from the
