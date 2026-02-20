@@ -145,10 +145,10 @@ class ProtonMailConnector(BaseConnector):
                 # space-separated message sequence numbers.
                 nums = message_nums[0].split()
 
-                # On the initial sync, cap at the 100 most recent messages to
+                # On the initial sync, cap at the 50 most recent messages to
                 # avoid a massive backfill that could flood the event bus.
-                if not cursor and len(nums) > 100:
-                    nums = nums[-100:]
+                if not cursor and len(nums) > 50:
+                    nums = nums[-50:]
 
                 for num in nums:
                     try:

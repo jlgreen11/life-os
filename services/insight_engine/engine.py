@@ -810,7 +810,7 @@ class InsightEngine:
 
         try:
             with self.db.get_connection("events") as conn:
-                cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
                 rows = conn.execute(
                     """SELECT timestamp FROM events
                        WHERE type IN ('email.received', 'email.sent')

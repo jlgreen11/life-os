@@ -186,8 +186,8 @@ class GoogleConnector(BaseConnector):
         else:
             query = None  # First sync — we'll limit results
 
-        # First sync fetches up to 20,000 messages; subsequent syncs are incremental
-        max_messages = 500 if cursor else 20000
+        # First sync fetches the 200 most recent messages; subsequent syncs are incremental
+        max_messages = 200 if cursor else 200
 
         try:
             # Fetch message IDs (paginate — API returns max 500 per page)

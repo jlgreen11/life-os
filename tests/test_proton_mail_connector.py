@@ -129,10 +129,10 @@ async def test_sync_with_no_imap_connection(connector):
 
 @pytest.mark.asyncio
 async def test_sync_first_run_fetches_all_messages(connector, mock_imap, event_bus):
-    """Test initial sync (no cursor) fetches ALL messages but caps at 100 most recent per folder."""
+    """Test initial sync (no cursor) fetches ALL messages but caps at 50 most recent per folder."""
     connector._imap = mock_imap
     connector._folders = ["INBOX"]  # Test with single folder for predictable count
-    # Simulate 150 messages in INBOX (should be capped at 100)
+    # Simulate 150 messages in INBOX (should be capped at 50)
     message_nums = [str(i).encode() for i in range(1, 151)]
     mock_imap.search.return_value = ("OK", [b" ".join(message_nums)])
     # Mock fetch to return minimal RFC 822 data
@@ -140,8 +140,8 @@ async def test_sync_first_run_fetches_all_messages(connector, mock_imap, event_b
 
     count = await connector.sync()
 
-    # Should only process the last 100 messages
-    assert count == 100
+    # Should only process the last 50 messages
+    assert count == 50
     # Verify search used "ALL" (no cursor)
     mock_imap.search.assert_called()
     call_args = str(mock_imap.search.call_args)
