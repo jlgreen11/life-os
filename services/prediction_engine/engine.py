@@ -29,6 +29,7 @@ import logging
 import uuid
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,10 @@ class PredictionEngine:
     - Episodic memory (past similar situations)
     """
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore):
+    def __init__(self, db: DatabaseManager, ums: UserModelStore, timezone: str = "America/Los_Angeles"):
         self.db = db   # Database access for events, user_model, and preferences tables
         self.ums = ums  # User-model store for signal profiles and semantic memory
+        self._tz_name = timezone
         self._last_event_cursor: int = 0  # rowid of last processed event
         self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
 
@@ -1375,7 +1377,8 @@ class PredictionEngine:
         # very low historical activity (< 5% of peak), treat it as a natural
         # quiet period and apply the same penalty.
         now = datetime.now(timezone.utc)
-        in_quiet_hours = self._is_quiet_hours(now)
+        local_now = now.astimezone(ZoneInfo(self._tz_name))
+        in_quiet_hours = self._is_quiet_hours(local_now)
 
         # Secondary: check cadence profile for naturally observed low-activity hours.
         # Only used when no explicit quiet hours are configured.
@@ -1386,7 +1389,7 @@ class PredictionEngine:
                 hourly_activity: dict = cadence_profile["data"].get("hourly_activity", {})
                 if hourly_activity:
                     peak = max(hourly_activity.values(), default=0)
-                    current_hour_activity = hourly_activity.get(str(now.hour), 0)
+                    current_hour_activity = hourly_activity.get(str(local_now.hour), 0)
                     # Flag as low-activity if current hour is below 5% of peak.
                     # This catches observed quiet periods (e.g., someone who never
                     # messages before 8am or after 10pm) without requiring the
@@ -1421,6 +1424,9 @@ class PredictionEngine:
 
     def _is_quiet_hours(self, now: datetime) -> bool:
         """Check whether *now* falls within the user's configured quiet hours.
+
+        ``now`` should already be in the user's local timezone so that
+        ``.time()`` and ``.strftime("%A")`` return local values.
 
         Quiet hours are stored in the ``preferences`` database under the key
         ``quiet_hours`` as a JSON list of time-range objects::

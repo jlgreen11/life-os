@@ -22,6 +22,7 @@ import signal
 import sys
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class LifeOS:
         # declares its dependencies as constructor args rather than importing
         # global singletons).
         data_dir = self.config.get("data_dir", "./data")
+        self.user_tz = self.config.get("timezone", "America/Los_Angeles")
 
         # Allow dependency injection for testing
         self.db = db if db is not None else DatabaseManager(data_dir)
@@ -111,12 +113,13 @@ class LifeOS:
         self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
         self.feedback_collector = FeedbackCollector(self.db, self.user_model_store, event_bus=self.event_bus)
         self.prediction_engine = PredictionEngine(
-            self.db, self.user_model_store
+            self.db, self.user_model_store, timezone=self.user_tz
         )
         self.source_weight_manager = SourceWeightManager(self.db)
         self.insight_engine = InsightEngine(
             self.db, self.user_model_store,
             source_weight_manager=self.source_weight_manager,
+            timezone=self.user_tz,
         )
         # SemanticFactInferrer derives high-level facts from signal profiles
         self.semantic_fact_inferrer = SemanticFactInferrer(self.user_model_store)
@@ -127,7 +130,7 @@ class LifeOS:
         # BehavioralAccuracyTracker infers prediction accuracy from user behavior
         self.behavioral_tracker = BehavioralAccuracyTracker(self.db)
         # NotificationManager needs the event_bus so it can publish notification events
-        self.notification_manager = NotificationManager(self.db, self.event_bus, self.config)
+        self.notification_manager = NotificationManager(self.db, self.event_bus, self.config, timezone=self.user_tz)
         # TaskManager needs the ai_engine to extract action items from events
         self.task_manager = TaskManager(self.db, event_bus=self.event_bus, ai_engine=self.ai_engine)
         # TaskCompletionDetector infers task completion from behavioral signals
@@ -1635,7 +1638,7 @@ class LifeOS:
 
         while not self.shutdown_event.is_set():
             try:
-                now = datetime.now()
+                now = datetime.now(timezone.utc).astimezone(ZoneInfo(self.user_tz))
                 current_hour = now.hour
 
                 # Check if we've reached a digest hour and haven't delivered yet this hour

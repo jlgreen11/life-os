@@ -32,6 +32,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from services.insight_engine.models import Insight
 from services.insight_engine.source_weights import SourceWeightManager
@@ -96,10 +97,12 @@ class InsightEngine:
     """Cross-correlates signal profiles to produce human-readable insights."""
 
     def __init__(self, db: DatabaseManager, ums: UserModelStore,
-                 source_weight_manager: Optional[SourceWeightManager] = None):
+                 source_weight_manager: Optional[SourceWeightManager] = None,
+                 timezone: str = "America/Los_Angeles"):
         self.db = db
         self.ums = ums
         self.swm = source_weight_manager
+        self._tz = ZoneInfo(timezone)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1467,11 +1470,21 @@ class InsightEngine:
         data = profile.get("data", {})
         total_samples = profile.get("samples_count", 0)
 
-        activity_by_hour: dict[str, int] = data.get("activity_by_hour", {})
+        activity_by_hour_utc: dict[str, int] = data.get("activity_by_hour", {})
         activity_by_day: dict[str, int] = data.get("activity_by_day", {})
 
-        if not activity_by_hour or total_samples < MIN_SAMPLES:
+        if not activity_by_hour_utc or total_samples < MIN_SAMPLES:
             return []
+
+        # Convert UTC hour buckets to user-local hour buckets so that
+        # chronotype and peak-hour insights reflect the user's actual
+        # day, not UTC offsets.
+        now_utc = datetime.now(timezone.utc)
+        utc_offset_hours = now_utc.astimezone(self._tz).utcoffset().total_seconds() / 3600
+        activity_by_hour: dict[str, int] = {}
+        for utc_h_str, count in activity_by_hour_utc.items():
+            local_h = (int(utc_h_str) + int(utc_offset_hours)) % 24
+            activity_by_hour[str(local_h)] = activity_by_hour.get(str(local_h), 0) + count
 
         insights: list[Insight] = []
 
@@ -1541,7 +1554,7 @@ class InsightEngine:
 
             if peak_count >= MIN_PEAK_ACTIVITY:
                 # Format hour as human-readable "9 AM", "2 PM", etc.
-                hour_label = datetime.now().replace(hour=peak_hour).strftime("%-I %p")
+                hour_label = datetime.now(timezone.utc).astimezone(self._tz).replace(hour=peak_hour).strftime("%-I %p")
                 summary = (
                     f"Your most active hour is {hour_label} — consider scheduling "
                     f"important work or focus blocks during this window "

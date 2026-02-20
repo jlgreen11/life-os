@@ -147,11 +147,11 @@ def user_model_store(db, event_bus):
 def prediction_engine(db, user_model_store):
     """A PredictionEngine wired to the temporary DatabaseManager and UserModelStore."""
     from services.prediction_engine.engine import PredictionEngine
-    return PredictionEngine(db, user_model_store)
+    return PredictionEngine(db, user_model_store, timezone="UTC")
 
 
 @pytest.fixture()
 def notification_manager(db, event_bus):
     """A NotificationManager wired to the temporary DatabaseManager and mock event bus."""
     from services.notification_manager.manager import NotificationManager
-    return NotificationManager(db, event_bus, config={})
+    return NotificationManager(db, event_bus, config={}, timezone="UTC")

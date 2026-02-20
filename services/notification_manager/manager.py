@@ -16,6 +16,7 @@ import json
 import uuid
 from datetime import datetime, time, timezone
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from storage.database import DatabaseManager
 
@@ -23,10 +24,11 @@ from storage.database import DatabaseManager
 class NotificationManager:
     """Routes, batches, and delivers notifications intelligently."""
 
-    def __init__(self, db: DatabaseManager, event_bus: Any, config: dict):
+    def __init__(self, db: DatabaseManager, event_bus: Any, config: dict, timezone: str = "America/Los_Angeles"):
         self.db = db          # Database access for notifications and preferences tables
         self.bus = event_bus   # Event bus for publishing delivery/dismissal events
         self.config = config   # App-level configuration (not user preferences)
+        self._tz = ZoneInfo(timezone)
 
         # In-memory batch for digest delivery.
         # Low-priority notifications accumulate here until get_digest() is
@@ -213,6 +215,10 @@ class NotificationManager:
         Quiet hours are stored as a JSON list of time-range objects, each
         with "start", "end", and "days" fields. Multiple ranges are
         supported (e.g., different times on weekdays vs. weekends).
+
+        The incoming ``now`` is UTC; we convert to the user's local
+        timezone before comparing against the configured quiet-hours
+        windows (which are specified in local time).
         """
         with self.db.get_connection("preferences") as conn:
             rows = conn.execute(
@@ -224,8 +230,9 @@ class NotificationManager:
 
         try:
             quiet_hours = json.loads(rows["value"])
-            current_time = now.time()
-            current_day = now.strftime("%A").lower()
+            local_now = now.astimezone(self._tz)
+            current_time = local_now.time()
+            current_day = local_now.strftime("%A").lower()
 
             for qh in quiet_hours:
                 # Skip ranges that don't apply to the current day of the week

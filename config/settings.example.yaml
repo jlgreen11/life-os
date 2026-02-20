@@ -6,6 +6,9 @@
 # Storage
 data_dir: "./data"
 
+# User timezone (IANA format) — used for quiet hours, digests, and insights
+timezone: "America/Los_Angeles"
+
 # NATS event bus
 nats_url: "nats://localhost:4222"
 

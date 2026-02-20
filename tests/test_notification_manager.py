@@ -40,7 +40,7 @@ def mock_event_bus():
 def notification_manager(db, mock_event_bus):
     """Create a NotificationManager instance with test database."""
     config = {}
-    return NotificationManager(db, mock_event_bus, config)
+    return NotificationManager(db, mock_event_bus, config, timezone="UTC")
 
 
 @pytest.fixture
@@ -889,7 +889,7 @@ async def test_create_notification_without_bus(db):
     disconnected_bus = MagicMock()
     disconnected_bus.is_connected = False
 
-    manager = NotificationManager(db, disconnected_bus, {})
+    manager = NotificationManager(db, disconnected_bus, {}, timezone="UTC")
 
     # Should not crash
     notif_id = await manager.create_notification("Test", priority="normal")
