@@ -80,11 +80,11 @@ HUMAN_CONTACTS = [
     "ernest.lim@harvestright.com",
     "roxana.nunez@harvestright.com",
     "victoria.galindo@harvestright.com",
-    # Educational
+    # Educational — personal student accounts (NOT mass-mailing lists)
+    # Note: alumni@ and kummercollege@ are bulk mailing lists, not personal accounts;
+    # they are correctly filtered as automated senders (added in iteration 179).
     "gerardo_sanchez2096@elcamino.edu",
     "natasha_mayekar2131@elcamino.edu",
-    "alumni@mst.edu",
-    "kummercollege@mst.edu",
     # Small business contacts
     "dino@ventiscafe.com",
     "cheers@bluskilletironware.com",
@@ -329,14 +329,29 @@ class TestPredictionEnginemarketingFilterV4:
             )
 
     def test_no_false_positives_educational(self):
-        """Educational addresses should NOT be filtered."""
+        """Personal student addresses should NOT be filtered; bulk list addresses should be.
+
+        Individual student addresses (username-style) are real people.
+        Mass-mailing list addresses like alumni@ are automated bulk senders.
+        """
+        # Personal student accounts — real people, must NOT be filtered
         for email in [
             "gerardo_sanchez2096@elcamino.edu",
             "natasha_mayekar2131@elcamino.edu",
-            "alumni@mst.edu",
         ]:
             assert not PredictionEngine._is_marketing_or_noreply(email, {}), (
-                f"{email} should not be filtered"
+                f"{email} is a student account — should not be filtered"
+            )
+
+        # Mass-mailing list addresses — automated bulk senders, MUST be filtered
+        # alumni@ and similar department prefixes are institutional automated lists,
+        # never personal contacts. Added in iteration 179.
+        for email in [
+            "alumni@mst.edu",
+            "alumni@harvard.edu",
+        ]:
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
+                f"{email} is an alumni mass-mailing list — should be filtered"
             )
 
 
