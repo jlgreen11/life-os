@@ -26,19 +26,28 @@ class TestEpisodeLinkageFix:
         """
         Create sample episodes in the database to link against.
 
+        Episodes span the granular interaction types introduced by the backfill
+        migration (email_sent, email_received, calendar) plus the legacy
+        "communication" type.  This mixture is realistic: after the migration,
+        historical episodes carry granular types while any remaining legacy rows
+        keep the old label.
+
         Returns:
-            List of episode IDs that can be used in tests
+            List of episode IDs (email_sent type) that can be used to assert
+            linkage for the linguistic inferrer, which specifically filters by
+            interaction_type="email_sent".
         """
         episodes = []
 
-        # Create 10 communication episodes with timestamps spread out
-        for i in range(10):
+        # Create 5 email_sent episodes — the linguistic inferrer filters on this
+        # granular type (see inferrer.py: _get_recent_episodes(interaction_type="email_sent")).
+        for i in range(5):
             episode = {
-                "id": f"ep-comm-{i:03d}",
+                "id": f"ep-sent-{i:03d}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "event_id": f"evt-{i:03d}",
-                "interaction_type": "communication",
-                "content_summary": f"Test communication {i}",
+                "event_id": f"evt-sent-{i:03d}",
+                "interaction_type": "email_sent",
+                "content_summary": f"Sent email {i}",
                 "contacts_involved": json.dumps([f"contact{i}@example.com"]),
                 "inferred_mood": json.dumps({"energy_level": 0.7, "stress_level": 0.3}),
                 "active_domain": "personal",
@@ -46,8 +55,23 @@ class TestEpisodeLinkageFix:
             user_model_store.store_episode(episode)
             episodes.append(episode["id"])
 
-        # Create 5 calendar episodes
+        # Create 5 email_received episodes — found by the no-filter inferrers
+        # (topic, cadence, mood).
         for i in range(5):
+            episode = {
+                "id": f"ep-recv-{i:03d}",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event_id": f"evt-recv-{i:03d}",
+                "interaction_type": "email_received",
+                "content_summary": f"Received email {i}",
+                "contacts_involved": json.dumps([f"contact{i}@example.com"]),
+                "inferred_mood": json.dumps({"energy_level": 0.7, "stress_level": 0.3}),
+                "active_domain": "personal",
+            }
+            user_model_store.store_episode(episode)
+
+        # Create 3 calendar episodes (different type, also found by no-filter inferrers).
+        for i in range(3):
             episode = {
                 "id": f"ep-cal-{i:03d}",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -100,16 +124,14 @@ class TestEpisodeLinkageFix:
         python_fact = [f for f in expertise_facts if f["key"] == "expertise_python"][0]
         assert python_fact["value"] == "python"
 
-        # CRITICAL: Verify episode linkage exists
+        # CRITICAL: Verify episode linkage exists.
+        # The topic inferrer uses _get_recent_episodes() with no interaction_type
+        # filter (the old "communication" label was retired by the backfill
+        # migration), so the linked episode may be any recent episode type.
         assert "source_episodes" in python_fact
         assert isinstance(python_fact["source_episodes"], list)
         assert len(python_fact["source_episodes"]) > 0, \
             "Topic facts must link to source episodes for audit trail"
-
-        # Episode should be one of our communication episodes
-        linked_episode = python_fact["source_episodes"][0]
-        assert linked_episode.startswith("ep-comm-"), \
-            f"Expected communication episode, got {linked_episode}"
 
     def test_cadence_inference_links_episodes(self, inferrer, user_model_store, sample_episodes):
         """
@@ -147,16 +169,14 @@ class TestEpisodeLinkageFix:
         boundary_fact = [f for f in facts if f["key"] == "work_life_boundaries"][0]
         assert boundary_fact["value"] == "strict_boundaries"
 
-        # CRITICAL: Verify episode linkage exists
+        # CRITICAL: Verify episode linkage exists.
+        # The cadence inferrer uses _get_recent_episodes() with no interaction_type
+        # filter (the old "communication" label was retired), so any recent episode
+        # qualifies as source evidence.
         assert "source_episodes" in boundary_fact
         assert isinstance(boundary_fact["source_episodes"], list)
         assert len(boundary_fact["source_episodes"]) > 0, \
             "Cadence facts must link to source episodes for audit trail"
-
-        # Episode should be one of our communication episodes
-        linked_episode = boundary_fact["source_episodes"][0]
-        assert linked_episode.startswith("ep-comm-"), \
-            f"Expected communication episode, got {linked_episode}"
 
     def test_mood_inference_links_episodes(self, inferrer, user_model_store, sample_episodes):
         """
@@ -208,16 +228,14 @@ class TestEpisodeLinkageFix:
         baseline_fact = stress_facts[0]
         assert baseline_fact["value"] == "low_stress"
 
-        # CRITICAL: Verify episode linkage exists
+        # CRITICAL: Verify episode linkage exists.
+        # The mood inferrer uses _get_recent_episodes() with no interaction_type
+        # filter (the old "communication" label was retired), so any recent episode
+        # qualifies as source evidence for mood patterns.
         assert "source_episodes" in baseline_fact
         assert isinstance(baseline_fact["source_episodes"], list)
         assert len(baseline_fact["source_episodes"]) > 0, \
             "Mood facts must link to source episodes for audit trail"
-
-        # Episode should be one of our communication episodes
-        linked_episode = baseline_fact["source_episodes"][0]
-        assert linked_episode.startswith("ep-comm-"), \
-            f"Expected communication episode, got {linked_episode}"
 
     def test_all_fact_types_have_episode_linkage(self, inferrer, user_model_store, sample_episodes):
         """

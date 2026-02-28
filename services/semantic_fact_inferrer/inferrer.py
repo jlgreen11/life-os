@@ -106,10 +106,16 @@ class SemanticFactInferrer:
         data = profile["data"]
         averages = data.get("averages", {})
 
-        # Get recent communication episodes to link as source evidence for
-        # linguistic facts. This creates an audit trail from facts back to
-        # raw observations and enables the confidence growth loop.
-        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        # Get recent outbound-email episodes to link as source evidence for
+        # linguistic facts.  The linguistic profile is built from sent messages
+        # (email_sent), so we look for those episodes specifically.  Passing
+        # "communication" here was a pre-migration label that no longer exists
+        # in the episodes table (the backfill in LifeOS._backfill_episode_classification_if_needed
+        # reclassified all "communication" rows to granular types like "email_sent").
+        # Without the correct type, this query always returns [] and every
+        # linguistic fact is stored with episode_id=None, breaking the audit
+        # trail and the confidence growth loop.
+        recent_episodes = self._get_recent_episodes(interaction_type="email_sent", limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
         # --- Implicit preference: communication formality ---
@@ -460,10 +466,12 @@ class SemanticFactInferrer:
         # The topic extractor stores data as "topic_counts", not "topic_frequencies"
         topic_counts = data.get("topic_counts", {})
 
-        # Get recent communication episodes to link as source evidence for
-        # topic-based facts. This creates an audit trail from facts back to
-        # raw observations and enables the confidence growth loop.
-        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        # Get recent episodes to link as source evidence for topic-based facts.
+        # Topics are extracted from all inbound and outbound email, so we do not
+        # filter by a specific interaction type.  The old "communication" type no
+        # longer exists after the episode backfill migration; fetching without a
+        # type filter ensures we always get a valid episode_id when episodes exist.
+        recent_episodes = self._get_recent_episodes(limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
         # --- Noise token blocklist ---
@@ -620,10 +628,12 @@ class SemanticFactInferrer:
         # The cadence extractor stores data as "hourly_activity", not "hourly_distribution"
         hourly_activity = data.get("hourly_activity", {})
 
-        # Get recent communication episodes to link as source evidence for
-        # cadence-based facts. This creates an audit trail from facts back to
-        # raw observations and enables the confidence growth loop.
-        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        # Get recent episodes to link as source evidence for cadence-based facts.
+        # Cadence patterns are derived from all communication activity (email
+        # received and sent, messages), so we do not restrict by interaction type.
+        # The "communication" type label was retired by the episode backfill migration;
+        # using no filter guarantees a valid episode_id whenever the episode log exists.
+        recent_episodes = self._get_recent_episodes(limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
         # --- Infer work-life boundaries from hourly activity ---
@@ -787,10 +797,12 @@ class SemanticFactInferrer:
             logger.debug("Mood profile has no recent signals, skipping inference")
             return
 
-        # Get recent communication episodes to link as source evidence for
-        # mood-based facts. This creates an audit trail from facts back to
-        # raw observations and enables the confidence growth loop.
-        recent_episodes = self._get_recent_episodes(interaction_type="communication", limit=5)
+        # Get recent episodes to link as source evidence for mood-based facts.
+        # Mood signals are extracted from all interaction types, so we do not
+        # restrict by interaction type.  The "communication" label was retired
+        # by the episode backfill migration; using no filter ensures the audit
+        # trail is populated whenever any episodic data exists.
+        recent_episodes = self._get_recent_episodes(limit=5)
         episode_id = recent_episodes[0] if recent_episodes else None
 
         # --- Analyze signal patterns ---
