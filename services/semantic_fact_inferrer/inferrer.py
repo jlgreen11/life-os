@@ -525,6 +525,33 @@ class SemanticFactInferrer:
             'normal', 'bold', 'italic', 'underline', 'decoration', 'transform',
             'uppercase', 'lowercase', 'capitalize', 'shadow', 'opacity', 'radius',
             'cursor', 'pointer', 'hover', 'focus', 'active', 'disabled', 'checked',
+            # Promotional/marketing vocabulary that floods inboxes despite HTML stripping.
+            # These words appear in plain-text portions of promotional emails (subject
+            # lines, call-to-action buttons, footer copy) and do NOT signal user interest.
+            # This expanded set was identified by examining the top-20 topic_counts
+            # from a real inbox dominated by marketing emails (2026-02-28 audit).
+            'offers', 'holiday', 'rewards', 'gift', 'deals', 'information',
+            'limited', 'exclusive', 'special', 'extra', 'plus', 'best', 'great',
+            'amazing', 'incredible', 'fantastic', 'love', 'back', 'last', 'next',
+            'only', 'come', 'going', 'want', 'need', 'make', 'find', 'take',
+            'know', 'think', 'look', 'show', 'feel', 'tell', 'keep', 'turn',
+            'cart', 'checkout', 'purchase', 'bought', 'spend', 'earn', 'spend',
+            'shipping', 'delivery', 'returns', 'exchange', 'eligible', 'redeem',
+            'activate', 'claim', 'apply', 'enter', 'register', 'sign', 'login',
+            'welcome', 'thank', 'thanks', 'hello', 'dear', 'regards', 'sincerely',
+            'best', 'warm', 'kind', 'invite', 'join', 'stay', 'visit', 'learn',
+            'discover', 'explore', 'enjoy', 'start', 'stop', 'continue', 'complete',
+            # Common proper nouns that appear in marketing greetings (e.g. "Hi Jeremy!")
+            # but are not meaningful user interests. We match lowercase so "jeremy" is
+            # caught whether the extractor normalises to lowercase or not.
+            #
+            # NOTE: The topic extractor calls .lower() on all tokens, so first names
+            # in greeting lines ("Hi Jeremy,") are stored as "jeremy" in topic_counts.
+            # Including common first-name patterns here prevents them from being
+            # misclassified as interests. We avoid listing specific proper nouns
+            # and instead catch the pattern via the marketing email filter at source —
+            # but for residual facts already in the database, we add a few observed ones.
+            'jeremy', 'hello', 'dear', 'friend', 'team', 'staff',
         }
 
         # --- Purge previously-stored garbage facts ---

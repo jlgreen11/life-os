@@ -3,6 +3,21 @@ Life OS — Topic Signal Extractor
 
 Extracts topics and interests from messages, searches, and browsing.
 Over time, builds a map of what the user cares about.
+
+Marketing email filtering:
+    Only genuine human communication (non-marketing email, direct messages, and
+    user commands) is processed for topic extraction.  Marketing and automated
+    sender emails are explicitly skipped because they flood the topic profile with
+    promotional vocabulary (``offer``, ``shop``, ``holiday``, ``deal``, etc.) that
+    has zero signal about the user's actual interests.  This prevents the semantic
+    fact inferrer from producing garbage facts like ``expertise_email`` or
+    ``interest_shop``.
+
+    The same ``is_marketing_or_noreply`` predicate used by the relationship
+    extractor and prediction engine is applied here.  Outbound email (``email.sent``)
+    is always processed since users only write genuine emails, not automated ones.
+    Direct messages (Signal, iMessage) are always processed since they are always
+    human-to-human.
 """
 
 from __future__ import annotations
@@ -14,6 +29,7 @@ from html.parser import HTMLParser
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 
 
 class HTMLStripper(HTMLParser):
@@ -114,8 +130,57 @@ class TopicExtractor(BaseExtractor):
         HTML content is automatically stripped to prevent HTML/CSS tokens
         (like 'nbsp', 'padding', 'tbody', 'border') from being extracted as
         topics and polluting the semantic memory layer with garbage expertise.
+
+        Marketing email filtering:
+            Inbound emails (``email.received``) from marketing/automated senders
+            are skipped entirely.  Without this guard, promotional vocabulary
+            (``offer``, ``shop``, ``holiday``, ``deal``, ``rewards``, etc.) floods
+            the topic profile and the semantic fact inferrer produces nonsensical
+            facts like ``expertise_email`` or ``interest_shop``.
+
+            Only genuine human email (where ``is_marketing_or_noreply()`` returns
+            False) is processed.  Outbound email and direct messages are always
+            processed — users only write genuine communication, never automated mail.
+
+        Args:
+            event: Normalised Life OS event dict with ``type``, ``payload``, etc.
+
+        Returns:
+            List containing a single topic signal dict, or empty list if the
+            event carries no meaningful topical content.
+
+        Example::
+
+            extractor = TopicExtractor(ums)
+            signals = extractor.extract({
+                "type": "email.received",
+                "payload": {"subject": "Meeting agenda", "body": "...", "from": "alice@example.com"},
+                "timestamp": "2026-02-28T10:00:00Z",
+            })
+            # Returns [{"type": "topic", "topics": ["meeting", "agenda", ...], ...}]
         """
         payload = event.get("payload", {})
+
+        # Skip marketing / automated inbound emails before doing any text work.
+        # This is the primary fix for topic profile pollution: promotional emails
+        # dominate inboxes and their vocabulary (shop, offer, holiday, rewards, etc.)
+        # is completely uninformative about the user's real interests.
+        #
+        # We only apply this check to email.received — outbound email is always
+        # genuine, and direct messages (Signal/iMessage) are always human-to-human.
+        if event.get("type") == EventType.EMAIL_RECEIVED.value:
+            from_addr = (
+                payload.get("from")
+                or payload.get("sender")
+                or payload.get("from_address")
+                or ""
+            )
+            if from_addr and is_marketing_or_noreply(from_addr, payload):
+                # Marketing/automated sender — skip topic extraction entirely.
+                # Returning an empty list is the correct no-op in the extractor
+                # contract (BaseExtractor.process() checks for empty returns).
+                return []
+
         text = payload.get("body", "") or payload.get("body_plain", "") or ""
         subject = payload.get("subject", "")
 
