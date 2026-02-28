@@ -1318,13 +1318,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             html += '</div></div>';
 
         } else if (item.channel === 'message') {
+            // Message cards (Signal, iMessage, WhatsApp).  Inbound messages
+            // from a contact show sender name + timestamp + body preview.
+            // The drill-down adds the full body, a Draft Reply button (same
+            // behaviour as email cards — hits /api/draft and shows the output
+            // with a Copy button), and a Create Task shortcut.
             var sender = meta.sender || item.source || '';
             html += '<div class="card-title">' + escHtml(item.title) + '</div>';
             html += '<div class="card-meta">' + escHtml(sender) + ' &middot; ' + escHtml(timeAgo(item.timestamp)) + '</div>';
             html += '<div class="card-body">' + escHtml(item.body) + '</div>';
             html += '<div class="card-detail">';
             html += '<div style="margin-bottom:8px">' + escHtml(item.body) + '</div>';
+            // Draft reply output area — populated asynchronously by draftReply()
+            // when the user clicks the Draft Reply button.  Rendered here so
+            // it sits between the message body and the action buttons.
+            html += '<div id="draft-' + escAttr(id) + '"></div>';
             html += '<div class="card-actions">';
+            // Draft Reply: generates an AI-drafted response using the message body
+            // as context.  The sender address is passed as the contact_id so the
+            // AI engine can apply per-contact communication templates.
+            html += '<button class="btn-primary" onclick="event.stopPropagation();draftReply(\'' + escAttr(id) + '\',\'' + escAttr(item.title) + '\')">Draft Reply</button>';
             html += '<button onclick="event.stopPropagation();createTaskFrom(\'' + escAttr(item.title) + '\')">Create Task</button>';
             if (item.kind === 'notification') {
                 // Prediction notifications get an "Act On" button to mark them as helpful
@@ -2109,6 +2122,24 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .catch(function(err) { console.error('Insight feedback failed:', err); });
     }
 
+    /**
+     * Generate an AI-drafted reply for a feed item and display it in the card.
+     *
+     * Looks up the full feed item from feedItems[] to extract the message body
+     * (the DraftRequest schema requires 'incoming_message' — passing only the
+     * card title gives the AI nothing to work with).  Also passes contact_id
+     * (sender address) so the AI engine can apply per-contact communication
+     * templates and match the user's established style with that contact.
+     *
+     * The draft is rendered in the #draft-{id} placeholder inside the card
+     * detail section, followed by a Copy button.
+     *
+     * Example (called from email and message card action buttons):
+     *   onclick="draftReply('abc123', 'Re: Meeting tomorrow')"
+     *
+     * @param {string} id      Feed item ID (used to find the draft placeholder).
+     * @param {string} context Card title / subject used as fallback message body.
+     */
     function draftReply(id, context) {
         var draftEl = document.getElementById('draft-' + id);
         if (!draftEl) return;
@@ -2123,13 +2154,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         var messageBody = (item && (item.body || item.snippet || item.preview || item.title)) || context;
 
+        // Extract the sender address as contact_id so the AI engine can look up
+        // communication templates for this contact (formality, greeting, style).
+        var contactId = (item && item.metadata && item.metadata.sender) || null;
+
         fetch(API + '/api/draft', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 incoming_message: messageBody,
                 context: context,
-                channel: (item && item.channel) || 'email'
+                channel: (item && item.channel) || 'email',
+                contact_id: contactId
             })
         })
         .then(function(res) { return res.json(); })
