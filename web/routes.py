@@ -108,6 +108,99 @@ def register_routes(app: FastAPI, life_os) -> None:
             "feedback_summary": life_os.feedback_collector.get_feedback_summary(),
         }
 
+    @app.get("/api/system/sources")
+    async def get_system_sources():
+        """Return per-source event statistics for the System health dashboard.
+
+        Queries the event log and groups by ``source`` to surface how recently
+        each data source has contributed events.  A source that hasn't sent
+        events for more than ``STALE_HOURS`` is flagged as stale so the user
+        can diagnose connector problems (e.g. an expired OAuth token or
+        network outage) before they impact their daily briefing.
+
+        The staleness threshold is 6 hours for external connectors (which
+        should sync at least hourly) and 24 hours for internal services
+        (user_model_store, rules_engine) that are driven by incoming data.
+
+        Returns a JSON object with::
+
+            {
+                "sources": [
+                    {
+                        "source": "google",
+                        "last_event": "2026-02-22T08:54:57Z",
+                        "total_events": 16545,
+                        "events_24h": 0,
+                        "events_7d": 0,
+                        "stale": true,
+                        "hours_since": 150.3
+                    },
+                    ...
+                ],
+                "generated_at": "2026-02-28T19:00:00Z",
+                "stale_count": 1,
+                "active_count": 4
+            }
+        """
+        now = datetime.now(timezone.utc)
+        cutoff_24h = (now - timedelta(hours=24)).isoformat()
+        cutoff_7d = (now - timedelta(days=7)).isoformat()
+
+        import asyncio
+
+        # Offload the synchronous SQLite query to a thread so we don't block
+        # the async event loop for what could be a scan of a large events table.
+        raw = await asyncio.to_thread(
+            life_os.event_store.get_source_stats, cutoff_24h, cutoff_7d
+        )
+
+        # Internal pipeline sources (driven by incoming events) — only flag
+        # stale if silent for 24+ hours since they don't self-initiate.
+        # External connectors — flag stale after 6 hours (they should sync
+        # at minimum every hour via their SYNC_INTERVAL_SECONDS setting).
+        INTERNAL_SOURCES = {"user_model_store", "rules_engine", "task_manager",
+                            "routine_detector", "workflow_detector", "feedback_collector"}
+        STALE_EXTERNAL_HOURS = 6
+        STALE_INTERNAL_HOURS = 24
+
+        sources = []
+        for row in raw:
+            source_name = row["source"]
+            last_event_str = row["last_event"]
+            hours_since: float | None = None
+            stale = False
+
+            if last_event_str:
+                try:
+                    last_dt = datetime.fromisoformat(last_event_str.replace("Z", "+00:00"))
+                    hours_since = round((now - last_dt).total_seconds() / 3600, 1)
+                    threshold = (STALE_INTERNAL_HOURS
+                                 if source_name in INTERNAL_SOURCES
+                                 else STALE_EXTERNAL_HOURS)
+                    stale = hours_since > threshold
+                except ValueError:
+                    pass  # Malformed timestamp — treat as unknown
+
+            sources.append({
+                "source": source_name,
+                "last_event": last_event_str,
+                "total_events": row["total_events"],
+                "events_24h": row["events_24h"],
+                "events_7d": row["events_7d"],
+                "stale": stale,
+                "hours_since": hours_since,
+            })
+
+        stale_count = sum(1 for s in sources if s["stale"])
+        active_count = sum(1 for s in sources if not s["stale"])
+
+        return {
+            "sources": sources,
+            "generated_at": now.isoformat(),
+            "stale_count": stale_count,
+            "active_count": active_count,
+        }
+
     # -------------------------------------------------------------------
     # Command Bar
     # -------------------------------------------------------------------

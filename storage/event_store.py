@@ -140,6 +140,46 @@ class EventStore:
         """Check whether an event has been suppressed by a rule action."""
         return self.has_tag(event_id, "system:suppressed")
 
+    def get_source_stats(self, hours_24h_cutoff: str, hours_7d_cutoff: str) -> list[dict]:
+        """Return per-source event statistics for the system health dashboard.
+
+        Aggregates the events table by ``source`` to show how recently each
+        data source has been active. This is the primary signal for detecting
+        stale connector syncs — if a source's last_event is older than its
+        expected sync interval, the user should be alerted.
+
+        Args:
+            hours_24h_cutoff: ISO-8601 timestamp; events after this count as
+                "last 24h" activity.
+            hours_7d_cutoff: ISO-8601 timestamp; events after this count as
+                "last 7d" activity.
+
+        Returns:
+            List of dicts with keys: source, last_event, total_events,
+            events_24h, events_7d. Ordered by last_event descending (most
+            recently active source first).
+
+        Example::
+
+            stats = event_store.get_source_stats(cutoff_24h, cutoff_7d)
+            # [{"source": "google", "last_event": "2026-02-28T19:00:00Z",
+            #   "total_events": 16545, "events_24h": 120, "events_7d": 850}, ...]
+        """
+        with self.db.get_connection("events") as conn:
+            rows = conn.execute(
+                """SELECT
+                       source,
+                       MAX(timestamp) AS last_event,
+                       COUNT(*) AS total_events,
+                       SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) AS events_24h,
+                       SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) AS events_7d
+                   FROM events
+                   GROUP BY source
+                   ORDER BY last_event DESC""",
+                (hours_24h_cutoff, hours_7d_cutoff),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_timestamp_by_message_id(self, message_id: str) -> Optional[str]:
         """Look up an event's timestamp by its payload.message_id.
 
