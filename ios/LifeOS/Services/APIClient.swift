@@ -27,7 +27,9 @@ actor APIClient {
     // MARK: - Command Interface
 
     func sendCommand(_ command: String) async throws -> CommandResponse {
-        let body = ["command": command]
+        // The backend CommandRequest schema expects "text", not "command".
+        // Using "command" returns a 422 Unprocessable Entity and silently fails.
+        let body = ["text": command]
         return try await post("/api/command", body: body)
     }
 
@@ -50,8 +52,9 @@ actor APIClient {
     }
 
     func createTask(_ title: String, priority: String = "normal") async throws -> LifeOSTask {
+        // The correct endpoint is /api/tasks (plural). /api/task returns 404.
         let body: [String: Any] = ["title": title, "priority": priority]
-        return try await post("/api/task", body: body)
+        return try await post("/api/tasks", body: body)
     }
 
     // MARK: - Search
