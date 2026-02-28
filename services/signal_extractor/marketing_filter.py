@@ -241,10 +241,15 @@ def is_marketing_or_noreply(
         "irrigation@",            # e.g., irrigation@ryanlawn.com (automated service alerts)
         # Retail / brand promotional senders
         "top@",                   # e.g., top@raymore.com (store "top picks" promo mailer)
-        # "alumni@" was removed: it incorrectly matched legitimate educational contacts
-        # like alumni@mst.edu (a real university address for the user). The pattern
-        # was too broad. Any specific alumni bulk-mailer domains should be added to
-        # marketing_service_patterns instead.
+        # University/college alumni mailing lists are automated bulk senders.
+        # alumni@university.edu is a mailing list address, never a personal inbox.
+        # Human contacts at educational institutions have personal addresses like
+        # john.doe@university.edu — those are NOT matched by this prefix pattern.
+        "alumni@",                # e.g., alumni@mst.edu (university alumni mailing list)
+        # Generic mailer address: mail@brand.com is a transactional or promotional
+        # sender, never a personal address. Mail service providers use this prefix
+        # for bulk delivery (e.g., mail@ifttt.com, mail@cardsagainsthumanity.com).
+        "mail@",                  # e.g., mail@cardsagainsthumanity.com (brand mailer)
         # System-generated sender local-parts that clearly identify automated accounts
         "msftpc@",                # e.g., msftpc@microsoft.com (Microsoft PC automated system)
         # Tagged notification senders: alerts+HASH@ is a common pattern used by
