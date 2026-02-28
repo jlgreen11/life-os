@@ -2172,6 +2172,46 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 }
             }
 
+            // ── Section 4: Database integrity ─────────────────────────────
+            // Reports the output of PRAGMA quick_check per database file.
+            // A "corrupted" status means certain tables or pages are unreadable,
+            // which silently degrades features like signal profiles and routines.
+            var dbHealth = health.db_health || {};
+            var dbNames = Object.keys(dbHealth);
+            if (dbNames.length) {
+                var anyCorrupted = health.db_status === 'degraded';
+                var dbLabel = anyCorrupted
+                    ? 'Databases \u26a0\ufe0f integrity issues detected'
+                    : 'Databases \u2713 all healthy';
+                html += '<div class="section-header" style="' + (anyCorrupted ? 'color:var(--accent-red)' : '') + '">' + escHtml(dbLabel) + '</div>';
+
+                for (var di = 0; di < dbNames.length; di++) {
+                    var dname = dbNames[di];
+                    var dinfo = dbHealth[dname];
+                    var dOk = dinfo.status === 'ok';
+                    var dDot = dOk ? 'var(--accent-green)' : 'var(--accent-red)';
+                    var sizeMB = dinfo.size_bytes ? (dinfo.size_bytes / 1048576).toFixed(1) + ' MB' : 'not found';
+
+                    html += '<div class="card sys-card' + (dOk ? '' : ' sys-stale') + '">';
+                    html += '<div class="sys-row">';
+                    html += '<span class="sys-dot" style="background:' + dDot + '"></span>';
+                    html += '<span class="sys-name">' + escHtml(dname) + '.db</span>';
+                    html += '<span class="sys-status" style="color:' + dDot + '">' + escHtml(dinfo.status) + '</span>';
+                    html += '<span class="sys-rate">' + escHtml(sizeMB) + '</span>';
+                    html += '</div>';
+                    if (!dOk && dinfo.errors && dinfo.errors.length) {
+                        // Show up to 2 error lines so the user has a hint without overflow
+                        for (var ei = 0; ei < Math.min(dinfo.errors.length, 2); ei++) {
+                            html += '<div class="sys-stale-msg" style="color:var(--accent-red)">\u26a0\ufe0f ' + escHtml(dinfo.errors[ei]) + '</div>';
+                        }
+                        if (dinfo.errors.length > 2) {
+                            html += '<div class="sys-stale-msg" style="color:var(--text-muted)">... and ' + (dinfo.errors.length - 2) + ' more errors</div>';
+                        }
+                    }
+                    html += '</div>';
+                }
+            }
+
             if (!html) {
                 html = '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No system data available</div></div>';
             }
