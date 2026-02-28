@@ -1090,3 +1090,222 @@ def test_setup_page(client):
     response = client.get("/setup")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
+
+
+# ---------------------------------------------------------------------------
+# Calendar Events API  (/api/calendar/events)
+# ---------------------------------------------------------------------------
+
+def _make_cal_rows(*payloads):
+    """Build mock DB row dicts for calendar.event.created events.
+
+    Each payload is JSON-encoded into a ``payload`` key, matching the format
+    returned by the ``events`` table.  The ``id`` field uses the event's own
+    ``event_id`` value for convenience.
+    """
+    return [{"id": p.get("event_id", f"db-{i}"), "payload": json.dumps(p), "timestamp": "2026-02-28T10:00:00Z"}
+            for i, p in enumerate(payloads)]
+
+
+def _set_cal_rows(mock_life_os, *payloads):
+    """Configure mock DB to return the given calendar event rows."""
+    mock_conn = Mock()
+    mock_conn.execute.return_value.fetchall.return_value = _make_cal_rows(*payloads)
+    mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
+
+
+def test_calendar_events_returns_events(client, mock_life_os):
+    """Test GET /api/calendar/events returns events overlapping the date range."""
+    _set_cal_rows(
+        mock_life_os,
+        {
+            "event_id": "evt-1",
+            "title": "Team Standup",
+            "start_time": "2026-03-01T09:00:00+00:00",
+            "end_time": "2026-03-01T09:30:00+00:00",
+            "is_all_day": False,
+            "location": "Zoom",
+            "attendees": ["alice@example.com"],
+            "description": "Daily standup",
+            "calendar_id": "work",
+        },
+    )
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-02")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert len(data["events"]) == 1
+    evt = data["events"][0]
+    assert evt["id"] == "evt-1"
+    assert evt["title"] == "Team Standup"
+    assert evt["location"] == "Zoom"
+    assert evt["attendees"] == ["alice@example.com"]
+    assert evt["calendar_id"] == "work"
+
+
+def test_calendar_events_deduplicates_by_event_id(client, mock_life_os):
+    """Test /api/calendar/events keeps only the most-recent sync per event_id.
+
+    The DB may have multiple rows for the same calendar event (from successive
+    syncs).  The endpoint deduplicates by event_id, keeping the first row
+    since rows are ordered timestamp DESC.
+    """
+    # Two rows with the same event_id but different titles (simulating re-sync)
+    _set_cal_rows(
+        mock_life_os,
+        {
+            "event_id": "evt-dup",
+            "title": "Updated Title",  # Most recent (first row, DESC order)
+            "start_time": "2026-03-01T10:00:00+00:00",
+            "end_time": "2026-03-01T11:00:00+00:00",
+            "is_all_day": False,
+        },
+        {
+            "event_id": "evt-dup",
+            "title": "Original Title",  # Older row — should be discarded
+            "start_time": "2026-03-01T10:00:00+00:00",
+            "end_time": "2026-03-01T11:00:00+00:00",
+            "is_all_day": False,
+        },
+    )
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-02")
+    assert response.status_code == 200
+    data = response.json()
+    # Only one event should be returned (deduplicated)
+    assert data["count"] == 1
+    assert data["events"][0]["title"] == "Updated Title"
+
+
+def test_calendar_events_filters_outside_range(client, mock_life_os):
+    """Test /api/calendar/events excludes events not overlapping [start, end)."""
+    _set_cal_rows(
+        mock_life_os,
+        {
+            "event_id": "in-range",
+            "title": "In Range",
+            "start_time": "2026-03-01T09:00:00+00:00",
+            "end_time": "2026-03-01T10:00:00+00:00",
+            "is_all_day": False,
+        },
+        {
+            "event_id": "before-range",
+            "title": "Before Range",
+            "start_time": "2026-02-28T09:00:00+00:00",
+            "end_time": "2026-02-28T10:00:00+00:00",
+            "is_all_day": False,
+        },
+        {
+            "event_id": "after-range",
+            "title": "After Range",
+            "start_time": "2026-03-05T09:00:00+00:00",
+            "end_time": "2026-03-05T10:00:00+00:00",
+            "is_all_day": False,
+        },
+    )
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-02")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert data["events"][0]["id"] == "in-range"
+
+
+def test_calendar_events_empty(client, mock_life_os):
+    """Test /api/calendar/events returns empty list when no events exist."""
+    _set_cal_rows(mock_life_os)  # No rows
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-02")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 0
+    assert data["events"] == []
+
+
+def test_calendar_events_sorted_by_start_time(client, mock_life_os):
+    """Test /api/calendar/events returns events sorted by start_time ascending."""
+    _set_cal_rows(
+        mock_life_os,
+        {
+            "event_id": "evt-afternoon",
+            "title": "Afternoon",
+            "start_time": "2026-03-01T14:00:00+00:00",
+            "end_time": "2026-03-01T15:00:00+00:00",
+            "is_all_day": False,
+        },
+        {
+            "event_id": "evt-morning",
+            "title": "Morning",
+            "start_time": "2026-03-01T09:00:00+00:00",
+            "end_time": "2026-03-01T10:00:00+00:00",
+            "is_all_day": False,
+        },
+    )
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-02")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 2
+    # Should be sorted morning → afternoon
+    assert data["events"][0]["id"] == "evt-morning"
+    assert data["events"][1]["id"] == "evt-afternoon"
+
+
+def test_calendar_events_all_day(client, mock_life_os):
+    """Test /api/calendar/events correctly returns all-day events."""
+    _set_cal_rows(
+        mock_life_os,
+        {
+            "event_id": "all-day-evt",
+            "title": "Team Offsite",
+            "start_time": "2026-03-01",
+            "end_time": "2026-03-02",
+            "is_all_day": True,
+        },
+    )
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-05")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    assert data["events"][0]["is_all_day"] is True
+
+
+def test_calendar_events_missing_required_params(client, mock_life_os):
+    """Test /api/calendar/events returns 422 when start or end is missing."""
+    response = client.get("/api/calendar/events?start=2026-03-01")
+    assert response.status_code == 422  # FastAPI validation error
+
+    response = client.get("/api/calendar/events?end=2026-03-05")
+    assert response.status_code == 422
+
+
+def test_dashboard_feed_calendar_topic(client, mock_life_os):
+    """Test dashboard feed topic=calendar returns upcoming calendar events."""
+    # Set up the DB to return one future calendar event
+    mock_conn = Mock()
+    future_payload = json.dumps({
+        "event_id": "cal-1",
+        "title": "Sprint Review",
+        "start_time": "2026-03-05T14:00:00+00:00",
+        "end_time": "2026-03-05T15:00:00+00:00",
+        "is_all_day": False,
+        "description": "Review sprint results",
+        "location": "Conference Room A",
+        "attendees": [],
+    })
+    mock_conn.execute.return_value.fetchall.return_value = [
+        {"id": "db-cal-1", "payload": future_payload, "timestamp": "2026-02-28T10:00:00Z"}
+    ]
+    mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
+
+    response = client.get("/api/dashboard/feed?topic=calendar")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["topic"] == "calendar"
+    # Calendar events should appear in the feed
+    calendar_items = [i for i in data["items"] if i["channel"] == "calendar"]
+    assert len(calendar_items) == 1
+    assert calendar_items[0]["title"] == "Sprint Review"
+    assert calendar_items[0]["kind"] == "event"

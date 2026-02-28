@@ -633,6 +633,137 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         .skeleton-line.short { width: 60%; }
 
+        /* --- Calendar Grid --- */
+        .calendar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .calendar-header .cal-nav {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 16px;
+            cursor: pointer;
+            font-family: var(--font-stack);
+            transition: color 0.15s, border-color 0.15s;
+        }
+        .calendar-header .cal-nav:hover {
+            color: #fff;
+            border-color: var(--accent-blue);
+        }
+        .calendar-header .cal-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .calendar-weekdays {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            text-align: center;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .calendar-day {
+            background: var(--bg-card);
+            min-height: 90px;
+            padding: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+            position: relative;
+        }
+        .calendar-day:hover {
+            background: var(--bg-card-hover);
+        }
+        .calendar-day.calendar-today {
+            box-shadow: inset 0 0 0 2px var(--accent-blue);
+        }
+        .calendar-day.calendar-other-month {
+            opacity: 0.35;
+        }
+        .calendar-day.calendar-selected {
+            background: var(--bg-card-hover);
+            box-shadow: inset 0 0 0 2px var(--accent-blue);
+        }
+        .calendar-day-number {
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        .calendar-today .calendar-day-number {
+            color: var(--accent-blue);
+            font-weight: 700;
+        }
+        .calendar-event {
+            font-size: 10px;
+            padding: 2px 4px;
+            border-radius: 3px;
+            margin-bottom: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            line-height: 1.4;
+        }
+        .calendar-event.all-day {
+            background: rgba(74,158,255,0.2);
+            color: var(--accent-blue);
+            font-weight: 500;
+        }
+        .calendar-event.timed {
+            background: rgba(168,85,247,0.15);
+            color: var(--accent-purple);
+        }
+        .calendar-event-more {
+            font-size: 10px;
+            color: var(--text-muted);
+            padding: 1px 4px;
+        }
+        .calendar-day-detail {
+            margin-top: 12px;
+            animation: slideIn 0.2s ease-out;
+        }
+        .calendar-detail-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+        }
+        .calendar-detail-card .cal-evt-title {
+            font-weight: 500;
+            font-size: 14px;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        .calendar-detail-card .cal-evt-time {
+            font-size: 12px;
+            color: var(--accent-blue);
+            margin-bottom: 4px;
+        }
+        .calendar-detail-card .cal-evt-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
         /* --- Animations --- */
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(8px); }
@@ -1068,6 +1199,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // --- Feed Loading ---
     function loadFeed() {
+        if (currentTopic === 'calendar') { loadCalendarView(); return; }
         if (currentTopic === 'insights') { loadInsightsFeed(); return; }
         if (currentTopic === 'profile') { loadFactsFeed(); return; }
         if (currentTopic === 'system') { loadSystemFeed(); return; }
@@ -1092,6 +1224,211 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .catch(function(err) {
             safeSetContent(el, '<div class="card"><div class="card-meta" style="color:var(--accent-red)">Failed to load feed: ' + escHtml(err.message) + '</div></div>');
         });
+    }
+
+    // --- Calendar View ---
+    var calendarMonth = new Date().getMonth();
+    var calendarYear = new Date().getFullYear();
+    var calendarEvents = [];
+    var calendarSelectedDay = null;
+
+    function loadCalendarView() {
+        var el = document.getElementById('feedContent');
+        var today = new Date();
+
+        // Build header with nav
+        var monthNames = ['January','February','March','April','May','June',
+                          'July','August','September','October','November','December'];
+        var html = '<div class="calendar-header">';
+        html += '<button class="cal-nav" onclick="event.stopPropagation();calendarNav(-1)">&lt;</button>';
+        html += '<span class="cal-title">' + escHtml(monthNames[calendarMonth]) + ' ' + calendarYear + '</span>';
+        html += '<button class="cal-nav" onclick="event.stopPropagation();calendarNav(1)">&gt;</button>';
+        html += '</div>';
+
+        // Weekday headers
+        html += '<div class="calendar-weekdays">';
+        var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        for (var i = 0; i < 7; i++) html += '<div>' + days[i] + '</div>';
+        html += '</div>';
+
+        // Calculate grid dates
+        var firstDay = new Date(calendarYear, calendarMonth, 1);
+        var lastDay = new Date(calendarYear, calendarMonth + 1, 0);
+        var startOffset = firstDay.getDay(); // 0=Sun
+        var totalDays = lastDay.getDate();
+
+        // Pad start to fill first week
+        var gridStart = new Date(firstDay);
+        gridStart.setDate(gridStart.getDate() - startOffset);
+
+        // Calculate total cells (fill complete weeks)
+        var totalCells = startOffset + totalDays;
+        var rows = Math.ceil(totalCells / 7);
+        totalCells = rows * 7;
+
+        // Show skeleton while loading
+        html += '<div class="calendar-grid" id="calendarGrid">';
+        for (var c = 0; c < totalCells; c++) {
+            var cellDate = new Date(gridStart);
+            cellDate.setDate(cellDate.getDate() + c);
+            var isOther = cellDate.getMonth() !== calendarMonth;
+            var isToday = cellDate.toDateString() === today.toDateString();
+            var isSelected = calendarSelectedDay && cellDate.toDateString() === calendarSelectedDay.toDateString();
+            var cls = 'calendar-day';
+            if (isOther) cls += ' calendar-other-month';
+            if (isToday) cls += ' calendar-today';
+            if (isSelected) cls += ' calendar-selected';
+            var dateStr = cellDate.getFullYear() + '-' + String(cellDate.getMonth()+1).padStart(2,'0') + '-' + String(cellDate.getDate()).padStart(2,'0');
+            html += '<div class="' + cls + '" data-date="' + dateStr + '" onclick="calendarDayClick(\'' + dateStr + '\')">';
+            html += '<div class="calendar-day-number">' + cellDate.getDate() + '</div>';
+            html += '<div class="cal-day-events" id="cal-' + dateStr + '"></div>';
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Detail area for selected day
+        html += '<div id="calendarDayDetail" class="calendar-day-detail"></div>';
+
+        safeSetContent(el, html);
+
+        // Fetch events for the visible range
+        var rangeStart = gridStart.getFullYear() + '-' + String(gridStart.getMonth()+1).padStart(2,'0') + '-' + String(gridStart.getDate()).padStart(2,'0');
+        var rangeEndDate = new Date(gridStart);
+        rangeEndDate.setDate(rangeEndDate.getDate() + totalCells);
+        var rangeEnd = rangeEndDate.getFullYear() + '-' + String(rangeEndDate.getMonth()+1).padStart(2,'0') + '-' + String(rangeEndDate.getDate()).padStart(2,'0');
+
+        fetch(API + '/api/calendar/events?start=' + rangeStart + '&end=' + rangeEnd)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            calendarEvents = data.events || [];
+            renderCalendarEvents();
+            if (calendarSelectedDay) renderDayDetail(calendarSelectedDay);
+        })
+        .catch(function(err) {
+            console.error('Failed to load calendar events:', err);
+        });
+    }
+
+    function renderCalendarEvents() {
+        for (var i = 0; i < calendarEvents.length; i++) {
+            var evt = calendarEvents[i];
+            var startDate = evt.start_time.substring(0, 10); // YYYY-MM-DD
+            var cell = document.getElementById('cal-' + startDate);
+            if (!cell) continue;
+
+            // Limit visible events per day to 3
+            var existing = cell.querySelectorAll('.calendar-event');
+            if (existing.length >= 3) {
+                // Check if we already have a "more" indicator
+                var moreEl = cell.querySelector('.calendar-event-more');
+                if (moreEl) {
+                    var count = parseInt(moreEl.getAttribute('data-count')) + 1;
+                    moreEl.setAttribute('data-count', count);
+                    safeSetContent(moreEl, '+' + count + ' more');
+                } else {
+                    var more = document.createElement('div');
+                    more.className = 'calendar-event-more';
+                    more.setAttribute('data-count', '1');
+                    more.textContent = '+1 more';
+                    cell.appendChild(more);
+                }
+                continue;
+            }
+
+            var pill = document.createElement('div');
+            pill.className = 'calendar-event ' + (evt.is_all_day ? 'all-day' : 'timed');
+            var label = '';
+            if (!evt.is_all_day && evt.start_time.length > 10) {
+                var t = new Date(evt.start_time);
+                if (!isNaN(t.getTime())) {
+                    label = t.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + ' ';
+                }
+            }
+            pill.textContent = label + (evt.title || 'Event');
+            pill.title = evt.title || '';
+            cell.appendChild(pill);
+        }
+    }
+
+    function calendarNav(dir) {
+        calendarMonth += dir;
+        if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
+        if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
+        calendarSelectedDay = null;
+        loadCalendarView();
+    }
+
+    function calendarDayClick(dateStr) {
+        var d = new Date(dateStr + 'T00:00:00');
+        if (calendarSelectedDay && calendarSelectedDay.toDateString() === d.toDateString()) {
+            calendarSelectedDay = null; // toggle off
+        } else {
+            calendarSelectedDay = d;
+        }
+        // Update selected state
+        var allDays = document.querySelectorAll('.calendar-day');
+        for (var i = 0; i < allDays.length; i++) {
+            allDays[i].classList.toggle('calendar-selected', allDays[i].getAttribute('data-date') === dateStr);
+        }
+        if (calendarSelectedDay) {
+            renderDayDetail(calendarSelectedDay);
+        } else {
+            safeSetContent(document.getElementById('calendarDayDetail'), '');
+        }
+    }
+
+    function renderDayDetail(day) {
+        var dateStr = day.getFullYear() + '-' + String(day.getMonth()+1).padStart(2,'0') + '-' + String(day.getDate()).padStart(2,'0');
+        var dayEvents = calendarEvents.filter(function(evt) {
+            return evt.start_time.substring(0, 10) === dateStr;
+        });
+
+        var detailEl = document.getElementById('calendarDayDetail');
+        if (dayEvents.length === 0) {
+            safeSetContent(detailEl, '<div class="calendar-detail-card"><div class="cal-evt-meta" style="text-align:center;padding:8px">No events on ' + escHtml(day.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'})) + '</div></div>');
+            return;
+        }
+
+        // Sort: all-day first, then by start_time
+        dayEvents.sort(function(a, b) {
+            if (a.is_all_day && !b.is_all_day) return -1;
+            if (!a.is_all_day && b.is_all_day) return 1;
+            return a.start_time < b.start_time ? -1 : 1;
+        });
+
+        var html = '<div style="font-size:13px;color:var(--text-secondary);margin-bottom:8px;font-weight:500">' +
+                   escHtml(day.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'})) +
+                   ' — ' + dayEvents.length + ' event' + (dayEvents.length !== 1 ? 's' : '') + '</div>';
+
+        for (var i = 0; i < dayEvents.length; i++) {
+            var evt = dayEvents[i];
+            html += '<div class="calendar-detail-card">';
+            html += '<div class="cal-evt-title">' + escHtml(evt.title || 'Untitled Event') + '</div>';
+
+            // Time
+            if (evt.is_all_day) {
+                html += '<div class="cal-evt-time">All day</div>';
+            } else {
+                var s = new Date(evt.start_time);
+                var e = evt.end_time ? new Date(evt.end_time) : null;
+                var timeStr = !isNaN(s.getTime()) ? s.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+                if (e && !isNaN(e.getTime())) timeStr += ' – ' + e.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+                if (timeStr) html += '<div class="cal-evt-time">' + escHtml(timeStr) + '</div>';
+            }
+
+            // Meta details
+            var meta = [];
+            if (evt.location) meta.push('\uD83D\uDCCD ' + escHtml(evt.location));
+            if (evt.calendar_id) meta.push('\uD83D\uDCC5 ' + escHtml(evt.calendar_id));
+            if (evt.attendees && evt.attendees.length) meta.push('\uD83D\uDC65 ' + escHtml(evt.attendees.join(', ')));
+            if (evt.description) meta.push(escHtml(evt.description));
+            if (meta.length) {
+                html += '<div class="cal-evt-meta">' + meta.join('<br>') + '</div>';
+            }
+            html += '</div>';
+        }
+
+        safeSetContent(detailEl, html);
     }
 
     function loadInsightsFeed() {
