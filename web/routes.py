@@ -305,6 +305,139 @@ def register_routes(app: FastAPI, life_os) -> None:
             except Exception:
                 pass
 
+        # --- Actual email events (email.received) ---
+        # The notifications section above only surfaces emails that triggered a
+        # rules-engine notification (very few).  This section fetches real inbound
+        # email events directly from the events store so the "Email" topic always
+        # has meaningful content, regardless of whether any notifications fired.
+        if topic in (None, "inbox", "email"):
+            try:
+                from services.signal_extractor.marketing_filter import is_marketing_or_noreply
+
+                # Collect notification source_event_ids to skip events that are
+                # already represented by a notification in the feed above.
+                notif_event_ids = {
+                    item["metadata"].get("source_event_id")
+                    for item in items
+                    if item.get("kind") == "notification" and item.get("metadata")
+                }
+
+                with life_os.db.get_connection("events") as conn:
+                    email_rows = conn.execute(
+                        """SELECT id, payload, timestamp FROM events
+                           WHERE type = 'email.received'
+                           ORDER BY timestamp DESC
+                           LIMIT ?""",
+                        (limit * 2,),  # Fetch extra to absorb marketing/dup filtering
+                    ).fetchall()
+
+                for row in email_rows:
+                    if len(items) >= limit:
+                        break
+                    try:
+                        ep = json.loads(row["payload"])
+                        if isinstance(ep, str):
+                            ep = json.loads(ep)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    # Skip if this event already appears as a notification.
+                    if row["id"] in notif_event_ids:
+                        continue
+
+                    # Skip marketing / automated senders — they add noise.
+                    from_addr = ep.get("from_address", "")
+                    if is_marketing_or_noreply(from_addr, ep):
+                        continue
+
+                    subject = ep.get("subject") or "(no subject)"
+                    snippet = ep.get("snippet") or ep.get("body", "")
+                    # Truncate snippet to keep feed items lightweight.
+                    if snippet and len(snippet) > 300:
+                        snippet = snippet[:297] + "…"
+
+                    items.append({
+                        "id": row["id"],
+                        "kind": "email",
+                        "channel": "email",
+                        "title": subject,
+                        "body": snippet,
+                        "priority": "normal",
+                        "timestamp": ep.get("timestamp", row["timestamp"]),
+                        "source": from_addr,
+                        "contact_id": from_addr,
+                        "metadata": {
+                            "from_address": from_addr,
+                            "from_name": ep.get("from_name", ""),
+                            "to_addresses": ep.get("to_addresses", []),
+                            "thread_id": ep.get("thread_id"),
+                            "message_id": ep.get("message_id"),
+                            "has_attachments": ep.get("has_attachments", False),
+                        },
+                    })
+            except Exception:
+                pass
+
+        # --- Actual message events (message.received) ---
+        # Same rationale as email: show real inbound messages even when no
+        # notification was generated for them.
+        if topic in (None, "inbox", "messages"):
+            try:
+                notif_event_ids_msg = {
+                    item["metadata"].get("source_event_id")
+                    for item in items
+                    if item.get("kind") == "notification" and item.get("metadata")
+                }
+
+                with life_os.db.get_connection("events") as conn:
+                    msg_rows = conn.execute(
+                        """SELECT id, payload, timestamp FROM events
+                           WHERE type = 'message.received'
+                           ORDER BY timestamp DESC
+                           LIMIT ?""",
+                        (limit,),
+                    ).fetchall()
+
+                for row in msg_rows:
+                    if len(items) >= limit:
+                        break
+                    try:
+                        ep = json.loads(row["payload"])
+                        if isinstance(ep, str):
+                            ep = json.loads(ep)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    if row["id"] in notif_event_ids_msg:
+                        continue
+
+                    from_addr = ep.get("from_address", "")
+                    channel = ep.get("channel", "message")
+                    body = ep.get("body", "")
+                    if body and len(body) > 300:
+                        body = body[:297] + "…"
+
+                    items.append({
+                        "id": row["id"],
+                        "kind": "message",
+                        "channel": channel,
+                        "title": ep.get("contact_name") or from_addr or "Message",
+                        "body": body,
+                        "priority": "normal",
+                        "timestamp": ep.get("timestamp", row["timestamp"]),
+                        "source": from_addr,
+                        "contact_id": from_addr,
+                        "metadata": {
+                            "from_address": from_addr,
+                            "channel": channel,
+                            "is_group": ep.get("is_group", False),
+                            "group_name": ep.get("group_name"),
+                            "message_id": ep.get("message_id"),
+                        },
+                    })
+            except Exception:
+                pass
+
         # --- Sort by priority (critical > high > normal > low), then newest first ---
         priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
         items.sort(key=lambda x: (
