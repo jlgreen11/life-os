@@ -12,6 +12,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
+from unittest.mock import AsyncMock, MagicMock
 
 # Add project root to path so we can import the backfill script
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -54,37 +55,31 @@ class TestBackfillTaskEventPublishing:
 
     @pytest.mark.asyncio
     async def test_backfill_publishes_task_created_events(self, db, tmpdir):
-        """Test that backfill script publishes task.created events for extracted tasks."""
-        # Create a simple event store
+        """Test that backfill script publishes task.created events for extracted tasks.
+
+        Uses a mocked AI engine so the test is hermetic — it does not require
+        Ollama to be running at localhost:11434. The mock returns a predictable
+        task list for any input, ensuring the backfill pipeline (event scanning,
+        task creation, task.created event publishing) can be validated without
+        an LLM dependency.
+        """
         event_store = EventStore(db)
-        user_model_store = UserModelStore(db)
 
-        # Create a minimal AI engine (will use real Ollama if available, fallback otherwise)
-        config = {
-            "ai": {
-                "ollama": {
-                    "base_url": "http://localhost:11434",
-                    "model": "mistral",
-                    "timeout_seconds": 30,
-                },
-                "use_cloud": False,
-            },
-            "vector_store": {
-                "model": "all-MiniLM-L6-v2",
-            },
-        }
-
-        # Initialize vector store with temp directory
-        vector_db_path = str(tmpdir.join("vectors"))
-        vector_store = VectorStore(
-            db_path=vector_db_path,
-            model_name=config["vector_store"]["model"]
-        )
-
-        ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
+        # Mock the AI engine's extract_action_items so this test never dials
+        # out to Ollama. The real test subject is the backfill pipeline itself,
+        # not LLM quality — so a deterministic mock is the correct approach.
+        mock_ai_engine = MagicMock(spec=AIEngine)
+        mock_ai_engine.extract_action_items = AsyncMock(return_value=[
+            {
+                "title": "Prepare Q4 financial report",
+                "due_hint": "Friday",
+                "priority": "high",
+                "is_completed": False,
+            }
+        ])
 
         # Create task manager without event bus (simulating backfill scenario)
-        task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
+        task_manager = TaskManager(db, event_bus=None, ai_engine=mock_ai_engine)
 
         # Create a test email event with actionable content
         test_event = {
