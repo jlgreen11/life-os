@@ -468,6 +468,73 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         .draft-btn:hover { opacity: 0.85; }
 
+        /* --- Inline Modal System --- */
+        /* Replaces native browser confirm()/prompt() dialogs with themed UI.
+           Works on mobile Safari where native dialogs are blocked. */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.visible { display: flex; }
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 420px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+        .modal-body { margin-bottom: 16px; color: var(--text-secondary); font-size: 14px; }
+        .modal-body input {
+            width: 100%;
+            padding: 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            box-sizing: border-box;
+            margin-top: 8px;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .modal-actions button {
+            padding: 8px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .modal-btn-cancel {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border) !important;
+        }
+        .modal-btn-confirm {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+        .modal-btn-danger {
+            background: var(--accent-red, #e05252);
+            color: white;
+        }
+
         /* --- Right: AI Sidebar --- */
         .ai-sidebar {
             width: 280px;
@@ -1541,38 +1608,66 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
     }
 
+    /**
+     * Delete a semantic fact from the user model.
+     *
+     * Uses the inline modal instead of the native confirm() dialog so the UI
+     * works on mobile Safari where browser dialogs are blocked.
+     *
+     * @param {string} key - The fact key to delete (e.g. "preferred_language").
+     */
     function deleteFact(key) {
-        if (!confirm('Delete this fact?')) return;
-        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {method: 'DELETE'})
-        .then(function(res) {
-            if (!res.ok) throw new Error('Failed');
-            var card = document.getElementById('fact-' + key);
-            if (card) card.style.display = 'none';
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = 'Fact deleted';
-            setTimeout(function() { resp.className = ''; }, 3000);
-        })
-        .catch(function(err) { console.error('Delete fact failed:', err); });
+        showConfirmModal(
+            'Delete fact',
+            'Are you sure you want to delete this fact? It will be removed from your user model.',
+            'Delete',
+            function() {
+                fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {method: 'DELETE'})
+                .then(function(res) {
+                    if (!res.ok) throw new Error('Failed');
+                    var card = document.getElementById('fact-' + key);
+                    if (card) card.style.display = 'none';
+                    var resp = document.getElementById('response');
+                    resp.className = 'visible';
+                    resp.textContent = 'Fact deleted';
+                    setTimeout(function() { resp.className = ''; }, 3000);
+                })
+                .catch(function(err) { console.error('Delete fact failed:', err); });
+            },
+            true  // danger = true → red confirm button
+        );
     }
 
+    /**
+     * Mark a semantic fact as incorrect, reducing its confidence.
+     *
+     * Uses the inline modal instead of the native prompt() dialog so the UI
+     * works on mobile Safari where browser dialogs are blocked.
+     *
+     * @param {string} key - The fact key to correct (e.g. "preferred_language").
+     */
     function correctFact(key) {
-        var reason = prompt('What is incorrect about this fact? (optional reason)');
-        if (reason === null) return; // cancelled
-        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {
-            method: 'PATCH',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({reason: reason || 'User correction'})
-        })
-        .then(function(res) {
-            if (!res.ok) throw new Error('Failed');
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = 'Fact corrected — confidence reduced';
-            setTimeout(function() { resp.className = ''; }, 3000);
-            loadFactsFeed(); // Refresh to show updated state
-        })
-        .catch(function(err) { console.error('Correct fact failed:', err); });
+        showPromptModal(
+            'Correct fact',
+            'What is incorrect? (optional — leave blank to just reduce confidence)',
+            'Submit',
+            function(reason) {
+                fetch(API + '/api/user-model/facts/' + encodeURIComponent(key), {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({reason: reason || 'User correction'})
+                })
+                .then(function(res) {
+                    if (!res.ok) throw new Error('Failed');
+                    var resp = document.getElementById('response');
+                    resp.className = 'visible';
+                    resp.textContent = 'Fact corrected \u2014 confidence reduced';
+                    setTimeout(function() { resp.className = ''; }, 3000);
+                    loadFactsFeed(); // Refresh to show updated confidence
+                })
+                .catch(function(err) { console.error('Correct fact failed:', err); });
+            }
+        );
     }
 
     function notAboutMeFact(key) {
@@ -1957,6 +2052,84 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     // --- Badge Counts ---
+    // --- Inline Modal System ---
+    // Replaces native browser confirm() / prompt() dialogs with themed UI that
+    // works on mobile Safari (where browser dialogs are often blocked) and
+    // matches the app's dark colour scheme.
+
+    /**
+     * Close the modal overlay.
+     *
+     * Called by the overlay backdrop click handler and every Cancel button.
+     */
+    function closeModal() {
+        document.getElementById('modalOverlay').classList.remove('visible');
+    }
+
+    /**
+     * Show a confirmation modal with optional danger styling.
+     *
+     * @param {string}   title        - Heading text shown in the modal.
+     * @param {string}   message      - Body copy describing the action.
+     * @param {string}   confirmLabel - Text on the confirm button.
+     * @param {Function} onConfirm    - Callback invoked when the user confirms.
+     * @param {boolean}  [danger]     - If true, styles confirm button as destructive (red).
+     *
+     * Example:
+     *   showConfirmModal('Delete fact', 'This cannot be undone.', 'Delete',
+     *       function() { deleteFactById(key); }, true);
+     */
+    function showConfirmModal(title, message, confirmLabel, onConfirm, danger) {
+        safeSetContent(document.getElementById('modalTitle'), escHtml(title));
+        safeSetContent(document.getElementById('modalBody'),
+            '<div>' + escHtml(message) + '</div>');
+        safeSetContent(document.getElementById('modalActions'),
+            '<button class="modal-btn-cancel" onclick="closeModal()">Cancel</button>' +
+            '<button class="' + (danger ? 'modal-btn-danger' : 'modal-btn-confirm') +
+            '" id="modalConfirmBtn">' + escHtml(confirmLabel) + '</button>');
+        document.getElementById('modalConfirmBtn').onclick = function() {
+            closeModal();
+            onConfirm();
+        };
+        document.getElementById('modalOverlay').classList.add('visible');
+    }
+
+    /**
+     * Show a text-input prompt modal.
+     *
+     * @param {string}   title        - Heading text shown in the modal.
+     * @param {string}   placeholder  - Placeholder text inside the input field.
+     * @param {string}   confirmLabel - Text on the confirm button.
+     * @param {Function} onConfirm    - Callback invoked with the entered string (may be empty).
+     *
+     * Example:
+     *   showPromptModal('Add note', 'Enter note text...', 'Save',
+     *       function(text) { saveNote(text); });
+     */
+    function showPromptModal(title, placeholder, confirmLabel, onConfirm) {
+        safeSetContent(document.getElementById('modalTitle'), escHtml(title));
+        safeSetContent(document.getElementById('modalBody'),
+            '<input type="text" id="modalInput" placeholder="' + escAttr(placeholder) + '">');
+        safeSetContent(document.getElementById('modalActions'),
+            '<button class="modal-btn-cancel" onclick="closeModal()">Cancel</button>' +
+            '<button class="modal-btn-confirm" id="modalConfirmBtn">' + escHtml(confirmLabel) + '</button>');
+        document.getElementById('modalConfirmBtn').onclick = function() {
+            var val = document.getElementById('modalInput').value;
+            closeModal();
+            onConfirm(val);
+        };
+        // Allow Enter key to confirm without clicking the button.
+        document.getElementById('modalInput').onkeydown = function(e) {
+            if (e.key === 'Enter') { document.getElementById('modalConfirmBtn').click(); }
+        };
+        document.getElementById('modalOverlay').classList.add('visible');
+        // Delay focus until the next tick so the CSS transition completes first.
+        setTimeout(function() {
+            var inp = document.getElementById('modalInput');
+            if (inp) inp.focus();
+        }, 100);
+    }
+
     function setBadge(topicId, count) {
         var badge = document.getElementById('badge-' + topicId);
         if (!badge) return;
@@ -2101,5 +2274,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     try { connectWS(); } catch(e) {}
 
     </script>
+
+<!-- Inline modal overlay: replaces native confirm()/prompt() dialogs.
+     Clicking the backdrop or the Cancel button closes the modal.
+     The modal-box click handler stops propagation so clicking inside
+     the box doesn't dismiss it. -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+        <div class="modal-title" id="modalTitle"></div>
+        <div class="modal-body" id="modalBody"></div>
+        <div class="modal-actions" id="modalActions"></div>
+    </div>
+</div>
+
 </body>
 </html>"""
