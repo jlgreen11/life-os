@@ -133,12 +133,18 @@ class TestRetailEducationalCorporate:
         """Retail store 'top picks' promotional mailer."""
         assert is_marketing_or_noreply("top@raymore.com") is True
 
-    def test_alumni_newsletter_not_filtered(self):
-        """alumni@ was removed from the filter because it incorrectly blocked
-        legitimate educational contacts (e.g. alumni@mst.edu is a real university
-        address, not a bulk mailer). The pattern was too broad; specific alumni
-        bulk-mailer domains should be added to marketing_service_patterns instead."""
-        assert is_marketing_or_noreply("alumni@mst.edu") is False
+    def test_alumni_newsletter_filtered(self):
+        """alumni@ is a university mailing-list prefix, never a personal address.
+
+        alumni@mst.edu is a bulk alumni mailing list, not an individual's inbox.
+        Real educational contacts have personal addresses like john.doe@university.edu
+        (which do NOT start with 'alumni@').  The pattern was reinstated in
+        iteration 179 after analysis of production data confirmed no false positives
+        for human contacts.
+        """
+        assert is_marketing_or_noreply("alumni@mst.edu") is True
+        assert is_marketing_or_noreply("alumni@harvard.edu") is True
+        assert is_marketing_or_noreply("alumni@stanford.edu") is True
 
     def test_msftpc_microsoft_automated(self):
         """Microsoft PC automated system (proactive customer outreach system)."""
