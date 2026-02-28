@@ -748,6 +748,63 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             gap: 16px;
         }
 
+        /* --- System Health Dashboard Cards --- */
+        .sys-card {
+            padding: 10px 14px;
+            margin-bottom: 6px;
+        }
+        .sys-card.sys-stale {
+            border-left: 3px solid var(--accent-red);
+        }
+        .sys-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .sys-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .sys-name {
+            flex: 1;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+            min-width: 100px;
+        }
+        .sys-status {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .sys-last-seen {
+            font-size: 12px;
+            color: var(--text-muted);
+            min-width: 60px;
+            text-align: right;
+        }
+        .sys-rate {
+            font-size: 11px;
+            color: var(--text-muted);
+            min-width: 70px;
+            text-align: right;
+        }
+        .sys-error {
+            font-size: 11px;
+            color: var(--accent-red);
+            flex-basis: 100%;
+            padding-left: 18px;
+            margin-top: 2px;
+        }
+        .sys-stale-msg {
+            font-size: 11px;
+            color: var(--accent-red);
+            padding: 4px 0 0 18px;
+            line-height: 1.4;
+        }
+
         /* --- Skeleton Loading --- */
         .skeleton {
             background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
@@ -1995,51 +2052,130 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function loadSystemFeed() {
+        /* Load the System health dashboard.
+         *
+         * Makes two parallel requests:
+         *   1. /health — event bus status, connector health checks, vector store
+         *   2. /api/system/sources — per-source event stats with staleness flags
+         *
+         * Staleness (red warning) means a source hasn't emitted events within its
+         * expected window (6h for external connectors, 24h for internal services).
+         * This is the primary signal for "why isn't my data fresh?" debugging.
+         */
         var el = document.getElementById('feedContent');
-        safeSetContent(el, '<div class="skeleton skeleton-card"></div>');
+        safeSetContent(el, '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>');
 
-        fetch(API + '/health')
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
+        Promise.all([
+            fetch(API + '/health').then(function(r) { return r.json(); }),
+            fetch(API + '/api/system/sources').then(function(r) { return r.json(); })
+        ]).then(function(results) {
+            var health = results[0];
+            var sourcesData = results[1];
             var html = '';
-            // Event bus status
-            html += '<div class="card"><div class="card-row"><div class="card-channel">\u2699</div>';
-            html += '<div class="card-content">';
-            html += '<div class="card-title">Event Bus</div>';
-            html += '<div class="card-meta">' + (data.event_bus ? '<span style="color:var(--accent-green)">\u2713 Connected</span>' : '<span style="color:var(--accent-red)">\u2717 Disconnected</span>') + '</div>';
-            html += '</div></div></div>';
 
-            // Events stored
-            html += '<div class="card"><div class="card-row"><div class="card-channel">\u2699</div>';
-            html += '<div class="card-content">';
-            html += '<div class="card-title">Events Stored</div>';
-            html += '<div class="card-meta">' + escHtml(String(data.events_stored || 0)) + ' total events</div>';
-            html += '</div></div></div>';
+            // ── Section 1: Infrastructure health ──────────────────────────
+            html += '<div class="section-header">Infrastructure</div>';
+
+            // Event bus
+            var busOk = health.event_bus;
+            html += '<div class="card sys-card">';
+            html += '<div class="sys-row">';
+            html += '<span class="sys-dot" style="background:' + (busOk ? 'var(--accent-green)' : 'var(--accent-red)') + '"></span>';
+            html += '<span class="sys-name">Event Bus (NATS)</span>';
+            html += '<span class="sys-status" style="color:' + (busOk ? 'var(--accent-green)' : 'var(--accent-red)') + '">' + (busOk ? '\u2713 Connected' : '\u2717 Disconnected') + '</span>';
+            html += '</div></div>';
 
             // Vector store
-            if (data.vector_store) {
-                html += '<div class="card"><div class="card-row"><div class="card-channel">\u2699</div>';
-                html += '<div class="card-content">';
-                html += '<div class="card-title">Vector Store</div>';
-                html += '<div class="card-meta">' + escHtml(String(data.vector_store.document_count || 0)) + ' documents indexed</div>';
-                html += '</div></div></div>';
+            if (health.vector_store) {
+                var docCount = health.vector_store.document_count || 0;
+                html += '<div class="card sys-card">';
+                html += '<div class="sys-row">';
+                html += '<span class="sys-dot" style="background:var(--accent-green)"></span>';
+                html += '<span class="sys-name">Vector Store (LanceDB)</span>';
+                html += '<span class="sys-status">' + escHtml(String(docCount)) + ' docs indexed</span>';
+                html += '</div></div>';
             }
 
-            // Connectors
-            var connectors = data.connectors || [];
-            for (var i = 0; i < connectors.length; i++) {
-                var c = connectors[i];
-                var name = c.name || c.type || 'Connector ' + i;
-                var status = c.status || c.state || 'unknown';
-                var statusColor = status === 'active' || status === 'connected' ? 'var(--accent-green)' : 'var(--accent-red)';
-                html += '<div class="card"><div class="card-row"><div class="card-channel">\u2699</div>';
-                html += '<div class="card-content">';
-                html += '<div class="card-title">' + escHtml(name) + '</div>';
-                html += '<div class="card-meta"><span style="color:' + statusColor + '">' + escHtml(status) + '</span></div>';
-                html += '</div></div></div>';
+            // Total events
+            var total = health.events_stored || 0;
+            html += '<div class="card sys-card">';
+            html += '<div class="sys-row">';
+            html += '<span class="sys-dot" style="background:var(--accent-blue)"></span>';
+            html += '<span class="sys-name">Event Log</span>';
+            html += '<span class="sys-status">' + escHtml(String(total.toLocaleString())) + ' total events</span>';
+            html += '</div></div>';
+
+            // ── Section 2: Data source sync status ─────────────────────────
+            // This is the core diagnostic section — shows last-sync time and
+            // flags any source that has gone silent beyond its expected window.
+            var sources = sourcesData.sources || [];
+            if (sources.length) {
+                var staleCount = sourcesData.stale_count || 0;
+                var sectionLabel = staleCount > 0
+                    ? 'Data Sources \u26a0\ufe0f ' + staleCount + ' stale'
+                    : 'Data Sources \u2713 all current';
+                html += '<div class="section-header" style="' + (staleCount > 0 ? 'color:var(--accent-yellow)' : '') + '">' + escHtml(sectionLabel) + '</div>';
+
+                for (var i = 0; i < sources.length; i++) {
+                    var s = sources[i];
+                    var isStale = s.stale;
+                    var dotColor = isStale ? 'var(--accent-red)' : 'var(--accent-green)';
+                    var nameColor = isStale ? 'color:var(--accent-red)' : '';
+
+                    // Format "last seen" label
+                    var lastSeenLabel = 'never';
+                    if (s.hours_since !== null && s.hours_since !== undefined) {
+                        var h = s.hours_since;
+                        if (h < 1) lastSeenLabel = Math.round(h * 60) + 'm ago';
+                        else if (h < 24) lastSeenLabel = Math.round(h) + 'h ago';
+                        else lastSeenLabel = Math.round(h / 24) + 'd ago';
+                    }
+
+                    // Format event rate for the last 24h
+                    var rate24h = s.events_24h > 0
+                        ? escHtml(String(s.events_24h)) + ' in 24h'
+                        : '<span style="color:var(--text-muted)">0 in 24h</span>';
+
+                    html += '<div class="card sys-card' + (isStale ? ' sys-stale' : '') + '">';
+                    html += '<div class="sys-row">';
+                    html += '<span class="sys-dot" style="background:' + dotColor + '"></span>';
+                    html += '<span class="sys-name" style="' + nameColor + '">' + escHtml(s.source) + '</span>';
+                    html += '<span class="sys-last-seen" style="' + (isStale ? 'color:var(--accent-red)' : '') + '">' + escHtml(lastSeenLabel) + '</span>';
+                    html += '<span class="sys-rate">' + rate24h + '</span>';
+                    html += '</div>';
+                    // Show stale warning inline so the user immediately understands the impact
+                    if (isStale) {
+                        html += '<div class="sys-stale-msg">\u26a0\ufe0f Source appears stale — check connector authentication or network</div>';
+                    }
+                    html += '</div>';
+                }
             }
 
-            safeSetContent(el, html || '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No system data available</div></div>');
+            // ── Section 3: Live connector health ──────────────────────────
+            // /health polls each active connector's health_check() in real time.
+            var connectors = health.connectors || [];
+            if (connectors.length) {
+                html += '<div class="section-header">Active Connectors</div>';
+                for (var j = 0; j < connectors.length; j++) {
+                    var c = connectors[j];
+                    var cStatus = c.status || c.state || 'unknown';
+                    var cOk = cStatus === 'ok' || cStatus === 'active' || cStatus === 'connected';
+                    html += '<div class="card sys-card">';
+                    html += '<div class="sys-row">';
+                    html += '<span class="sys-dot" style="background:' + (cOk ? 'var(--accent-green)' : 'var(--accent-red)') + '"></span>';
+                    html += '<span class="sys-name">' + escHtml(c.connector || c.name || 'Connector') + '</span>';
+                    html += '<span class="sys-status" style="color:' + (cOk ? 'var(--accent-green)' : 'var(--accent-red)') + '">' + escHtml(cStatus) + '</span>';
+                    if (c.details && !cOk) {
+                        html += '<span class="sys-error">' + escHtml(String(c.details).slice(0, 80)) + '</span>';
+                    }
+                    html += '</div></div>';
+                }
+            }
+
+            if (!html) {
+                html = '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No system data available</div></div>';
+            }
+            safeSetContent(el, html);
         })
         .catch(function(err) {
             safeSetContent(el, '<div class="card"><div class="card-meta" style="color:var(--accent-red)">Failed to load system status: ' + escHtml(err.message) + '</div></div>');
@@ -2522,21 +2658,51 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // --- Status Bar ---
     function loadStatus() {
-        fetch(API + '/health')
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
+        /* Refresh the bottom status bar with live health and data-freshness info.
+         *
+         * Fetches /health (connector health checks) and /api/system/sources
+         * (per-source event stats) in parallel, then updates three status bar
+         * slots:
+         *   1. Connection dot — green when NATS event bus is connected
+         *   2. Event count — total events logged
+         *   3. Data freshness — "N sources syncing" or a stale-source warning
+         *
+         * The stale-source warning (⚠ N stale) links to the System topic so
+         * the user can drill in to see which source stopped and why.
+         */
+        Promise.all([
+            fetch(API + '/health').then(function(r) { return r.json(); }),
+            fetch(API + '/api/system/sources').then(function(r) { return r.json(); })
+        ]).then(function(results) {
+            var health = results[0];
+            var sourcesData = results[1];
+
             var dot = document.getElementById('statusDot');
             var text = document.getElementById('statusText');
             var count = document.getElementById('eventCount');
             var connStatus = document.getElementById('connectorStatus');
 
-            dot.className = 'status-dot ' + (data.status === 'ok' ? 'ok' : 'error');
-            text.textContent = data.event_bus ? 'Connected' : 'Event bus disconnected';
-            count.textContent = (data.events_stored || 0) + ' events';
+            dot.className = 'status-dot ' + (health.status === 'ok' ? 'ok' : 'error');
+            text.textContent = health.event_bus ? 'Connected' : 'Event bus disconnected';
+            count.textContent = (health.events_stored || 0).toLocaleString() + ' events';
 
-            var connectors = data.connectors || [];
-            var active = connectors.filter(function(c) { return c.status === 'active' || c.state === 'active'; }).length;
-            connStatus.textContent = active + '/' + connectors.length + ' connectors';
+            // Show stale-source warning if any external connector is silent —
+            // this is the #1 sign the user should check their connector config.
+            var staleCount = sourcesData.stale_count || 0;
+            if (staleCount > 0) {
+                // All values used here are numeric — no XSS risk.
+                connStatus.textContent = '\u26a0\ufe0f ' + staleCount +
+                    ' stale source' + (staleCount > 1 ? 's' : '');
+                connStatus.style.color = 'var(--accent-yellow)';
+                connStatus.style.cursor = 'pointer';
+                connStatus.onclick = function() { switchTopic('system'); };
+            } else {
+                var activeCount = (sourcesData.sources || []).filter(function(s) { return !s.stale; }).length;
+                connStatus.textContent = activeCount + ' source' + (activeCount !== 1 ? 's' : '') + ' syncing';
+                connStatus.style.color = '';
+                connStatus.style.cursor = '';
+                connStatus.onclick = null;
+            }
         })
         .catch(function() {
             document.getElementById('statusDot').className = 'status-dot error';
