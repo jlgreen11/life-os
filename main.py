@@ -1046,19 +1046,27 @@ class LifeOS:
 
         # Build the episode dict matching the schema in user_model.db.
         #
-        # CRITICAL FIX: Use the event's actual interaction timestamp (from payload.date
-        # for emails, or event.timestamp as fallback) instead of always using sync time.
-        # This enables proper temporal analysis — without it, all episodes collapse to
-        # the sync date, breaking routine detection (requires multi-day patterns),
-        # workflow analysis (needs correct sequencing), and temporal profile extraction.
+        # CRITICAL FIX: Use the event's actual interaction timestamp, not the sync
+        # timestamp. Without this fix, all email episodes collapse to the sync date
+        # (e.g., 2026-02-22 when the Google connector first ran), making it impossible
+        # for the routine detector to see multi-day patterns — the detector requires
+        # activities on 3+ distinct days to call something a routine.
         #
-        # For emails: payload.date is the RFC 2822 Date header (actual send/receive time)
-        # For calendar: payload.start_time is the event start (actual meeting time)
-        # For other events: fallback to event.timestamp (sync time)
+        # Connector-specific field names for the actual event timestamp:
+        #   - email_date   : Google/Proton mail connectors (from RFC 2822 Date header)
+        #   - sent_at      : iMessage and Signal connectors (when message was sent)
+        #   - received_at  : Some message connectors (when message arrived)
+        #   - date         : Generic connectors that use the bare "date" key
+        #   - start_time   : CalDAV and Google Calendar (meeting start time)
+        #
+        # The relationship extractor uses an identical priority chain; keep in sync.
         actual_timestamp = (
-            payload.get("date")  # Email: actual send/receive timestamp
+            payload.get("email_date")   # Google/Proton mail — actual Date header
+            or payload.get("sent_at")   # iMessage, Signal — message send time
+            or payload.get("received_at")  # some connectors — arrival time
+            or payload.get("date")      # generic fallback for older connectors
             or payload.get("start_time")  # Calendar: actual event start
-            or event.get("timestamp")  # Fallback: sync timestamp
+            or event.get("timestamp")   # Last resort: sync timestamp
         )
 
         episode = {
