@@ -1698,12 +1698,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function loadInsightsFeed() {
-        // Loads the Insights tab with four data sources in parallel:
+        // Loads the Insights tab with five data sources in parallel:
         //   1. AI-generated behavioral insights (/api/insights/summary)
         //   2. Raw signal profiles (/api/user-model/signal-profiles) — temporal,
         //      linguistic, cadence, mood, relationships, topics, etc.
         //   3. Detected routines (/api/user-model/routines)
         //   4. Detected workflows (/api/user-model/workflows)
+        //   5. Communication style templates (/api/user-model/templates) — per-contact
+        //      writing style summaries learned from outbound/inbound messages.
         // Each section is rendered separately so partial failures degrade gracefully.
         var el = document.getElementById('feedContent');
         safeSetContent(el, '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>');
@@ -1712,12 +1714,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             fetch(API + '/api/insights/summary').then(function(r) { return r.json(); }).catch(function() { return {}; }),
             fetch(API + '/api/user-model/signal-profiles').then(function(r) { return r.json(); }).catch(function() { return {}; }),
             fetch(API + '/api/user-model/routines?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; }),
-            fetch(API + '/api/user-model/workflows?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; })
+            fetch(API + '/api/user-model/workflows?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; }),
+            fetch(API + '/api/user-model/templates?limit=20').then(function(r) { return r.json(); }).catch(function() { return {}; })
         ]).then(function(results) {
-            var insightData  = results[0];
-            var profileData  = results[1];
-            var routineData  = results[2];
-            var workflowData = results[3];
+            var insightData   = results[0];
+            var profileData   = results[1];
+            var routineData   = results[2];
+            var workflowData  = results[3];
+            var templateData  = results[4];
             var html = '';
             var hasAny = false;
 
@@ -1825,6 +1829,74 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     if (w.success_rate !== undefined) html += '<span>Success: ' + Math.round(w.success_rate * 100) + '%</span>';
                     if (w.observation_count) html += '<span>' + w.observation_count + ' observations</span>';
                     html += '</div>';
+                    html += '</div></div></div>';
+                }
+            }
+
+            // ── 5. Communication Style Templates ─────────────────────────────
+            // Per-contact, per-channel writing style summaries learned from
+            // outbound and inbound messages.  Grouped by direction so the user
+            // can see both how they write (user_to_contact) and how each contact
+            // writes back (contact_to_user).
+            var templates = (templateData.templates || []);
+            if (templates.length > 0) {
+                html += '<div class="section-header">Communication Style Templates</div>';
+                hasAny = true;
+
+                // Group by contact so we can show both directions side-by-side.
+                var grouped = {};
+                for (var ti = 0; ti < templates.length; ti++) {
+                    var tmpl = templates[ti];
+                    var key = (tmpl.contact_id || 'general') + '|' + (tmpl.channel || 'unknown');
+                    if (!grouped[key]) grouped[key] = {contact: tmpl.contact_id, channel: tmpl.channel, items: []};
+                    grouped[key].items.push(tmpl);
+                }
+
+                var groupKeys = Object.keys(grouped);
+                for (var gi = 0; gi < groupKeys.length; gi++) {
+                    var grp = grouped[groupKeys[gi]];
+                    var contactLabel = grp.contact ? escHtml(grp.contact) : 'General';
+                    var channelLabel = grp.channel ? escHtml(grp.channel) : 'unknown';
+
+                    html += '<div class="card">';
+                    html += '<div class="card-row">';
+                    html += '<div class="card-channel">\uD83D\uDCDD</div>';
+                    html += '<div class="card-content">';
+                    html += '<div class="card-title">' + contactLabel + ' &mdash; ' + channelLabel + '</div>';
+
+                    for (var ii = 0; ii < grp.items.length; ii++) {
+                        var t = grp.items[ii];
+                        var dirLabel = t.context === 'user_to_contact' ? 'You \u2192' : '\u2190 Them';
+                        var formalPct = Math.round((t.formality || 0) * 100);
+
+                        html += '<div class="insight-meta-row" style="margin-top:6px">';
+                        html += '<span style="font-weight:600;color:var(--text-secondary)">' + escHtml(dirLabel) + '</span>';
+                        if (t.greeting) html += '<span>Opens: <em>' + escHtml(t.greeting) + '</em></span>';
+                        if (t.closing)  html += '<span>Closes: <em>' + escHtml(t.closing) + '</em></span>';
+                        html += '<span>Formality: ' + formalPct + '%</span>';
+                        if (t.typical_length) html += '<span>~' + Math.round(t.typical_length) + ' words</span>';
+                        if (t.uses_emoji)    html += '<span>\uD83D\uDE00 Uses emoji</span>';
+                        if (t.samples_analyzed) html += '<span>' + t.samples_analyzed + ' samples</span>';
+                        html += '</div>';
+
+                        // Show common phrases if present
+                        if (t.common_phrases && t.common_phrases.length > 0) {
+                            html += '<div class="card-meta" style="margin-top:4px">Common: ';
+                            for (var pi2 = 0; pi2 < Math.min(t.common_phrases.length, 4); pi2++) {
+                                html += '<span class="chip">' + escHtml(t.common_phrases[pi2]) + '</span>';
+                            }
+                            html += '</div>';
+                        }
+                        // Show tone notes if present
+                        if (t.tone_notes && t.tone_notes.length > 0) {
+                            html += '<div class="card-meta" style="margin-top:2px">Tone: ';
+                            for (var tn = 0; tn < Math.min(t.tone_notes.length, 3); tn++) {
+                                html += '<span class="chip">' + escHtml(t.tone_notes[tn]) + '</span>';
+                            }
+                            html += '</div>';
+                        }
+                    }
+
                     html += '</div></div></div>';
                 }
             }
