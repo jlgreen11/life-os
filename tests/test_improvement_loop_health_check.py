@@ -341,8 +341,9 @@ class TestImprovementLoopHealthCheck:
 
         script_content = script_path.read_text()
 
-        # Validate key improvements are present
-        assert "Ensure Life OS is running" in script_content, \
+        # Validate key improvements are present.
+        # The script comment uses lowercase "ensure" — match exactly.
+        assert "ensure Life OS is running" in script_content, \
             "Script should check Life OS health on every iteration"
 
         assert "CODE_UPDATED=false" in script_content, \
