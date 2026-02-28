@@ -468,6 +468,56 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         .draft-btn:hover { opacity: 0.85; }
 
+        /* --- Insights Tab Sections --- */
+        /* Section headers visually group the different data sources shown
+           in the Insights tab (AI insights, signal profiles, routines, workflows). */
+        .section-header {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: var(--text-muted);
+            margin: 20px 0 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid var(--border);
+        }
+        /* First section header needs no top margin */
+        .section-header:first-child { margin-top: 0; }
+
+        /* Grid layout for displaying individual signal profile metrics */
+        .signal-profile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .signal-profile-item {
+            background: var(--bg-primary);
+            border-radius: 6px;
+            padding: 8px 10px;
+        }
+        .signal-profile-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 2px;
+        }
+        .signal-profile-value {
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        /* Inline metadata row for routines and workflows */
+        .insight-meta-row {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
         /* --- Inline Modal System --- */
         /* Replaces native browser confirm()/prompt() dialogs with themed UI.
            Works on mobile Safari where native dialogs are blocked. */
@@ -1515,43 +1565,220 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function loadInsightsFeed() {
+        // Loads the Insights tab with four data sources in parallel:
+        //   1. AI-generated behavioral insights (/api/insights/summary)
+        //   2. Raw signal profiles (/api/user-model/signal-profiles) — temporal,
+        //      linguistic, cadence, mood, relationships, topics, etc.
+        //   3. Detected routines (/api/user-model/routines)
+        //   4. Detected workflows (/api/user-model/workflows)
+        // Each section is rendered separately so partial failures degrade gracefully.
         var el = document.getElementById('feedContent');
         safeSetContent(el, '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>');
 
-        fetch(API + '/api/insights/summary')
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
-            var insights = data.insights || data.predictions || [];
-            if (!Array.isArray(insights)) insights = [];
-            if (insights.length === 0) {
-                safeSetContent(el, '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No insights available yet</div></div>');
-                return;
-            }
+        Promise.all([
+            fetch(API + '/api/insights/summary').then(function(r) { return r.json(); }).catch(function() { return {}; }),
+            fetch(API + '/api/user-model/signal-profiles').then(function(r) { return r.json(); }).catch(function() { return {}; }),
+            fetch(API + '/api/user-model/routines?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; }),
+            fetch(API + '/api/user-model/workflows?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; })
+        ]).then(function(results) {
+            var insightData  = results[0];
+            var profileData  = results[1];
+            var routineData  = results[2];
+            var workflowData = results[3];
             var html = '';
-            for (var i = 0; i < insights.length; i++) {
-                var ins = insights[i];
-                html += '<div class="card" id="insight-' + escAttr(ins.id || i) + '">';
-                html += '<div class="card-row"><div class="card-channel">\u2605</div>';
-                html += '<div class="card-content">';
-                html += '<div class="card-title">' + escHtml(ins.type || ins.category || 'Insight') + '</div>';
-                html += '<div class="card-body">' + escHtml(ins.summary || ins.description || ins.content || ins.text || JSON.stringify(ins)) + '</div>';
-                if (ins.confidence !== undefined) {
-                    html += '<div class="card-meta" style="margin-top:4px">Confidence: ' + escHtml(String(Math.round(ins.confidence * 100))) + '%</div>';
+            var hasAny = false;
+
+            // ── 1. AI-Generated Behavioral Insights ─────────────────────────
+            var insights = insightData.insights || insightData.predictions || [];
+            if (!Array.isArray(insights)) insights = [];
+            if (insights.length > 0) {
+                html += '<div class="section-header">AI Behavioral Insights</div>';
+                hasAny = true;
+                for (var i = 0; i < insights.length; i++) {
+                    var ins = insights[i];
+                    html += '<div class="card" id="insight-' + escAttr(ins.id || i) + '">';
+                    html += '<div class="card-row"><div class="card-channel">\u2605</div>';
+                    html += '<div class="card-content">';
+                    html += '<div class="card-title">' + escHtml(ins.type || ins.category || 'Insight') + '</div>';
+                    html += '<div class="card-body">' + escHtml(ins.summary || ins.description || ins.content || ins.text || '') + '</div>';
+                    if (ins.confidence !== undefined) {
+                        html += '<div class="card-meta" style="margin-top:4px">Confidence: ' + Math.round(ins.confidence * 100) + '%</div>';
+                    }
+                    if (ins.id) {
+                        html += '<div class="card-actions" style="margin-top:8px;display:flex;gap:6px">';
+                        html += '<button class="btn-small" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'useful\')">Useful</button>';
+                        html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'dismissed\')">Dismiss</button>';
+                        html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'not_relevant\')">Not About Me</button>';
+                        html += '</div>';
+                    }
+                    html += '</div></div></div>';
                 }
-                if (ins.id) {
-                    html += '<div class="card-actions" style="margin-top:8px;display:flex;gap:6px">';
-                    html += '<button class="btn-small" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'useful\')">Useful</button>';
-                    html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'dismissed\')">Dismiss</button>';
-                    html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();insightFeedback(\'' + escAttr(ins.id) + '\',\'not_relevant\')">Not About Me</button>';
+            }
+
+            // ── 2. Raw Signal Profiles ───────────────────────────────────────
+            // Maps profile type names to human-readable labels shown as card titles.
+            var profileLabels = {
+                temporal:           'Temporal \u2014 When you work',
+                linguistic:         'Linguistic \u2014 How you write',
+                linguistic_inbound: 'Inbound Style \u2014 How contacts write to you',
+                cadence:            'Cadence \u2014 Response patterns',
+                mood_signals:       'Mood \u2014 Emotional signals',
+                relationships:      'Relationships \u2014 Contact patterns',
+                topics:             'Topics \u2014 Interest areas',
+                spatial:            'Spatial \u2014 Location patterns',
+                decision:           'Decision \u2014 Choice patterns'
+            };
+            var profiles = profileData.profiles || {};
+            var profileTypes = profileData.types_with_data || Object.keys(profiles);
+            if (profileTypes.length > 0) {
+                html += '<div class="section-header">Behavioral Signal Profiles</div>';
+                hasAny = true;
+                for (var pi = 0; pi < profileTypes.length; pi++) {
+                    var ptype = profileTypes[pi];
+                    var profile = profiles[ptype];
+                    if (!profile) continue;
+                    var pdata = profile.data || profile;
+                    var samples = profile.samples_count || 0;
+                    var label = profileLabels[ptype] || ptype.replace(/_/g, ' ');
+                    html += '<div class="card">';
+                    html += '<div class="card-row"><div class="card-channel" style="font-size:20px">' + profileEmoji(ptype) + '</div>';
+                    html += '<div class="card-content">';
+                    html += '<div class="card-title">' + escHtml(label) + '</div>';
+                    if (samples > 0) {
+                        html += '<div class="card-meta" style="margin-bottom:6px">' + samples.toLocaleString() + ' samples</div>';
+                    }
+                    html += renderProfileData(pdata);
+                    html += '</div></div></div>';
+                }
+            }
+
+            // ── 3. Detected Routines ─────────────────────────────────────────
+            var routines = routineData.routines || routineData || [];
+            if (!Array.isArray(routines)) routines = [];
+            if (routines.length > 0) {
+                html += '<div class="section-header">Detected Routines</div>';
+                hasAny = true;
+                for (var ri = 0; ri < routines.length; ri++) {
+                    var r = routines[ri];
+                    html += '<div class="card">';
+                    html += '<div class="card-row"><div class="card-channel">\uD83D\uDD04</div>';
+                    html += '<div class="card-content">';
+                    html += '<div class="card-title">' + escHtml(r.name || r.trigger || 'Routine') + '</div>';
+                    html += '<div class="insight-meta-row">';
+                    if (r.trigger) html += '<span>Trigger: ' + escHtml(r.trigger) + '</span>';
+                    if (r.consistency !== undefined) html += '<span>Consistency: ' + Math.round(r.consistency * 100) + '%</span>';
+                    if (r.observation_count) html += '<span>' + r.observation_count + ' observations</span>';
+                    if (r.typical_duration_minutes) html += '<span>~' + Math.round(r.typical_duration_minutes) + ' min</span>';
                     html += '</div>';
+                    html += '</div></div></div>';
                 }
-                html += '</div></div></div>';
+            }
+
+            // ── 4. Detected Workflows ────────────────────────────────────────
+            var workflows = workflowData.workflows || workflowData || [];
+            if (!Array.isArray(workflows)) workflows = [];
+            if (workflows.length > 0) {
+                html += '<div class="section-header">Detected Workflows</div>';
+                hasAny = true;
+                for (var wi = 0; wi < workflows.length; wi++) {
+                    var w = workflows[wi];
+                    html += '<div class="card">';
+                    html += '<div class="card-row"><div class="card-channel">\uD83D\uDCC8</div>';
+                    html += '<div class="card-content">';
+                    html += '<div class="card-title">' + escHtml(w.name || w.goal || 'Workflow') + '</div>';
+                    html += '<div class="insight-meta-row">';
+                    var stepCount = (w.steps ? w.steps.length : 0) || w.step_count || 0;
+                    if (stepCount) html += '<span>' + stepCount + ' steps</span>';
+                    if (w.success_rate !== undefined) html += '<span>Success: ' + Math.round(w.success_rate * 100) + '%</span>';
+                    if (w.observation_count) html += '<span>' + w.observation_count + ' observations</span>';
+                    html += '</div>';
+                    html += '</div></div></div>';
+                }
+            }
+
+            if (!hasAny) {
+                html = '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No insights yet. Use Life OS for a few days and patterns will emerge here.</div></div>';
             }
             safeSetContent(el, html);
         })
         .catch(function(err) {
             safeSetContent(el, '<div class="card"><div class="card-meta" style="color:var(--accent-red)">Failed to load insights: ' + escHtml(err.message) + '</div></div>');
         });
+    }
+
+    /**
+     * Returns a representative emoji for each signal profile type.
+     * Used as the icon in signal profile cards on the Insights tab.
+     */
+    function profileEmoji(type) {
+        var emojis = {
+            temporal:           '\u23F0',   // alarm clock
+            linguistic:         '\u270D',   // writing hand
+            linguistic_inbound: '\uD83D\uDCEC', // incoming envelope
+            cadence:            '\u26A1',   // lightning (response speed)
+            mood_signals:       '\uD83D\uDCC9', // chart (mood trends)
+            relationships:      '\uD83D\uDC65', // two people
+            topics:             '\uD83D\uDCDA', // books
+            spatial:            '\uD83D\uDCCD', // pin
+            decision:           '\u2696'    // scales
+        };
+        return emojis[type] || '\uD83D\uDCCA'; // bar chart fallback
+    }
+
+    /**
+     * Renders a signal profile's data object as a grid of labelled metric tiles.
+     *
+     * Only scalar values and simple arrays of primitives are rendered — nested
+     * objects are skipped to keep the UI readable. Numbers between 0 and 1
+     * (exclusive) are displayed as percentages unless the key name contains
+     * "count" or "total".
+     *
+     * @param {Object} data — Raw data dict from the signal profile.
+     * @returns {string}   HTML string (signal-profile-grid or empty-state div).
+     */
+    function renderProfileData(data) {
+        if (!data || typeof data !== 'object') return '';
+        var items = [];
+        var keys = Object.keys(data);
+        for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            var v = data[k];
+            if (v === null || v === undefined) continue;
+            // Convert snake_case key to Title Case label
+            var label = k.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+            var valueStr = '';
+            if (typeof v === 'number') {
+                // Render as percentage if in (0,1] and key doesn't suggest a raw count
+                var isCount = k.indexOf('count') !== -1 || k.indexOf('total') !== -1 || k.indexOf('days') !== -1;
+                valueStr = (!isCount && v > 0 && v <= 1)
+                    ? Math.round(v * 100) + '%'
+                    : (Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2));
+            } else if (typeof v === 'boolean') {
+                valueStr = v ? 'Yes' : 'No';
+            } else if (typeof v === 'string') {
+                valueStr = v.replace(/_/g, ' ');
+            } else if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'string') {
+                // Compact display for string arrays (e.g., top_topics)
+                valueStr = v.slice(0, 5).join(', ');
+            } else if (Array.isArray(v) && v.length > 0 && typeof v[0] === 'number') {
+                // Compact display for number arrays (e.g., peak_hours: [9, 10, 14])
+                valueStr = v.slice(0, 6).join(', ');
+            } else {
+                continue; // Skip nested objects and complex arrays
+            }
+            if (valueStr !== '') {
+                items.push(
+                    '<div class="signal-profile-item">' +
+                        '<div class="signal-profile-label">' + escHtml(label) + '</div>' +
+                        '<div class="signal-profile-value">' + escHtml(valueStr) + '</div>' +
+                    '</div>'
+                );
+            }
+        }
+        if (!items.length) {
+            return '<div style="color:var(--text-muted);font-size:12px;margin-top:4px">No data collected yet</div>';
+        }
+        return '<div class="signal-profile-grid">' + items.join('') + '</div>';
     }
 
     function loadFactsFeed() {
