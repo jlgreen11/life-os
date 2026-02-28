@@ -907,16 +907,52 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             100% { background-position: -200% 0; }
         }
 
+        /* --- Mobile Sidebar FAB (floating action button) ---
+         * Visible only below 900px. Tapping it opens the AI sidebar as a
+         * full-screen overlay. The close button inside the sidebar dismisses it. */
+        .mobile-sidebar-fab {
+            display: none;
+        }
+        .mobile-sidebar-close {
+            display: none;
+        }
+
         /* --- Responsive: 900px --- */
         @media (max-width: 900px) {
+            /* Sidebar is hidden by default; .mobile-open turns it into a full-screen overlay. */
             .ai-sidebar { display: none; }
+            .ai-sidebar.mobile-open {
+                display: flex;
+                flex-direction: column;
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                width: 100%;
+                min-width: 100%;
+                z-index: 998;
+                background: var(--bg-primary);
+                padding: 20px 20px 80px;  /* bottom pad clears the FAB */
+                overflow-y: auto;
+            }
+            /* Show close button only inside the mobile overlay */
+            .ai-sidebar.mobile-open .mobile-sidebar-close {
+                display: flex;
+                justify-content: flex-end;
+                margin-bottom: 8px;
+            }
             .sidebar-toggle { display: none; }
             .topic-nav {
                 width: 50px;
                 min-width: 50px;
             }
             .topic-label { display: none; }
-            .topic-badge { display: none !important; }
+            /* Restore badge counts at smaller size — they're still informative on mobile. */
+            .topic-badge {
+                font-size: 9px;
+                min-width: 14px;
+                height: 14px;
+                line-height: 14px;
+                padding: 0 3px;
+            }
             .topic-item {
                 justify-content: center;
                 padding: 10px 0;
@@ -924,6 +960,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             .topic-icon { margin: 0; }
             .greeting { display: none; }
             .mood-bar { display: none; }
+            /* Floating action button to open AI sidebar */
+            .mobile-sidebar-fab {
+                display: block;
+                position: fixed;
+                bottom: 40px;
+                right: 16px;
+                width: 48px;
+                height: 48px;
+                border-radius: 50%;
+                background: var(--accent);
+                color: var(--bg-primary);
+                border: none;
+                font-weight: 700;
+                font-size: 13px;
+                cursor: pointer;
+                z-index: 999;
+                box-shadow: 0 2px 12px rgba(0,0,0,0.45);
+                letter-spacing: 0.02em;
+            }
+            .mobile-sidebar-fab:active { opacity: 0.85; }
         }
 
         /* --- Responsive: 600px --- */
@@ -1024,6 +1080,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         <!-- Right: AI Sidebar -->
         <aside class="ai-sidebar" id="aiSidebar">
+            <!-- Close button shown only in mobile overlay mode (< 900px).
+                 Uses .mobile-sidebar-close which is display:none by default
+                 and display:flex inside .ai-sidebar.mobile-open. -->
+            <div class="mobile-sidebar-close">
+                <button onclick="toggleMobileSidebar()" aria-label="Close AI sidebar"
+                        style="background:none;border:none;color:var(--text-secondary);font-size:22px;cursor:pointer;padding:0 4px">&#10005;</button>
+            </div>
             <div class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9664;</div>
 
             <div class="sidebar-section">
@@ -2278,6 +2341,31 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         safeSetContent(toggle, sidebar.classList.contains('collapsed') ? '&#9654;' : '&#9664;');
     }
 
+    /**
+     * Toggle the AI sidebar as a full-screen overlay on small screens (< 900px).
+     *
+     * On wide screens this function is unreachable (the FAB is hidden by CSS),
+     * so it only runs when the viewport is narrow.  Adds / removes
+     * `mobile-open` class on #aiSidebar which is wired to the overlay CSS rule.
+     *
+     * Loads sidebar data on first open so the overlay has real content to show.
+     *
+     * Example (called from the FAB and the ✕ close button inside the sidebar):
+     *   onclick="toggleMobileSidebar()"
+     */
+    function toggleMobileSidebar() {
+        var sidebar = document.getElementById('aiSidebar');
+        var isOpen = sidebar.classList.toggle('mobile-open');
+        // Load sidebar data the first time the overlay opens so the user
+        // sees real content rather than skeletons.  Subsequent opens skip
+        // the fetch if data is already present (the sidebar persists in DOM).
+        if (isOpen) {
+            loadMood();
+            loadPredictions();
+            loadPeopleRadar();
+        }
+    }
+
     // --- Badge Counts ---
     // --- Inline Modal System ---
     // Replaces native browser confirm() / prompt() dialogs with themed UI that
@@ -2507,6 +2595,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     try { connectWS(); } catch(e) {}
 
     </script>
+
+<!-- Mobile sidebar FAB: opens the AI sidebar as a full-screen overlay on
+     small screens (< 900px). Hidden via CSS on wide screens. -->
+<button class="mobile-sidebar-fab" id="mobileSidebarFab"
+        onclick="toggleMobileSidebar()" aria-label="Open AI sidebar">AI</button>
 
 <!-- Inline modal overlay: replaces native confirm()/prompt() dialogs.
      Clicking the backdrop or the Cancel button closes the modal.
