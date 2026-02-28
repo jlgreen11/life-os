@@ -210,6 +210,95 @@ def register_routes(app: FastAPI, life_os) -> None:
             "active_count": active_count,
         }
 
+    @app.get("/api/system/intelligence")
+    async def get_system_intelligence():
+        """Return prediction engine diagnostics for the System health dashboard.
+
+        Exposes the prediction engine's internal state: which prediction types
+        are active or blocked, what data each generator needs, and how many
+        predictions were generated in the last 7 days.  Also reports the
+        current user-model depth (signal profiles, routines, workflows,
+        semantic facts) so the System tab gives a complete picture of
+        intelligence layer health without requiring database access.
+
+        Returns::
+
+            {
+                "prediction_types": {
+                    "reminder": {
+                        "status": "active" | "limited" | "blocked",
+                        "generated_last_7d": int,
+                        "blockers": ["list"],
+                        "recommendations": ["list"]
+                    },
+                    ...
+                },
+                "overall": {
+                    "total_predictions_7d": int,
+                    "active_types": int,
+                    "blocked_types": int,
+                    "health": "healthy" | "degraded" | "broken"
+                },
+                "user_model_depth": {
+                    "signal_profiles": int,
+                    "routines": int,
+                    "workflows": int,
+                    "semantic_facts": int,
+                    "episodes": int
+                },
+                "generated_at": "ISO-8601 timestamp"
+            }
+
+        Example::
+
+            GET /api/system/intelligence
+            → {
+                "overall": {"total_predictions_7d": 4, "health": "degraded", ...},
+                "prediction_types": {
+                    "opportunity": {"status": "active", "generated_last_7d": 4, ...},
+                    "reminder": {"status": "blocked", "generated_last_7d": 0, ...}
+                },
+                "user_model_depth": {
+                    "signal_profiles": 8, "routines": 0, "workflows": 0,
+                    "semantic_facts": 23, "episodes": 56876
+                }
+              }
+        """
+        try:
+            diagnostics = await life_os.prediction_engine.get_diagnostics()
+        except Exception:
+            diagnostics = {"prediction_types": {}, "overall": {"health": "unknown"}}
+
+        # Augment with user-model depth metrics pulled from the user model store.
+        # This surfaces how populated each intelligence layer is so the System
+        # tab can explain *why* predictions might be limited (e.g. "0 routines
+        # detected" directly explains why routine-deviation predictions are blocked).
+        user_model_depth = {"signal_profiles": 0, "routines": 0, "workflows": 0,
+                            "semantic_facts": 0, "episodes": 0}
+        try:
+            with life_os.db.get_connection("user_model") as um_conn:
+                user_model_depth["signal_profiles"] = um_conn.execute(
+                    "SELECT COUNT(*) FROM signal_profiles"
+                ).fetchone()[0]
+                user_model_depth["routines"] = um_conn.execute(
+                    "SELECT COUNT(*) FROM routines"
+                ).fetchone()[0]
+                user_model_depth["workflows"] = um_conn.execute(
+                    "SELECT COUNT(*) FROM workflows"
+                ).fetchone()[0]
+                user_model_depth["semantic_facts"] = um_conn.execute(
+                    "SELECT COUNT(*) FROM semantic_facts"
+                ).fetchone()[0]
+                user_model_depth["episodes"] = um_conn.execute(
+                    "SELECT COUNT(*) FROM episodes"
+                ).fetchone()[0]
+        except Exception:
+            pass  # Fail-open: missing counts don't break the endpoint
+
+        diagnostics["user_model_depth"] = user_model_depth
+        diagnostics["generated_at"] = datetime.now(timezone.utc).isoformat()
+        return diagnostics
+
     # -------------------------------------------------------------------
     # Command Bar
     # -------------------------------------------------------------------
