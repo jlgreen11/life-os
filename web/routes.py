@@ -1359,6 +1359,118 @@ def register_routes(app: FastAPI, life_os) -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    @app.get("/api/user-model/templates")
+    async def get_communication_templates(
+        contact_id: Optional[str] = None,
+        channel: Optional[str] = None,
+        context: Optional[str] = None,
+        limit: int = 50,
+    ):
+        """Return learned communication style templates from Layer 3 (procedural memory).
+
+        Communication templates are per-contact, per-channel writing-style summaries
+        derived from analyzing the user's outbound messages and the contact's inbound
+        messages.  Each template captures:
+
+        - **context**: Direction — ``user_to_contact`` (user's outbound style) or
+          ``contact_to_user`` (contact's inbound style).
+        - **contact_id**: Email or phone of the other party.
+        - **channel**: Communication channel — ``email``, ``message``, etc.
+        - **greeting** / **closing**: Detected opening and sign-off phrases.
+        - **formality**: 0.0 (casual) to 1.0 (formal).
+        - **typical_length**: Average word count for messages to/from this contact.
+        - **uses_emoji**: Whether emoji appear in the conversation.
+        - **samples_analyzed**: Number of messages used to derive this template.
+
+        Templates are populated by the relationship extractor on every inbound/outbound
+        communication event, and are used by the AI engine to style-match when
+        generating draft replies.  This endpoint surfaces them so the user can verify
+        what writing patterns the system has learned.
+
+        Query params:
+            contact_id: Filter to a specific contact (email/phone).
+            channel: Filter to a specific channel (e.g. ``email``).
+            context: Filter to ``user_to_contact`` or ``contact_to_user``.
+            limit: Max templates to return (default 50, capped at 200).
+
+        Returns::
+
+            {
+                "templates": [
+                    {
+                        "id": "...",
+                        "context": "user_to_contact",
+                        "contact_id": "alice@example.com",
+                        "channel": "email",
+                        "greeting": "hey",
+                        "closing": "thanks",
+                        "formality": 0.25,
+                        "typical_length": 42.0,
+                        "uses_emoji": false,
+                        "common_phrases": ["sounds good", "let me know"],
+                        "avoids_phrases": [],
+                        "tone_notes": ["casual"],
+                        "samples_analyzed": 17,
+                        "updated_at": "2026-02-20T10:15:30.000Z"
+                    }
+                ],
+                "total": 1,
+                "generated_at": "..."
+            }
+        """
+        import json as _json
+
+        # Cap limit to prevent excessively large responses.
+        limit = min(limit, 200)
+
+        conditions = []
+        params: list = []
+
+        if contact_id is not None:
+            conditions.append("contact_id = ?")
+            params.append(contact_id)
+        if channel is not None:
+            conditions.append("channel = ?")
+            params.append(channel)
+        if context is not None:
+            conditions.append("context = ?")
+            params.append(context)
+
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    f"""SELECT id, context, contact_id, channel, greeting, closing,
+                               formality, typical_length, uses_emoji,
+                               common_phrases, avoids_phrases, tone_notes,
+                               samples_analyzed, updated_at
+                          FROM communication_templates
+                         {where_clause}
+                         ORDER BY samples_analyzed DESC, updated_at DESC
+                         LIMIT ?""",
+                    params + [limit],
+                ).fetchall()
+
+            templates = []
+            for row in rows:
+                t = dict(row)
+                # Deserialize JSON list fields so callers receive native arrays.
+                t["common_phrases"] = _json.loads(t["common_phrases"] or "[]")
+                t["avoids_phrases"] = _json.loads(t["avoids_phrases"] or "[]")
+                t["tone_notes"] = _json.loads(t["tone_notes"] or "[]")
+                t["uses_emoji"] = bool(t["uses_emoji"])
+                templates.append(t)
+
+            return {
+                "templates": templates,
+                "total": len(templates),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            logger.error("Failed to fetch communication templates: %s", e)
+            return {"templates": [], "total": 0, "generated_at": datetime.now(timezone.utc).isoformat()}
+
     # -------------------------------------------------------------------
     # Contacts (entities database — people the system has learned about)
     # -------------------------------------------------------------------
