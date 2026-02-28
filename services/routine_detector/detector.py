@@ -172,8 +172,14 @@ class RoutineDetector:
     def _detect_temporal_routines(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect routines that occur at similar times each day.
 
-        Groups episodes into time-of-day buckets (morning: 5-11am, afternoon: 11am-5pm,
-        evening: 5-11pm, night: 11pm-5am) and looks for recurring action sequences.
+        Groups episodes into time-of-day buckets (morning: 5–10am, midday: 11am–1pm,
+        afternoon: 2–4pm, evening: 5–10pm, night: 11pm–4am) and looks for recurring
+        action sequences.
+
+        Grouping is performed in SQL by a CASE expression on the UTC hour so that
+        an activity spread across 3am, 4am, and 5am on different days is correctly
+        aggregated into the "night" bucket rather than split into three low-count
+        (exact-hour, type) pairs that never meet min_occurrences.
 
         Consistency is measured as (avg occurrences per active day) rather than
         (avg occurrences / full lookback window).  The full-window denominator
@@ -200,20 +206,45 @@ class RoutineDetector:
         # 10 active days has 80% consistency, regardless of the lookback window.
         active_days = self._count_active_days(cutoff)
 
-        # Fetch episodes grouped by time-of-day bucket.
-        # strftime('%H', timestamp) extracts the UTC hour (0-23).
+        # Fetch episodes grouped by time-of-day bucket using a SQL CASE expression.
+        #
+        # BUG FIX: The previous version grouped by the exact UTC hour, which meant
+        # an activity that occurred at 3am on one day and 4am on another would be
+        # counted as two separate (hour, type) groups — each with a day_count of 1 —
+        # and never meet the min_occurrences threshold, even though the activity
+        # consistently happens "at night."  Grouping by time-of-day bucket (morning,
+        # midday, afternoon, evening, night) instead of exact hour correctly
+        # aggregates all instances of an activity within the same broad time window,
+        # giving an accurate count of distinct days the pattern occurred.
+        #
+        # Bucket boundaries (UTC hours, inclusive BETWEEN):
+        #   morning   :  5 – 10
+        #   midday    : 11 – 13
+        #   afternoon : 14 – 16
+        #   evening   : 17 – 22
+        #   night     :  0 –  4 and 23  (all other hours)
         with self.db.get_connection("user_model") as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
-                    strftime('%H', timestamp) as hour,
+                    CASE
+                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 5 AND 10
+                            THEN 'morning'
+                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 11 AND 13
+                            THEN 'midday'
+                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 14 AND 16
+                            THEN 'afternoon'
+                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 17 AND 22
+                            THEN 'evening'
+                        ELSE 'night'
+                    END as time_bucket,
                     interaction_type,
                     COUNT(DISTINCT DATE(timestamp)) as day_count
                 FROM episodes
                 WHERE timestamp > ? AND interaction_type IS NOT NULL
-                GROUP BY hour, interaction_type
+                GROUP BY time_bucket, interaction_type
                 HAVING day_count >= ?
-                ORDER BY hour, day_count DESC
+                ORDER BY time_bucket, day_count DESC
             """, (cutoff.isoformat(), self.min_occurrences))
 
             hour_actions = cursor.fetchall()
@@ -221,33 +252,19 @@ class RoutineDetector:
         if not hour_actions:
             return routines
 
-        # Group actions by time-of-day bucket
-        buckets = {
-            "morning": (5, 11),    # 5am-11am
-            "midday": (11, 14),    # 11am-2pm
-            "afternoon": (14, 17), # 2pm-5pm
-            "evening": (17, 23),   # 5pm-11pm
-            "night": (23, 5),      # 11pm-5am (wraps around midnight)
-        }
-
         # Compute actual measured inter-step durations once, reuse for all buckets.
         # The final step of each routine falls back to LAST_STEP_DEFAULT_MINUTES
         # because there is no subsequent step to measure a gap against.
         LAST_STEP_DEFAULT_MINUTES = 15.0
         step_duration_map = self._compute_step_duration_map(cutoff)
 
+        # SQL already resolved each row to its time_bucket; no further mapping needed.
+        # Each tuple is (time_bucket, interaction_type, day_count).
         bucket_actions: dict[str, list] = defaultdict(list)
-        for hour_str, interaction_type, day_count in hour_actions:
-            hour = int(hour_str)
+        for time_bucket, interaction_type, day_count in hour_actions:
             # Look up the measured gap duration; placeholder 5.0 if not available.
             duration = step_duration_map.get(interaction_type, 5.0)
-            for bucket_name, (start, end) in buckets.items():
-                if start < end:
-                    if start <= hour < end:
-                        bucket_actions[bucket_name].append((interaction_type, day_count, duration))
-                else:  # Night bucket wraps around midnight
-                    if hour >= start or hour < end:
-                        bucket_actions[bucket_name].append((interaction_type, day_count, duration))
+            bucket_actions[time_bucket].append((interaction_type, day_count, duration))
 
         # Create routines for buckets with at least one recurring action.
         # A single consistent action at a fixed time (e.g., morning coffee at 7am)
