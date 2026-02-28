@@ -148,10 +148,10 @@ def test_badges_returns_badges_dict(client):
 
 
 def test_badges_has_all_expected_topics(client):
-    """Badge counts are returned for all five main topics."""
+    """Badge counts are returned for all six main topics including insights."""
     response = client.get("/api/dashboard/badges")
     badges = response.json()["badges"]
-    for topic in ("inbox", "messages", "email", "calendar", "tasks"):
+    for topic in ("inbox", "messages", "email", "calendar", "tasks", "insights"):
         assert topic in badges, f"Missing badge count for topic '{topic}'"
 
 
@@ -281,3 +281,40 @@ def test_badges_handles_calendar_db_error(mock_life_os, client):
     response = client.get("/api/dashboard/badges")
     assert response.status_code == 200
     assert response.json()["badges"]["calendar"] == 0
+
+
+def test_badges_insights_count_zero_when_empty(client):
+    """Insights badge count is 0 when the DB returns no active insights."""
+    # The default mock returns (0,) for all DB queries, including insights.
+    response = client.get("/api/dashboard/badges")
+    badges = response.json()["badges"]
+    assert badges["insights"] == 0
+
+
+def test_badges_insights_count_from_db(mock_life_os, client):
+    """Insights badge reflects the number of active (non-dismissed, non-expired) insights."""
+    # Simulate 7 active insights in user_model.db
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = (7,)
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value = mock_cursor
+    mock_life_os.db.get_connection = Mock(
+        return_value=Mock(
+            __enter__=Mock(return_value=mock_conn),
+            __exit__=Mock(return_value=False),
+        )
+    )
+    response = client.get("/api/dashboard/badges")
+    badges = response.json()["badges"]
+    assert badges["insights"] == 7
+
+
+def test_badges_insights_handles_db_error(mock_life_os, client):
+    """Insights badge defaults to 0 when the user_model DB query fails."""
+    # Calendar and insights both use db.get_connection; make it raise.
+    mock_life_os.db.get_connection = Mock(
+        side_effect=RuntimeError("user_model DB unavailable")
+    )
+    response = client.get("/api/dashboard/badges")
+    assert response.status_code == 200
+    assert response.json()["badges"]["insights"] == 0
