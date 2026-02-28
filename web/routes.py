@@ -438,6 +438,70 @@ def register_routes(app: FastAPI, life_os) -> None:
             except Exception:
                 pass
 
+        # --- Enrich email items with AI-extracted action items ---
+        # The task manager extracts actionable tasks from every email it processes
+        # and stores them in the tasks table with a ``source_event_id`` pointing
+        # back to the originating email event.  We batch-fetch those tasks here
+        # and attach them as ``action_items`` lists so the dashboard card renderer
+        # can display them as chips — surfacing AI intelligence directly on the
+        # email card without the user having to open a drill-down view.
+        #
+        # Email items from email.received events use the event row id as their
+        # feed item id.  Notification-based email items store the original event
+        # id in metadata.source_event_id.  Both are collected here so all email
+        # cards in the feed can benefit from the enrichment.
+        email_event_ids: list[str] = []
+        for item in items:
+            if item.get("kind") == "email":
+                # Direct email events: item id == events.id
+                if item.get("id"):
+                    email_event_ids.append(item["id"])
+            elif item.get("kind") == "notification" and item.get("channel") == "email":
+                # Notification-backed email items: source_event_id is in metadata
+                src_id = (item.get("metadata") or {}).get("source_event_id")
+                if src_id:
+                    email_event_ids.append(src_id)
+
+        if email_event_ids:
+            try:
+                placeholders = ",".join("?" * len(email_event_ids))
+                with life_os.db.get_connection("state") as state_conn:
+                    task_rows = state_conn.execute(
+                        f"""SELECT source_event_id, title
+                               FROM tasks
+                              WHERE source_event_id IN ({placeholders})
+                                AND status NOT IN ('dismissed', 'cancelled')
+                           ORDER BY created_at ASC""",
+                        email_event_ids,
+                    ).fetchall()
+
+                # Build event_id → [task titles] mapping in one pass
+                tasks_by_event: dict[str, list[str]] = {}
+                for tr in task_rows:
+                    eid = tr["source_event_id"]
+                    tasks_by_event.setdefault(eid, []).append(tr["title"])
+
+                # Attach action_items to each matching feed item.
+                # For direct email items, the item id is the event id.
+                # For notification items, the event id lives in metadata.
+                for item in items:
+                    if item.get("kind") == "email":
+                        action_items = tasks_by_event.get(item.get("id"))
+                    elif item.get("kind") == "notification" and item.get("channel") == "email":
+                        src_id = (item.get("metadata") or {}).get("source_event_id")
+                        action_items = tasks_by_event.get(src_id) if src_id else None
+                    else:
+                        continue
+                    if action_items:
+                        if item.get("metadata") is None:
+                            item["metadata"] = {}
+                        item["metadata"]["action_items"] = action_items
+            except Exception:
+                # Action-item enrichment is non-critical.  If the tasks DB is
+                # unavailable or the query fails, the feed still returns all items
+                # — they just won't have action_items chips on email cards.
+                pass
+
         # --- Sort by priority (critical > high > normal > low), then newest first ---
         priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
         items.sort(key=lambda x: (
