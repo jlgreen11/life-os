@@ -2067,10 +2067,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         Promise.all([
             fetch(API + '/health').then(function(r) { return r.json(); }),
-            fetch(API + '/api/system/sources').then(function(r) { return r.json(); })
+            fetch(API + '/api/system/sources').then(function(r) { return r.json(); }),
+            fetch(API + '/api/system/intelligence').then(function(r) { return r.json(); }).catch(function() { return {}; })
         ]).then(function(results) {
             var health = results[0];
             var sourcesData = results[1];
+            var intel = results[2];
             var html = '';
 
             // ── Section 1: Infrastructure health ──────────────────────────
@@ -2207,6 +2209,73 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                         if (dinfo.errors.length > 2) {
                             html += '<div class="sys-stale-msg" style="color:var(--text-muted)">... and ' + (dinfo.errors.length - 2) + ' more errors</div>';
                         }
+                    }
+                    html += '</div>';
+                }
+            }
+
+            // ── Section 5: Intelligence engine diagnostics ────────────────
+            // Shows prediction engine health: which prediction types are active
+            // or blocked, how many predictions were generated in the last 7 days,
+            // and how deep the user model is (signal profiles, routines, episodes).
+            // This is the single most useful section for understanding why Life OS's
+            // intelligence layer is or isn't generating useful insights.
+            var overall = intel.overall || {};
+            var predTypes = intel.prediction_types || {};
+            var depth = intel.user_model_depth || {};
+            var overallHealth = overall.health || 'unknown';
+            var healthColor = overallHealth === 'healthy' ? 'var(--accent-green)'
+                : overallHealth === 'degraded' ? 'var(--accent-yellow)'
+                : overallHealth === 'broken' ? 'var(--accent-red)' : 'var(--text-muted)';
+            var totalPreds = overall.total_predictions_7d || 0;
+            var activePredTypes = overall.active_types || 0;
+            var blockedPredTypes = overall.blocked_types || 0;
+
+            if (Object.keys(predTypes).length || Object.keys(depth).length) {
+                html += '<div class="section-header" style="color:' + healthColor + '">Prediction Engine — ' + escHtml(overallHealth) + '</div>';
+
+                // Summary card: 7-day stats and model depth at a glance
+                html += '<div class="card sys-card">';
+                html += '<div class="sys-row"><span class="sys-dot" style="background:' + healthColor + '"></span>';
+                html += '<span class="sys-name">7-day predictions</span>';
+                html += '<span class="sys-status">' + escHtml(String(totalPreds)) + ' generated';
+                if (activePredTypes || blockedPredTypes) {
+                    html += ' \u00b7 ' + escHtml(String(activePredTypes)) + ' active, ' + escHtml(String(blockedPredTypes)) + ' blocked';
+                }
+                html += '</span></div>';
+                // User model depth row
+                if (Object.keys(depth).length) {
+                    html += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;padding:0 4px">';
+                    html += escHtml(String(depth.episodes || 0)) + ' episodes \u00b7 ';
+                    html += escHtml(String(depth.semantic_facts || 0)) + ' facts \u00b7 ';
+                    html += escHtml(String(depth.routines || 0)) + ' routines \u00b7 ';
+                    html += escHtml(String(depth.workflows || 0)) + ' workflows \u00b7 ';
+                    html += escHtml(String(depth.signal_profiles || 0)) + ' signal profiles';
+                    html += '</div>';
+                }
+                html += '</div>';
+
+                // Per-type breakdown — only show types where we have useful data
+                var typeKeys = Object.keys(predTypes);
+                for (var ti = 0; ti < typeKeys.length; ti++) {
+                    var tname = typeKeys[ti];
+                    var tdata = predTypes[tname];
+                    var tStatus = tdata.status || 'unknown';
+                    var tCount = tdata.generated_last_7d || 0;
+                    var tDotColor = tStatus === 'active' ? 'var(--accent-green)'
+                        : tStatus === 'limited' ? 'var(--accent-yellow)' : 'var(--accent-red)';
+                    var tBlockers = tdata.blockers || [];
+
+                    html += '<div class="card sys-card' + (tStatus === 'blocked' ? ' sys-stale' : '') + '">';
+                    html += '<div class="sys-row">';
+                    html += '<span class="sys-dot" style="background:' + tDotColor + '"></span>';
+                    html += '<span class="sys-name">' + escHtml(tname) + '</span>';
+                    html += '<span class="sys-status" style="color:' + tDotColor + '">' + escHtml(tStatus) + '</span>';
+                    html += '<span class="sys-rate">' + escHtml(String(tCount)) + ' in 7d</span>';
+                    html += '</div>';
+                    // Show up to 2 blockers if any, so the user knows what's preventing predictions
+                    for (var bi = 0; bi < Math.min(tBlockers.length, 2); bi++) {
+                        html += '<div class="sys-stale-msg">\u26a0\ufe0f ' + escHtml(tBlockers[bi]) + '</div>';
                     }
                     html += '</div>';
                 }
