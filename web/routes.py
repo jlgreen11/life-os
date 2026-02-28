@@ -786,6 +786,22 @@ def register_routes(app: FastAPI, life_os) -> None:
         except Exception:
             cal_count = 0
 
+        # --- Insights (active, non-dismissed, non-expired) ---
+        # Counts insights the user hasn't yet dismissed so the Insights tab
+        # badge reflects how many fresh behavioral observations are waiting.
+        # Uses the same staleness window as /api/insights/summary (TTL-driven).
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    """SELECT COUNT(*) FROM insights
+                       WHERE (feedback IS NULL OR feedback NOT IN ('negative', 'dismissed', 'not_relevant'))
+                         AND datetime(created_at) >
+                             datetime('now', '-' || staleness_ttl_hours || ' hours')"""
+                ).fetchone()
+                insights_count = row[0] if row else 0
+        except Exception:
+            insights_count = 0
+
         # Inbox aggregates all three categories
         inbox_count = len(all_notifications) + task_count + cal_count
 
@@ -796,6 +812,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "email": email_count,
                 "calendar": cal_count,
                 "tasks": task_count,
+                "insights": insights_count,
             }
         }
 
