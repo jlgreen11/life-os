@@ -451,6 +451,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             color: var(--text-primary);
             white-space: pre-wrap;
         }
+        .draft-actions {
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+        }
+        .draft-btn {
+            padding: 6px 16px;
+            background: var(--accent);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .draft-btn:hover { opacity: 0.85; }
 
         /* --- Right: AI Sidebar --- */
         .ai-sidebar {
@@ -1703,17 +1719,49 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         if (!draftEl) return;
         safeSetContent(draftEl, '<div class="draft-area" style="opacity:0.5">Generating draft...</div>');
 
+        // Look up the original feed item to get the actual message body.
+        // The DraftRequest schema requires 'incoming_message' — sending only
+        // 'context' (the card title) leaves the AI with no content to work from.
+        var item = null;
+        for (var i = 0; i < feedItems.length; i++) {
+            if (feedItems[i].id === id) { item = feedItems[i]; break; }
+        }
+        var messageBody = (item && (item.body || item.snippet || item.preview || item.title)) || context;
+
         fetch(API + '/api/draft', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({context: context, event_id: id})
+            body: JSON.stringify({
+                incoming_message: messageBody,
+                context: context,
+                channel: (item && item.channel) || 'email'
+            })
         })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            safeSetContent(draftEl, '<div class="draft-area">' + escHtml(data.draft || data.content || 'No draft generated') + '</div>');
+            var draft = data.draft || data.content || 'No draft generated';
+            safeSetContent(draftEl,
+                '<div class="draft-area">' + escHtml(draft) + '</div>' +
+                '<div class="draft-actions">' +
+                    '<button class="draft-btn" onclick="copyDraft(this)">Copy</button>' +
+                '</div>'
+            );
         })
         .catch(function(err) {
             safeSetContent(draftEl, '<div class="draft-area" style="color:var(--accent-red)">Failed to generate draft: ' + escHtml(err.message) + '</div>');
+        });
+    }
+
+    /**
+     * Copy the generated draft text to the clipboard.
+     * The button sits in .draft-actions immediately after the .draft-area div.
+     */
+    function copyDraft(btn) {
+        var area = btn.closest('.draft-actions').previousElementSibling;
+        if (!area) return;
+        navigator.clipboard.writeText(area.textContent).then(function() {
+            btn.textContent = 'Copied!';
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
         });
     }
 
@@ -1839,29 +1887,35 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     function loadPeopleRadar() {
         var el = document.getElementById('peopleContent');
 
-        fetch(API + '/api/insights/summary')
+        // Use the contacts API which provides last_contact, contact_frequency_days,
+        // and typical_response_time — actual relationship metrics, not filtered insights.
+        fetch(API + '/api/contacts?has_metrics=true&limit=10')
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var insights = data.insights || data.predictions || [];
-            if (!Array.isArray(insights)) insights = [];
-            var people = insights.filter(function(ins) {
-                var t = (ins.type || ins.category || '').toLowerCase();
-                return t.indexOf('relationship_overdue') >= 0 || t.indexOf('people') >= 0 || t.indexOf('contact') >= 0;
-            });
-            if (people.length === 0) {
-                safeSetContent(el, '<div style="color:var(--text-muted)">No overdue contacts</div>');
+            var contacts = data.contacts || (Array.isArray(data) ? data : []);
+            if (contacts.length === 0) {
+                safeSetContent(el, '<div style="color:var(--text-muted)">No contact data yet</div>');
                 return;
             }
             var html = '';
-            for (var i = 0; i < Math.min(people.length, 5); i++) {
-                var p = people[i];
-                var name = p.entity || p.name || p.contact || 'Someone';
-                var detail = p.description || p.text || '';
+            for (var i = 0; i < Math.min(contacts.length, 8); i++) {
+                var c = contacts[i];
+                var name = c.name || c.contact_id || 'Unknown';
+                var lastContact = c.last_contact ? timeAgo(c.last_contact) : 'never';
+
+                // Mark overdue if days since last contact exceeds 1.5× the typical frequency
+                var overdue = false;
+                if (c.contact_frequency_days && c.last_contact) {
+                    var daysSince = (Date.now() - new Date(c.last_contact).getTime()) / 86400000;
+                    overdue = daysSince > c.contact_frequency_days * 1.5;
+                }
+                var dotColor = overdue ? 'var(--accent-red)' : 'var(--accent-green)';
+
                 html += '<div class="person-card">';
-                html += '<div class="person-avatar">' + escHtml(name.charAt(0).toUpperCase()) + '</div>';
+                html += '<div class="person-avatar" style="background:' + dotColor + '">' + escHtml(name.charAt(0).toUpperCase()) + '</div>';
                 html += '<div class="person-info">';
                 html += '<div class="person-name">' + escHtml(name) + '</div>';
-                html += '<div class="person-detail">' + escHtml(detail) + '</div>';
+                html += '<div class="person-detail">' + escHtml(lastContact) + '</div>';
                 html += '</div></div>';
             }
             safeSetContent(el, html);
@@ -1875,9 +1929,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         fetch(API + '/api/user-model/mood')
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var energy = Math.max(0, Math.min(100, (data.energy || 0.5) * 100));
-            var stress = Math.max(0, Math.min(100, (data.stress || 0.3) * 100));
-            var social = Math.max(0, Math.min(100, (data.social || 0.4) * 100));
+            // The endpoint returns {"mood": {"energy_level":…, "stress_level":…, "social_battery":…}}.
+            // Fall back to the top-level object for any future schema changes.
+            var m = data.mood || data || {};
+            var energy = Math.max(0, Math.min(100, (m.energy_level || 0.5) * 100));
+            var stress = Math.max(0, Math.min(100, (m.stress_level || 0.3) * 100));
+            var social = Math.max(0, Math.min(100, (m.social_battery || 0.4) * 100));
 
             document.getElementById('moodEnergy').style.width = energy + '%';
             document.getElementById('moodStress').style.width = stress + '%';
@@ -1976,9 +2033,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             try {
                 var data = JSON.parse(e.data);
                 if (data.type === 'notification' || data.type === 'event') {
-                    // Show banner so the user can choose to refresh -- don't
-                    // auto-reload the feed or badges.
+                    // Show the banner so the user can choose to refresh the feed.
                     document.getElementById('newItemsBanner').classList.add('visible');
+                    // Also refresh badge counts immediately so the nav dot stays accurate.
+                    loadBadges();
+                }
+                // Refresh mood bars when a mood_update event is pushed.
+                if (data.type === 'mood_update') {
+                    loadMood();
                 }
             } catch(err) {}
         };
@@ -2022,10 +2084,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     loadPeopleRadar();
     loadMood();
 
-    // --- No automatic polling ---
-    // Data loads once on page open; user can refresh manually via the
-    // refresh button or by reloading the page.  WebSocket still shows a
-    // banner when new items arrive.
+    // --- Auto-refresh sidebar data every 60 seconds ---
+    // The main feed is not auto-refreshed to avoid surprising the user mid-scroll;
+    // they use the banner / refresh button for that.  Sidebar panels (mood, predictions,
+    // people radar) are cheap and benefit from staying current.
+    setInterval(function() {
+        loadMood();
+        loadPredictions();
+        loadPeopleRadar();
+    }, 60000);
+
+    // Refresh badge counts every 2 minutes so the nav stays accurate.
+    setInterval(loadBadges, 120000);
 
     // --- WebSocket ---
     try { connectWS(); } catch(e) {}
