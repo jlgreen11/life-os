@@ -124,8 +124,10 @@ class GenericBrowserConnector(BrowserBaseConnector):
 
         for item in items[:self._max_items]:
             # Generate a stable hash for deduplication
-            item_hash = hashlib.md5(
-                json.dumps(item, sort_keys=True).encode()
+            # SECURITY: md5 used only for content deduplication, not security
+            item_hash = hashlib.md5(  # noqa: S324
+                json.dumps(item, sort_keys=True).encode(),
+                usedforsecurity=False,
             ).hexdigest()[:16]
 
             if item_hash not in seen_hashes:

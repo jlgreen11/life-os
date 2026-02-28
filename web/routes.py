@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -248,6 +248,63 @@ def register_routes(app: FastAPI, life_os) -> None:
             except Exception:
                 pass
 
+        # --- Calendar (upcoming events for badge count) ---
+        if topic in (None, "inbox", "calendar"):
+            try:
+                now = datetime.now(timezone.utc)
+                # Show events in the next 7 days for the feed/badge
+                end_window = (now + timedelta(days=7)).isoformat()
+                with life_os.db.get_connection("events") as conn:
+                    rows = conn.execute(
+                        """SELECT id, payload, timestamp FROM events
+                           WHERE type = 'calendar.event.created'
+                           ORDER BY timestamp DESC""",
+                    ).fetchall()
+
+                # Deduplicate by event_id
+                seen_eids: set[str] = set()
+                for row in rows:
+                    try:
+                        payload = json.loads(row["payload"])
+                        if isinstance(payload, str):
+                            payload = json.loads(payload)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    eid = payload.get("event_id", row["id"])
+                    if eid in seen_eids:
+                        continue
+                    seen_eids.add(eid)
+
+                    evt_start = payload.get("start_time", "")
+                    if not evt_start or evt_start < now.isoformat():
+                        continue
+                    if evt_start > end_window:
+                        continue
+
+                    start_time = payload.get("start_time", "")
+                    end_time = payload.get("end_time", "")
+                    location = payload.get("location", "")
+                    items.append({
+                        "id": row["id"],
+                        "kind": "event",
+                        "channel": "calendar",
+                        "title": payload.get("title", "Calendar Event"),
+                        "body": payload.get("description", ""),
+                        "priority": "normal",
+                        "timestamp": start_time,
+                        "source": "calendar",
+                        "metadata": {
+                            "start_time": start_time,
+                            "end_time": end_time,
+                            "location": location,
+                            "attendees": payload.get("attendees", []),
+                            "is_all_day": payload.get("is_all_day", False),
+                        },
+                    })
+            except Exception:
+                pass
+
         # --- Sort by priority (critical > high > normal > low), then newest first ---
         priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
         items.sort(key=lambda x: (
@@ -263,6 +320,75 @@ def register_routes(app: FastAPI, life_os) -> None:
             sorted_items.extend(group_list)
 
         return {"items": sorted_items[:limit], "count": len(sorted_items[:limit]), "topic": topic or "inbox"}
+
+    # -------------------------------------------------------------------
+    # Calendar Events
+    # -------------------------------------------------------------------
+
+    @app.get("/api/calendar/events")
+    async def calendar_events(start: str, end: str):
+        """Return deduplicated calendar events overlapping [start, end].
+
+        Query params:
+            start: Start of range as YYYY-MM-DD (inclusive).
+            end:   End of range as YYYY-MM-DD (exclusive).
+
+        Deduplicates by payload.event_id, keeping the most recent sync.
+        Returns events whose start_time/end_time overlap the requested range.
+        """
+        import asyncio
+
+        def _query():
+            with life_os.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """SELECT id, payload, timestamp
+                       FROM events
+                       WHERE type = 'calendar.event.created'
+                       ORDER BY timestamp DESC""",
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+        rows = await asyncio.to_thread(_query)
+
+        # Deduplicate by event_id — keep most recent sync per calendar event
+        seen: dict[str, dict] = {}
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            eid = payload.get("event_id", row["id"])
+            if eid in seen:
+                continue  # rows already ordered by timestamp DESC
+            seen[eid] = payload
+
+        # Filter to events overlapping [start, end)
+        results = []
+        for payload in seen.values():
+            evt_start = payload.get("start_time", "")
+            evt_end = payload.get("end_time", "")
+            if not evt_start:
+                continue
+            # An event overlaps if it starts before range-end AND ends after range-start
+            if evt_start < end and (evt_end > start if evt_end else evt_start >= start):
+                results.append({
+                    "id": payload.get("event_id", ""),
+                    "title": payload.get("title", ""),
+                    "start_time": evt_start,
+                    "end_time": evt_end,
+                    "is_all_day": payload.get("is_all_day", False),
+                    "location": payload.get("location", ""),
+                    "attendees": payload.get("attendees", []),
+                    "description": payload.get("description", ""),
+                    "calendar_id": payload.get("calendar_id", ""),
+                })
+
+        # Sort by start_time
+        results.sort(key=lambda e: e["start_time"])
+        return {"events": results, "count": len(results)}
 
     # -------------------------------------------------------------------
     # Briefing
