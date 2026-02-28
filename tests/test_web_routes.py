@@ -30,6 +30,15 @@ def mock_life_os():
     mock_conn = Mock()
     mock_conn.execute = Mock()
     life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+    # Return a healthy per-database status dict so the /health endpoint can
+    # iterate it without hitting the real filesystem.
+    life_os.db.get_database_health = Mock(return_value={
+        "events":      {"status": "ok", "errors": [], "path": "/tmp/events.db",      "size_bytes": 1024},
+        "entities":    {"status": "ok", "errors": [], "path": "/tmp/entities.db",    "size_bytes": 1024},
+        "state":       {"status": "ok", "errors": [], "path": "/tmp/state.db",       "size_bytes": 1024},
+        "user_model":  {"status": "ok", "errors": [], "path": "/tmp/user_model.db",  "size_bytes": 1024},
+        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+    })
 
     # Mock event bus
     life_os.event_bus = Mock()

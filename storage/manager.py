@@ -13,10 +13,13 @@ Database Architecture:
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
@@ -89,6 +92,66 @@ class DatabaseManager:
             raise
         finally:
             conn.close()
+
+    def get_database_health(self) -> dict[str, dict]:
+        """Run a quick integrity check on every database and return per-DB results.
+
+        Uses ``PRAGMA quick_check`` (much faster than ``integrity_check``) to
+        detect B-tree corruption, missing pages, and malformed cell structures.
+        Each database is checked independently so a problem in one file does not
+        prevent the other four from being reported.
+
+        Returns a dict keyed by database name, each value containing:
+          - ``status``: ``"ok"`` or ``"corrupted"``
+          - ``errors``: list of error strings (empty when status is "ok")
+          - ``path``: absolute path to the database file
+          - ``size_bytes``: file size in bytes, or 0 if the file doesn't exist yet
+
+        Example::
+
+            {
+                "events":     {"status": "ok",        "errors": [], ...},
+                "user_model": {"status": "corrupted", "errors": ["..."], ...},
+            }
+
+        Safe to call frequently — ``quick_check`` opens a read-only connection
+        and returns within milliseconds on typical database sizes.  Any exception
+        (e.g. file not found, permission denied) is caught and reported as an
+        error so callers never see a Python traceback from this method.
+        """
+        results: dict[str, dict] = {}
+        for db_name, db_path in self._databases.items():
+            path = Path(db_path)
+            size_bytes = path.stat().st_size if path.exists() else 0
+            errors: list[str] = []
+            status = "ok"
+            try:
+                # Open a fresh read-only connection to avoid disturbing any
+                # active WAL transaction in progress on the normal write path.
+                conn = sqlite3.connect(db_path)
+                conn.execute("PRAGMA journal_mode=WAL")
+                rows = conn.execute("PRAGMA quick_check(10)").fetchall()
+                conn.close()
+                # quick_check returns a single "ok" row when healthy; any other
+                # content is an error message.
+                for row in rows:
+                    msg = row[0]
+                    if msg != "ok":
+                        errors.append(msg)
+                        status = "corrupted"
+            except Exception as exc:
+                errors.append(str(exc))
+                status = "corrupted"
+                logger.warning("Database health check failed for %s: %s", db_name, exc)
+
+            results[db_name] = {
+                "status": status,
+                "errors": errors,
+                "path": db_path,
+                "size_bytes": size_bytes,
+            }
+
+        return results
 
     # -----------------------------------------------------------------------
     # events.db — The immutable event log

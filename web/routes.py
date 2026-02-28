@@ -84,10 +84,17 @@ def register_routes(app: FastAPI, life_os) -> None:
         connectors = await asyncio.gather(*[_check(c) for c in life_os.connectors])
 
         # Offload synchronous SQLite calls to threads
-        events_stored, vector_stats = await asyncio.gather(
+        events_stored, vector_stats, db_health = await asyncio.gather(
             asyncio.to_thread(life_os.event_store.get_event_count),
             asyncio.to_thread(life_os.vector_store.get_stats),
+            asyncio.to_thread(life_os.db.get_database_health),
         )
+
+        # Derive overall DB status: "ok" if all databases are healthy,
+        # "degraded" if one or more are corrupted.  Callers can inspect
+        # db_health for per-database detail.
+        corrupted_dbs = [name for name, info in db_health.items() if info["status"] != "ok"]
+        db_status = "degraded" if corrupted_dbs else "ok"
 
         return {
             "status": "ok",
@@ -96,6 +103,8 @@ def register_routes(app: FastAPI, life_os) -> None:
             "events_stored": events_stored,
             "vector_store": vector_stats,
             "connectors": list(connectors),
+            "db_health": db_health,
+            "db_status": db_status,
         }
 
     @app.get("/api/status")
