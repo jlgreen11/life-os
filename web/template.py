@@ -2035,18 +2035,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // --- Card Interaction ---
     function toggleCard(id) {
+        // Collapse the previously-expanded card without touching the DOM for
+        // any other card. This avoids the full-feed re-render that caused a
+        // visual flash and scroll-position loss on every expand/collapse.
+        if (expandedCardId && expandedCardId !== id) {
+            var prevCard = document.querySelector('[data-id="' + expandedCardId + '"]');
+            if (prevCard) prevCard.classList.remove('expanded');
+        }
+
+        var card = document.querySelector('[data-id="' + id + '"]');
+        if (!card) return;
+
         if (expandedCardId === id) {
+            // Clicking an already-expanded card collapses it.
             expandedCardId = null;
+            card.classList.remove('expanded');
         } else {
+            // Expand the clicked card.  CSS rule
+            // ".card.expanded .card-detail { display: block }" handles
+            // revealing the detail panel — no inline style needed.
             expandedCardId = id;
+            card.classList.add('expanded');
         }
-        // Re-render feed
-        var el = document.getElementById('feedContent');
-        var html = '';
-        for (var i = 0; i < feedItems.length; i++) {
-            html += renderCard(feedItems[i]);
-        }
-        if (html) safeSetContent(el, html);
     }
 
     function completeTask(id) {
@@ -2546,13 +2556,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     // --- Escape key: collapse expanded card ---
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape' && expandedCardId) {
+            // Use targeted class removal — same pattern as toggleCard() — to
+            // avoid the full feed re-render and its associated scroll-position loss.
+            var card = document.querySelector('[data-id="' + expandedCardId + '"]');
+            if (card) card.classList.remove('expanded');
             expandedCardId = null;
-            var el = document.getElementById('feedContent');
-            var html = '';
-            for (var i = 0; i < feedItems.length; i++) {
-                html += renderCard(feedItems[i]);
-            }
-            if (html) safeSetContent(el, html);
         }
     });
 
