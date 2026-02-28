@@ -8,8 +8,10 @@ and the dynamics of each relationship.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
+import uuid
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -18,6 +20,35 @@ from services.signal_extractor.base import BaseExtractor
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 
 logger = logging.getLogger(__name__)
+
+# Auto-create a contact record only after this many observed interactions.
+# Filters out one-off senders while ensuring real contacts are surfaced.
+MIN_INTERACTIONS_FOR_AUTO_CREATE = 2
+
+
+def _name_from_email(addr: str) -> str:
+    """Derive a human-readable display name from an email address.
+
+    Splits the local part on common separators (dot, underscore, hyphen, plus)
+    and capitalises each token.  Falls back to the full local part when no
+    separators are present.
+
+    Args:
+        addr: Raw email address string, e.g. ``"john.doe@example.com"``.
+
+    Returns:
+        A best-effort display name, e.g. ``"John Doe"``.
+
+    Example::
+
+        >>> _name_from_email("john.doe@example.com")
+        'John Doe'
+        >>> _name_from_email("jsmith@company.org")
+        'Jsmith'
+    """
+    local = addr.split("@")[0]
+    parts = re.split(r"[._\-+]", local)
+    return " ".join(p.capitalize() for p in parts if p)
 
 
 def _compute_frequency_days(timestamps: list[str]) -> float | None:
@@ -307,9 +338,12 @@ class RelationshipExtractor(BaseExtractor):
 
         The lookup from email address → ``contact_id`` is performed in a single
         batch query via ``contact_identifiers`` to avoid N+1 database
-        round-trips.  Addresses with no matching contact record are silently
-        skipped (they are typically unrecognised senders or marketing addresses
-        that slipped past the filter before reaching this layer).
+        round-trips.  Addresses with no matching contact record are
+        auto-created as minimal stubs (name derived from the local part of the
+        email address) when their interaction count meets
+        ``MIN_INTERACTIONS_FOR_AUTO_CREATE``.  This ensures that frequent email
+        correspondents appear in the People Radar even when no dedicated
+        connector (Google Contacts, iMessage, Signal) has created the record.
 
         Fail-open: any exception here is logged and swallowed.  The signal
         profile remains the authoritative source; the contacts-table columns
@@ -341,7 +375,37 @@ class RelationshipExtractor(BaseExtractor):
                 for addr, profile in contacts_data.items():
                     contact_id = email_to_contact_id.get(addr.lower())
                     if not contact_id:
-                        continue  # No matching entity — skip silently.
+                        # Auto-create a minimal contact stub for email addresses
+                        # observed enough times to be a real person.  One-off
+                        # senders are skipped to avoid polluting the contacts table
+                        # with noise.
+                        if profile.get("interaction_count", 0) < MIN_INTERACTIONS_FOR_AUTO_CREATE:
+                            continue
+
+                        # Use a deterministic UUID so repeated runs never create
+                        # duplicate rows even if the contact_identifiers INSERT
+                        # races with itself.
+                        contact_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"auto:{addr.lower()}"))
+                        name = _name_from_email(addr)
+                        conn.execute(
+                            """INSERT OR IGNORE INTO contacts
+                                   (id, name, emails, channels, created_at, updated_at)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            (
+                                contact_id,
+                                name,
+                                json.dumps([addr]),
+                                json.dumps({"email": addr}),
+                                now,
+                                now,
+                            ),
+                        )
+                        conn.execute(
+                            """INSERT OR IGNORE INTO contact_identifiers
+                                   (identifier, identifier_type, contact_id)
+                               VALUES (?, 'email', ?)""",
+                            (addr.lower(), contact_id),
+                        )
 
                     freq_days = _compute_frequency_days(
                         profile.get("interaction_timestamps", [])
