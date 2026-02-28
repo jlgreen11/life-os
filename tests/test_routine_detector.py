@@ -536,3 +536,57 @@ class TestRoutineDetector:
         # Check for variety in triggers
         triggers = {r["trigger"] for r in routines}
         assert len(triggers) >= 2  # At least 2 different trigger types
+
+    def test_temporal_routine_varied_hours_same_bucket(self, db, user_model_store):
+        """Regression test: activities at different hours within the same time-of-day
+        bucket should be aggregated and detect a routine.
+
+        Before the fix, the detector grouped by exact UTC hour, so an activity at
+        3am on one day and 4am on another would be split into two (hour, type)
+        groups each with day_count=1 — never reaching min_occurrences=3 — even
+        though the activity consistently happens "at night."  The fix groups by
+        time-of-day bucket (morning/midday/afternoon/evening/night) in the SQL
+        query so all hours within the same bucket are counted together.
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        # Simulate production scenario: email_received arriving at different UTC
+        # hours each day (3am one day, 4am the next, 5am the third) — all in the
+        # "night" bucket (hours 0–4 and 23).  The old exact-hour grouping would
+        # give day_count=1 for each (hour, email_received) pair and detect nothing.
+        base_date = datetime.now(timezone.utc) - timedelta(days=5)
+        varying_hours = [3, 4, 5, 3, 4]  # different hours, all night bucket (0–4)
+
+        for day_offset, hour in enumerate(varying_hours):
+            day = (base_date + timedelta(days=day_offset)).replace(
+                hour=hour, minute=0, second=0, microsecond=0
+            )
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "email_received",
+                "content_summary": "Email received",
+            })
+            # Add a second action (email_sent) shortly after on 3+ days so that
+            # bucket has >= 1 recurring action and consistency can reach 0.6.
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (day + timedelta(minutes=5)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "email_sent",
+                "content_summary": "Email sent",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # With bucket-based grouping the night bucket should be detected.
+        night_routines = [r for r in routines if r["trigger"] == "night"]
+        assert len(night_routines) >= 1, (
+            "Expected a 'night' routine from activities spread across varied UTC hours "
+            "(3am, 4am, 5am) — the time-bucket grouping fix should aggregate them."
+        )
+
+        routine = night_routines[0]
+        assert routine["consistency_score"] >= 0.6
+        assert len(routine["steps"]) >= 1
