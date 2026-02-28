@@ -2142,14 +2142,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function loadBadges() {
-        var topicIds = ['inbox', 'messages', 'email', 'calendar', 'tasks'];
-        topicIds.forEach(function(tid) {
-            fetch(API + '/api/dashboard/feed?topic=' + tid + '&limit=100')
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                setBadge(tid, data.count || 0);
-            })
-            .catch(function() {});
+        // Single request to /api/dashboard/badges returns all counts at once.
+        // This replaces the previous pattern of 5 separate full-feed requests
+        // (each with limit=100) which fetched ~50 KB of items just to get counts.
+        fetch(API + '/api/dashboard/badges')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var badges = data.badges || {};
+            var topicIds = Object.keys(badges);
+            for (var i = 0; i < topicIds.length; i++) {
+                setBadge(topicIds[i], badges[topicIds[i]] || 0);
+            }
+        })
+        .catch(function() {
+            // Silently fail — badge counts are non-critical UI decoration.
         });
     }
 
