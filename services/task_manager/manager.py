@@ -510,6 +510,82 @@ class TaskManager:
 
         return context
 
+    def _is_duplicate_task(self, title: str, lookback_days: int = 30, is_completion: bool = False) -> bool:
+        """Check whether a task with this title already exists in the database.
+
+        Performs a case-insensitive, whitespace-normalized title comparison
+        against tasks created within the last ``lookback_days`` days.
+
+        Two distinct deduplication modes are supported:
+
+        **Pending task mode** (``is_completion=False``, default):
+            Checks all statuses (pending, completed, dismissed). This prevents
+            re-creating a task from a re-synced email even if the user previously
+            dismissed it as irrelevant.
+
+        **Completion signal mode** (``is_completion=True``):
+            Only checks if a completed or dismissed task already exists. A
+            *pending* task with the same title is intentionally NOT treated as a
+            duplicate — the completion record must still be written so that the
+            workflow detector can pair the original request with its completion
+            signal. This is how the system learns "receive report request →
+            send report" patterns from historical email data.
+
+        Args:
+            title: The task title to check for duplicates.
+            lookback_days: How far back to search (default 30 days).  Tasks
+                older than this are ignored so that genuinely recurring tasks
+                (e.g., "Pay monthly rent") can appear again after a full cycle.
+            is_completion: When True, only block if a completed/dismissed copy
+                already exists (allow completion events to pair with pending).
+
+        Returns:
+            True if a matching task already exists; False if this is new.
+
+        Example::
+
+            manager._is_duplicate_task("Review Q3 report")  # → False (new task)
+            # ... after create_task("Review Q3 report") ...
+            manager._is_duplicate_task("Review Q3 report")  # → True (blocked)
+            manager._is_duplicate_task("REVIEW Q3 REPORT")  # → True (case-insensitive)
+
+            # Completion signal for a pending task is NOT a duplicate:
+            manager._is_duplicate_task("Send report", is_completion=True)  # → False
+            # ...even if a pending "Send report" already exists in the DB
+        """
+        # Normalize: strip whitespace and lowercase for robust comparison.
+        # SQLite's LOWER() handles ASCII; Python lower() handles Unicode.
+        normalized = title.strip().lower()
+        if not normalized:
+            return False  # Empty titles are never considered duplicates
+
+        with self.db.get_connection("state") as conn:
+            if is_completion:
+                # Completion mode: only block if a completed or dismissed copy
+                # already exists. A pending task is not a duplicate — the
+                # completion record is needed for workflow pattern learning.
+                row = conn.execute(
+                    """SELECT id FROM tasks
+                       WHERE LOWER(TRIM(title)) = ?
+                         AND status IN ('completed', 'dismissed')
+                         AND created_at > datetime('now', ? || ' days')
+                       LIMIT 1""",
+                    (normalized, f"-{lookback_days}"),
+                ).fetchone()
+            else:
+                # Pending mode: block regardless of status — prevents re-creating
+                # tasks that were previously completed or dismissed from re-synced
+                # emails.
+                row = conn.execute(
+                    """SELECT id FROM tasks
+                       WHERE LOWER(TRIM(title)) = ?
+                         AND created_at > datetime('now', ? || ' days')
+                       LIMIT 1""",
+                    (normalized, f"-{lookback_days}"),
+                ).fetchone()
+
+        return row is not None
+
     async def ingest_ai_extracted_tasks(self, tasks: list[dict], source_event_id: str):
         """
         Store tasks extracted by the AI engine from messages/emails.
@@ -528,14 +604,40 @@ class TaskManager:
         When a task is extracted with completed=true (e.g., "I sent the report yesterday"),
         it's immediately marked as completed. This generates task.completed events that
         enable workflow detection from historical data instead of waiting days for aging.
+
+        Duplicate suppression: tasks whose normalized title (lowercase, trimmed)
+        matches an existing task created within the last 30 days are silently
+        skipped.  This prevents the same action item from accumulating multiple
+        copies when an email is processed more than once (e.g., during a full
+        connector re-sync or when the AI extracts overlapping action items).
         """
         for task_data in tasks:
-            # Check if the AI detected this task as already completed
+            title = task_data.get("title", "Untitled task")
+
+            # Check if the AI detected this task as already completed.
+            # We need this BEFORE the dedup check because the dedup logic
+            # behaves differently for completion signals vs. new pending tasks.
             is_completed = task_data.get("completed", False)
+
+            # --- Deduplication guard: skip tasks that already exist ---
+            # AI extraction runs on every incoming message event, so the same
+            # action item can appear multiple times if an email is synced again
+            # or if the LLM extracts overlapping items from the same message.
+            #
+            # Pending task: block if ANY matching task exists (all statuses).
+            # Completion signal: only block if a completed/dismissed copy exists.
+            #   A pending task is not a duplicate — the completion record is
+            #   needed so the workflow detector can pair request with response.
+            if self._is_duplicate_task(title, is_completion=is_completed):
+                logger.debug(
+                    "Skipping duplicate AI-extracted task '%s' (already exists in last 30 days)",
+                    title,
+                )
+                continue
 
             # Create the task (always starts as pending initially)
             task_id = await self.create_task(
-                title=task_data.get("title", "Untitled task"),
+                title=title,
                 source="ai_extracted",           # Marks provenance as AI-extracted
                 source_event_id=source_event_id,   # Links back to the originating message
                 priority=task_data.get("priority", "normal"),

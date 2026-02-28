@@ -312,8 +312,13 @@ async def test_backfill_limit_parameter(db, event_store):
         })
 
     class MockAIEngine:
+        """Returns a unique task title per call to avoid deduplication blocking."""
+        def __init__(self):
+            self._call = 0
+
         async def extract_action_items(self, text, source):
-            return [{"title": "Task", "due_hint": None, "priority": "normal"}]
+            self._call += 1
+            return [{"title": f"Task {self._call}", "due_hint": None, "priority": "normal"}]
 
     task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
 
@@ -447,13 +452,13 @@ async def test_backfill_is_idempotent(db, event_store):
 
     # First run should extract 1 task
     assert stats1["tasks_extracted"] == 1
-    # Second run should also extract 1 task (the AI engine still returns the same result)
-    # This is expected behavior - the script is idempotent at the event level,
-    # but if the AI consistently identifies tasks, they will be created each time.
-    # In production, users would only run this once for historical data.
-    assert stats2["tasks_extracted"] == 1
-    # Total tasks should be 2 (1 from each run)
-    assert tasks_after_second == tasks_after_first + 1
+    # Second run: deduplication suppresses the re-creation.
+    # The task already exists from the first run, so the AI's output is silently
+    # skipped — true idempotency: re-running the backfill does not accumulate
+    # duplicate tasks that the user would have to dismiss one by one.
+    assert stats2["tasks_extracted"] == 0
+    # Total task count must not grow on the second run
+    assert tasks_after_second == tasks_after_first
 
 
 @pytest.mark.asyncio
