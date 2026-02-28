@@ -72,6 +72,70 @@ class LinguisticExtractor(BaseExtractor):
         flags=re.UNICODE,
     )
 
+    # Humor markers signal levity, playfulness, and informal register.
+    # Tracking these helps calibrate the AI's tone when drafting replies —
+    # a user who frequently says "lol" wants casual drafts, not formal ones.
+    HUMOR_PATTERNS = [
+        r'\bhaha\b', r'\bhehe\b', r'\blol\b', r'\blmao\b', r'\blmfao\b',
+        r'\bjk\b', r'\bjust kidding\b', r'\brofl\b', r'\bxd\b',
+    ]
+
+    # Affirmative response patterns reveal how the user says "yes".  Matching
+    # these builds a vocabulary the AI can mirror when accepting requests or
+    # confirming plans.
+    AFFIRMATIVE_PATTERNS = [
+        r'\byes\b', r'\byeah\b', r'\byep\b', r'\bsure\b',
+        r'\babsolutely\b', r'\bsounds good\b', r'\bof course\b',
+        r'\bdefinitely\b', r'\bwill do\b', r'\bperfect\b',
+        r'\bgreat\b', r'\bon it\b',
+    ]
+
+    # Negative/declination patterns reveal how the user says "no" or declines.
+    # Useful for drafting polite refusals that match the user's natural voice.
+    NEGATIVE_PATTERNS = [
+        r"\bcan't make it\b", r"\bunable to\b", r"\bnot possible\b",
+        r"\bunfortunately\b", r"\bsorry,?\s+i\b", r"\bapologies\b",
+        r"\bI(?:'m| am) not\b", r"\bI (?:don't|can't|won't|couldn't)\b",
+    ]
+
+    # Gratitude patterns reveal how the user expresses appreciation.
+    # The AI can mirror these when closing drafted messages.
+    GRATITUDE_PATTERNS = [
+        r'\bthank you\b', r'\bthanks\b', r'\bappreciate\b',
+        r'\bgrateful\b', r'\bmuch appreciated\b', r'\bthank\b',
+    ]
+
+    # Oxford comma detection regexes — mutually exclusive by design:
+    #   OXFORD_COMMA_RE:  "eggs, bacon, and coffee"  (comma before conjunction)
+    #   NO_OXFORD_RE:     "eggs, bacon and coffee"   (no comma before conjunction)
+    # Both require a preceding comma in the list, so they only fire on actual
+    # list constructions (not stray "and" conjunctions).
+    OXFORD_COMMA_RE = re.compile(r'\b\w+,\s+\w+,\s+(?:and|or)\s+\w+', re.IGNORECASE)
+    NO_OXFORD_RE = re.compile(r'\b\w+,\s+\w+\s+(?:and|or)\s+\w+', re.IGNORECASE)
+
+    def _detect_first(self, text: str, patterns: list[str]) -> Optional[str]:
+        """Return the actual matched text of the first pattern that fires, or None.
+
+        Scans the pattern bank in order and returns the lowercased matched
+        string on the first hit.  The returned value is the word or phrase as
+        written by the user (e.g. ``"lol"``, ``"thank you"``), not the regex
+        pattern string.  This lets the caller build frequency distributions of
+        the user's actual vocabulary rather than of abstract pattern categories.
+
+        Example::
+
+            self._detect_first("haha that's hilarious", self.HUMOR_PATTERNS)
+            # → "haha"
+
+            self._detect_first("Of course, I'll get that done", self.AFFIRMATIVE_PATTERNS)
+            # → "of course"
+        """
+        for p in patterns:
+            m = re.search(p, text, re.IGNORECASE)
+            if m:
+                return m.group(0).lower()
+        return None
+
     def can_process(self, event: dict) -> bool:
         # Analyse both directions.  Outbound messages feed the user's own
         # linguistic fingerprint; inbound messages build per-contact incoming
@@ -192,6 +256,53 @@ class LinguisticExtractor(BaseExtractor):
         greeting = self._detect_greeting(first_line)
         closing = self._detect_closing(last_line)
 
+        # --- Extended pattern detection ---
+        # These feed into the higher-level LinguisticProfile fields that were
+        # previously left at their zero/None defaults.
+
+        # Humor markers reveal levity and playfulness.  Track the first
+        # matching keyword per message so we can build a Top-5 list later.
+        humor_count = sum(
+            len(re.findall(p, text, re.IGNORECASE)) for p in self.HUMOR_PATTERNS
+        )
+        humor_type = self._detect_first(text, self.HUMOR_PATTERNS)
+
+        # Affirmative patterns capture how the user says "yes".
+        affirmative_count = sum(
+            len(re.findall(p, text, re.IGNORECASE)) for p in self.AFFIRMATIVE_PATTERNS
+        )
+        affirmative_word = self._detect_first(text, self.AFFIRMATIVE_PATTERNS)
+
+        # Negative patterns capture how the user declines or says "no".
+        negative_count = sum(
+            len(re.findall(p, text, re.IGNORECASE)) for p in self.NEGATIVE_PATTERNS
+        )
+        negative_word = self._detect_first(text, self.NEGATIVE_PATTERNS)
+
+        # Gratitude patterns capture how the user expresses thanks.
+        gratitude_count = sum(
+            len(re.findall(p, text, re.IGNORECASE)) for p in self.GRATITUDE_PATTERNS
+        )
+        gratitude_word = self._detect_first(text, self.GRATITUDE_PATTERNS)
+
+        # Oxford comma usage — counts list constructions with and without the
+        # serial comma.  Needs ≥5 list instances before we can form a confident
+        # preference signal.
+        oxford_comma_count = len(self.OXFORD_COMMA_RE.findall(text))
+        no_oxford_count = len(self.NO_OXFORD_RE.findall(text))
+
+        # Capitalization analysis — counts sentence starts (upper vs. lower)
+        # and ALL-CAPS emphasis words.  These feed into capitalization_style.
+        cap_starts = sum(1 for s in sentences if s and s[0].isupper())
+        lower_starts = sum(1 for s in sentences if s and s[0].islower())
+        # ALL-CAPS words signal emphatic style (e.g., "I NEED this ASAP").
+        # Exclude single-letter words and non-alpha tokens to avoid noise.
+        all_caps_words = sum(1 for w in words if len(w) > 1 and w.isupper() and w.isalpha())
+
+        # Average word length is a proxy for vocabulary sophistication:
+        # longer average word length → more complex/technical vocabulary.
+        avg_word_length = sum(len(w) for w in words) / max(word_count, 1)
+
         # --- Build the signal ---
         # All rates are normalised per sentence so the profile stays comparable
         # regardless of message length.
@@ -206,6 +317,7 @@ class LinguisticExtractor(BaseExtractor):
                 "word_count": word_count,
                 "avg_sentence_length": round(avg_sentence_length, 1),
                 "unique_word_ratio": round(unique_word_ratio, 3),
+                "avg_word_length": round(avg_word_length, 2),
                 "formality": round(formality, 2),
                 "hedge_rate": round(hedge_count / max(len(sentences), 1), 3),
                 "assertion_rate": round(assertion_count / max(len(sentences), 1), 3),
@@ -217,6 +329,21 @@ class LinguisticExtractor(BaseExtractor):
                 "profanity_count": profanity_count,
                 "greeting_detected": greeting,
                 "closing_detected": closing,
+                # Extended pattern fields — feed into the higher-level
+                # LinguisticProfile fields (humor_markers, affirmative_patterns, etc.)
+                "humor_count": humor_count,
+                "humor_type": humor_type,
+                "affirmative_count": affirmative_count,
+                "affirmative_word": affirmative_word,
+                "negative_count": negative_count,
+                "negative_word": negative_word,
+                "gratitude_count": gratitude_count,
+                "gratitude_word": gratitude_word,
+                "oxford_comma_count": oxford_comma_count,
+                "no_oxford_count": no_oxford_count,
+                "cap_starts": cap_starts,
+                "lower_starts": lower_starts,
+                "all_caps_words": all_caps_words,
             },
         }
 
@@ -355,6 +482,21 @@ class LinguisticExtractor(BaseExtractor):
             # messages don't inflate the averages.
             "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
             "profanity_rate": statistics.mean(s["profanity_count"] / max(s["word_count"], 1) for s in samples),
+            # New extended rates — use .get() with a 0 default so existing
+            # samples (before this feature was added) are treated as zero-count
+            # rather than raising a KeyError.
+            "humor_rate": statistics.mean(
+                s.get("humor_count", 0) / max(s["word_count"], 1) for s in samples
+            ),
+            "affirmative_rate": statistics.mean(
+                s.get("affirmative_count", 0) / max(s["word_count"], 1) for s in samples
+            ),
+            "negative_rate": statistics.mean(
+                s.get("negative_count", 0) / max(s["word_count"], 1) for s in samples
+            ),
+            "gratitude_rate": statistics.mean(
+                s.get("gratitude_count", 0) / max(s["word_count"], 1) for s in samples
+            ),
         }
 
         # Surface the user's most-used greetings and closings (top 3 each).
@@ -364,6 +506,58 @@ class LinguisticExtractor(BaseExtractor):
         all_closings = [s["closing_detected"] for s in samples if s["closing_detected"]]
         data["common_greetings"] = [g for g, _ in Counter(all_greetings).most_common(3)]
         data["common_closings"] = [c for c, _ in Counter(all_closings).most_common(3)]
+
+        # --- Derived higher-level profile fields ---
+        # These correspond directly to LinguisticProfile model fields that
+        # were previously left at their hardcoded defaults.
+
+        # vocabulary_complexity: blends lexical diversity (unique_word_ratio)
+        # with average word length (normalized to 0–1 on a 2–8 char scale).
+        # Scores closer to 1.0 indicate richer, more complex language.
+        avg_word_len = statistics.mean(s.get("avg_word_length", 4.0) for s in samples)
+        avg_unique = statistics.mean(s["unique_word_ratio"] for s in samples)
+        word_len_norm = min(1.0, max(0.0, (avg_word_len - 2.0) / 6.0))
+        data["vocabulary_complexity"] = round(avg_unique * 0.6 + word_len_norm * 0.4, 3)
+
+        # capitalization_style: inferred from the balance of sentence-starting
+        # caps vs. lowercase starts and the frequency of ALL-CAPS emphasis words.
+        total_starts = sum(s.get("cap_starts", 0) + s.get("lower_starts", 0) for s in samples)
+        total_lower_starts = sum(s.get("lower_starts", 0) for s in samples)
+        total_caps_words = sum(s.get("all_caps_words", 0) for s in samples)
+        total_words_all = sum(s["word_count"] for s in samples)
+        if total_starts > 0:
+            lower_ratio = total_lower_starts / total_starts
+            caps_emphasis_rate = total_caps_words / max(total_words_all, 1)
+            if lower_ratio > 0.7:
+                data["capitalization_style"] = "all_lower"
+            elif caps_emphasis_rate > 0.05:
+                data["capitalization_style"] = "all_caps_emphasis"
+            else:
+                data["capitalization_style"] = "standard"
+        else:
+            data["capitalization_style"] = "standard"
+
+        # uses_oxford_comma: aggregate list-construction counts across all samples.
+        # Require at least 5 list instances before committing to a preference so
+        # a single message doesn't bias the result.
+        total_oxford = sum(s.get("oxford_comma_count", 0) for s in samples)
+        total_no_oxford = sum(s.get("no_oxford_count", 0) for s in samples)
+        total_lists = total_oxford + total_no_oxford
+        if total_lists >= 5:
+            data["uses_oxford_comma"] = total_oxford >= total_no_oxford
+        else:
+            data["uses_oxford_comma"] = None  # insufficient data
+
+        # Top-N characteristic vocabulary for each response category.
+        # Mirrors how common_greetings / common_closings are built.
+        all_humor = [s.get("humor_type") for s in samples if s.get("humor_type")]
+        all_affirmative = [s.get("affirmative_word") for s in samples if s.get("affirmative_word")]
+        all_negative = [s.get("negative_word") for s in samples if s.get("negative_word")]
+        all_gratitude = [s.get("gratitude_word") for s in samples if s.get("gratitude_word")]
+        data["top_humor_markers"] = [w for w, _ in Counter(all_humor).most_common(5)]
+        data["top_affirmative_patterns"] = [w for w, _ in Counter(all_affirmative).most_common(5)]
+        data["top_negative_patterns"] = [w for w, _ in Counter(all_negative).most_common(5)]
+        data["top_gratitude_patterns"] = [w for w, _ in Counter(all_gratitude).most_common(5)]
 
         # Compute per-contact style averages from the per-contact ring buffers.
         # Only contacts with enough samples (_MIN_PER_CONTACT_SAMPLES) get an
