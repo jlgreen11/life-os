@@ -321,6 +321,96 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         return {"items": sorted_items[:limit], "count": len(sorted_items[:limit]), "topic": topic or "inbox"}
 
+    @app.get("/api/dashboard/badges")
+    async def dashboard_badges():
+        """Return per-topic badge counts without loading full feed items.
+
+        Replaces the previous pattern of firing 5 separate /api/dashboard/feed
+        requests with limit=100 just to get counts.  This endpoint directly
+        queries the same underlying data stores but only counts items, keeping
+        the payload tiny (~100 bytes vs ~50 KB for five full-feed responses).
+
+        Counts match the ``dashboard_feed`` definition:
+          - inbox:    all pending notifications + pending tasks + upcoming calendar events
+          - messages: notifications whose source contains "message" or "signal"
+          - email:    notifications whose source contains "email"
+          - calendar: calendar.event.created events starting within the next 7 days
+          - tasks:    pending tasks
+
+        Returns:
+            JSON ``{"badges": {topic: count, ...}}`` for topics inbox, messages,
+            email, calendar, and tasks.
+
+        Example response::
+
+            {
+                "badges": {
+                    "inbox": 12,
+                    "messages": 3,
+                    "email": 7,
+                    "calendar": 4,
+                    "tasks": 2
+                }
+            }
+        """
+        # --- Notifications ---
+        # Fetch once and count per-channel; avoids 3 separate queries.
+        try:
+            all_notifications = life_os.notification_manager.get_pending(limit=500)
+        except Exception:
+            all_notifications = []
+
+        email_count = sum(
+            1 for n in all_notifications if "email" in n.get("source", "")
+        )
+        msg_count = sum(
+            1 for n in all_notifications
+            if "message" in n.get("source", "") or "signal" in n.get("source", "")
+        )
+
+        # --- Tasks ---
+        try:
+            pending_tasks = life_os.task_manager.get_pending_tasks(limit=500)
+            task_count = len(pending_tasks)
+        except Exception:
+            task_count = 0
+
+        # --- Calendar (upcoming events in the next 7 days) ---
+        try:
+            now = datetime.now(timezone.utc)
+            end_window = (now + timedelta(days=7)).isoformat()
+            with life_os.db.get_connection("events") as conn:
+                # Count distinct calendar events (deduplicate by event_id payload field)
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT json_extract(payload, '$.event_id') AS eid
+                        FROM events
+                        WHERE type = 'calendar.event.created'
+                          AND json_extract(payload, '$.start_time') > ?
+                          AND json_extract(payload, '$.start_time') <= ?
+                        GROUP BY eid
+                    )
+                    """,
+                    (now.isoformat(), end_window),
+                ).fetchone()
+                cal_count = row[0] if row else 0
+        except Exception:
+            cal_count = 0
+
+        # Inbox aggregates all three categories
+        inbox_count = len(all_notifications) + task_count + cal_count
+
+        return {
+            "badges": {
+                "inbox": inbox_count,
+                "messages": msg_count,
+                "email": email_count,
+                "calendar": cal_count,
+                "tasks": task_count,
+            }
+        }
+
     # -------------------------------------------------------------------
     # Calendar Events
     # -------------------------------------------------------------------
