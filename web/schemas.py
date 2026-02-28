@@ -71,6 +71,16 @@ class DraftRequest(BaseModel):
     context: Optional[str] = None
 
 
+# --- POST /api/messages/send ---
+# Send a direct message via the appropriate messaging connector (iMessage or
+# Signal).  ``channel`` hints which connector to prefer; ``recipient`` is the
+# destination address (phone number, Apple ID, or Signal number).
+class SendMessageRequest(BaseModel):
+    recipient: str
+    message: str
+    channel: str = "message"  # "imessage", "signal", or generic "message"
+
+
 # --- POST /api/feedback ---
 # Explicit user feedback (free-text).  Processed by the feedback collector
 # to update the learning loop.

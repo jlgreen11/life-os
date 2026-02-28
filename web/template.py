@@ -468,6 +468,55 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         .draft-btn:hover { opacity: 0.85; }
 
+        /* --- Quick-reply inline compose box (message cards) --- */
+        /* Shown in the drill-down of message cards so the user can type and send
+           a reply without leaving the dashboard.  The textarea auto-resizes via
+           JS and the send button is disabled while the request is in-flight. */
+        .quick-reply-area {
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+        }
+        .quick-reply-input {
+            width: 100%;
+            min-height: 60px;
+            padding: 8px 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 13px;
+            line-height: 1.5;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .quick-reply-input:focus { outline: none; border-color: var(--accent); }
+        .quick-reply-input:disabled { opacity: 0.5; cursor: not-allowed; }
+        .quick-reply-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+            align-items: center;
+        }
+        .quick-reply-send {
+            padding: 6px 18px;
+            background: var(--accent);
+            color: var(--bg-primary);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .quick-reply-send:hover { opacity: 0.85; }
+        .quick-reply-send:disabled { opacity: 0.5; cursor: not-allowed; }
+        .quick-reply-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            flex: 1;
+        }
+
         /* --- Insights Tab Sections --- */
         /* Section headers visually group the different data sources shown
            in the Insights tab (AI insights, signal profiles, routines, workflows). */
@@ -1377,18 +1426,40 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         } else if (item.channel === 'message') {
             // Message cards (Signal, iMessage, WhatsApp).  Inbound messages
             // from a contact show sender name + timestamp + body preview.
-            // The drill-down adds the full body, a Draft Reply button (same
-            // behaviour as email cards — hits /api/draft and shows the output
-            // with a Copy button), and a Create Task shortcut.
+            // The drill-down adds:
+            //   1. Full message body
+            //   2. Quick-reply textarea + Send button (direct send via connector)
+            //   3. Draft Reply button (AI-generated draft with Copy)
+            //   4. Create Task shortcut
             var sender = meta.sender || item.source || '';
+            // from_address is the reply-to address (phone / email / Signal number).
+            // Prefer the explicit metadata field; fall back to the card's contact_id or source.
+            var fromAddr = (meta.from_address) || item.contact_id || item.source || '';
+            // channel carries the transport ("imessage", "signal", etc.) so the send
+            // endpoint can route to the right connector.
+            var msgChannel = (meta.channel) || item.channel || 'message';
             html += '<div class="card-title">' + escHtml(item.title) + '</div>';
             html += '<div class="card-meta">' + escHtml(sender) + ' &middot; ' + escHtml(timeAgo(item.timestamp)) + '</div>';
             html += '<div class="card-body">' + escHtml(item.body) + '</div>';
             html += '<div class="card-detail">';
             html += '<div style="margin-bottom:8px">' + escHtml(item.body) + '</div>';
+
+            // Quick-reply compose box: lets the user type and send a reply directly
+            // without leaving the dashboard.  sendQuickReply() posts to /api/messages/send.
+            html += '<div class="quick-reply-area">';
+            html += '<textarea id="qr-' + escAttr(id) + '" class="quick-reply-input"' +
+                    ' placeholder="Type a quick reply…"' +
+                    ' onclick="event.stopPropagation()"' +
+                    ' onkeydown="if(event.ctrlKey&&event.key===\'Enter\'){event.stopPropagation();sendQuickReply(\'' + escAttr(id) + '\',\'' + escAttr(fromAddr) + '\',\'' + escAttr(msgChannel) + '\')}"></textarea>';
+            html += '<div class="quick-reply-row">';
+            html += '<button class="quick-reply-send" id="qr-btn-' + escAttr(id) + '"' +
+                    ' onclick="event.stopPropagation();sendQuickReply(\'' + escAttr(id) + '\',\'' + escAttr(fromAddr) + '\',\'' + escAttr(msgChannel) + '\')">Send</button>';
+            html += '<span class="quick-reply-hint">Ctrl+Enter to send</span>';
+            html += '</div></div>';
+
             // Draft reply output area — populated asynchronously by draftReply()
             // when the user clicks the Draft Reply button.  Rendered here so
-            // it sits between the message body and the action buttons.
+            // it sits between the quick-reply box and the action buttons.
             html += '<div id="draft-' + escAttr(id) + '"></div>';
             html += '<div class="card-actions">';
             // Draft Reply: generates an AI-drafted response using the message body
@@ -2510,6 +2581,69 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         navigator.clipboard.writeText(area.textContent).then(function() {
             btn.textContent = 'Copied!';
             setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+        });
+    }
+
+    /**
+     * Send the text in the quick-reply textarea directly via POST /api/messages/send.
+     *
+     * The message is routed to the right connector (iMessage or Signal) based on
+     * ``channel``.  While the request is in-flight, the textarea and button are
+     * disabled to prevent double-sends.  On success the textarea is cleared and a
+     * toast confirmation is shown.  On failure (no connector configured, network
+     * error) a descriptive toast is shown so the user knows the message was not sent.
+     *
+     * Ctrl+Enter in the textarea also triggers this function (wired in renderCard).
+     *
+     * @param {string} cardId   - The feed-item ID, used to find textarea/button.
+     * @param {string} recipient - The address to send to (phone, Apple ID, Signal).
+     * @param {string} channel  - Transport hint: "imessage", "signal", or "message".
+     */
+    function sendQuickReply(cardId, recipient, channel) {
+        var textarea = document.getElementById('qr-' + cardId);
+        var btn = document.getElementById('qr-btn-' + cardId);
+        if (!textarea) return;
+
+        var message = textarea.value.trim();
+        if (!message) {
+            textarea.focus();
+            return;
+        }
+
+        // Disable controls while request is in-flight to prevent double-sends
+        textarea.disabled = true;
+        if (btn) btn.disabled = true;
+
+        fetch(API + '/api/messages/send', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({recipient: recipient, message: message, channel: channel})
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var resp = document.getElementById('response');
+            if (data.status === 'sent') {
+                textarea.value = '';
+                resp.className = 'visible';
+                resp.textContent = 'Message sent via ' + (data.connector || channel);
+            } else if (data.status === 'no_connector') {
+                resp.className = 'visible';
+                resp.textContent = 'No messaging connector active. Configure iMessage or Signal in Admin.';
+            } else {
+                resp.className = 'visible';
+                resp.textContent = 'Send failed: ' + (data.details || 'Unknown error');
+            }
+            setTimeout(function() { resp.className = ''; }, 4000);
+        })
+        .catch(function(err) {
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = 'Send failed: ' + err.message;
+            setTimeout(function() { resp.className = ''; }, 4000);
+        })
+        .finally(function() {
+            textarea.disabled = false;
+            if (btn) btn.disabled = false;
         });
     }
 

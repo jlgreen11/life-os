@@ -28,6 +28,7 @@ from web.schemas import (
     PreferenceUpdate,
     RuleCreateRequest,
     SearchRequest,
+    SendMessageRequest,
     SetupSubmitRequest,
     SourceWeightCreate,
     SourceWeightUpdate,
@@ -988,6 +989,82 @@ def register_routes(app: FastAPI, life_os) -> None:
             incoming_message=req.incoming_message,
         )
         return {"draft": draft}
+
+    @app.post("/api/messages/send")
+    async def send_message(req: SendMessageRequest):
+        """Send a direct message via the appropriate messaging connector.
+
+        Routes the outbound message to whichever connector matches the
+        requested channel:
+          - ``channel="imessage"`` → iMessage connector (AppleScript-based)
+          - ``channel="signal"``   → Signal connector (signal-cli-based)
+          - ``channel="message"``  → tries iMessage then Signal (first active wins)
+
+        The connector's ``execute("send_message", {...})`` method handles the
+        actual delivery.  If no matching connector is active (e.g. not
+        configured), the endpoint returns ``{"status": "no_connector"}`` so the
+        UI can show a helpful message rather than a 500 error.
+
+        Args:
+            req: SendMessageRequest with ``recipient``, ``message``, and
+                 optional ``channel`` hint.
+
+        Returns:
+            ``{"status": "sent", "details": {...}}`` on success.
+            ``{"status": "no_connector", "details": "..."}`` when no connector.
+            ``{"status": "error", "details": "..."}`` on connector error.
+
+        Example::
+
+            POST /api/messages/send
+            {"recipient": "+15555550100", "message": "See you at 3!", "channel": "imessage"}
+            -> {"status": "sent", "details": {"title": "See you at 3!"}}
+        """
+        # --- Build the ordered list of candidate connector IDs ---
+        # Explicit channel names map directly to their connector IDs.
+        # The generic "message" channel tries iMessage then Signal so the user
+        # gets a best-effort send without knowing which connector is active.
+        channel = req.channel.lower()
+        if channel == "imessage":
+            candidate_ids = ["imessage"]
+        elif channel == "signal":
+            candidate_ids = ["signal"]
+        else:
+            # Generic "message" or unknown channel: try both in preference order
+            candidate_ids = ["imessage", "signal"]
+
+        # --- Find the first active connector from the candidates ---
+        connector = None
+        matched_id = None
+        for cid in candidate_ids:
+            c = life_os.connector_map.get(cid)
+            if c is not None:
+                connector = c
+                matched_id = cid
+                break
+
+        if connector is None:
+            return {
+                "status": "no_connector",
+                "details": (
+                    f"No active messaging connector found for channel '{req.channel}'. "
+                    "Configure iMessage or Signal in the Admin panel to enable sending."
+                ),
+            }
+
+        # --- Delegate to the connector's execute() method ---
+        try:
+            result = await connector.execute(
+                "send_message",
+                {"recipient": req.recipient, "message": req.message},
+            )
+            # Connectors return {"status": "sent", ...} or {"status": "error", ...}
+            if isinstance(result, dict) and result.get("status") == "error":
+                return {"status": "error", "details": result.get("details", "Unknown error")}
+            return {"status": "sent", "connector": matched_id, "details": result}
+        except Exception as e:
+            logger.error("send_message via %s failed: %s", matched_id, e)
+            return {"status": "error", "details": str(e)}
 
     # -------------------------------------------------------------------
     # Rules
