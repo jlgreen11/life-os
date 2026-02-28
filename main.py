@@ -260,7 +260,23 @@ class LifeOS:
         # communication patterns for every contact.
         await self._backfill_communication_templates_if_needed()
 
-        # 1.8. Clean marketing contacts from relationships profile
+        # 1.8. Backfill relationship signal profile if empty after migration
+        # The relationship backfill script (scripts/backfill_relationship_profile.py)
+        # was added in PR #313 but had no auto-trigger in main.py.  After Migration
+        # 0→1 wipes signal_profiles, the connector must re-sync to refill it — but if
+        # the Google connector is stale, the table stays empty forever.  This trigger
+        # replays all historical email events through RelationshipExtractor on startup
+        # so the profile is always populated regardless of connector health.
+        await self._backfill_relationship_profile_if_needed()
+
+        # 1.9. Backfill temporal signal profile if empty after migration
+        # Same problem: backfill_temporal_profile.py exists but was never auto-triggered.
+        # The temporal profile drives time-of-day patterns, energy peak detection, and
+        # preparation-needs predictions. Without it, predictions based on calendar events
+        # or task scheduling patterns never fire.
+        await self._backfill_temporal_profile_if_needed()
+
+        # 1.10. Clean marketing contacts from relationships profile
         # The relationship extractor was filtering marketing emails at extraction time
         # (PR #143) but this left 469+ marketing contacts from historical data that
         # were tracked before the filter existed. This cleanup removes them to enable
@@ -663,6 +679,149 @@ class LifeOS:
 
         except Exception as e:
             logger.warning("       ⚠ Communication template backfill failed (non-fatal): %s", e)
+
+    async def _backfill_relationship_profile_if_needed(self):
+        """Auto-trigger relationship signal profile backfill when the profile is missing.
+
+        The relationship signal profile is the foundation of Life OS's social intelligence:
+        it powers relationship maintenance predictions, the People Radar in the dashboard,
+        and semantic fact inference about high-priority contacts.
+
+        After Migration 0→1 wiped ``signal_profiles``, this profile is empty.  The live
+        pipeline refills it only when new email events arrive, but if the connector is
+        stale (e.g., OAuth token expired), it stays empty indefinitely.
+
+        This method mirrors ``_backfill_communication_templates_if_needed()``:
+        - Checks whether the profile already has data (idempotent guard)
+        - Counts eligible events to confirm there's history to learn from
+        - Delegates the heavy lifting to ``scripts/backfill_relationship_profile.py``
+          in a background thread so startup is not blocked
+
+        The backfill processes ``email.received``, ``email.sent``, ``message.received``,
+        and ``message.sent`` events through the live RelationshipExtractor, building the
+        same per-contact interaction graph that real-time processing would produce.
+
+        Effects once populated:
+        - Semantic inferrer generates ``relationship_priority_*`` facts for frequent contacts
+        - Prediction engine's ``_check_relationship_maintenance()`` fires alerts for overdue contacts
+        - People Radar shows real contacts with last-contact timestamps and frequency dots
+        - Draft Reply endpoint has relationship context for tone-matching
+        """
+        try:
+            # Guard: skip if the profile already has meaningful data.
+            # Threshold of 10 samples allows for the case where a very small backfill
+            # ran before and we don't want to re-run it needlessly.
+            profile = self.user_model_store.get_signal_profile("relationships")
+            if profile and profile.get("samples_count", 0) >= 10:
+                return
+
+            # Check that we have enough historical communication events to learn from.
+            # Running the backfill on <10 events wouldn't produce useful relationship data.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'email.received', 'email.sent',
+                           'message.received', 'message.sent'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 10:
+                return
+
+            logger.info(
+                "       → Backfilling relationship signal profile from %s communication events...",
+                f"{event_count:,}",
+            )
+
+            # Run in a thread so the async event loop isn't blocked during the
+            # O(n_emails) SQLite iteration that can take several seconds on large datasets.
+            def _run_backfill():
+                from scripts.backfill_relationship_profile import backfill_relationship_profile
+
+                return backfill_relationship_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,  # Reasonable batch size for progress reporting
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Relationship profile: %s contacts discovered from %s events (%.1fs)",
+                f"{stats['contacts_discovered']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Relationship profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_temporal_profile_if_needed(self):
+        """Auto-trigger temporal signal profile backfill when the profile is missing.
+
+        The temporal profile captures the user's activity patterns across hours and days:
+        peak energy times, preferred meeting slots, planning horizon behavior, and the
+        ratio of reactive vs. scheduled work.  It feeds:
+
+        - ``_check_preparation_needs()`` in the prediction engine (e.g., "You usually
+          prepare meeting agendas the day before; one is due tomorrow")
+        - Routine detection (time-based routines require temporal data to normalize by
+          time-of-day and day-of-week)
+        - Insights tab's behavioral pattern cards
+
+        The temporal backfill processes user-initiated events:
+        ``email.sent``, ``message.sent``, ``calendar.event.created``, ``task.created``,
+        ``task.completed``, and ``system.user.command``.
+
+        Uses the same idempotent guard and background-thread pattern as the other
+        backfill methods in this startup sequence.
+        """
+        try:
+            # Guard: skip if temporal profile already populated.
+            profile = self.user_model_store.get_signal_profile("temporal")
+            if profile and profile.get("samples_count", 0) >= 5:
+                return
+
+            # Confirm there are user-initiated events to analyze.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'email.sent', 'message.sent',
+                           'calendar.event.created', 'calendar.event.updated',
+                           'task.created', 'task.completed', 'task.updated',
+                           'system.user.command'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 5:
+                return
+
+            logger.info(
+                "       → Backfilling temporal signal profile from %s user-initiated events...",
+                f"{event_count:,}",
+            )
+
+            def _run_backfill():
+                from scripts.backfill_temporal_profile import backfill_temporal_profile
+
+                return backfill_temporal_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Temporal profile: %s signals from %s events (%.1fs)",
+                f"{stats['signals_extracted']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            logger.warning("       ⚠ Temporal profile backfill failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
