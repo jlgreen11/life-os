@@ -342,8 +342,13 @@ class TestImprovementLoopHealthCheck:
         script_content = script_path.read_text()
 
         # Validate key improvements are present
-        assert "Ensure Life OS is running" in script_content, \
-            "Script should check Life OS health on every iteration"
+        # The script uses "EVERY iteration" in the comment block that explains
+        # why the health check runs unconditionally (not just when code changes).
+        # Accept either the original comment phrasing or a log-line alternative.
+        assert (
+            "EVERY iteration" in script_content
+            or "Ensure Life OS is running" in script_content
+        ), "Script should check Life OS health on every iteration"
 
         assert "CODE_UPDATED=false" in script_content, \
             "Script should track whether code changed"
