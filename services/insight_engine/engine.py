@@ -813,7 +813,12 @@ class InsightEngine:
 
         try:
             with self.db.get_connection("events") as conn:
-                cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+                # Use 30-day window to match docstring and give a full month of
+                # data — a 7-day window was too short: on Sundays the comparison
+                # days (Saturday–Monday prior week) fall outside the window,
+                # leaving only 1 weekday bucket which can never reach the 1.5x
+                # threshold relative to itself.
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
                 rows = conn.execute(
                     """SELECT timestamp FROM events
                        WHERE type IN ('email.received', 'email.sent')
