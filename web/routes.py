@@ -2957,6 +2957,8 @@ def register_routes(app: FastAPI, life_os) -> None:
           2. temporal      — activity-hour patterns (preparation needs, routine detection)
           3. topic         — email topic frequencies (expertise/interest semantic facts)
           4. linguistic    — writing-style metrics (communication-style semantic facts)
+          5. cadence       — response times, activity heatmaps (priority contact detection)
+          6. mood_signals  — mood signal ring buffer (dashboard mood widget, episode energy)
 
         Returns:
             {"status": "started", "backfills": [...], "message": "..."}
@@ -2967,7 +2969,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             → {
                 "status": "started",
                 "message": "Signal profile backfills triggered in background. ...",
-                "backfills": ["relationship", "temporal", "topic", "linguistic"]
+                "backfills": ["relationship", "temporal", "topic", "linguistic", "cadence", "mood_signals"]
               }
         """
         import asyncio as _asyncio
@@ -2984,6 +2986,8 @@ def register_routes(app: FastAPI, life_os) -> None:
             await life_os._backfill_temporal_profile_if_needed()
             await life_os._backfill_topic_profile_if_needed()
             await life_os._backfill_linguistic_profile_if_needed()
+            await life_os._backfill_cadence_profile_if_needed()
+            await life_os._backfill_mood_signals_profile_if_needed()
 
         # Fire-and-forget: background task so the HTTP response returns immediately.
         # The caller should poll /api/admin/backfills/status to track completion.
@@ -2995,7 +2999,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "Signal profile backfills triggered in background. "
                 "Poll /api/admin/backfills/status to track progress."
             ),
-            "backfills": ["relationship", "temporal", "topic", "linguistic"],
+            "backfills": ["relationship", "temporal", "topic", "linguistic", "cadence", "mood_signals"],
         }
 
     # -------------------------------------------------------------------
