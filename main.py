@@ -653,20 +653,29 @@ class LifeOS:
           - The data quality report always shows ``signal_profiles: {}``
 
         Recovery strategy:
-          1. Try reading a single row from signal_profiles (the cheapest test
-             that exercises the data column).
-          2. If that read fails with "malformed" or any error, DROP the table
-             and immediately re-create it using the same schema as the original
-             CREATE TABLE statement in the migration.
-          3. Set the schema version back to the post-migration value so the
-             existing migration machinery does not try to re-run.
-          4. Log a WARNING so the user knows a repair occurred.
-          5. The subsequent backfill guards in ``_backfill_relationship_profile_if_needed()``,
+          1. Force SQLite to read ALL data blobs by computing SUM(LENGTH(data)).
+             This is the only reliable way to detect partial corruption: a
+             ``LIMIT 1`` check only exercises the first row's overflow pages and
+             will succeed even when all other rows are corrupted — a false
+             negative that leaves the system silently broken.
+          2. If that aggregate fails with "malformed" or any error, DROP the
+             table and immediately re-create it using the same schema as the
+             original CREATE TABLE statement in the migration.
+          3. Log a WARNING so the user knows a repair occurred.
+          4. The subsequent backfill guards in ``_backfill_relationship_profile_if_needed()``,
              ``_backfill_topic_profile_if_needed()``, etc. will see an empty table
              and automatically trigger full repopulation.
 
+        Why SUM(LENGTH(data)) instead of LIMIT 1:
+          SQLite computes aggregate functions by scanning every row.  Each scan
+          step reads the data column, which forces every overflow page to be
+          loaded.  A corrupted page raises immediately, regardless of which row
+          owns it.  By contrast, ``LIMIT 1`` fetches only the first row —
+          typically stored in the earliest allocated B-tree page — and returns
+          successfully even when later pages (holding other rows) are corrupted.
+
         This method is idempotent: if the table is healthy, it returns quickly
-        after a single cheap read.
+        after a single cheap aggregate query.
 
         Example::
 
@@ -675,13 +684,13 @@ class LifeOS:
             # → "Repaired corrupted signal_profiles table" if fixed
         """
         try:
-            # Step 1: Test whether the data column is readable.
-            # We use a LIMIT 1 SELECT that touches both the primary key column
-            # (always readable when the table exists) and the data column
-            # (the one prone to overflow-page corruption).
+            # Step 1: Force SQLite to read ALL overflow pages by summing the
+            # lengths of every data blob in the table.  This is the minimum
+            # query that exercises every row's data column; a LIMIT 1 check
+            # only reads the first row and misses corruption in later rows.
             with self.db.get_connection("user_model") as conn:
                 conn.execute(
-                    "SELECT profile_type, data FROM signal_profiles LIMIT 1"
+                    "SELECT SUM(LENGTH(data)) FROM signal_profiles"
                 ).fetchone()
             # Table is healthy — nothing to do.
             logger.debug("       ✓ signal_profiles table is healthy")
