@@ -2852,6 +2852,153 @@ def register_routes(app: FastAPI, life_os) -> None:
         return diagnostics
 
     # -------------------------------------------------------------------
+    # Signal Profile Backfills (Admin)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/backfills/status")
+    async def get_backfill_status():
+        """
+        Return the current population state of all signal profiles.
+
+        Signal profiles are the foundation of the intelligence layer.  When they
+        are empty — typically after a database migration that wipes
+        ``signal_profiles``, or when the live connector is stale — the following
+        features degrade silently:
+
+          - Relationship maintenance predictions (People Radar contacts)
+          - Semantic fact inference (expertise / interest / communication-style facts)
+          - Behavioral insights (cadence, temporal, and topic patterns)
+
+        Use this endpoint to determine whether a backfill is needed and to track
+        progress after triggering one via ``POST /api/admin/backfills/trigger``.
+
+        Returns:
+            {
+                "status": "ok" | "needs_backfill",
+                "profiles": {
+                    "<profile_name>": {
+                        "populated": bool,
+                        "samples_count": int,
+                        "last_updated": str | null
+                    },
+                    ...
+                },
+                "generated_at": "<ISO-8601>"
+            }
+
+        Example::
+
+            GET /api/admin/backfills/status
+            → {
+                "status": "needs_backfill",
+                "profiles": {
+                    "relationships": {"populated": false, "samples_count": 0, "last_updated": null},
+                    "temporal":      {"populated": false, "samples_count": 0, "last_updated": null},
+                    ...
+                },
+                "generated_at": "2026-03-01T00:00:00.000000+00:00"
+              }
+        """
+        # The six signal profiles that drive the intelligence layer.
+        # "relationships" powers People Radar and maintenance predictions.
+        # "temporal" drives preparation-needs and routine-deviation predictions.
+        # "topics" feeds expertise/interest semantic fact inference.
+        # "linguistic" drives communication-style fact inference and tone matching.
+        # "cadence" tracks reply latency and peak communication hours.
+        # "mood_signals" drives stress detection in the reaction prediction gatekeeper.
+        profile_names = ["relationships", "temporal", "topics", "linguistic", "cadence", "mood_signals"]
+
+        profiles: dict[str, dict] = {}
+        for name in profile_names:
+            profile = life_os.user_model_store.get_signal_profile(name)
+            if profile:
+                samples = profile.get("samples_count", 0)
+                profiles[name] = {
+                    "populated": samples >= 1,
+                    "samples_count": samples,
+                    "last_updated": profile.get("last_updated"),
+                }
+            else:
+                profiles[name] = {
+                    "populated": False,
+                    "samples_count": 0,
+                    "last_updated": None,
+                }
+
+        all_populated = all(p["populated"] for p in profiles.values())
+        return {
+            "status": "ok" if all_populated else "needs_backfill",
+            "profiles": profiles,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.post("/api/admin/backfills/trigger")
+    async def trigger_signal_profile_backfills():
+        """
+        Trigger all signal profile backfills without requiring a system restart.
+
+        After a database migration or when the live connector is stale, signal
+        profiles may be completely empty.  Empty profiles block the entire
+        intelligence layer: relationship maintenance predictions, People Radar
+        contacts, semantic fact inference, and behavioral insights.
+
+        This endpoint replays historical events from ``events.db`` through each
+        signal extractor to rebuild the profiles.  The work runs in a background
+        ``asyncio`` task so this endpoint returns immediately.  Use
+        ``GET /api/admin/backfills/status`` to poll progress.
+
+        Backfills are idempotent: each one checks whether the profile already
+        has meaningful data (``samples_count >= 10``) and skips silently if so.
+        To force a re-run on an already-populated profile, first clear it via the
+        database browser, then call this endpoint again.
+
+        Backfills triggered (in order):
+          1. relationship  — per-contact interaction graph (People Radar, maintenance predictions)
+          2. temporal      — activity-hour patterns (preparation needs, routine detection)
+          3. topic         — email topic frequencies (expertise/interest semantic facts)
+          4. linguistic    — writing-style metrics (communication-style semantic facts)
+
+        Returns:
+            {"status": "started", "backfills": [...], "message": "..."}
+
+        Example::
+
+            POST /api/admin/backfills/trigger
+            → {
+                "status": "started",
+                "message": "Signal profile backfills triggered in background. ...",
+                "backfills": ["relationship", "temporal", "topic", "linguistic"]
+              }
+        """
+        import asyncio as _asyncio
+
+        async def _run_all_backfills():
+            """Run all signal profile backfills sequentially in the background.
+
+            Order matters: relationship first because it also populates contact stubs
+            that downstream profiles (cadence, temporal) can enrich.  Marketing cleanup
+            runs right after relationship so the other profiles see clean data.
+            """
+            await life_os._backfill_relationship_profile_if_needed()
+            await life_os._clean_relationship_profile_if_needed()
+            await life_os._backfill_temporal_profile_if_needed()
+            await life_os._backfill_topic_profile_if_needed()
+            await life_os._backfill_linguistic_profile_if_needed()
+
+        # Fire-and-forget: background task so the HTTP response returns immediately.
+        # The caller should poll /api/admin/backfills/status to track completion.
+        _asyncio.create_task(_run_all_backfills())
+
+        return {
+            "status": "started",
+            "message": (
+                "Signal profile backfills triggered in background. "
+                "Poll /api/admin/backfills/status to track progress."
+            ),
+            "backfills": ["relationship", "temporal", "topic", "linguistic"],
+        }
+
+    # -------------------------------------------------------------------
     # Setup / Onboarding
     # -------------------------------------------------------------------
 
