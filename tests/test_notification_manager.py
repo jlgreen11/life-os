@@ -883,6 +883,141 @@ def test_get_stats_returns_counts_by_status(notification_manager, db):
 # ============================================================================
 
 
+# ============================================================================
+# Batch Recovery on Restart
+# ============================================================================
+
+
+def test_batch_recovery_on_init(db, mock_event_bus):
+    """Test that pending normal/low-priority notifications are recovered on init.
+
+    When the server restarts, the in-memory batch queue is lost. The recovery
+    method should re-populate it from notifications that are still 'pending'
+    with normal or low priority in the database.
+    """
+    # Pre-populate 3 pending normal-priority notifications BEFORE creating NM
+    with db.get_connection("state") as conn:
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO notifications (id, title, body, priority, domain, status) VALUES (?, ?, ?, ?, ?, ?)",
+                (f"batch-{i}", f"Batch {i}", f"Body {i}", "normal", "email", "pending"),
+            )
+
+    # Instantiate a NEW NotificationManager — should recover pending batch
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    assert len(nm._pending_batch) == 3
+    recovered_ids = {item["id"] for item in nm._pending_batch}
+    assert recovered_ids == {"batch-0", "batch-1", "batch-2"}
+
+
+def test_batch_recovery_skips_high_priority(db, mock_event_bus):
+    """Test that high-priority pending notifications are NOT recovered into batch.
+
+    High-priority notifications are delivered immediately, not batched.
+    If one is still 'pending' after a restart, it means it was just created
+    and hasn't been processed yet — it should NOT be in the batch queue.
+    """
+    with db.get_connection("state") as conn:
+        conn.execute(
+            "INSERT INTO notifications (id, title, priority, status) VALUES (?, ?, ?, ?)",
+            ("high-1", "High Priority", "high", "pending"),
+        )
+        conn.execute(
+            "INSERT INTO notifications (id, title, priority, status) VALUES (?, ?, ?, ?)",
+            ("crit-1", "Critical", "critical", "pending"),
+        )
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    assert len(nm._pending_batch) == 0
+
+
+def test_batch_recovery_skips_delivered(db, mock_event_bus):
+    """Test that already-delivered notifications are NOT recovered into batch.
+
+    Only notifications with status='pending' should be recovered. Delivered
+    notifications have already been shown to the user.
+    """
+    with db.get_connection("state") as conn:
+        conn.execute(
+            "INSERT INTO notifications (id, title, priority, status) VALUES (?, ?, ?, ?)",
+            ("delivered-1", "Already Delivered", "normal", "delivered"),
+        )
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    assert len(nm._pending_batch) == 0
+
+
+@pytest.mark.asyncio
+async def test_recovered_batch_delivers_on_digest(db, mock_event_bus):
+    """Test that recovered batch notifications are delivered via get_digest().
+
+    After recovery, calling get_digest() should deliver the recovered
+    notifications and mark them as 'delivered' in the database.
+    """
+    with db.get_connection("state") as conn:
+        conn.execute(
+            "INSERT INTO notifications (id, title, body, priority, domain, status) VALUES (?, ?, ?, ?, ?, ?)",
+            ("recover-1", "Recovered", "Body", "normal", "email", "pending"),
+        )
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+    assert len(nm._pending_batch) == 1
+
+    # Deliver via digest
+    digest = await nm.get_digest()
+    assert len(digest) == 1
+    assert digest[0]["id"] == "recover-1"
+
+    # Notification should now be marked as delivered in DB
+    with db.get_connection("state") as conn:
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("recover-1",)).fetchone()
+        assert row["status"] == "delivered"
+
+    # Batch should be empty after digest
+    assert len(nm._pending_batch) == 0
+
+
+@pytest.mark.asyncio
+async def test_recovered_prediction_gets_surfaced(db, mock_event_bus, create_prediction):
+    """Test that recovered prediction notifications mark predictions as surfaced.
+
+    When a batched prediction notification is recovered and then delivered via
+    get_digest(), the linked prediction should have was_surfaced=1 set. This
+    is critical for the prediction accuracy feedback loop.
+    """
+    prediction_id = "pred-recovered"
+    create_prediction(prediction_id, was_surfaced=0)
+
+    # Create a pending prediction notification in DB before NM init
+    with db.get_connection("state") as conn:
+        conn.execute(
+            "INSERT INTO notifications (id, title, priority, domain, source_event_id, status) VALUES (?, ?, ?, ?, ?, ?)",
+            ("pred-notif-1", "Prediction Alert", "normal", "prediction", prediction_id, "pending"),
+        )
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+    assert len(nm._pending_batch) == 1
+
+    # Deliver via digest
+    await nm.get_digest()
+
+    # Prediction should now be marked as surfaced
+    with db.get_connection("user_model") as conn:
+        row = conn.execute(
+            "SELECT was_surfaced FROM predictions WHERE id = ?",
+            (prediction_id,),
+        ).fetchone()
+        assert row["was_surfaced"] == 1
+
+
+# ============================================================================
+# Edge Cases and Error Handling
+# ============================================================================
+
+
 @pytest.mark.asyncio
 async def test_create_notification_without_bus(db):
     """Test that notifications work even when event bus is disconnected."""

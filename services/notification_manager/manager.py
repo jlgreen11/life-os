@@ -13,10 +13,13 @@ suppresses noise the user has trained the system to ignore.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, time, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 from storage.database import DatabaseManager
 
@@ -34,6 +37,50 @@ class NotificationManager:
         # Low-priority notifications accumulate here until get_digest() is
         # called (typically on a schedule — e.g., 9 AM, 1 PM, 6 PM).
         self._pending_batch: list[dict] = []
+
+        # Recover any batched notifications that were lost during a restart.
+        # Notifications with status='pending' and normal/low priority were
+        # destined for batch delivery but their in-memory references were lost.
+        self._recover_pending_batch()
+
+    def _recover_pending_batch(self):
+        """Recover batched notifications from the database after a restart.
+
+        When the server restarts, the in-memory _pending_batch list is lost.
+        Notifications that were routed to batch delivery are still in the DB
+        with status='pending'. This method queries for those notifications and
+        re-populates the batch so the next get_digest() call delivers them.
+
+        Only normal/low priority notifications are recovered because those are
+        the ones routed to batch delivery by _decide_delivery(). Critical and
+        high priority notifications are always delivered immediately and would
+        never be in a pending-batch state.
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    """SELECT id, title, body, priority, domain, source_event_id
+                       FROM notifications
+                       WHERE status = 'pending'
+                         AND priority IN ('normal', 'low')""",
+                ).fetchall()
+
+            for row in rows:
+                self._pending_batch.append({
+                    "id": row["id"],
+                    "title": row["title"],
+                    "body": row["body"],
+                    "priority": row["priority"],
+                    "domain": row["domain"],
+                    "source_event_id": row["source_event_id"],
+                })
+
+            if self._pending_batch:
+                logger.info("Recovered %d pending batch notifications from database", len(self._pending_batch))
+        except Exception:
+            # Fail-open: if recovery fails, start with an empty batch.
+            # The notifications are still in the DB and can be recovered later.
+            logger.warning("Failed to recover pending batch notifications", exc_info=True)
 
     def _log_automatic_feedback(self, action_id: str, action_type: str,
                                  feedback_type: str, context: Optional[dict] = None):
