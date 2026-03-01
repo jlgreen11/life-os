@@ -84,7 +84,8 @@ class GoogleConnector(BaseConnector):
 
         success = await self.authenticate()
         if not success:
-            await self._update_state("error", "Authentication failed")
+            error_detail = getattr(self, "_auth_error", None) or "Authentication failed"
+            await self._update_state("error", error_detail)
             return
 
         self._running = True
@@ -106,14 +107,21 @@ class GoogleConnector(BaseConnector):
         await self._sync_loop()
 
     async def authenticate(self) -> bool:
-        """Load stored OAuth token and build API service objects."""
+        """Load stored OAuth token and build API service objects.
+
+        Returns True on success, False on failure. Sets self._auth_error with a
+        descriptive message when authentication fails, so start() can pass it
+        to _update_state() for display in the admin UI.
+        """
+        self._auth_error = None
         try:
             from google.oauth2.credentials import Credentials
             from googleapiclient.discovery import build
 
             creds = self._load_credentials()
             if not creds:
-                logger.warning("No valid token found. Complete OAuth via admin UI first.")
+                self._auth_error = "No valid token found — complete OAuth via /admin connector panel"
+                logger.warning(self._auth_error)
                 return False
 
             self._gmail_service = build("gmail", "v1", credentials=creds)
@@ -126,14 +134,26 @@ class GoogleConnector(BaseConnector):
             logger.info("Authenticated as %s", self._email_address)
 
             return True
+        except ValueError as e:
+            # Descriptive errors from _load_credentials() — surface directly
+            self._auth_error = str(e)
+            logger.error("Auth failed: %s", e)
+            return False
         except Exception as e:
+            self._auth_error = f"Authentication failed: {e}"
             logger.error("Auth failed: %s", e)
             return False
 
     def _load_credentials(self):
-        """Load and refresh OAuth credentials from token file."""
+        """Load and refresh OAuth credentials from token file.
+
+        Returns valid credentials or None. Raises ValueError with a descriptive
+        message on known failure modes so authenticate() can surface actionable
+        guidance in the admin UI.
+        """
         import os
 
+        from google.auth import exceptions as google_exceptions
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
@@ -146,11 +166,38 @@ class GoogleConnector(BaseConnector):
             return creds
 
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except google_exceptions.RefreshError as e:
+                logger.error(
+                    "Token refresh failed (revoked or expired grant): %s — "
+                    "re-authenticate via /admin connector panel",
+                    e,
+                )
+                raise ValueError(
+                    "Token refresh failed (invalid_grant) — re-authenticate via /admin connector panel"
+                ) from e
+            except google_exceptions.TransportError as e:
+                logger.error(
+                    "Token refresh failed (network error): %s — check network connectivity",
+                    e,
+                )
+                raise ValueError(
+                    "Token refresh failed (network error) — check network connectivity"
+                ) from e
             # Save refreshed token
             with open(self._token_file, "w") as f:
                 f.write(creds.to_json())
             return creds
+
+        if creds.expired:
+            logger.warning(
+                "Token expired but no refresh_token present — "
+                "re-authenticate via /admin connector panel to get a new refresh token"
+            )
+            raise ValueError(
+                "Token expired with no refresh_token — re-authenticate via /admin connector panel"
+            )
 
         return None
 
