@@ -360,6 +360,89 @@ def test_profile_averages_include_new_rates(db, user_model_store):
         assert avgs[key] >= 0.0
 
 
+# ---------------------------------------------------------------------------
+# Profile-level derived fields — emoji_usage
+# ---------------------------------------------------------------------------
+
+
+def test_emoji_usage_dict_populated(db, user_model_store):
+    """After processing messages with emojis, emoji_usage should map emoji chars to frequencies summing to ~1.0."""
+    ex = make_extractor(db, user_model_store)
+    # Send 5 messages with various emojis to build enough data
+    ex.extract(_sent_event("Great job on the presentation! \U0001F600\U0001F44D"))
+    ex.extract(_sent_event("Sounds good, let's do it \U0001F44D\U0001F44D"))
+    ex.extract(_sent_event("Happy Friday everyone \U0001F389\U0001F600"))
+    ex.extract(_sent_event("Can't wait for the weekend \U0001F600\U0001F389\U0001F44D"))
+    ex.extract(_sent_event("Love this idea so much \U0001F44D\U0001F600"))
+    profile = user_model_store.get_signal_profile("linguistic")
+    emoji_usage = profile["data"].get("emoji_usage", {})
+    assert isinstance(emoji_usage, dict)
+    assert len(emoji_usage) > 0
+    # All values should be floats between 0 and 1
+    for emoji, freq in emoji_usage.items():
+        assert isinstance(freq, float)
+        assert 0.0 < freq <= 1.0
+    # Frequencies should sum to approximately 1.0 (or exactly 1.0 with rounding)
+    total = sum(emoji_usage.values())
+    assert abs(total - 1.0) < 0.01
+
+
+def test_emoji_usage_empty_when_no_emojis(db, user_model_store):
+    """emoji_usage should be an empty dict when no emojis appear in messages."""
+    ex = make_extractor(db, user_model_store)
+    ex.extract(_sent_event("This is a plain message with no emojis at all."))
+    ex.extract(_sent_event("Another serious message without any decorations here."))
+    ex.extract(_sent_event("Just business communications, nothing fancy or fun."))
+    profile = user_model_store.get_signal_profile("linguistic")
+    assert profile["data"].get("emoji_usage") == {}
+
+
+def test_emoji_usage_top_20_cap(db, user_model_store):
+    """emoji_usage should contain at most 20 entries even with 30+ distinct emojis."""
+    ex = make_extractor(db, user_model_store)
+    # Build a message with 25+ distinct emojis (each from different Unicode ranges)
+    many_emojis = (
+        "\U0001F600\U0001F601\U0001F602\U0001F603\U0001F604"
+        "\U0001F605\U0001F606\U0001F607\U0001F608\U0001F609"
+        "\U0001F60A\U0001F60B\U0001F60C\U0001F60D\U0001F60E"
+        "\U0001F60F\U0001F610\U0001F611\U0001F612\U0001F613"
+        "\U0001F614\U0001F615\U0001F616\U0001F617\U0001F618"
+    )
+    # Send several messages so the sample buffer has data
+    for _ in range(3):
+        ex.extract(_sent_event(f"Check out all these fun emoji characters: {many_emojis}"))
+    profile = user_model_store.get_signal_profile("linguistic")
+    emoji_usage = profile["data"].get("emoji_usage", {})
+    assert len(emoji_usage) <= 20
+
+
+# ---------------------------------------------------------------------------
+# Profile-level derived fields — profanity_comfort
+# ---------------------------------------------------------------------------
+
+
+def test_profanity_comfort_scales_with_usage(db, user_model_store):
+    """profanity_comfort should be > 0 when profanity is used in messages."""
+    ex = make_extractor(db, user_model_store)
+    ex.extract(_sent_event("Damn it, that report is such crap and I'm annoyed."))
+    ex.extract(_sent_event("What the hell happened with the server last night?"))
+    ex.extract(_sent_event("This is bullshit, we need to fix this problem now."))
+    profile = user_model_store.get_signal_profile("linguistic")
+    comfort = profile["data"].get("profanity_comfort", 0.0)
+    assert comfort > 0.0
+    assert comfort <= 1.0
+
+
+def test_profanity_comfort_zero_when_clean(db, user_model_store):
+    """profanity_comfort should be 0.0 when no profanity appears in messages."""
+    ex = make_extractor(db, user_model_store)
+    ex.extract(_sent_event("The quarterly report looks great, well done team."))
+    ex.extract(_sent_event("Please review the attached document at your convenience."))
+    ex.extract(_sent_event("Looking forward to the meeting tomorrow morning."))
+    profile = user_model_store.get_signal_profile("linguistic")
+    assert profile["data"].get("profanity_comfort") == 0.0
+
+
 def test_existing_samples_without_new_keys_do_not_crash(db, user_model_store):
     """Old samples missing the new keys should not cause KeyError in _update_profile."""
     ex = make_extractor(db, user_model_store)

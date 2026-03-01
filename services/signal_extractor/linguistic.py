@@ -559,6 +559,30 @@ class LinguisticExtractor(BaseExtractor):
         data["top_negative_patterns"] = [w for w, _ in Counter(all_negative).most_common(5)]
         data["top_gratitude_patterns"] = [w for w, _ in Counter(all_gratitude).most_common(5)]
 
+        # emoji_usage: per-emoji relative frequency dict (top 20).
+        # Accumulates all emoji characters across the sample window and
+        # normalises by total count so values sum to ~1.0.
+        all_emojis = []
+        for s in samples:
+            all_emojis.extend(s.get("emojis_used", []))
+        if all_emojis:
+            emoji_counts = Counter(all_emojis)
+            total = sum(emoji_counts.values())
+            data["emoji_usage"] = {
+                emoji: round(count / total, 4)
+                for emoji, count in emoji_counts.most_common(20)
+            }
+        else:
+            data["emoji_usage"] = {}
+
+        # profanity_comfort: 0.0 (never swears) to 1.0 (frequently swears).
+        # Derived from the average profanity_rate (profanity_count / word_count).
+        # A rate of 0.02 (1 profanity per 50 words) is treated as full comfort.
+        # This cap is a reasonable heuristic — typical casual speech with
+        # frequent swearing rarely exceeds ~2% profanity density.
+        profanity_rate = data["averages"].get("profanity_rate", 0.0)
+        data["profanity_comfort"] = round(min(1.0, profanity_rate / 0.02), 4)
+
         # Compute per-contact style averages from the per-contact ring buffers.
         # Only contacts with enough samples (_MIN_PER_CONTACT_SAMPLES) get an
         # entry — thin contacts fall back to the global averages in the draft
