@@ -343,6 +343,22 @@ class LifeOS:
         # events through the MoodInferenceEngine to immediately re-populate.
         await self._backfill_mood_signals_profile_if_needed()
 
+        # 1.15. Backfill spatial profile if empty after migration/rebuild
+        # The spatial profile tracks place-based behavior patterns (visit frequency,
+        # duration, dominant domain per location).  It drives the semantic inferrer's
+        # infer_from_spatial_profile() which produces facts like primary_work_location
+        # and frequent_location_{place}.  Without this backfill, the spatial inference
+        # path is permanently blocked (requires >= 10 samples) after a DB rebuild.
+        await self._backfill_spatial_profile_if_needed()
+
+        # 1.16. Backfill decision profile if empty after migration/rebuild
+        # The decision profile tracks decision-making patterns (speed by domain,
+        # delegation comfort, risk tolerance).  It drives the semantic inferrer's
+        # infer_from_decision_profile() which produces facts like decision_speed_{domain}
+        # and risk_tolerance_{domain}.  Without this backfill, the decision inference
+        # path is permanently blocked (requires >= 20 samples) after a DB rebuild.
+        await self._backfill_decision_profile_if_needed()
+
         # 2. Initialize vector store
         logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -1552,6 +1568,139 @@ class LifeOS:
         except Exception as e:
             # Fail-open: backfill errors must never crash the startup sequence.
             logger.warning("       ⚠ Mood signals profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_spatial_profile_if_needed(self):
+        """Auto-trigger spatial profile backfill when the profile is missing.
+
+        The spatial profile tracks place-based behavior patterns (visit frequency,
+        duration, dominant domain per location) used by the SpatialExtractor.  It
+        powers the semantic fact inferrer's ``infer_from_spatial_profile()`` which
+        derives facts like primary work location, work location type, and frequent
+        location patterns.  That inference requires >= 10 samples.
+
+        The SpatialExtractor processes three event types:
+        - calendar.event.created (with non-empty location field)
+        - ios.context.update (with location or device_proximity)
+        - system.user.location_update
+
+        After a DB migration or rebuild the spatial profile is wiped.  Without this
+        backfill, no spatial semantic facts are ever generated until enough new live
+        events accumulate (typically weeks of usage).
+        """
+        try:
+            # Guard: skip if the spatial profile already has meaningful data.
+            profile = self.user_model_store.get_signal_profile("spatial")
+            if profile and profile.get("samples_count", 0) >= 10:
+                return
+
+            # Check that we have enough historical events to learn from.
+            # Use a broader query — the SpatialExtractor.can_process() will filter
+            # further (e.g. calendar events without a location field are skipped).
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'calendar.event.created',
+                           'ios.context.update',
+                           'system.user.location_update'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 10:
+                return
+
+            logger.info(
+                "       → Backfilling spatial profile from %s events...",
+                f"{event_count:,}",
+            )
+
+            def _run_backfill():
+                from scripts.backfill_spatial_profile import backfill_spatial_profile
+
+                return backfill_spatial_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Spatial profile: %s samples from %s events (%.1fs)",
+                f"{stats['final_samples']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Spatial profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_decision_profile_if_needed(self):
+        """Auto-trigger decision profile backfill when the profile is missing.
+
+        The decision profile tracks decision-making patterns (speed by domain,
+        delegation comfort, risk tolerance, fatigue indicators) used by the
+        DecisionExtractor.  It powers the semantic fact inferrer's
+        ``infer_from_decision_profile()`` which derives facts like decision speed,
+        risk tolerance, and delegation preferences.  That inference requires >= 20
+        samples.
+
+        The DecisionExtractor processes five event types:
+        - task.completed (decision execution)
+        - task.created (commitment decisions)
+        - email.sent (decision communication)
+        - message.sent (decision communication)
+        - calendar.event.created (commitment decisions)
+
+        After a DB migration or rebuild the decision profile is wiped.  Without
+        this backfill, no decision-making semantic facts are ever generated until
+        enough new live events accumulate (typically weeks of usage).
+        """
+        try:
+            # Guard: skip if the decision profile already has meaningful data.
+            profile = self.user_model_store.get_signal_profile("decision")
+            if profile and profile.get("samples_count", 0) >= 20:
+                return
+
+            # Check that we have enough historical events to learn from.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'task.completed', 'task.created',
+                           'email.sent', 'message.sent',
+                           'calendar.event.created'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 20:
+                return
+
+            logger.info(
+                "       → Backfilling decision profile from %s events...",
+                f"{event_count:,}",
+            )
+
+            def _run_backfill():
+                from scripts.backfill_decision_profile import backfill_decision_profile
+
+                return backfill_decision_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Decision profile: %s samples from %s events (%.1fs)",
+                f"{stats['final_samples']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Decision profile backfill failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
