@@ -513,6 +513,14 @@ class RelationshipExtractor(BaseExtractor):
             # using exponential moving average (weight recent samples more)
             alpha = 0.3  # Learning rate — higher = adapt faster to style changes
 
+            # Pre-compute merged common phrases so we can pass them to both
+            # the template dict and the avoids_phrases cross-contact analysis.
+            merged_phrases = self._merge_phrases(
+                existing.get("common_phrases", []),
+                words,
+                max_phrases=10,
+            )
+
             # Set context based on direction for downstream filtering
             context = "user_to_contact" if is_outbound else "contact_to_user"
 
@@ -536,12 +544,13 @@ class RelationshipExtractor(BaseExtractor):
                 # Emoji usage: true if used in any recent sample (sticky flag)
                 "uses_emoji": uses_emoji or existing.get("uses_emoji", False),
                 # Top 10 most frequent words (excluding stop words)
-                "common_phrases": self._merge_phrases(
-                    existing.get("common_phrases", []),
-                    words,
-                    max_phrases=10
-                ),
-                "avoids_phrases": existing.get("avoids_phrases", []),  # Requires cross-contact comparative analysis — deferred
+                "common_phrases": merged_phrases,
+                # Phrases commonly used with OTHER contacts but absent from this one.
+                # Only computed after 5+ samples (reliable signal) via cross-contact
+                # comparative analysis against all user_to_contact templates.
+                "avoids_phrases": self._compute_avoids_phrases(
+                    address, merged_phrases
+                ) if is_outbound and samples_count + 1 >= 5 else existing.get("avoids_phrases", []),
                 "tone_notes": self._analyze_tone(body, existing.get("tone_notes", [])),
                 "example_message_ids": (
                     existing.get("example_message_ids", []) + [event.get("id")]
@@ -738,6 +747,70 @@ class RelationshipExtractor(BaseExtractor):
 
         # Return top N most common
         return [word for word, _ in word_counts.most_common(max_phrases)]
+
+    def _compute_avoids_phrases(self, current_contact_id: str, current_phrases: list[str]) -> list[str]:
+        """Identify phrases commonly used with other contacts but absent for this one.
+
+        Cross-contact comparative analysis: queries all outbound communication
+        templates (user_to_contact) and builds a frequency map of phrases across
+        other contacts.  Phrases that appear in 40%+ of other templates but are
+        missing from the current contact's common_phrases are considered
+        "avoided" — the user deliberately (or unconsciously) omits them when
+        writing to this specific contact.
+
+        This is the inverse of common_phrases and is equally informative: knowing
+        what someone does NOT say to a contact reveals formality differences,
+        relationship dynamics, and topic boundaries.
+
+        Args:
+            current_contact_id: Email address / identifier of the contact whose
+                template is being updated.
+            current_phrases: The current contact's merged common_phrases list.
+
+        Returns:
+            List of avoided phrases (max 10), or empty list if fewer than 3
+            other templates exist (cold-start guard).
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    "SELECT contact_id, common_phrases FROM communication_templates "
+                    "WHERE context = 'user_to_contact' AND contact_id != ?",
+                    (current_contact_id,),
+                ).fetchall()
+
+            # Cold-start guard: need at least 3 other outbound templates to
+            # make meaningful cross-contact comparisons.
+            template_count = len(rows)
+            if template_count < 3:
+                return []
+
+            # Build frequency map: count how many templates include each phrase.
+            # Using set() per template so a phrase repeated within a single
+            # template's list only counts once (per-template, not per-occurrence).
+            phrase_frequency: Counter = Counter()
+            for row in rows:
+                phrases = json.loads(row["common_phrases"] or "[]")
+                phrase_frequency.update(set(phrases))
+
+            # Threshold: at least 40% of other templates AND a minimum of 2
+            # templates must use the phrase for it to be considered "common".
+            threshold = max(2, template_count * 0.4)
+            current_set = set(current_phrases)
+
+            avoids = [
+                phrase
+                for phrase, count in phrase_frequency.most_common()
+                if count >= threshold and phrase not in current_set
+            ][:10]  # Cap at 10 avoids phrases
+
+            return avoids
+
+        except Exception:
+            # Fail-open: if the DB query fails, return empty list rather than
+            # crashing the template extraction pipeline.
+            logger.exception("Failed to compute avoids_phrases for %s", current_contact_id)
+            return []
 
     def _analyze_tone(self, text: str, existing_notes: list[str]) -> list[str]:
         """Derive tone observations from message text using lightweight heuristics.
