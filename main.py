@@ -319,6 +319,22 @@ class LifeOS:
         # historical outbound emails are available in events.db.
         await self._backfill_linguistic_profile_if_needed()
 
+        # 1.13. Backfill cadence signal profile if empty after migration/rebuild
+        # The cadence profile tracks response times (per-contact and per-channel) and
+        # activity-window heatmaps.  It drives response-time priority contact detection
+        # in the prediction engine and peak/quiet hours enforcement.  Without this
+        # backfill, these features are broken after a DB rebuild until enough new
+        # live events accumulate (typically weeks of usage).
+        await self._backfill_cadence_profile_if_needed()
+
+        # 1.14. Backfill mood_signals profile if empty after migration/rebuild
+        # The mood_signals profile powers compute_current_mood() for the dashboard
+        # mood widget and provides energy-level data for episode creation.  After a
+        # DB rebuild, the mood widget shows no data and all episodes have NULL
+        # energy_level until enough new events arrive.  This replays historical
+        # events through the MoodInferenceEngine to immediately re-populate.
+        await self._backfill_mood_signals_profile_if_needed()
+
         # 2. Initialize vector store
         logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -1339,6 +1355,135 @@ class LifeOS:
         except Exception as e:
             # Fail-open: backfill errors must never crash the startup sequence.
             logger.warning("       ⚠ Linguistic profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_cadence_profile_if_needed(self):
+        """Auto-trigger cadence signal profile backfill when the profile is missing.
+
+        The cadence signal profile tracks response times (per-contact and per-channel)
+        and activity-window heatmaps (hourly/daily histograms).  It drives:
+
+        - Response-time priority contact detection in the prediction engine
+          (``_check_relationship_maintenance`` uses per-contact reply latency to
+          identify high-priority contacts the user hasn't responded to)
+        - Peak-hours and quiet-hours detection (requires 50+ activity samples)
+        - Per-domain response-time breakdowns in the Insights tab
+
+        After a DB migration or rebuild, the cadence profile is wiped.  Without this
+        backfill, response-time priority detection is permanently broken until enough
+        new live events accumulate (typically weeks of usage).  This trigger replays
+        all historical email and message events through CadenceExtractor on startup.
+        """
+        try:
+            # Guard: skip if the cadence profile already has meaningful data.
+            profile = self.user_model_store.get_signal_profile("cadence")
+            if profile and profile.get("samples_count", 0) >= 10:
+                return
+
+            # Check that we have enough historical communication events to learn from.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'email.received', 'email.sent',
+                           'message.received', 'message.sent'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 10:
+                return
+
+            logger.info(
+                "       → Backfilling cadence signal profile from %s communication events...",
+                f"{event_count:,}",
+            )
+
+            # Run in a thread so the async event loop isn't blocked during the
+            # O(n_events) SQLite iteration that can take several seconds on large datasets.
+            def _run_backfill():
+                from scripts.backfill_cadence_profile import backfill_cadence_profile
+
+                return backfill_cadence_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Cadence profile: %s contacts tracked from %s events (%.1fs)",
+                f"{stats['contacts_tracked']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Cadence profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_mood_signals_profile_if_needed(self):
+        """Auto-trigger mood_signals profile backfill when the profile is missing.
+
+        The mood_signals profile stores a ring buffer of recent mood-relevant signals
+        that ``compute_current_mood()`` reads to produce the ``MoodState`` displayed
+        on the dashboard mood widget.  It also provides energy-level data for episode
+        creation and mood trend computation.
+
+        The MoodInferenceEngine casts a wide net — it processes 10 event types:
+        email (sent/received), message (sent/received), health metrics, sleep data,
+        calendar events, financial transactions, location changes, and user commands.
+
+        After a DB migration or rebuild, the mood_signals profile is wiped.  Without
+        this backfill, compute_current_mood() always returns a neutral MoodState with
+        0.0 confidence until enough new live events accumulate.  This trigger replays
+        all qualifying historical events through MoodInferenceEngine on startup.
+        """
+        try:
+            # Guard: skip if the mood_signals profile already has meaningful data.
+            profile = self.user_model_store.get_signal_profile("mood_signals")
+            if profile and profile.get("samples_count", 0) >= 10:
+                return
+
+            # Check that we have enough historical events to learn from.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'email.sent', 'email.received',
+                           'message.sent', 'message.received',
+                           'health.metric.updated', 'sleep.recorded',
+                           'calendar.event.created', 'transaction.new',
+                           'location.changed', 'system.user.command'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 10:
+                return
+
+            logger.info(
+                "       → Backfilling mood_signals profile from %s events...",
+                f"{event_count:,}",
+            )
+
+            def _run_backfill():
+                from scripts.backfill_mood_profile import backfill_mood_profile
+
+                return backfill_mood_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Mood signals profile: %s samples from %s events (%.1fs)",
+                f"{stats['final_samples']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Mood signals profile backfill failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
