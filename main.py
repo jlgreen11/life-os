@@ -284,6 +284,24 @@ class LifeOS:
         # 57% of tracked "contacts" are marketing automations, not humans).
         await self._clean_relationship_profile_if_needed()
 
+        # 1.11. Backfill topic signal profile if empty after migration
+        # The topic profile drives the semantic inferrer's expertise/interest fact
+        # generation (infer_from_topic_profile() produces expertise_<topic> and
+        # interest_<topic> semantic facts).  After Migration 0→1 wipes signal_profiles,
+        # the topic profile stays empty and no new expertise facts are generated
+        # until the connector re-syncs.  This trigger replays all historical email
+        # events through TopicExtractor to immediately re-populate the profile.
+        await self._backfill_topic_profile_if_needed()
+
+        # 1.12. Backfill linguistic signal profile if empty after migration
+        # The linguistic profile drives the semantic inferrer's communication style
+        # fact generation (infer_from_linguistic_profile() produces facts about
+        # formality, directness, enthusiasm, and emoji usage).  These facts feed
+        # the communication template system and tone-matching in draft replies.
+        # Without this backfill the profile stays empty after a DB reset even though
+        # historical outbound emails are available in events.db.
+        await self._backfill_linguistic_profile_if_needed()
+
         # 2. Initialize vector store
         logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -822,6 +840,144 @@ class LifeOS:
 
         except Exception as e:
             logger.warning("       ⚠ Temporal profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_topic_profile_if_needed(self):
+        """Auto-trigger topic signal profile backfill when the profile is missing.
+
+        The topic signal profile is the data foundation for the semantic inferrer's
+        expertise and interest fact generation.  ``infer_from_topic_profile()`` reads
+        this profile and produces ``expertise_<topic>`` and ``interest_<topic>`` semantic
+        facts — the richest user model data that powers the "AI that knows you" experience.
+
+        After Migration 0→1 wiped ``signal_profiles``, this profile is empty.  The live
+        pipeline refills it only when new email events arrive, but if the connector is
+        stale the table stays empty indefinitely.  This trigger replays all historical
+        communication events through TopicExtractor on startup so the profile is always
+        populated regardless of connector health.
+
+        Effects once populated:
+        - Semantic inferrer generates ``expertise_<topic>`` facts for frequently-discussed
+          technical/professional topics (e.g., expertise_python, expertise_machine_learning)
+        - Semantic inferrer generates ``interest_<topic>`` facts for common discussion areas
+        - Topic distribution shown in the Insights tab behavioral pattern cards
+        - Prediction engine has topic context for preparation-need detection
+        """
+        try:
+            # Guard: skip if the topic profile already has meaningful data.
+            # A threshold of 30 samples matches the inferrer's minimum requirement.
+            profile = self.user_model_store.get_signal_profile("topics")
+            if profile and profile.get("samples_count", 0) >= 30:
+                return
+
+            # Check that we have enough historical communication events to learn from.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'email.received', 'email.sent',
+                           'message.received', 'message.sent',
+                           'system.user.command'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 30:
+                return
+
+            logger.info(
+                "       → Backfilling topic signal profile from %s communication events...",
+                f"{event_count:,}",
+            )
+
+            # Run in a thread so the async event loop isn't blocked during the
+            # O(n_emails) SQLite iteration that can take several seconds on large datasets.
+            def _run_backfill():
+                from scripts.backfill_topic_profile import backfill_topic_profile
+
+                return backfill_topic_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Topic profile: %s topics discovered from %s events (%.1fs)",
+                f"{stats['topics_discovered']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Topic profile backfill failed (non-fatal): %s", e)
+
+    async def _backfill_linguistic_profile_if_needed(self):
+        """Auto-trigger linguistic signal profile backfill when the profile is missing.
+
+        The linguistic signal profile captures the user's writing-style fingerprint:
+        vocabulary complexity, formality level, sentence structure preferences, hedge
+        word usage, exclamation rate, and emoji density.  The semantic inferrer reads
+        this profile via ``infer_from_linguistic_profile()`` to produce facts about
+        communication style preferences (formal vs. casual, direct vs. tentative, etc.).
+
+        These facts in turn feed:
+        - Communication template extraction (the templates learn the user's preferred
+          tone per contact, derived from their linguistic baseline)
+        - Draft reply generation (AI-drafted replies match the user's observed style)
+        - Insights tab linguistic profile card
+
+        After Migration 0→1 wiped ``signal_profiles``, this profile is empty.  This
+        trigger replays all historical communication events through LinguisticExtractor
+        so the profile is always populated on startup.
+        """
+        try:
+            # Guard: skip if the linguistic profile already has meaningful data.
+            # Threshold of 1 sample matches the inferrer's minimum requirement.
+            profile = self.user_model_store.get_signal_profile("linguistic")
+            if profile and profile.get("samples_count", 0) >= 1:
+                return
+
+            # Check that we have outbound communication events to learn from.
+            # The linguistic profile is most informative from email.sent events
+            # (the user's actual writing), so we require at least 1 sent email.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    """SELECT COUNT(*) FROM events
+                       WHERE type IN (
+                           'email.received', 'email.sent',
+                           'message.received', 'message.sent',
+                           'system.user.command'
+                       )"""
+                ).fetchone()[0]
+
+            if event_count < 1:
+                return
+
+            logger.info(
+                "       → Backfilling linguistic signal profile from %s communication events...",
+                f"{event_count:,}",
+            )
+
+            def _run_backfill():
+                from scripts.backfill_linguistic_profile import backfill_linguistic_profile
+
+                return backfill_linguistic_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Linguistic profile: %s samples from %s events (%.1fs)",
+                f"{stats['final_samples']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Linguistic profile backfill failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
