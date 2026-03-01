@@ -131,6 +131,23 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
 
         <div class="section-label">Browser Connectors</div>
         <div class="grid" id="browserGrid"></div>
+
+        <div class="section-label">Intelligence &amp; Signal Profiles</div>
+        <div id="intelligenceCard" style="background:#1a1a1a;border:1px solid #222;border-radius:10px;padding:16px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <span style="font-weight:500;font-size:15px;">Signal Profile Status</span>
+                <button class="btn" onclick="triggerBackfills()" id="backfillBtn">Rebuild All Profiles</button>
+            </div>
+            <p style="font-size:13px;color:#666;margin-bottom:12px;">
+                Signal profiles drive predictions, People Radar, and behavioral insights.
+                Rebuild if profiles are empty after a database migration or connector outage.
+            </p>
+            <div id="profileGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;"></div>
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+                <button class="btn btn-secondary" onclick="runSemanticInference()" id="inferBtn">Run Semantic Inference</button>
+                <span id="intelligenceStatus" style="font-size:12px;color:#666;"></span>
+            </div>
+        </div>
     </div>
 
     <div class="toast" id="toast"></div>
@@ -461,9 +478,125 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     // ---------------------------------------------------------------
+    // Intelligence / Signal Profile Backfills
+    // ---------------------------------------------------------------
+
+    /** Load signal profile status and render the profile grid. */
+    async function loadBackfillStatus() {
+        try {
+            const res = await fetch(`${API}/api/admin/backfills/status`);
+            const data = await res.json();
+            renderProfileGrid(data.profiles || {});
+        } catch (e) {
+            const grid = document.getElementById('profileGrid');
+            while (grid.firstChild) grid.removeChild(grid.firstChild);
+            const msg = document.createElement('span');
+            msg.style.cssText = 'color:#666;font-size:13px;';
+            msg.textContent = 'Could not load profile status';
+            grid.appendChild(msg);
+        }
+    }
+
+    /** Render one status chip per signal profile using safe DOM methods (no innerHTML). */
+    function renderProfileGrid(profiles) {
+        const grid = document.getElementById('profileGrid');
+        const labelMap = {
+            relationships: 'Relationships', temporal: 'Temporal',
+            topics: 'Topics', linguistic: 'Linguistic',
+            cadence: 'Cadence', mood_signals: 'Mood',
+        };
+        while (grid.firstChild) grid.removeChild(grid.firstChild);
+        const entries = Object.entries(profiles);
+        if (!entries.length) {
+            const empty = document.createElement('span');
+            empty.style.cssText = 'color:#666;font-size:13px;';
+            empty.textContent = 'No profiles found';
+            grid.appendChild(empty);
+            return;
+        }
+        for (const [key, info] of entries) {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:10px;';
+
+            const hdr = document.createElement('div');
+            hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+
+            const nameEl = document.createElement('span');
+            nameEl.style.cssText = 'font-size:13px;font-weight:500;';
+            nameEl.textContent = labelMap[key] || key;
+
+            const dot = document.createElement('span');
+            dot.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:50%;background:'
+                + (info.populated ? '#4aff6b' : '#ff5555') + ';';
+
+            const meta = document.createElement('div');
+            meta.style.cssText = 'font-size:11px;color:#666;margin-top:4px;';
+            meta.textContent = info.populated
+                ? info.samples_count.toLocaleString() + ' samples'
+                : 'Empty \u2014 needs backfill';
+
+            hdr.appendChild(nameEl);
+            hdr.appendChild(dot);
+            card.appendChild(hdr);
+            card.appendChild(meta);
+            grid.appendChild(card);
+        }
+    }
+
+    /** Trigger all signal profile backfills and poll for completion. */
+    async function triggerBackfills() {
+        const btn = document.getElementById('backfillBtn');
+        const statusEl = document.getElementById('intelligenceStatus');
+        btn.disabled = true;
+        btn.textContent = 'Starting\u2026';
+        statusEl.textContent = '';
+        try {
+            const res = await fetch(`${API}/api/admin/backfills/trigger`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Trigger failed');
+            showToast('Backfills started \u2014 profiles rebuilding in background\u2026', 'info');
+            statusEl.textContent = 'Running in background\u2026';
+            let polls = 0;
+            const poll = setInterval(async () => {
+                polls++;
+                await loadBackfillStatus();
+                if (polls >= 12) {
+                    clearInterval(poll);
+                    statusEl.textContent = 'Check profiles above for results.';
+                    btn.disabled = false;
+                    btn.textContent = 'Rebuild All Profiles';
+                }
+            }, 5000);
+        } catch (e) {
+            showToast('Backfill trigger failed: ' + e.message, 'error');
+            btn.disabled = false;
+            btn.textContent = 'Rebuild All Profiles';
+        }
+    }
+
+    /** Trigger semantic fact inference from current signal profiles. */
+    async function runSemanticInference() {
+        const btn = document.getElementById('inferBtn');
+        btn.disabled = true;
+        btn.textContent = 'Running\u2026';
+        try {
+            const res = await fetch(`${API}/api/admin/semantic-facts/infer`, { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Inference failed');
+            showToast('Inference complete \u2014 ' + data.total_facts + ' facts in memory', 'success');
+        } catch (e) {
+            showToast('Inference failed: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Run Semantic Inference';
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Init
     // ---------------------------------------------------------------
     loadAll();
+    loadBackfillStatus();
     </script>
 </body>
 </html>"""
