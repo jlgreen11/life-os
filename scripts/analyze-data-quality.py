@@ -19,16 +19,20 @@ Usage: python scripts/analyze-data-quality.py [--data-dir ./data]
 
 import argparse
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _query(conn, sql, default=None):
     """Execute a query and return results, or default on error."""
     try:
         return conn.execute(sql).fetchall()
-    except Exception:
+    except Exception as e:
+        logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
         return default
 
 
@@ -36,7 +40,8 @@ def _query_one(conn, sql, default=None):
     """Execute a query and return first row, or default on error."""
     try:
         return conn.execute(sql).fetchone()
-    except Exception:
+    except Exception as e:
+        logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
         return default
 
 
@@ -109,6 +114,8 @@ def analyze(data_dir: str = "./data") -> dict:
     # -----------------------------------------------------------------------
     um_conn = _connect(data_path / "user_model.db")
     if um_conn:
+        # Each section is wrapped independently so a failure in one
+        # does not silently suppress all subsequent sections.
         try:
             pred_stats = _query(
                 um_conn,
@@ -158,13 +165,19 @@ def analyze(data_dir: str = "./data") -> dict:
                 "total_unresolved": total_unresolved["c"] if total_unresolved else 0,
                 "stale_over_7d": stale_predictions["c"] if stale_predictions else 0,
             }
+        except Exception as e:
+            report["sections"]["prediction_accuracy"] = {"error": str(e)}
 
+        try:
             # Signal profiles freshness
             profiles = _query(um_conn, "SELECT profile_type, samples_count, updated_at FROM signal_profiles", [])
             report["sections"]["signal_profiles"] = {
                 r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]} for r in profiles
             }
+        except Exception as e:
+            report["sections"]["signal_profiles"] = {"error": str(e)}
 
+        try:
             # Insight feedback
             insight_stats = _query(
                 um_conn,
@@ -176,7 +189,10 @@ def analyze(data_dir: str = "./data") -> dict:
             report["sections"]["insight_feedback"] = [
                 {"type": r["type"], "feedback": r["feedback"], "count": r["c"]} for r in insight_stats
             ]
+        except Exception as e:
+            report["sections"]["insight_feedback"] = {"error": str(e)}
 
+        try:
             # User model depth — episodes, facts, routines
             episode_count = _query_one(um_conn, "SELECT COUNT(*) as c FROM episodes")
             fact_count = _query_one(um_conn, "SELECT COUNT(*) as c FROM semantic_facts")
@@ -197,9 +213,9 @@ def analyze(data_dir: str = "./data") -> dict:
                 "fact_categories": {r["category"]: r["c"] for r in fact_categories},
             }
         except Exception as e:
-            report["sections"]["prediction_accuracy"] = {"error": str(e)}
-        finally:
-            um_conn.close()
+            report["sections"]["user_model"] = {"error": str(e)}
+
+        um_conn.close()
     else:
         report["sections"]["prediction_accuracy"] = {"error": "could not connect to user_model.db"}
 
@@ -228,7 +244,7 @@ def analyze(data_dir: str = "./data") -> dict:
             # Connector sync status — last sync times and error states
             connector_states = _query(
                 state_conn,
-                """SELECT connector_id, status, last_sync, error_message
+                """SELECT connector_id, status, last_sync, last_error
                    FROM connector_state ORDER BY connector_id""",
                 [],
             )
@@ -237,7 +253,7 @@ def analyze(data_dir: str = "./data") -> dict:
                     r["connector_id"]: {
                         "status": r["status"],
                         "last_sync": r["last_sync"],
-                        "error": r["error_message"],
+                        "error": r["last_error"],
                     }
                     for r in connector_states
                 }
@@ -274,16 +290,16 @@ def analyze(data_dir: str = "./data") -> dict:
             # confidence in some data sources
             source_weights = _query(
                 pref_conn,
-                """SELECT source_key, weight, drift, updated_at
-                   FROM source_weights ORDER BY drift DESC""",
+                """SELECT source_key, user_weight, ai_drift, ai_updated_at
+                   FROM source_weights ORDER BY ai_drift DESC""",
                 [],
             )
             report["sections"]["source_weights"] = (
                 {
                     r["source_key"]: {
-                        "weight": r["weight"],
-                        "drift": r["drift"],
-                        "updated_at": r["updated_at"],
+                        "weight": r["user_weight"],
+                        "drift": r["ai_drift"],
+                        "updated_at": r["ai_updated_at"],
                     }
                     for r in source_weights
                 }
