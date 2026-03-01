@@ -303,3 +303,46 @@ class TestCorruptedDatabase:
         # Archive should be unchanged (no second rebuild happened)
         assert archive.stat().st_mtime == archive_mtime, \
             "Archive mtime changed — second rebuild should not have fired"
+
+    @pytest.mark.asyncio
+    async def test_rebuilt_db_readable_without_wal(self, simulated_corrupt_data_dir):
+        """Rebuilt DB must be self-contained — readable even if its WAL file is missing.
+
+        Root cause of the WAL bug (fixed in this iteration):
+            SQLite WAL mode writes new data to a separate WAL file instead of
+            directly to the main DB.  The old rebuild code moved only the main DB
+            file and then deleted the temp dir (including the WAL).  The moved DB
+            had no WAL data baked in → any read raised "database disk image is
+            malformed".
+
+        Fix verification:
+            After rebuild, delete the WAL file (simulating the temp-dir cleanup)
+            and confirm the main DB is still fully readable.  A properly
+            checkpointed DB will have all data in the main file and an empty
+            (or absent) WAL, so reads succeed without the WAL companion.
+        """
+        life_os = _make_corrupting_life_os(simulated_corrupt_data_dir)
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        db_path = simulated_corrupt_data_dir / "user_model.db"
+        wal_path = simulated_corrupt_data_dir / "user_model.db-wal"
+
+        # Remove the WAL file to simulate what happened before the fix:
+        # the WAL was in temp_dir and got deleted by shutil.rmtree.
+        if wal_path.exists():
+            wal_path.unlink()
+
+        # The DB must be fully readable without its WAL file.
+        conn = sqlite3.connect(str(db_path))
+        try:
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            assert len(tables) > 0, "Schema should be readable without WAL"
+
+            # All core tables must be queryable — this is the regression guard.
+            for table in ("episodes", "semantic_facts", "signal_profiles", "routines"):
+                count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                assert isinstance(count, int), f"{table} COUNT(*) should return an int"
+        finally:
+            conn.close()

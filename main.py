@@ -828,6 +828,27 @@ class LifeOS:
             )
 
             # ---------------------------------------------------------------
+            # Step 4.5: Checkpoint the WAL before moving the new DB.
+            #
+            # SQLite WAL (Write-Ahead Log) mode writes new data to a
+            # separate WAL file rather than directly to the main DB file.
+            # If we move only the main DB without first checkpointing, the
+            # WAL file stays in temp_dir and is deleted by shutil.rmtree in
+            # the finally block.  The main DB then has no WAL data baked in
+            # and reads as "database disk image is malformed" — the exact
+            # corruption symptom we were trying to heal.
+            #
+            # PRAGMA wal_checkpoint(TRUNCATE):
+            #   1. Copies all WAL frames into the main DB (checkpoint).
+            #   2. Resets the WAL file to zero bytes (truncate).
+            # After this call the main DB is self-contained and can be moved
+            # safely without its WAL companion.
+            # ---------------------------------------------------------------
+            with new_db.get_connection("user_model") as chk_conn:
+                chk_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                logger.debug("       ✓ WAL checkpoint complete — new DB is self-contained")
+
+            # ---------------------------------------------------------------
             # Step 5: Atomic swap — archive the corrupted file and replace.
             # ---------------------------------------------------------------
             corrupted_archive = db_path.with_suffix(".db.corrupted")
@@ -835,17 +856,19 @@ class LifeOS:
             if corrupted_archive.exists():
                 corrupted_archive.unlink()
 
+            # Remove any WAL/SHM associated with the OLD (corrupted) DB
+            # BEFORE the swap so they cannot be erroneously applied to the
+            # fresh DB after it is moved into place.
+            for suffix in ["-wal", "-shm"]:
+                old_wal = db_path.with_name(db_path.name + suffix)
+                if old_wal.exists():
+                    old_wal.unlink(missing_ok=True)
+
             new_db_path = Path(temp_dir) / "user_model.db"
             # Archive the corrupted DB
             shutil.move(str(db_path), str(corrupted_archive))
-            # Move the fresh DB into place
+            # Move the fresh DB into place (WAL already checkpointed → empty)
             shutil.move(str(new_db_path), str(db_path))
-
-            # Remove WAL/SHM leftovers from the fresh DB (may not exist)
-            for suffix in ["-wal", "-shm"]:
-                leftover = db_path.with_name(db_path.name + suffix)
-                if leftover.exists():
-                    leftover.unlink(missing_ok=True)
 
             logger.warning(
                 "       ✓ Rebuilt corrupted user_model.db — "
