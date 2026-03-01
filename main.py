@@ -1422,9 +1422,52 @@ class LifeOS:
         # what happened, suitable for display in timeline UIs.
         content_summary = self._generate_episode_summary(event)
 
-        # Store the full event payload as content_full for later retrieval
-        # when the user wants complete details ("show me that email again").
-        content_full = json.dumps(payload)
+        # Store a COMPACT version of the payload as content_full.
+        #
+        # Root-cause fix (iteration 43): storing the raw payload caused
+        # user_model.db to balloon to 7.4 GB because email bodies (often
+        # 50–200 KB of HTML) were duplicated into every episode row.  With
+        # 55 K+ email episodes the overflow-page chains that SQLite uses for
+        # large BLOBs became corrupted, breaking signal_profiles reads and
+        # semantic-fact inference.
+        #
+        # The full event payload is already in events.db (immutable log, keyed
+        # on event_id).  Episodes only need the metadata fields needed for
+        # timeline display and relationship analysis; the heavy body text is
+        # never read from content_full by any service or query.
+        #
+        # Strategy:
+        #  1. Drop fields that are large by definition (body, html, raw mime).
+        #  2. Truncate any remaining string value that exceeds 500 characters
+        #     to a concise snippet (adds "…" suffix).
+        #  3. Cap the total JSON at 4 000 chars as a hard backstop.
+        _LARGE_FIELDS = frozenset(
+            {"body", "html_body", "raw", "raw_mime", "text_body", "html", "content"}
+        )
+        _SNIPPET_CHARS = 500
+        _MAX_TOTAL_CHARS = 4_000
+
+        compact_payload: dict = {}
+        for k, v in payload.items():
+            if k in _LARGE_FIELDS:
+                # Replace bulky body fields with a short snippet so the field
+                # still exists (useful for debugging) but takes minimal space.
+                if isinstance(v, str) and v:
+                    compact_payload[k] = v[:_SNIPPET_CHARS] + ("…" if len(v) > _SNIPPET_CHARS else "")
+                # Non-string body fields (rare) are simply dropped.
+            elif isinstance(v, str) and len(v) > _SNIPPET_CHARS:
+                compact_payload[k] = v[:_SNIPPET_CHARS] + "…"
+            else:
+                compact_payload[k] = v
+
+        content_full_json = json.dumps(compact_payload)
+        # Hard cap: if the compacted JSON is somehow still large, truncate
+        # at a safe boundary (this should never happen in practice, but
+        # prevents any future schema additions from reintroducing bloat).
+        content_full = (
+            content_full_json[:_MAX_TOTAL_CHARS] if len(content_full_json) > _MAX_TOTAL_CHARS
+            else content_full_json
+        )
 
         # Retrieve current mood from the user model if available — this
         # provides emotional context that helps the system understand why

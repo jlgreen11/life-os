@@ -94,7 +94,8 @@ async def test_episodic_memory_email_received(db, event_store, user_model_store,
         assert "alice@example.com" in episode["content_summary"]
         assert "Quarterly review" in episode["content_summary"]
 
-        # Verify full content is preserved
+        # Verify metadata fields are preserved in compact content_full
+        # (body fields are stripped to prevent DB bloat — see iteration 43)
         content_full = json.loads(episode["content_full"])
         assert content_full["subject"] == "Quarterly review meeting"
 
@@ -627,3 +628,90 @@ async def test_episode_summary_truncation(db, event_store, user_model_store, eve
         episode = dict(episodes[0])
         # Summary should be truncated to 200 chars
         assert len(episode["content_summary"]) <= 200
+
+
+@pytest.mark.asyncio
+async def test_episode_content_full_strips_large_body(db, event_store, user_model_store, event_bus):
+    """Episode content_full must strip large body fields to prevent DB bloat.
+
+    Root cause (iteration 43): storing the raw event payload caused
+    user_model.db to reach 7.4 GB because email bodies (often 50–200 KB of
+    HTML) were stored verbatim in every episode row.  The fix strips fields
+    named ``body``, ``html_body``, ``raw``, etc., keeping only metadata and
+    a short snippet.  The full payload is always recoverable from events.db
+    via event_id.
+
+    This test verifies:
+    - Large ``body`` field is stripped to ≤ 500 chars (with "…" suffix)
+    - Metadata fields (subject, from_address) are preserved intact
+    - ``html_body`` is stripped similarly
+    - Total content_full JSON stays under 4 000 chars even for huge payloads
+    """
+    from main import LifeOS
+
+    large_body = "A" * 10_000  # 10 KB body — typical HTML email
+    large_html = "<html>" + "B" * 10_000 + "</html>"
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "gmail",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "sender@example.com",
+            "to_addresses": ["me@example.com"],
+            "subject": "Important newsletter",
+            "message_id": "test-large-body",
+            "body": large_body,
+            "html_body": large_html,
+        },
+        "metadata": {"domain": "personal"},
+    }
+
+    config = {
+        "web_port": 8080,
+        "ollama_url": "http://localhost:11434",
+        "ollama_model": "mistral",
+    }
+
+    lifeos = LifeOS(
+        db=db,
+        event_bus=event_bus,
+        event_store=event_store,
+        user_model_store=user_model_store,
+        config=config,
+    )
+
+    await lifeos._create_episode(event)
+
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute(
+            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
+        ).fetchall()
+        assert len(episodes) == 1, "Episode should be created"
+
+        episode = dict(episodes[0])
+        content_full_raw = episode["content_full"]
+
+        # Total JSON must be under the 4 000-char hard cap
+        assert len(content_full_raw) <= 4_000, (
+            f"content_full exceeds 4000 chars: {len(content_full_raw)}"
+        )
+
+        content_full = json.loads(content_full_raw)
+
+        # Metadata fields must survive compaction
+        assert content_full["subject"] == "Important newsletter"
+        assert content_full["from_address"] == "sender@example.com"
+
+        # Large body fields must be stripped to a snippet (≤ 500 chars + "…")
+        assert "body" in content_full, "body field should still exist as a snippet"
+        assert len(content_full["body"]) <= 502, (  # 500 + len("…") ≤ 502
+            f"body not stripped: {len(content_full['body'])} chars"
+        )
+        assert content_full["body"].endswith("…"), "Stripped body must end with ellipsis"
+
+        assert "html_body" in content_full, "html_body field should still exist as a snippet"
+        assert len(content_full["html_body"]) <= 502
+        assert content_full["html_body"].endswith("…")
