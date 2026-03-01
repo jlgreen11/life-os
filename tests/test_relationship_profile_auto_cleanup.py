@@ -192,6 +192,7 @@ def test_cleanup_skips_when_profile_already_clean(db):
 def test_cleanup_skips_when_profile_empty(db):
     """Verify cleanup handles empty profile gracefully."""
     from main import LifeOS
+    from storage.user_model_store import UserModelStore
 
     # Create empty profile
     with db.get_connection("user_model") as conn:
@@ -206,9 +207,11 @@ def test_cleanup_skips_when_profile_empty(db):
             ),
         )
 
-    # Run the cleanup (should not crash)
+    # Run the cleanup using the test-scoped db fixture so we don't touch
+    # the real (potentially corrupted) production database.
     import asyncio
-    lifeos = LifeOS()
+    ums = UserModelStore(db)
+    lifeos = LifeOS(db=db, user_model_store=ums)
     asyncio.run(lifeos._clean_relationship_profile_if_needed())
 
     # Verify profile is still empty
@@ -224,11 +227,14 @@ def test_cleanup_skips_when_profile_empty(db):
 def test_cleanup_skips_when_profile_missing(db):
     """Verify cleanup handles missing profile gracefully."""
     from main import LifeOS
+    from storage.user_model_store import UserModelStore
 
     # Don't create any profile
-    # Run the cleanup (should not crash)
+    # Run the cleanup using the test-scoped db fixture so we don't touch
+    # the real (potentially corrupted) production database.
     import asyncio
-    lifeos = LifeOS()
+    ums = UserModelStore(db)
+    lifeos = LifeOS(db=db, user_model_store=ums)
     asyncio.run(lifeos._clean_relationship_profile_if_needed())
 
     # Verify no profile was created
