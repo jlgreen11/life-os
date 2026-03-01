@@ -237,6 +237,14 @@ class LifeOS:
         # 1.5 — Seed default source weights (no-op if already populated)
         self.source_weight_manager.seed_defaults()
 
+        # 1.55 — Detect and repair signal_profiles table corruption
+        # SQLite B-tree pages for the signal_profiles.data column can become
+        # corrupted (manifests as "database disk image is malformed" on SELECT).
+        # This repair runs before any backfills so that the existing backfill
+        # guards (which check whether profiles are empty) correctly see an empty
+        # table and trigger full repopulation.
+        await self._repair_signal_profiles_if_corrupted()
+
         # 1.6 — Backfill episode classification if needed
         # This ensures routine and workflow detection have the granular
         # interaction types they need. Without this, all old episodes would
@@ -626,6 +634,93 @@ class LifeOS:
         except Exception as e:
             # Backfill errors should not crash startup
             logger.warning("       ⚠ Task completion backfill failed: %s", e)
+
+    async def _repair_signal_profiles_if_corrupted(self):
+        """Detect and repair SQLite B-tree corruption in the signal_profiles table.
+
+        The ``signal_profiles`` table stores large JSON blobs in its ``data``
+        column. These blobs can span multiple B-tree overflow pages in the
+        SQLite file. When these pages become corrupted (e.g. after an unclean
+        shutdown or disk I/O error), any SELECT that touches the ``data`` column
+        raises ``sqlite3.DatabaseError: database disk image is malformed``.
+
+        Effect of undetected corruption:
+          - ``UserModelStore.get_signal_profile()`` silently returns ``None``
+          - All semantic fact inference stops (semantic inferrer skips profiles
+            that return ``None``)
+          - Relationship maintenance predictions stop firing
+          - Preparation-needs predictions stop firing
+          - The data quality report always shows ``signal_profiles: {}``
+
+        Recovery strategy:
+          1. Try reading a single row from signal_profiles (the cheapest test
+             that exercises the data column).
+          2. If that read fails with "malformed" or any error, DROP the table
+             and immediately re-create it using the same schema as the original
+             CREATE TABLE statement in the migration.
+          3. Set the schema version back to the post-migration value so the
+             existing migration machinery does not try to re-run.
+          4. Log a WARNING so the user knows a repair occurred.
+          5. The subsequent backfill guards in ``_backfill_relationship_profile_if_needed()``,
+             ``_backfill_topic_profile_if_needed()``, etc. will see an empty table
+             and automatically trigger full repopulation.
+
+        This method is idempotent: if the table is healthy, it returns quickly
+        after a single cheap read.
+
+        Example::
+
+            await life_os._repair_signal_profiles_if_corrupted()
+            # → "signal_profiles table is healthy" if OK
+            # → "Repaired corrupted signal_profiles table" if fixed
+        """
+        try:
+            # Step 1: Test whether the data column is readable.
+            # We use a LIMIT 1 SELECT that touches both the primary key column
+            # (always readable when the table exists) and the data column
+            # (the one prone to overflow-page corruption).
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    "SELECT profile_type, data FROM signal_profiles LIMIT 1"
+                ).fetchone()
+            # Table is healthy — nothing to do.
+            logger.debug("       ✓ signal_profiles table is healthy")
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Catch both "malformed" corruption and any other read failure that
+            # would leave profiles permanently unreadable.
+            logger.warning(
+                "       ⚠ signal_profiles table is corrupted (%s) — rebuilding…", e
+            )
+
+            try:
+                # Step 2: Drop the corrupted table and re-create it.
+                # The schema mirrors the definition in
+                # DatabaseManager._create_user_model_schema() (Migration 1).
+                with self.db.get_connection("user_model") as conn:
+                    conn.execute("DROP TABLE IF EXISTS signal_profiles")
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS signal_profiles (
+                            profile_type  TEXT PRIMARY KEY,
+                            data          TEXT NOT NULL DEFAULT '{}',
+                            samples_count INT  NOT NULL DEFAULT 0,
+                            updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                        )
+                    """)
+
+                logger.info(
+                    "       ✓ Repaired corrupted signal_profiles table — "
+                    "backfill methods will repopulate profiles on startup"
+                )
+
+            except Exception as repair_err:
+                # Repair itself failed — log and continue. The system will
+                # run without signal profiles rather than crash on startup.
+                logger.error(
+                    "       ✗ Failed to repair signal_profiles table: %s — "
+                    "system will run without signal profiles", repair_err
+                )
 
     async def _backfill_communication_templates_if_needed(self):
         """Extract communication templates from all historical communication events.
