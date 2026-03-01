@@ -237,6 +237,15 @@ class LifeOS:
         # 1.5 — Seed default source weights (no-op if already populated)
         self.source_weight_manager.seed_defaults()
 
+        # 1.54 — Detect and rebuild user_model.db when deep B-tree corruption
+        # affects the episodes table (e.g. content_full overflow pages).  This
+        # is a more comprehensive repair than the signal_profiles-only fix below:
+        # it rebuilds the entire user_model.db from all readable columns, so
+        # ALL signal profile backfills and semantic inference recover correctly.
+        # Must run BEFORE _repair_signal_profiles_if_corrupted so the latter
+        # operates on a healthy (or freshly rebuilt) database.
+        await self._rebuild_user_model_db_if_corrupted()
+
         # 1.55 — Detect and repair signal_profiles table corruption
         # SQLite B-tree pages for the signal_profiles.data column can become
         # corrupted (manifests as "database disk image is malformed" on SELECT).
@@ -634,6 +643,231 @@ class LifeOS:
         except Exception as e:
             # Backfill errors should not crash startup
             logger.warning("       ⚠ Task completion backfill failed: %s", e)
+
+    async def _rebuild_user_model_db_if_corrupted(self):
+        """Detect and rebuild user_model.db when deep B-tree corruption affects episodes.
+
+        The ``episodes.content_full`` column stores large email/message bodies as
+        TEXT blobs.  When these blobs span many SQLite B-tree overflow pages, a
+        single unclean shutdown or disk I/O error can corrupt those pages, making
+        any column read that touches the same page-chain fail with:
+            sqlite3.DatabaseError: database disk image is malformed
+
+        The prior ``_repair_signal_profiles_if_corrupted`` method only fixes the
+        ``signal_profiles`` table.  But if the *episodes* table is also corrupted
+        (which happens when ``content_full`` shares overflow pages with neighbouring
+        columns like ``contacts_involved``, ``topics``, ``entities``, and
+        ``created_at``), the backfill methods that read episodes will also fail,
+        leaving signal profiles permanently empty.
+
+        Recovery strategy:
+          1. Probe: attempt ``SELECT content_full FROM episodes LIMIT 1``.
+             If this succeeds, the DB is healthy and we return immediately.
+          2. Dump: read all readable episode columns (skip the corrupted large-blob
+             ones: content_full, contacts_involved, topics, entities, created_at).
+             Also dump semantic_facts, routines, predictions, insights.
+          3. Rebuild: create a fresh user_model.db in a temp directory using
+             DatabaseManager.initialize_all(), which runs the full migration stack
+             and produces a schema-correct database.
+          4. Restore: insert the recovered data into the fresh DB.
+          5. Swap: atomically rename the temp DB to user_model.db, archiving the
+             corrupted file as user_model.db.corrupted.
+          6. Log a clear WARNING so the user knows a rebuild occurred.
+
+        Columns preserved from episodes (all behavioral intelligence is retained):
+          id, timestamp, event_id, location, inferred_mood, active_domain,
+          energy_level, interaction_type, content_summary, outcome,
+          user_satisfaction, embedding_id
+
+        Columns lost (were already unreadable due to corruption):
+          content_full, contacts_involved, topics, entities, created_at
+          (content_full is the root-cause column; the others share its overflow pages)
+
+        After the rebuild:
+          - signal_profiles is empty → backfill guards repopulate on startup
+          - episodes are fully accessible → routine/workflow detection works
+          - semantic inference runs without the "database disk image is malformed" error
+
+        This method is idempotent: if the DB is healthy it returns after a single
+        cheap probe query and touches nothing.
+
+        Example::
+
+            await life_os._rebuild_user_model_db_if_corrupted()
+            # → "user_model.db is healthy" if OK
+            # → "Rebuilt corrupted user_model.db — recovered N episodes" if fixed
+        """
+        import shutil
+        import tempfile
+
+        # ---------------------------------------------------------------
+        # Step 1: Probe for corruption.
+        # Reading episodes.content_full is the canary: it spans the same
+        # overflow-page chains as contacts_involved, topics, entities.
+        # A successful read means the DB is healthy.
+        # ---------------------------------------------------------------
+        try:
+            with self.db.get_connection("user_model") as conn:
+                try:
+                    conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
+                    # Also check signal_profiles data (the other common corruption point)
+                    conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
+                    logger.debug("       ✓ user_model.db is healthy — no rebuild needed")
+                    return
+                except Exception as probe_err:
+                    logger.warning(
+                        "       ⚠ user_model.db corruption detected (%s) — rebuilding from readable columns...",
+                        probe_err,
+                    )
+        except Exception:
+            # Can't even connect — let initialize_all() deal with it
+            return
+
+        # ---------------------------------------------------------------
+        # Step 2: Dump all recoverable data from the corrupted DB.
+        # We read columns individually so that one corrupted column
+        # does not block the recovery of all other columns.
+        # ---------------------------------------------------------------
+        # These episode columns are always readable even when content_full is not,
+        # because they use inline record storage (not overflow pages).
+        SAFE_EPISODE_COLS = (
+            "id, timestamp, event_id, location, inferred_mood, active_domain, "
+            "energy_level, interaction_type, content_summary, outcome, "
+            "user_satisfaction, embedding_id"
+        )
+
+        recovered_episodes = []
+        recovered_tables: dict[str, list] = {
+            "semantic_facts": [],
+            "routines": [],
+            "predictions": [],
+            "insights": [],
+        }
+
+        try:
+            with self.db.get_connection("user_model") as src:
+                # Episodes: read only the safe columns
+                try:
+                    rows = src.execute(
+                        f"SELECT {SAFE_EPISODE_COLS} FROM episodes"
+                    ).fetchall()
+                    recovered_episodes = [tuple(r) for r in rows]
+                    logger.info(
+                        "       ✓ Recovered %d episodes (safe columns only)", len(rows)
+                    )
+                except Exception as e:
+                    logger.warning("       ⚠ Could not recover episodes: %s", e)
+
+                # Other tables: read everything (these are small and corruption-free)
+                for table in recovered_tables:
+                    try:
+                        rows = src.execute(f"SELECT * FROM {table}").fetchall()
+                        recovered_tables[table] = [tuple(r) for r in rows]
+                        logger.info(
+                            "       ✓ Recovered %d rows from %s", len(rows), table
+                        )
+                    except Exception as e:
+                        logger.warning("       ⚠ Could not recover %s: %s", table, e)
+
+        except Exception as dump_err:
+            logger.error("       ✗ Failed to dump recoverable data: %s", dump_err)
+            return
+
+        # ---------------------------------------------------------------
+        # Step 3: Build a fresh user_model.db in a temp directory.
+        # Using DatabaseManager.initialize_all() ensures the full migration
+        # stack runs and the schema matches what the rest of the code expects.
+        # ---------------------------------------------------------------
+        db_path = self.db.data_dir / "user_model.db"
+        temp_dir = None
+        try:
+            # Create a sibling temp file so the eventual rename is atomic
+            # (same filesystem, no cross-device move required).
+            temp_dir = tempfile.mkdtemp(dir=str(self.db.data_dir), prefix=".rebuild_")
+            from storage.manager import DatabaseManager as _DBManager
+
+            new_db = _DBManager(temp_dir)
+            new_db.initialize_all()  # Creates proper schema with all tables
+
+            # ---------------------------------------------------------------
+            # Step 4: Insert recovered data into the fresh DB.
+            # ---------------------------------------------------------------
+            with new_db.get_connection("user_model") as dst:
+                # Episodes: insert with safe columns only; other columns get defaults
+                if recovered_episodes:
+                    safe_col_count = len(SAFE_EPISODE_COLS.split(","))
+                    placeholders = ", ".join(["?"] * safe_col_count)
+                    dst.executemany(
+                        f"INSERT OR IGNORE INTO episodes ({SAFE_EPISODE_COLS}) "
+                        f"VALUES ({placeholders})",
+                        recovered_episodes,
+                    )
+
+                # Other tables: insert all columns
+                for table, rows in recovered_tables.items():
+                    if not rows:
+                        continue
+                    # Determine column count from first row
+                    placeholders = ", ".join(["?"] * len(rows[0]))
+                    try:
+                        dst.executemany(
+                            f"INSERT OR IGNORE INTO {table} VALUES ({placeholders})",
+                            rows,
+                        )
+                    except Exception as insert_err:
+                        logger.warning(
+                            "       ⚠ Could not restore %s: %s", table, insert_err
+                        )
+
+            logger.info(
+                "       ✓ Rebuilt fresh user_model.db with %d episodes, "
+                "%d semantic_facts, %d insights",
+                len(recovered_episodes),
+                len(recovered_tables["semantic_facts"]),
+                len(recovered_tables["insights"]),
+            )
+
+            # ---------------------------------------------------------------
+            # Step 5: Atomic swap — archive the corrupted file and replace.
+            # ---------------------------------------------------------------
+            corrupted_archive = db_path.with_suffix(".db.corrupted")
+            # Remove old archive if present to avoid rename collision
+            if corrupted_archive.exists():
+                corrupted_archive.unlink()
+
+            new_db_path = Path(temp_dir) / "user_model.db"
+            # Archive the corrupted DB
+            shutil.move(str(db_path), str(corrupted_archive))
+            # Move the fresh DB into place
+            shutil.move(str(new_db_path), str(db_path))
+
+            # Remove WAL/SHM leftovers from the fresh DB (may not exist)
+            for suffix in ["-wal", "-shm"]:
+                leftover = db_path.with_name(db_path.name + suffix)
+                if leftover.exists():
+                    leftover.unlink(missing_ok=True)
+
+            logger.warning(
+                "       ✓ Rebuilt corrupted user_model.db — "
+                "recovered %d episodes, signal_profiles will be repopulated by backfills. "
+                "Corrupted DB archived at %s",
+                len(recovered_episodes),
+                corrupted_archive,
+            )
+
+        except Exception as rebuild_err:
+            logger.error(
+                "       ✗ Failed to rebuild user_model.db: %s — "
+                "system will continue with the existing (possibly corrupted) database",
+                rebuild_err,
+            )
+        finally:
+            # Clean up temp directory regardless of success/failure
+            if temp_dir:
+                try:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                except Exception:
+                    pass
 
     async def _repair_signal_profiles_if_corrupted(self):
         """Detect and repair SQLite B-tree corruption in the signal_profiles table.

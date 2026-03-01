@@ -74,7 +74,11 @@ that.
 9. **Read recent git log** to understand trajectory and avoid duplicating work.
 
 **Priority order:**
-1. **Unimplemented planned features** — features in `docs/plans/` that have
+1. **Active priority plan** — If `docs/plans/2026-02-28-ui-engagement-fixes.md`
+   has uncompleted tasks, work through them in order (Task 1 first, then Task 2,
+   etc.). Each cycle should complete one task from this plan. Check recent git log
+   to see which tasks have already been shipped and skip those.
+2. **Unimplemented planned features** — features in `docs/plans/` that have
    designs but no code. These are high-value, pre-specified work.
 2. **Broken user-facing features** — things the user would notice are broken
    (e.g., a dashboard widget that shows no data, a connector that fails silently,
