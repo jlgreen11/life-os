@@ -541,8 +541,8 @@ class RelationshipExtractor(BaseExtractor):
                     words,
                     max_phrases=10
                 ),
-                "avoids_phrases": existing.get("avoids_phrases", []),  # Not auto-detected yet
-                "tone_notes": existing.get("tone_notes", []),  # Could add sentiment here
+                "avoids_phrases": existing.get("avoids_phrases", []),  # Requires cross-contact comparative analysis — deferred
+                "tone_notes": self._analyze_tone(body, existing.get("tone_notes", [])),
                 "example_message_ids": (
                     existing.get("example_message_ids", []) + [event.get("id")]
                 )[-10:],  # Keep last 10 example IDs
@@ -738,6 +738,79 @@ class RelationshipExtractor(BaseExtractor):
 
         # Return top N most common
         return [word for word, _ in word_counts.most_common(max_phrases)]
+
+    def _analyze_tone(self, text: str, existing_notes: list[str]) -> list[str]:
+        """Derive tone observations from message text using lightweight heuristics.
+
+        Analyzes the message for stylistic patterns (length, question density,
+        positive sentiment, directness, hedging) and merges new observations
+        with previously stored tone notes using set-union deduplication.
+
+        Args:
+            text: The message body to analyze.
+            existing_notes: Tone notes already stored for this template.
+
+        Returns:
+            A deduplicated list of tone note strings, capped at 5 entries.
+            When more than 5 exist, the most recently observed patterns are
+            kept (new observations take priority over old ones).
+        """
+        new_notes: list[str] = []
+
+        words = text.split()
+        word_count = len(words)
+
+        # --- Message length pattern ---
+        if word_count < 50:
+            new_notes.append("concise communicator")
+        elif word_count > 200:
+            new_notes.append("detailed communicator")
+
+        # --- Question density ---
+        # Split on sentence-ending punctuation, filter empties.
+        sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+        if sentences:
+            question_count = sum(1 for s in re.findall(r"[^.!?]*\?", text))
+            if question_count / len(sentences) > 0.3:
+                new_notes.append("inquisitive style")
+
+        # --- Positive sentiment keywords ---
+        positive_keywords = {
+            "great", "thanks", "wonderful", "appreciate", "excellent",
+            "happy", "glad", "love", "perfect", "awesome",
+        }
+        positive_hits = sum(
+            1 for w in re.findall(r"\b[a-z]+\b", text.lower())
+            if w in positive_keywords
+        )
+        if positive_hits > 2:
+            new_notes.append("warm/positive tone")
+
+        # --- Directness / action-oriented ---
+        action_patterns = re.findall(
+            r"\b(?:please|let's|let us|we should|i need|can you|would you|could you)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if len(action_patterns) >= 2:
+            new_notes.append("action-oriented")
+
+        # --- Hedging language ---
+        hedge_patterns = re.findall(
+            r"\b(?:maybe|perhaps|might|i think|sort of|kind of|possibly|not sure)\b",
+            text,
+            re.IGNORECASE,
+        )
+        if len(hedge_patterns) > 2:
+            new_notes.append("cautious/hedging style")
+
+        # Merge with existing notes via set-union, preserving new observations
+        # when we need to cap at 5.  New notes appear at the end so slicing
+        # from the tail keeps the most recently observed patterns.
+        merged = list(dict.fromkeys(existing_notes + new_notes))
+        if len(merged) > 5:
+            merged = merged[-5:]
+        return merged
 
     # Extractor-specific extra patterns applied in addition to the shared baseline.
     # These were already present in the relationship extractor before this refactor
