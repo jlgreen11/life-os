@@ -282,6 +282,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-weight: 500;
         }
         .new-items-banner.visible { display: block; }
+        .stale-data-banner {
+            display: none;
+            background: var(--accent-yellow);
+            color: #000;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            text-align: center;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .stale-data-banner.visible { display: flex; }
         #response {
             background: var(--bg-sidebar);
             border-radius: 10px;
@@ -1174,6 +1189,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Center: Main Feed -->
         <main class="main-feed" id="mainFeed">
             <div class="new-items-banner" id="newItemsBanner" onclick="scrollToTop()">New items available</div>
+            <div class="stale-data-banner" id="staleDataBanner">
+                <span id="staleDataMsg"></span>
+                <button onclick="dismissStaleWarning()" style="background:none;border:none;color:inherit;cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
+            </div>
             <div id="response"></div>
             <div class="feed-header"><span id="feedHeader">Inbox</span><button class="refresh-btn" onclick="refreshAll()" title="Refresh">&#8635; Refresh</button></div>
             <div id="feedContent">
@@ -3025,6 +3044,42 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
     }
 
+    // --- Data Freshness Warning ---
+    function checkDataFreshness() {
+        // Don't show if user dismissed in this session
+        if (sessionStorage.getItem('stale-dismissed')) return;
+
+        fetch(API + '/api/system/sources')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var sources = data.sources || [];
+            // Filter out internal sources that are expected to be idle when no
+            // external data flows in — they don't self-initiate.
+            var stale = sources.filter(function(s) {
+                return s.stale && s.source !== 'user_model_store' && s.source !== 'rules_engine';
+            });
+            var banner = document.getElementById('staleDataBanner');
+            if (stale.length === 0) {
+                banner.classList.remove('visible');
+                return;
+            }
+            var msgs = stale.map(function(s) {
+                var hrs = Math.round(s.hours_since || 0);
+                var timeStr = hrs > 48 ? Math.round(hrs / 24) + ' days' : hrs + ' hours';
+                return s.source + ' (' + timeStr + ' ago)';
+            });
+            document.getElementById('staleDataMsg').textContent =
+                'Data may be outdated \u2014 ' + msgs.join(', ') + ' not syncing';
+            banner.classList.add('visible');
+        })
+        .catch(function() {});
+    }
+
+    function dismissStaleWarning() {
+        document.getElementById('staleDataBanner').classList.remove('visible');
+        sessionStorage.setItem('stale-dismissed', '1');
+    }
+
     // --- Manual Refresh ---
     function refreshAll() {
         loadFeed();
@@ -3034,6 +3089,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         loadPredictions();
         loadPeopleRadar();
         loadMood();
+        checkDataFreshness();
     }
 
     // --- Scroll ---
@@ -3102,6 +3158,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     loadPredictions();
     loadPeopleRadar();
     loadMood();
+    checkDataFreshness();
 
     // --- Auto-refresh sidebar data every 60 seconds ---
     // The main feed is not auto-refreshed to avoid surprising the user mid-scroll;
@@ -3115,6 +3172,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // Refresh badge counts every 2 minutes so the nav stays accurate.
     setInterval(loadBadges, 120000);
+
+    // Re-check data freshness every 5 minutes.
+    setInterval(checkDataFreshness, 300000);
 
     // --- WebSocket ---
     try { connectWS(); } catch(e) {}
