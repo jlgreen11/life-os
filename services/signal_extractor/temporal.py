@@ -7,12 +7,16 @@ weekly patterns, and how behavior changes throughout the day and week.
 
 from __future__ import annotations
 
+import logging
+import statistics
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
+
+logger = logging.getLogger(__name__)
 
 
 class TemporalExtractor(BaseExtractor):
@@ -148,9 +152,14 @@ class TemporalExtractor(BaseExtractor):
             "activity_by_hour": {},  # {hour: count}
             "activity_by_day": {},   # {day: count}
             "activity_by_type": {},  # {type: count}
+            "activity_by_day_and_type": {},  # {"monday:communication": count} — for day classification
             "scheduled_hours": {},   # {hour: count} — when events are scheduled
             "advance_planning_days": [],  # list of planning horizons
         }
+
+        # Ensure activity_by_day_and_type exists for profiles created before this field was added
+        if "activity_by_day_and_type" not in data:
+            data["activity_by_day_and_type"] = {}
 
         # Process each signal
         for signal in signals:
@@ -174,6 +183,12 @@ class TemporalExtractor(BaseExtractor):
                     data["activity_by_type"][activity_type] = 0
                 data["activity_by_type"][activity_type] += 1
 
+                # Update per-day-per-type count (for day classification)
+                day_type_key = f"{day}:{activity_type}"
+                if day_type_key not in data["activity_by_day_and_type"]:
+                    data["activity_by_day_and_type"][day_type_key] = 0
+                data["activity_by_day_and_type"][day_type_key] += 1
+
             elif signal["type"] == "temporal_scheduled_event":
                 scheduled_hour = str(signal["scheduled_hour"])
                 advance_days = signal["advance_planning_days"]
@@ -191,7 +206,117 @@ class TemporalExtractor(BaseExtractor):
                     if len(data["advance_planning_days"]) > 1000:
                         data["advance_planning_days"] = data["advance_planning_days"][-1000:]
 
+        # Derive higher-level behavioral fields from the raw counters
+        data = self._derive_behavioral_fields(data)
+
         # Persist the updated profile
         # Note: update_signal_profile expects just the data dict, and automatically
         # increments samples_count by 1 per call and updates the timestamp
         self.ums.update_signal_profile("temporal", data)
+
+    def _derive_behavioral_fields(self, data: dict) -> dict:
+        """
+        Derive higher-level behavioral fields from raw activity counters.
+
+        Computes chronotype, peak_hours, wake/sleep times, day classifications,
+        and planning horizon from the raw counters already stored in the profile.
+        All derivations are guarded by minimum sample thresholds to avoid noisy
+        conclusions from sparse data.
+
+        Args:
+            data: The profile data dict containing raw counters.
+
+        Returns:
+            The mutated data dict with derived fields added.
+        """
+        activity_by_hour = data.get("activity_by_hour", {})
+        total_activity = sum(activity_by_hour.values())
+
+        # --- Chronotype (requires 50+ total activities) ---
+        if total_activity >= 50:
+            morning_activity = sum(
+                count for hour, count in activity_by_hour.items()
+                if 6 <= int(hour) <= 10
+            )
+            evening_activity = sum(
+                count for hour, count in activity_by_hour.items()
+                if 20 <= int(hour) <= 23
+            )
+            morning_ratio = morning_activity / total_activity
+            evening_ratio = evening_activity / total_activity
+
+            if morning_ratio > 0.3:
+                data["chronotype"] = "early_bird"
+            elif evening_ratio > 0.3:
+                data["chronotype"] = "night_owl"
+            else:
+                data["chronotype"] = "variable"
+
+        # --- Peak hours (requires 20+ total activities) ---
+        if total_activity >= 20:
+            # Sort hours by activity count descending, keep those with >= 5% of total
+            threshold = total_activity * 0.05
+            sorted_hours = sorted(
+                activity_by_hour.items(),
+                key=lambda kv: kv[1],
+                reverse=True,
+            )
+            peak_hours = [
+                int(hour) for hour, count in sorted_hours
+                if count >= threshold
+            ][:3]
+            if peak_hours:
+                data["peak_hours"] = peak_hours
+
+        # --- Typical wake / sleep hours (requires 20+ total activities) ---
+        if total_activity >= 20:
+            threshold_2pct = total_activity * 0.02
+            active_hours = sorted(
+                int(hour) for hour, count in activity_by_hour.items()
+                if count > threshold_2pct
+            )
+            if active_hours:
+                data["typical_wake_hour"] = active_hours[0]
+                data["typical_sleep_hour"] = active_hours[-1]
+
+        # --- Day classification (requires 20+ total activities) ---
+        if total_activity >= 20:
+            activity_by_day = data.get("activity_by_day", {})
+            activity_by_day_and_type = data.get("activity_by_day_and_type", {})
+            productive_days = []
+            social_days = []
+            recharge_days = []
+
+            for day, day_total in activity_by_day.items():
+                if day_total == 0:
+                    recharge_days.append(day)
+                    continue
+                # Count work-oriented activity types for this day
+                work_count = sum(
+                    activity_by_day_and_type.get(f"{day}:{t}", 0)
+                    for t in ("communication", "planning", "work")
+                )
+                work_ratio = work_count / day_total
+
+                if work_ratio > 0.6:
+                    productive_days.append(day)
+                elif work_ratio < 0.3:
+                    # Low work ratio with communication present => social
+                    comm_count = activity_by_day_and_type.get(f"{day}:communication", 0)
+                    if comm_count > 0:
+                        social_days.append(day)
+                    else:
+                        recharge_days.append(day)
+                else:
+                    recharge_days.append(day)
+
+            data["productive_days"] = productive_days
+            data["social_days"] = social_days
+            data["recharge_days"] = recharge_days
+
+        # --- Median planning horizon (requires at least 3 data points) ---
+        planning_days = data.get("advance_planning_days", [])
+        if len(planning_days) >= 3:
+            data["median_planning_horizon_days"] = float(statistics.median(planning_days))
+
+        return data

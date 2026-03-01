@@ -346,3 +346,145 @@ def test_temporal_extractor_incremental_profile_updates(db, user_model_store):
     data = profile["data"]
     assert data["activity_by_type"]["communication"] == 5
     assert data["activity_by_type"]["work"] == 3
+
+
+# --- Tests for _derive_behavioral_fields ---
+
+
+def _build_profile_with_hourly_distribution(extractor, hour_counts: dict[int, int]):
+    """
+    Helper: feed events into the extractor to build a profile with the given
+    hourly distribution.  hour_counts maps hour (int) -> number of events at that hour.
+    All events land on Wednesday (2026-02-18).
+    """
+    for hour, count in hour_counts.items():
+        for i in range(count):
+            event = {
+                "type": EventType.EMAIL_SENT.value,
+                "timestamp": f"2026-02-18T{hour:02d}:{i:02d}:00Z",
+                "payload": {},
+            }
+            extractor.extract(event)
+
+
+def test_derive_chronotype_early_bird(db, user_model_store):
+    """Profile with >30% of activity in hours 6-10 should derive chronotype='early_bird'."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    # 40% of activity in morning hours 6-10 (24 out of 60 events),
+    # rest spread across midday hours
+    hour_counts = {
+        6: 5, 7: 5, 8: 5, 9: 5, 10: 4,  # 24 morning events
+        12: 9, 13: 9, 14: 9, 15: 9,       # 36 midday events
+    }
+    _build_profile_with_hourly_distribution(extractor, hour_counts)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+    assert data["chronotype"] == "early_bird"
+
+
+def test_derive_chronotype_night_owl(db, user_model_store):
+    """Profile with >30% of activity in hours 20-23 should derive chronotype='night_owl'."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    # 40% of activity in evening hours 20-23 (24 out of 60 events)
+    hour_counts = {
+        12: 9, 13: 9, 14: 9, 15: 9,       # 36 midday events
+        20: 6, 21: 6, 22: 6, 23: 6,        # 24 evening events
+    }
+    _build_profile_with_hourly_distribution(extractor, hour_counts)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+    assert data["chronotype"] == "night_owl"
+
+
+def test_derive_chronotype_variable(db, user_model_store):
+    """Even distribution across hours should derive chronotype='variable'."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    # Spread 60 events evenly across 12 hours (5 each), none dominant in morning/evening
+    hour_counts = {h: 5 for h in range(8, 20)}  # 8am - 7pm, 12 hours * 5 = 60
+    _build_profile_with_hourly_distribution(extractor, hour_counts)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+    assert data["chronotype"] == "variable"
+
+
+def test_derive_peak_hours(db, user_model_store):
+    """Profile with clear top-3 hours should derive peak_hours containing them."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    # Create a clear pattern: hours 10, 14, 16 dominate (8 events each),
+    # everything else is 1 event (background noise)
+    hour_counts = {h: 1 for h in range(8, 20)}  # 12 hours * 1 = 12 baseline
+    hour_counts[10] = 8
+    hour_counts[14] = 8
+    hour_counts[16] = 8
+    # Total = 12 + (8-1)*3 = 12 + 21 = 33
+    _build_profile_with_hourly_distribution(extractor, hour_counts)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+    assert "peak_hours" in data
+    assert set(data["peak_hours"]) == {10, 14, 16}
+
+
+def test_derive_wake_sleep_hours(db, user_model_store):
+    """Profile with activity from 7am-23pm should derive typical_wake_hour=7, typical_sleep_hour=23."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    # Activity from 7am to 11pm, each hour has 3 events (all above 2% threshold)
+    # Total = 17 hours * 3 = 51 events; 2% of 51 ≈ 1.02
+    hour_counts = {h: 3 for h in range(7, 24)}
+    _build_profile_with_hourly_distribution(extractor, hour_counts)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+    assert data["typical_wake_hour"] == 7
+    assert data["typical_sleep_hour"] == 23
+
+
+def test_derive_skips_with_insufficient_samples(db, user_model_store):
+    """Profile with <50 total activities should not have chronotype derived."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    # Only 10 events total — below the 50-event threshold for chronotype
+    # and below the 20-event threshold for peak_hours
+    hour_counts = {8: 5, 9: 5}
+    _build_profile_with_hourly_distribution(extractor, hour_counts)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+
+    # Chronotype needs 50+, so should not be present
+    assert "chronotype" not in data
+    # Peak hours needs 20+, so should not be present
+    assert "peak_hours" not in data
+    # Wake/sleep need 20+, so should not be present
+    assert "typical_wake_hour" not in data
+
+
+def test_derive_planning_horizon(db, user_model_store):
+    """Profile with advance_planning_days [1,3,7,14,30] should derive median=7.0."""
+    extractor = TemporalExtractor(db, user_model_store)
+
+    now = datetime(2026, 2, 18, 10, 0, 0, tzinfo=timezone.utc)
+    planning_horizons = [1, 3, 7, 14, 30]
+
+    for days_ahead in planning_horizons:
+        event_time = now + timedelta(days=days_ahead)
+        event = {
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "timestamp": now.isoformat().replace("+00:00", "Z"),
+            "payload": {
+                "start_time": event_time.isoformat().replace("+00:00", "Z"),
+            },
+        }
+        extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("temporal")
+    data = profile["data"]
+    assert data["median_planning_horizon_days"] == 7.0
