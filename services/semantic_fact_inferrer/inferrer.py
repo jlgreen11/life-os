@@ -100,8 +100,8 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("linguistic")
         if not profile or profile.get("samples_count", 0) < 1:
-            logger.debug("Linguistic profile has insufficient samples (<1), skipping inference")
-            return
+            logger.info("Linguistic profile has insufficient samples (<1), skipping inference")
+            return {"type": "linguistic", "processed": False, "reason": "insufficient samples (<1)"}
 
         data = profile["data"]
         averages = data.get("averages", {})
@@ -189,6 +189,7 @@ class SemanticFactInferrer:
             )
 
         logger.info(f"Inferred semantic facts from linguistic profile (samples={profile.get('samples_count')})")
+        return {"type": "linguistic", "processed": True, "reason": None}
 
     def infer_from_relationship_profile(self):
         """
@@ -221,8 +222,8 @@ class SemanticFactInferrer:
 
         profile = self.ums.get_signal_profile("relationships")
         if not profile or profile.get("samples_count", 0) < 10:
-            logger.debug("Relationship profile has insufficient samples (<10), skipping inference")
-            return
+            logger.info("Relationship profile has insufficient samples (<10), skipping inference")
+            return {"type": "relationship", "processed": False, "reason": "insufficient samples (<10)"}
 
         data = profile["data"]
         contacts = data.get("contacts", {})
@@ -231,7 +232,7 @@ class SemanticFactInferrer:
         # A contact is high-priority if they have significantly more interactions
         # than average (top 20% of contacts by interaction count)
         if not contacts:
-            return
+            return {"type": "relationship", "processed": True, "reason": None}
 
         # Filter 1: Skip contacts with zero outbound messages.
         # These are pure inbound senders (newsletters, automated receipts, etc.)
@@ -257,8 +258,8 @@ class SemanticFactInferrer:
         }
 
         if not human_contacts:
-            logger.debug("No human bidirectional contacts found after marketing filter, skipping relationship inference")
-            return
+            logger.info("No human bidirectional contacts found after marketing filter, skipping relationship inference")
+            return {"type": "relationship", "processed": True, "reason": None}
 
         # Calculate average interaction count across human contacts only.
         # Previously this was computed over all bidirectional contacts, which
@@ -327,6 +328,7 @@ class SemanticFactInferrer:
                     )
 
         logger.info(f"Inferred semantic facts from relationship profile (samples={profile.get('samples_count')})")
+        return {"type": "relationship", "processed": True, "reason": None}
 
     def _purge_noise_topic_facts(self, noise_blocklist: set) -> int:
         """
@@ -459,8 +461,8 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("topics")
         if not profile or profile.get("samples_count", 0) < 30:
-            logger.debug("Topic profile has insufficient samples (<30), skipping inference")
-            return
+            logger.info("Topic profile has insufficient samples (<30), skipping inference")
+            return {"type": "topic", "processed": False, "reason": "insufficient samples (<30)"}
 
         data = profile["data"]
         # The topic extractor stores data as "topic_counts", not "topic_frequencies"
@@ -606,6 +608,7 @@ class SemanticFactInferrer:
         if filtered_count > 0:
             logger.info(f"Filtered {filtered_count} noise tokens from topic-based fact inference")
         logger.info(f"Inferred semantic facts from topic profile (samples={profile.get('samples_count')})")
+        return {"type": "topic", "processed": True, "reason": None}
 
     def infer_from_cadence_profile(self):
         """
@@ -621,8 +624,8 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("cadence")
         if not profile or profile.get("samples_count", 0) < 50:
-            logger.debug("Cadence profile has insufficient samples (<50), skipping inference")
-            return
+            logger.info("Cadence profile has insufficient samples (<50), skipping inference")
+            return {"type": "cadence", "processed": False, "reason": "insufficient samples (<50)"}
 
         data = profile["data"]
         # The cadence extractor stores data as "hourly_activity", not "hourly_distribution"
@@ -765,6 +768,7 @@ class SemanticFactInferrer:
                 fast_domains_stored += 1
 
         logger.info(f"Inferred semantic facts from cadence profile (samples={profile.get('samples_count')})")
+        return {"type": "cadence", "processed": True, "reason": None}
 
     def infer_from_mood_profile(self):
         """
@@ -787,15 +791,15 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("mood_signals")
         if not profile or profile.get("samples_count", 0) < 5:
-            logger.debug("Mood profile has insufficient samples (<5), skipping inference")
-            return
+            logger.info("Mood profile has insufficient samples (<5), skipping inference")
+            return {"type": "mood", "processed": False, "reason": "insufficient samples (<5)"}
 
         data = profile["data"]
         recent_signals = data.get("recent_signals", [])
 
         if not recent_signals:
-            logger.debug("Mood profile has no recent signals, skipping inference")
-            return
+            logger.info("Mood profile has no recent signals, skipping inference")
+            return {"type": "mood", "processed": True, "reason": None}
 
         # Get recent episodes to link as source evidence for mood-based facts.
         # Mood signals are extracted from all interaction types, so we do not
@@ -849,6 +853,7 @@ class SemanticFactInferrer:
                 )
 
         logger.info(f"Inferred semantic facts from mood profile (samples={profile.get('samples_count')})")
+        return {"type": "mood", "processed": True, "reason": None}
 
     def infer_from_temporal_profile(self):
         """
@@ -871,8 +876,8 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("temporal")
         if not profile or profile.get("samples_count", 0) < 50:
-            logger.debug("Temporal profile has insufficient samples (<50), skipping inference")
-            return
+            logger.info("Temporal profile has insufficient samples (<50), skipping inference")
+            return {"type": "temporal", "processed": False, "reason": "insufficient samples (<50)"}
 
         data = profile["data"]
         # Keys match what TemporalExtractor._update_profile() actually stores:
@@ -891,7 +896,7 @@ class SemanticFactInferrer:
         if hourly_activity:
             total_activity = sum(hourly_activity.values())
             if total_activity == 0:
-                return
+                return {"type": "temporal", "processed": True, "reason": None}
 
             morning_activity = sum(
                 count for hour, count in hourly_activity.items()
@@ -947,7 +952,7 @@ class SemanticFactInferrer:
         if weekly_activity:
             total_weekly = sum(weekly_activity.values())
             if total_weekly == 0:
-                return
+                return {"type": "temporal", "processed": True, "reason": None}
 
             # Identify most productive day
             most_productive_day = max(weekly_activity, key=weekly_activity.get)
@@ -978,6 +983,7 @@ class SemanticFactInferrer:
                 )
 
         logger.info(f"Inferred semantic facts from temporal profile (samples={profile.get('samples_count')})")
+        return {"type": "temporal", "processed": True, "reason": None}
 
     def infer_from_spatial_profile(self):
         """
@@ -1000,8 +1006,8 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("spatial")
         if not profile or profile.get("samples_count", 0) < 10:
-            logger.debug("Spatial profile has insufficient samples (<10), skipping inference")
-            return
+            logger.info("Spatial profile has insufficient samples (<10), skipping inference")
+            return {"type": "spatial", "processed": False, "reason": "insufficient samples (<10)"}
 
         data = profile["data"]
         # The spatial extractor stores data as JSON-encoded "place_behaviors"
@@ -1013,13 +1019,13 @@ class SemanticFactInferrer:
                 place_behaviors = json.loads(place_behaviors_json)
             except Exception as e:
                 logger.warning(f"Failed to parse place_behaviors JSON: {e}")
-                return
+                return {"type": "spatial", "processed": True, "reason": None}
         else:
             place_behaviors = place_behaviors_json
 
         if not place_behaviors:
-            logger.debug("Spatial profile has no place behaviors, skipping inference")
-            return
+            logger.info("Spatial profile has no place behaviors, skipping inference")
+            return {"type": "spatial", "processed": True, "reason": None}
 
         # Get recent episodes to link as source evidence for spatial facts
         recent_episodes = self._get_recent_episodes(limit=5)
@@ -1101,6 +1107,7 @@ class SemanticFactInferrer:
                     )
 
         logger.info(f"Inferred semantic facts from spatial profile (samples={profile.get('samples_count')})")
+        return {"type": "spatial", "processed": True, "reason": None}
 
     def infer_from_decision_profile(self):
         """
@@ -1123,8 +1130,8 @@ class SemanticFactInferrer:
         """
         profile = self.ums.get_signal_profile("decision")
         if not profile or profile.get("samples_count", 0) < 20:
-            logger.debug("Decision profile has insufficient samples (<20), skipping inference")
-            return
+            logger.info("Decision profile has insufficient samples (<20), skipping inference")
+            return {"type": "decision", "processed": False, "reason": "insufficient samples (<20)"}
 
         data = profile["data"]
         decision_speeds = data.get("decision_speed_by_domain", {})
@@ -1206,6 +1213,36 @@ class SemanticFactInferrer:
                 )
 
         logger.info(f"Inferred semantic facts from decision profile (samples={profile.get('samples_count')})")
+        return {"type": "decision", "processed": True, "reason": None}
+
+    def _log_inference_summary(self, results: list[dict]) -> None:
+        """
+        Log a summary of which profile types were processed vs skipped.
+
+        Called by run_all_inference() after all 8 inference methods complete.
+        Provides at-a-glance observability at the default INFO log level so
+        operators can tell whether the cognitive pipeline is actually running
+        or still waiting for sufficient data.
+
+        Args:
+            results: List of status dicts from each infer_from_* method, each
+                containing 'type', 'processed' (bool), and 'reason' (str or None).
+        """
+        processed = [r["type"] for r in results if r.get("processed")]
+        skipped = [(r["type"], r.get("reason", "unknown")) for r in results if not r.get("processed")]
+
+        processed_str = ", ".join(processed) if processed else "none"
+        if skipped:
+            skipped_parts = [f"{t} ({reason})" for t, reason in skipped]
+            skipped_str = ", ".join(skipped_parts)
+        else:
+            skipped_str = "none"
+
+        logger.info(
+            "SemanticFactInferrer: inference cycle complete — processed: %s; skipped: %s",
+            processed_str,
+            skipped_str,
+        )
 
     def run_all_inference(self):
         """
@@ -1222,13 +1259,16 @@ class SemanticFactInferrer:
         """
         logger.info("Starting semantic fact inference across all profiles")
 
-        self.infer_from_linguistic_profile()
-        self.infer_from_relationship_profile()
-        self.infer_from_topic_profile()
-        self.infer_from_cadence_profile()
-        self.infer_from_mood_profile()
-        self.infer_from_temporal_profile()
-        self.infer_from_spatial_profile()
-        self.infer_from_decision_profile()
+        results = [
+            self.infer_from_linguistic_profile(),
+            self.infer_from_relationship_profile(),
+            self.infer_from_topic_profile(),
+            self.infer_from_cadence_profile(),
+            self.infer_from_mood_profile(),
+            self.infer_from_temporal_profile(),
+            self.infer_from_spatial_profile(),
+            self.infer_from_decision_profile(),
+        ]
 
+        self._log_inference_summary(results)
         logger.info("Completed semantic fact inference")
