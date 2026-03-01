@@ -254,6 +254,14 @@ class LifeOS:
         # table and trigger full repopulation.
         await self._repair_signal_profiles_if_corrupted()
 
+        # 1.58 — Backfill episodes from events.db if user_model.db is empty
+        # After a user_model.db rebuild (step 1.54 above), the episodes table is empty
+        # but events.db still has the full event history.  Episodes are the foundation
+        # of the cognitive pipeline: routine detection, semantic fact inference, and
+        # prediction accuracy all depend on episodes existing.  This must run BEFORE
+        # episode classification (1.6) since classification operates on existing episodes.
+        await self._backfill_episodes_from_events_if_needed()
+
         # 1.6 — Backfill episode classification if needed
         # This ensures routine and workflow detection have the granular
         # interaction types they need. Without this, all old episodes would
@@ -385,6 +393,66 @@ class LifeOS:
         logger.info("  → Health:  http://localhost:%s/health", port)
         logger.info("  Life OS is running. Press Ctrl+C to stop.")
         logger.info("=" * 60)
+
+    async def _backfill_episodes_from_events_if_needed(self):
+        """Create episodic memory from events.db when user_model.db has no episodes.
+
+        Episodes are the foundation of the entire cognitive pipeline:
+        - Routine detection queries episodes to find recurring patterns
+        - Semantic fact inference uses episodes to derive expertise, interests, etc.
+        - Prediction accuracy tracking needs episodes for calibration
+        - The dashboard timeline and episodic memory views are empty without them
+
+        After a user_model.db rebuild (e.g., due to corruption repair in step 1.54),
+        the episodes table is wiped but events.db retains the full event history.
+        This method detects the empty-episodes condition and backfills from events.db
+        using the same logic as ``scripts/backfill_episodes_from_events.py``.
+
+        The backfill is idempotent: it checks for existing episodes per event_id
+        and uses INSERT OR IGNORE, so running it multiple times is safe.
+        """
+        try:
+            # Check if episodes already exist — if so, nothing to do
+            with self.db.get_connection("user_model") as conn:
+                episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+
+            if episode_count > 0:
+                return
+
+            # Check if there are episodic events in events.db to backfill from
+            from scripts.backfill_episodes_from_events import EPISODIC_EVENT_TYPES
+
+            placeholders = ", ".join("?" for _ in EPISODIC_EVENT_TYPES)
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    f"SELECT COUNT(*) FROM events WHERE type IN ({placeholders})",
+                    list(EPISODIC_EVENT_TYPES),
+                ).fetchone()[0]
+
+            if event_count == 0:
+                return
+
+            logger.info("       → Backfilling episodes from %d events...", event_count)
+
+            # Run in a thread so the async event loop isn't blocked during the
+            # O(n_events) SQLite iteration that can take several seconds on large datasets.
+            def _run_backfill():
+                from scripts.backfill_episodes_from_events import backfill_episodes
+
+                return backfill_episodes(self.db)
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Episodes backfilled: %d created, %d skipped, %d errors",
+                stats["episodes_created"],
+                stats["episodes_skipped_existing"],
+                stats["errors"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Episode backfill from events failed (non-fatal): %s", e)
 
     async def _backfill_episode_classification_if_needed(self):
         """Reclassify old episodes with granular interaction types if needed.
