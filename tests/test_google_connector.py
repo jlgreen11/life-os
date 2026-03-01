@@ -142,6 +142,71 @@ async def test_load_credentials_missing_file(connector):
         assert result is None
 
 
+@pytest.mark.asyncio
+async def test_load_credentials_refresh_error(connector):
+    """Test _load_credentials raises ValueError with actionable message when refresh fails."""
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = "refresh_token_123"
+
+    # Import the exception class to use as side_effect
+    from google.auth import exceptions as google_exceptions
+
+    mock_creds.refresh.side_effect = google_exceptions.RefreshError("Token has been revoked")
+
+    with patch("os.path.exists", return_value=True), \
+         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
+               return_value=mock_creds), \
+         patch("google.auth.transport.requests.Request"):
+
+        with pytest.raises(ValueError, match="re-authenticate via /admin connector panel"):
+            connector._load_credentials()
+
+        mock_creds.refresh.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_load_credentials_expired_no_refresh_token(connector):
+    """Test _load_credentials raises ValueError when token is expired but has no refresh_token."""
+    mock_creds = MagicMock()
+    mock_creds.valid = False
+    mock_creds.expired = True
+    mock_creds.refresh_token = None
+
+    with patch("os.path.exists", return_value=True), \
+         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
+               return_value=mock_creds):
+
+        with pytest.raises(ValueError, match="no refresh_token"):
+            connector._load_credentials()
+
+
+@pytest.mark.asyncio
+async def test_authenticate_descriptive_error_state(connector, db):
+    """Test that start() passes specific error message to _update_state, not generic 'Authentication failed'."""
+    error_msg = "Token refresh failed (invalid_grant) — re-authenticate via /admin connector panel"
+
+    with patch.object(connector, "_load_credentials", side_effect=ValueError(error_msg)):
+
+        result = await connector.authenticate()
+        assert result is False
+        assert connector._auth_error == error_msg
+
+        # Simulate what start() does: verify _update_state gets the descriptive message
+        await connector.start()
+
+        # Check the state stored in the database
+        with db.get_connection("state") as conn:
+            row = conn.execute(
+                "SELECT last_error FROM connector_state WHERE connector_id = ?",
+                (connector.CONNECTOR_ID,),
+            ).fetchone()
+            assert row is not None
+            assert "re-authenticate" in row["last_error"]
+            assert "Authentication failed" != row["last_error"]
+
+
 # ------------------------------------------------------------------
 # Gmail sync tests
 # ------------------------------------------------------------------
