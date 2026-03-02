@@ -959,6 +959,16 @@ def register_routes(app: FastAPI, life_os) -> None:
         )
         return {"task_id": task_id}
 
+    @app.get("/api/tasks/stats")
+    async def get_task_stats():
+        """Get task dashboard statistics.
+
+        Returns summary counts for the task management widget:
+        pending tasks, tasks completed today, overdue tasks,
+        and a breakdown of pending tasks by life domain.
+        """
+        return life_os.task_manager.get_task_stats()
+
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, req: TaskUpdateRequest):
         await life_os.task_manager.update_task(task_id, **req.model_dump(exclude_none=True))
