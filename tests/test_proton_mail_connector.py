@@ -2,20 +2,25 @@
 Tests for the ProtonMail connector.
 
 Validates email sync via Proton Bridge (local IMAP/SMTP), including:
+    - Initialization and configuration defaults
     - IMAP authentication with STARTTLS upgrade
     - Incremental sync with date-based cursor
     - RFC 822 email parsing (headers, body, attachments)
     - Thread detection via In-Reply-To header
     - Direction detection (inbound vs. outbound)
-    - Urgency keyword detection
+    - Urgency keyword detection (parametrized per keyword)
     - SMTP email sending with multipart/alternative
     - Health checks via IMAP NOOP
+    - Edge cases: unicode, missing headers, empty bodies, long content
 """
 
 from __future__ import annotations
 
 import email.utils
+import smtplib
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -61,6 +66,52 @@ def mock_imap():
 def connector(event_bus, db, proton_config):
     """Create a ProtonMailConnector instance with mocked dependencies."""
     return ProtonMailConnector(event_bus, db, proton_config)
+
+
+# ---------------------------------------------------------------------------
+# Initialization & Configuration Tests
+# ---------------------------------------------------------------------------
+
+
+def test_connector_id(connector):
+    """Test connector has correct CONNECTOR_ID."""
+    assert connector.CONNECTOR_ID == "proton_mail"
+
+
+def test_display_name(connector):
+    """Test connector has correct DISPLAY_NAME."""
+    assert connector.DISPLAY_NAME == "Proton Mail"
+
+
+def test_sync_interval(connector):
+    """Test connector has correct default sync interval."""
+    assert connector.SYNC_INTERVAL_SECONDS == 30
+
+
+def test_config_folders_from_config(connector):
+    """Test connector reads folders list from config."""
+    assert connector._folders == ["INBOX", "Sent"]
+
+
+def test_config_folders_default(event_bus, db):
+    """Test connector defaults to INBOX when folders not in config."""
+    conn = ProtonMailConnector(event_bus, db, {
+        "username": "u@proton.me",
+        "password": "pass",
+    })
+    assert conn._folders == ["INBOX"]
+
+
+def test_init_stores_dependencies(connector, event_bus, db):
+    """Test constructor stores event_bus, db, and config."""
+    assert connector.bus is event_bus
+    assert connector.db is db
+    assert connector.config["username"] == "test@proton.me"
+
+
+def test_imap_not_connected_initially(connector):
+    """Test IMAP connection is None before authenticate()."""
+    assert connector._imap is None
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +163,30 @@ async def test_authenticate_login_failure(connector, mock_imap):
         result = await connector.authenticate()
 
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_authenticate_uses_config_host_port(connector, mock_imap):
+    """Test IMAP4 is opened with the configured host and port."""
+    with patch("connectors.proton_mail.connector.imaplib.IMAP4", return_value=mock_imap) as mock_cls:
+        await connector.authenticate()
+
+    mock_cls.assert_called_once_with("127.0.0.1", 1143)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_default_host_port(event_bus, db):
+    """Test IMAP4 uses default host/port when not in config."""
+    conn = ProtonMailConnector(event_bus, db, {
+        "username": "u@proton.me",
+        "password": "pass",
+    })
+    mock_imap = MagicMock()
+
+    with patch("connectors.proton_mail.connector.imaplib.IMAP4", return_value=mock_imap) as mock_cls:
+        await conn.authenticate()
+
+    mock_cls.assert_called_once_with("127.0.0.1", 1143)
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +856,327 @@ async def test_health_check_noop_failure(connector, mock_imap):
     assert "Connection lost" in result["details"]
 
 
+@pytest.mark.asyncio
+async def test_health_check_noop_bad_status(connector, mock_imap):
+    """Test health check returns error when NOOP returns non-OK status."""
+    connector._imap = mock_imap
+    mock_imap.noop.return_value = ("BAD", [b"Server error"])
+
+    result = await connector.health_check()
+
+    assert result["status"] == "error"
+    assert "Not connected" in result["details"]
+
+
+# ---------------------------------------------------------------------------
+# Edge Cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_process_email_no_subject(connector, mock_imap):
+    """Test processing email with empty subject."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="",
+        body="Body without subject",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    count = await connector._process_email(b"1", "INBOX")
+
+    assert count == 1
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["subject"] == ""
+
+
+@pytest.mark.asyncio
+async def test_process_email_no_body_attachment_only(connector, mock_imap):
+    """Test processing attachment-only email with empty text body."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email_with_attachments(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Attachment only",
+        body="",
+        attachments=["document.pdf"],
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    count = await connector._process_email(b"1", "INBOX")
+
+    assert count == 1
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["has_attachments"] is True
+    assert payload["body_plain"] == ""
+
+
+@pytest.mark.asyncio
+async def test_process_email_unicode_body(connector, mock_imap):
+    """Test processing email with unicode characters in body."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    unicode_body = "Привет мир! Ça va? Über cool 日本語テスト"
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Unicode test",
+        body=unicode_body,
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    count = await connector._process_email(b"1", "INBOX")
+
+    assert count == 1
+    payload = connector.bus.publish.call_args[0][1]
+    assert "Привет мир" in payload["body_plain"]
+
+
+@pytest.mark.asyncio
+async def test_process_email_very_long_body(connector, mock_imap):
+    """Test processing email with very long body (10KB+)."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    long_body = "Lorem ipsum dolor sit amet. " * 500  # ~14KB
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Long email",
+        body=long_body,
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    count = await connector._process_email(b"1", "INBOX")
+
+    assert count == 1
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["body_plain"] == long_body
+    # Snippet should be truncated.
+    assert len(payload["snippet"]) == 153  # 150 + "..."
+    assert payload["snippet"].endswith("...")
+
+
+@pytest.mark.asyncio
+async def test_process_email_short_snippet_no_ellipsis(connector, mock_imap):
+    """Test short email body snippet is not truncated."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    short_body = "Quick note."
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Short",
+        body=short_body,
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["snippet"] == short_body
+    assert "..." not in payload["snippet"]
+
+
+@pytest.mark.asyncio
+async def test_process_email_empty_fetch_returns_zero(connector, mock_imap):
+    """Test _process_email returns 0 when IMAP fetch returns empty data."""
+    connector._imap = mock_imap
+    mock_imap.fetch.return_value = ("OK", [None])
+
+    count = await connector._process_email(b"1", "INBOX")
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_process_email_no_attachments(connector, mock_imap):
+    """Test plain email correctly reports no attachments."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Just text",
+        body="No attachments here",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["has_attachments"] is False
+    assert payload["attachment_names"] == []
+
+
+@pytest.mark.asyncio
+async def test_process_email_html_preferred_over_plain(connector, mock_imap):
+    """Test HTML body is preferred for payload body when both parts exist."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_multipart_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Multi",
+        plain_body="Plain version",
+        html_body="<p>HTML version</p>",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    payload = connector.bus.publish.call_args[0][1]
+    assert "<p>HTML version</p>" in payload["body"]
+    assert payload["body_plain"] == "Plain version"
+
+
+@pytest.mark.asyncio
+async def test_process_email_email_date_in_payload(connector, mock_imap):
+    """Test email_date field in payload contains the message Date header."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Date test",
+        body="Testing date",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    payload = connector.bus.publish.call_args[0][1]
+    # email_date should be an ISO 8601 string.
+    assert payload["email_date"] is not None
+    assert "T" in payload["email_date"]  # ISO format includes T separator
+
+
+@pytest.mark.asyncio
+async def test_process_email_folder_in_payload(connector, mock_imap):
+    """Test folder name is included in the event payload."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject="Test",
+        body="Test",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "Sent")
+
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["folder"] == "Sent"
+
+
+@pytest.mark.asyncio
+async def test_sync_readonly_select(connector, mock_imap):
+    """Test folders are opened in readonly mode to avoid modifying flags."""
+    connector._imap = mock_imap
+    connector._folders = ["INBOX"]
+    mock_imap.search.return_value = ("OK", [b""])
+
+    await connector.sync()
+
+    mock_imap.select.assert_called_with("INBOX", readonly=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keyword", ["urgent", "asap", "immediately", "critical", "emergency"])
+async def test_urgency_keyword_parametrized(connector, mock_imap, keyword):
+    """Test each urgency keyword individually triggers high priority."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        subject=f"Please respond {keyword} - action needed",
+        body="Needs attention",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    call_kwargs = connector.bus.publish.call_args[1]
+    assert call_kwargs["priority"] == "high", f"Keyword '{keyword}' should trigger high priority"
+
+
+@pytest.mark.asyncio
+async def test_process_email_cc_addresses_extracted(connector, mock_imap):
+    """Test CC header addresses are extracted into cc_addresses field."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="sender@example.com",
+        to_addr="test@proton.me",
+        cc_addr="bob@example.com, carol@example.com",
+        subject="CC test",
+        body="Test",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    payload = connector.bus.publish.call_args[0][1]
+    assert "bob@example.com" in payload["cc_addresses"]
+    assert "carol@example.com" in payload["cc_addresses"]
+
+
+@pytest.mark.asyncio
+async def test_execute_send_email_smtp_failure(connector):
+    """Test SMTP send failure propagates the exception."""
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+        mock_smtp.send_message.side_effect = smtplib.SMTPException("Relay access denied")
+
+        with pytest.raises(smtplib.SMTPException, match="Relay access denied"):
+            await connector.execute("send_email", {
+                "to": ["alice@example.com"],
+                "subject": "Fail",
+                "body": "This should fail",
+            })
+
+
+@pytest.mark.asyncio
+async def test_execute_send_uses_smtp_config(connector):
+    """Test SMTP connection uses configured host and port."""
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+
+        await connector.execute("send_email", {
+            "to": ["alice@example.com"],
+            "subject": "Config test",
+            "body": "test",
+        })
+
+    mock_smtp_class.assert_called_once_with("127.0.0.1", 1025)
+
+
+@pytest.mark.asyncio
+async def test_process_email_display_name_stripped(connector, mock_imap):
+    """Test from_address strips display name, keeping only email."""
+    connector._imap = mock_imap
+    connector.bus.publish = AsyncMock()
+    email_data = _build_rfc822_email(
+        from_addr="Alice Smith <alice@example.com>",
+        to_addr="test@proton.me",
+        subject="Display name test",
+        body="Test",
+    )
+    mock_imap.fetch.return_value = ("OK", [[None, email_data]])
+
+    await connector._process_email(b"1", "INBOX")
+
+    payload = connector.bus.publish.call_args[0][1]
+    assert payload["from_address"] == "alice@example.com"
+
+
 # ---------------------------------------------------------------------------
 # Helper Methods Tests
 # ---------------------------------------------------------------------------
@@ -814,6 +1210,24 @@ def test_parse_address_list_empty():
     """Test parsing empty address list returns empty list."""
     addrs = ProtonMailConnector._parse_address_list("")
     assert addrs == []
+
+
+def test_parse_address_list_none():
+    """Test parsing None returns empty list."""
+    addrs = ProtonMailConnector._parse_address_list(None)
+    assert addrs == []
+
+
+def test_parse_address_empty_string():
+    """Test _parse_address with empty string returns empty string."""
+    result = ProtonMailConnector._parse_address("")
+    assert result == ""
+
+
+def test_parse_address_list_single():
+    """Test _parse_address_list with a single address."""
+    addrs = ProtonMailConnector._parse_address_list("alice@example.com")
+    assert addrs == ["alice@example.com"]
 
 
 def test_extract_body_plain_text_only():
