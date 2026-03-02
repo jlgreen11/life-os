@@ -60,6 +60,25 @@ def analyze(data_dir: str = "./data") -> dict:
     report = {"generated_at": datetime.now(UTC).isoformat(), "sections": {}}
 
     # -----------------------------------------------------------------------
+    # Database health — run PRAGMA integrity_check on each database
+    # -----------------------------------------------------------------------
+    db_names = ["events", "user_model", "state", "preferences", "entities"]
+    health = {}
+    for db_name in db_names:
+        db_conn = _connect(data_path / f"{db_name}.db")
+        if db_conn:
+            try:
+                result = db_conn.execute("PRAGMA integrity_check").fetchone()
+                health[db_name] = result[0] if result else "unknown"
+            except Exception as e:
+                health[db_name] = f"error: {e}"
+            finally:
+                db_conn.close()
+        else:
+            health[db_name] = "could not connect"
+    report["sections"]["database_health"] = health
+
+    # -----------------------------------------------------------------------
     # Events
     # -----------------------------------------------------------------------
     events_conn = _connect(data_path / "events.db")
@@ -254,9 +273,21 @@ def analyze(data_dir: str = "./data") -> dict:
 
         try:
             # User model depth — episodes, facts, routines
+            # Track query failures separately so corruption/errors are
+            # distinguishable from genuinely empty tables.
+            query_errors = []
+
             episode_count = _query_one(um_conn, "SELECT COUNT(*) as c FROM episodes")
+            if episode_count is None:
+                query_errors.append("episodes")
+
             fact_count = _query_one(um_conn, "SELECT COUNT(*) as c FROM semantic_facts")
+            if fact_count is None:
+                query_errors.append("semantic_facts")
+
             routine_count = _query_one(um_conn, "SELECT COUNT(*) as c FROM routines")
+            if routine_count is None:
+                query_errors.append("routines")
 
             # Facts by category
             fact_categories = _query(
@@ -271,6 +302,7 @@ def analyze(data_dir: str = "./data") -> dict:
                 "semantic_facts": fact_count["c"] if fact_count else 0,
                 "routines": routine_count["c"] if routine_count else 0,
                 "fact_categories": {r["category"]: r["c"] for r in fact_categories},
+                "query_errors": query_errors,
             }
         except Exception as e:
             report["sections"]["user_model"] = {"error": str(e)}

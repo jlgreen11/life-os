@@ -438,6 +438,164 @@ def test_prediction_pipeline_surfacing_rate(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Database health section
+# ---------------------------------------------------------------------------
+
+
+def test_database_health_section_present(tmp_path):
+    """Report includes a 'database_health' section with entries for all 5 databases."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+    # entities.db doesn't exist — should report "could not connect"
+
+    report = analyze(str(tmp_path))
+    health = report["sections"].get("database_health")
+
+    assert health is not None, "database_health section should exist"
+    expected_dbs = ["events", "user_model", "state", "preferences", "entities"]
+    for db_name in expected_dbs:
+        assert db_name in health, f"database_health should include '{db_name}', got: {list(health.keys())}"
+
+
+def test_database_health_reports_ok(tmp_path):
+    """Healthy databases all report 'ok' in the database_health section."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+    _create_minimal_entities_db(tmp_path)
+
+    report = analyze(str(tmp_path))
+    health = report["sections"]["database_health"]
+
+    for db_name in ["events", "user_model", "state", "preferences", "entities"]:
+        assert health[db_name] == "ok", f"{db_name} should be 'ok', got: {health[db_name]}"
+
+
+def test_corrupted_db_reports_query_errors(tmp_path, monkeypatch):
+    """When _query_one returns None (e.g. due to corruption), query_errors tracks failures."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    # Patch _query_one to simulate corruption: return None for episodes/routines
+    original_query_one = _query_one
+
+    def _failing_query_one(conn, sql, default=None):
+        """Simulate corruption for episodes and routines tables."""
+        if "FROM episodes" in sql or "FROM routines" in sql:
+            return None
+        return original_query_one(conn, sql, default)
+
+    monkeypatch.setattr(_mod, "_query_one", _failing_query_one)
+
+    report = analyze(str(tmp_path))
+    um = report["sections"]["user_model"]
+
+    assert "episodes" in um["query_errors"], f"Expected 'episodes' in query_errors, got: {um['query_errors']}"
+    assert "routines" in um["query_errors"], f"Expected 'routines' in query_errors, got: {um['query_errors']}"
+    assert "semantic_facts" not in um["query_errors"], "semantic_facts should not be in query_errors"
+    # Values should still be 0 (the fallback), but query_errors tells us why
+    assert um["episodes"] == 0
+    assert um["routines"] == 0
+
+
+def test_corrupted_db_detected_by_integrity_check(tmp_path):
+    """PRAGMA integrity_check detects a corrupted database file."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    # Create a valid user_model.db with enough data to span multiple pages
+    db_path = tmp_path / "user_model.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA page_size = 512")  # small pages = more pages for same data
+    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, data TEXT)")
+    # Insert enough rows to create multiple pages
+    for i in range(200):
+        conn.execute("INSERT INTO episodes (id, data) VALUES (?, ?)", (i, "x" * 200))
+    conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
+    conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
+    conn.execute("""
+        CREATE TABLE predictions (
+            id TEXT PRIMARY KEY, prediction_type TEXT,
+            was_surfaced INTEGER DEFAULT 0, was_accurate INTEGER,
+            filter_reason TEXT, resolution_reason TEXT,
+            user_response TEXT, resolved_at TEXT,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE signal_profiles (
+            profile_type TEXT PRIMARY KEY, samples_count INTEGER DEFAULT 0, updated_at TEXT
+        )
+    """)
+    conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
+    conn.commit()
+    conn.close()
+
+    # Corrupt data pages (well past the header and schema pages)
+    data = bytearray(db_path.read_bytes())
+    # Corrupt a large section in the latter half of the file
+    start = len(data) * 3 // 4
+    for i in range(start, min(start + 2048, len(data))):
+        data[i] = 0xFF
+    db_path.write_bytes(bytes(data))
+
+    report = analyze(str(tmp_path))
+    health = report["sections"]["database_health"]
+
+    # The corrupted DB should NOT report 'ok'
+    assert health["user_model"] != "ok", f"Corrupted DB should not report 'ok', got: {health['user_model']}"
+
+
+def test_healthy_db_has_empty_query_errors(tmp_path):
+    """A healthy user_model.db with data should have an empty query_errors list."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    db_path = tmp_path / "user_model.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE predictions (
+            id TEXT PRIMARY KEY, prediction_type TEXT,
+            was_surfaced INTEGER DEFAULT 0, was_accurate INTEGER,
+            filter_reason TEXT, resolution_reason TEXT,
+            user_response TEXT, resolved_at TEXT,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE signal_profiles (
+            profile_type TEXT PRIMARY KEY, samples_count INTEGER DEFAULT 0, updated_at TEXT
+        )
+    """)
+    conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
+    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO episodes (id) VALUES (1)")
+    conn.execute("INSERT INTO episodes (id) VALUES (2)")
+    conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
+    conn.execute("INSERT INTO semantic_facts (id, category) VALUES (1, 'preference')")
+    conn.execute("INSERT INTO semantic_facts (id, category) VALUES (2, 'fact')")
+    conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO routines (id) VALUES (1)")
+    conn.commit()
+    conn.close()
+
+    report = analyze(str(tmp_path))
+    um = report["sections"]["user_model"]
+
+    assert um["query_errors"] == [], f"Healthy DB should have empty query_errors, got: {um['query_errors']}"
+    assert um["episodes"] == 2
+    assert um["semantic_facts"] == 2
+    assert um["routines"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Helper functions to create minimal database files
 # ---------------------------------------------------------------------------
 
@@ -548,6 +706,19 @@ def _create_minimal_preferences_db(tmp_path):
             user_weight REAL NOT NULL DEFAULT 0.5,
             ai_drift REAL NOT NULL DEFAULT 0.0,
             ai_updated_at TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _create_minimal_entities_db(tmp_path):
+    """Create a minimal entities.db with a placeholder table."""
+    conn = sqlite3.connect(str(tmp_path / "entities.db"))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS contacts (
+            id TEXT PRIMARY KEY,
+            name TEXT
         )
     """)
     conn.commit()
