@@ -183,7 +183,8 @@ class VectorStore:
             metadata: Additional metadata (type, source, timestamp, etc.)
 
         Returns:
-            True if successfully added
+            True if at least one chunk was successfully embedded and stored,
+            False if the text was too short or no chunks could be embedded
         """
         # Skip very short texts — they produce low-quality embeddings and
         # are unlikely to contain meaningful searchable content.
@@ -194,10 +195,12 @@ class VectorStore:
         # so that each chunk fits within the embedding model's effective context
         # window and retrieval can pinpoint the relevant passage.
         chunks = self._chunk_text(text, max_chars=1000, overlap=100)
+        chunks_stored = 0
 
         for i, chunk in enumerate(chunks):
             embedding = self.embed_text(chunk)
             if embedding is None:
+                logger.debug("Embedding failed for chunk %d of doc %s", i, doc_id)
                 continue
 
             # If the document was split into multiple chunks, append a numeric
@@ -216,6 +219,7 @@ class VectorStore:
                 try:
                     import pyarrow as pa
                     self._table.add([doc])
+                    chunks_stored += 1
                 except Exception as e:
                     logger.error("LanceDB add error: %s", e)
                     return False
@@ -227,11 +231,15 @@ class VectorStore:
                     "created_at": doc["created_at"],
                 })
                 self._fallback_embeddings.append(embedding)
+                chunks_stored += 1
                 # Persist every 50 documents to balance write frequency against
                 # data-loss risk (at most 49 docs lost on a crash).
                 if len(self._fallback_docs) % 50 == 0:
                     self._save_fallback()
 
+        if chunks_stored == 0:
+            logger.warning("add_document(%s): no chunks embedded — embedding model may be unavailable", doc_id)
+            return False
         return True
 
     def search(self, query: str, limit: int = 10,
