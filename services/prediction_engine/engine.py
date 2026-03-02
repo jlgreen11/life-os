@@ -54,6 +54,7 @@ class PredictionEngine:
         self._tz_name = timezone
         self._last_event_cursor: int = 0  # rowid of last processed event
         self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
+        self._first_follow_up_run: bool = True  # First cycle uses wider lookback (72h vs 24h)
 
     def _has_new_events(self) -> bool:
         """Check if any new events have arrived since last prediction run."""
@@ -158,19 +159,23 @@ class PredictionEngine:
             generation_stats['relationship_maintenance'] = '(skipped: no time trigger)'
             generation_stats['preparation_needs'] = '(skipped: no time trigger)'
 
-        # EVENT-BASED predictions: Run when new events arrive
-        # These react to specific events like incoming emails or spending activity.
-        if has_new_events:
-            followup_preds = await self._check_follow_up_needs(current_context)
-            generation_stats['follow_up_needs'] = len(followup_preds)
-            predictions.extend(followup_preds)
+        # HYBRID predictions: Run on EITHER trigger (new events OR time-based).
+        # Follow-up checks need to run on time-based triggers too, because emails
+        # age past the 3-hour grace period even when no new events arrive (e.g.,
+        # after a connector outage). The deduplication logic in _check_follow_up_needs
+        # (already_predicted_messages set) prevents duplicate predictions.
+        followup_preds = await self._check_follow_up_needs(current_context)
+        generation_stats['follow_up_needs'] = len(followup_preds)
+        predictions.extend(followup_preds)
 
+        # EVENT-BASED predictions: Run when new events arrive
+        # These react to specific events like new spending activity.
+        if has_new_events:
             spending_preds = await self._check_spending_patterns(current_context)
             generation_stats['spending_patterns'] = len(spending_preds)
             predictions.extend(spending_preds)
         else:
             # Skip event-based predictions, mark as not run
-            generation_stats['follow_up_needs'] = '(skipped: no new events)'
             generation_stats['spending_patterns'] = '(skipped: no new events)'
 
         logger.debug(
@@ -661,11 +666,20 @@ class PredictionEngine:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Now fetch emails from a tighter window (24h instead of 48h)
-        # This reduces the scan volume by 50% while still catching all actionable messages
+        # Determine lookback window: 72h on first cycle (to catch unreplied emails
+        # from startup or after a connector outage), then 24h on subsequent cycles.
+        # The 72h window keeps scan volume manageable (~3x the normal 24h, not the
+        # full 70K+ that caused the original performance issue in iteration 81).
+        if self._first_follow_up_run:
+            lookback_hours = 72
+            self._first_follow_up_run = False
+            logger.debug("follow_up_needs: first cycle — using wider %dh lookback", lookback_hours)
+        else:
+            lookback_hours = 24
+
         with self.db.get_connection("events") as conn:
-            # Inbound messages from the last 24 hours
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            # Inbound messages from the lookback window
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
 
             inbound = conn.execute(
                 """SELECT id, payload, timestamp FROM events

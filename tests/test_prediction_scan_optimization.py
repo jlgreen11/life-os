@@ -29,8 +29,11 @@ from services.prediction_engine.engine import PredictionEngine
 
 @pytest.mark.asyncio
 async def test_scan_window_reduced_to_24_hours(db, user_model_store):
-    """Verify that email scan uses 24-hour window, not 48-hour."""
+    """Verify that email scan uses 24-hour window, not 48-hour (on subsequent cycles)."""
     engine = PredictionEngine(db, user_model_store)
+    # Consume the first-run flag so the test exercises the steady-state 24h window.
+    # The first cycle intentionally uses a wider 72h lookback for catchup.
+    engine._first_follow_up_run = False
 
     now = datetime.now(timezone.utc)
 
@@ -362,8 +365,11 @@ async def test_marketing_filter_still_applied(db, user_model_store):
 
 @pytest.mark.asyncio
 async def test_scan_efficiency_metric(db, user_model_store):
-    """Verify that scan window reduction achieves expected efficiency gains."""
+    """Verify that scan window reduction achieves expected efficiency gains (on subsequent cycles)."""
     engine = PredictionEngine(db, user_model_store)
+    # Consume the first-run flag so the test exercises the steady-state 24h window.
+    # The first cycle intentionally uses a wider 72h lookback for catchup.
+    engine._first_follow_up_run = False
 
     now = datetime.now(timezone.utc)
 
