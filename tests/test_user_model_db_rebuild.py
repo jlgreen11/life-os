@@ -156,6 +156,65 @@ def _make_corrupting_life_os(data_dir: Path):
     return obj
 
 
+def _make_table_corrupting_life_os(data_dir: Path, corrupted_table_patterns: list[str]):
+    """Build a LifeOS-like object that raises DatabaseError for specific table probes.
+
+    Similar to ``_make_corrupting_life_os`` but configurable: the caller specifies
+    which SQL substrings should trigger corruption errors.  This allows testing that
+    corruption in *any* probed table (semantic_facts, routines, mood_history, etc.)
+    triggers the rebuild, not just episodes or signal_profiles.
+
+    Args:
+        data_dir: Path to the temporary data directory containing user_model.db.
+        corrupted_table_patterns: SQL substrings that should raise DatabaseError
+            when seen in an execute() call during the probe phase.  For example,
+            ``["semantic_facts"]`` will cause any probe query containing
+            "semantic_facts" to fail.
+    """
+    from unittest.mock import MagicMock as _MagicMock
+
+    from storage.manager import DatabaseManager
+    from main import LifeOS
+
+    db = DatabaseManager(str(data_dir))
+    obj = MagicMock()
+    obj.db = db
+
+    probe_calls = {"done": False}
+    original_get_connection = db.get_connection
+
+    @contextlib.contextmanager
+    def patched_get_connection(db_name: str):
+        """Yield a mock connection on the first user_model call to simulate corruption."""
+        if db_name == "user_model" and not probe_calls["done"]:
+            probe_calls["done"] = True
+
+            mock_conn = _MagicMock(spec=sqlite3.Connection)
+
+            def raising_execute(sql: str, *args, **kwargs):
+                """Raise DatabaseError for queries touching the specified tables."""
+                for pattern in corrupted_table_patterns:
+                    if pattern in sql:
+                        raise sqlite3.DatabaseError("database disk image is malformed")
+                result = _MagicMock()
+                result.fetchone.return_value = None
+                result.fetchall.return_value = []
+                return result
+
+            mock_conn.execute.side_effect = raising_execute
+            yield mock_conn
+        else:
+            with original_get_connection(db_name) as conn:
+                yield conn
+
+    db.get_connection = patched_get_connection
+
+    obj._rebuild_user_model_db_if_corrupted = (
+        LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
+    )
+    return obj
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -344,5 +403,94 @@ class TestCorruptedDatabase:
             for table in ("episodes", "semantic_facts", "signal_profiles", "routines"):
                 count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 assert isinstance(count, int), f"{table} COUNT(*) should return an int"
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Tests: corruption in non-episode/signal_profiles tables triggers rebuild
+# ---------------------------------------------------------------------------
+
+class TestBroadCorruptionDetection:
+    """Verify that corruption in ANY probed table triggers the rebuild.
+
+    The original probes only checked episodes.content_full and signal_profiles.data.
+    The expanded probes now cover semantic_facts, routines, mood_history, predictions,
+    and insights.  Each test simulates corruption in one specific table and verifies
+    the rebuild fires (archive file created).
+    """
+
+    @pytest.mark.asyncio
+    async def test_rebuild_triggered_by_semantic_facts_corruption(self, simulated_corrupt_data_dir):
+        """Corruption in semantic_facts triggers a rebuild."""
+        life_os = _make_table_corrupting_life_os(
+            simulated_corrupt_data_dir, ["semantic_facts"]
+        )
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
+        assert archive.exists(), "Rebuild should trigger when semantic_facts is corrupted"
+
+    @pytest.mark.asyncio
+    async def test_rebuild_triggered_by_routines_corruption(self, simulated_corrupt_data_dir):
+        """Corruption in routines triggers a rebuild."""
+        life_os = _make_table_corrupting_life_os(
+            simulated_corrupt_data_dir, ["routines"]
+        )
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
+        assert archive.exists(), "Rebuild should trigger when routines is corrupted"
+
+    @pytest.mark.asyncio
+    async def test_rebuild_triggered_by_mood_history_corruption(self, simulated_corrupt_data_dir):
+        """Corruption in mood_history triggers a rebuild."""
+        life_os = _make_table_corrupting_life_os(
+            simulated_corrupt_data_dir, ["mood_history"]
+        )
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
+        assert archive.exists(), "Rebuild should trigger when mood_history is corrupted"
+
+    @pytest.mark.asyncio
+    async def test_rebuild_triggered_by_predictions_corruption(self, simulated_corrupt_data_dir):
+        """Corruption in predictions triggers a rebuild."""
+        life_os = _make_table_corrupting_life_os(
+            simulated_corrupt_data_dir, ["predictions"]
+        )
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
+        assert archive.exists(), "Rebuild should trigger when predictions is corrupted"
+
+    @pytest.mark.asyncio
+    async def test_rebuild_triggered_by_insights_corruption(self, simulated_corrupt_data_dir):
+        """Corruption in insights triggers a rebuild."""
+        life_os = _make_table_corrupting_life_os(
+            simulated_corrupt_data_dir, ["insights"]
+        )
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
+        assert archive.exists(), "Rebuild should trigger when insights is corrupted"
+
+    @pytest.mark.asyncio
+    async def test_rebuild_recovers_data_after_table_corruption(self, simulated_corrupt_data_dir):
+        """After rebuild triggered by non-episode corruption, episode data is still recovered."""
+        life_os = _make_table_corrupting_life_os(
+            simulated_corrupt_data_dir, ["semantic_facts"]
+        )
+        await life_os._rebuild_user_model_db_if_corrupted()
+
+        db_path = simulated_corrupt_data_dir / "user_model.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            # Episodes should be recovered
+            count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+            assert count == 2, f"Expected 2 recovered episodes, got {count}"
+            # Rebuilt DB should be fully readable
+            conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()
+            conn.execute("SELECT COUNT(*) FROM signal_profiles").fetchone()
         finally:
             conn.close()
