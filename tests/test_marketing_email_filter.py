@@ -95,12 +95,12 @@ class TestMarketingEmailFilter:
                 f"Expected {addr} to be filtered as support address"
 
     def test_unsubscribe_in_body_is_filtered(self):
-        """Emails with 'unsubscribe' in body/snippet should be filtered."""
+        """Emails with 'unsubscribe' plus bulk phrases in body/snippet should be filtered."""
         test_cases = [
             {"body_plain": "Click here to unsubscribe from our emails"},
-            {"snippet": "To unsubscribe, visit..."},
-            {"body": "<a href='...'>Unsubscribe</a>"},
-            {"body_plain": "UNSUBSCRIBE"},  # Case insensitive
+            {"snippet": "To unsubscribe from our mailing list, visit..."},
+            {"body": "<a href='...'>Unsubscribe</a> | Manage your subscription"},
+            {"body_plain": "UNSUBSCRIBE from future emails"},  # Case insensitive
         ]
 
         for payload in test_cases:

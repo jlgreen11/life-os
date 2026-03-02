@@ -91,13 +91,14 @@ class TestMarketingEmailFilter:
                 f"Should filter {from_addr}"
 
     def test_filters_unsubscribe_emails(self):
-        """Emails with unsubscribe links should be filtered."""
-        # Unsubscribe can appear in body, snippet, or body_plain
+        """Emails with unsubscribe links and bulk phrases should be filtered."""
+        # Unsubscribe can appear in body, snippet, or body_plain, but must be
+        # accompanied by a bulk phrase or appear multiple times
         test_cases = [
-            {"from_address": "team@company.com", "body": "Click here to unsubscribe"},
-            {"from_address": "john@startup.com", "snippet": "Unsubscribe from this list"},
-            {"from_address": "alice@corp.org", "body_plain": "To unsubscribe, click below"},
-            {"from_address": "bob@firm.com", "body": "<a href='#'>Unsubscribe</a>"},
+            {"from_address": "team@company.com", "body": "Click here to unsubscribe from our mailing list"},
+            {"from_address": "john@startup.com", "snippet": "Unsubscribe | Manage your subscription"},
+            {"from_address": "alice@corp.org", "body_plain": "To unsubscribe from future emails, click below"},
+            {"from_address": "bob@firm.com", "body": "<a href='#'>Unsubscribe</a> You are receiving this email because you signed up."},
         ]
         for payload in test_cases:
             assert TaskManager._is_marketing_email(payload) is True, \

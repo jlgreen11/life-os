@@ -224,14 +224,73 @@ class TestUnsubscribeLinkInPayload:
         assert is_marketing_or_noreply("sender@company.com", payload) is True
 
     def test_unsubscribe_in_snippet_blocked(self):
-        """Unsubscribe in snippet also triggers the filter."""
-        payload = {"snippet": "...to unsubscribe click here..."}
+        """Unsubscribe in snippet with bulk phrase also triggers the filter."""
+        payload = {"snippet": "...to unsubscribe from our mailing list click here..."}
         assert is_marketing_or_noreply("sender@company.com", payload) is True
 
     def test_no_payload_skips_body_check(self):
         """Without a payload, a genuine human address passes the filter."""
         assert is_marketing_or_noreply("alice@gmail.com") is False
         assert is_marketing_or_noreply("alice@gmail.com", None) is False
+
+
+class TestUnsubscribeRefinedHeuristic:
+    """Tests for the refined unsubscribe heuristic that requires corroborating evidence.
+
+    A single 'unsubscribe' in a corporate footer should NOT trigger the filter.
+    The filter should require either multiple 'unsubscribe' mentions or an
+    accompanying bulk/marketing phrase to reduce false positives on personal
+    emails sent via corporate email platforms.
+    """
+
+    def test_unsubscribe_with_bulk_phrase_is_filtered(self):
+        """An email with 'unsubscribe' PLUS a bulk marketing phrase IS filtered."""
+        bulk_payloads = [
+            {"body_plain": "Click here to unsubscribe from our mailing list."},
+            {"body": "To unsubscribe, manage your subscription preferences."},
+            {"snippet": "Opt out or unsubscribe from future emails."},
+            {"body_plain": "Unsubscribe | You are receiving this because you signed up."},
+            {"body": "No longer wish to receive these? Unsubscribe here."},
+            {"body_plain": "Unsubscribe | Email preferences | Update your preferences"},
+        ]
+        for payload in bulk_payloads:
+            assert is_marketing_or_noreply("sender@company.com", payload) is True, (
+                f"Expected payload with unsubscribe + bulk phrase to be filtered: {payload}"
+            )
+
+    def test_bare_unsubscribe_not_filtered(self):
+        """An email with only 'unsubscribe' and NO bulk phrases is NOT filtered.
+
+        This is the key false-positive fix: personal emails from colleagues at
+        companies using email platforms (e.g. HubSpot, Salesforce) auto-append
+        an 'unsubscribe' link in the footer.  These should not be filtered.
+        """
+        bare_payloads = [
+            {"body_plain": "Hey, let's catch up this week!\n\nUnsubscribe"},
+            {"body": "Project update attached.\n<a href='#'>Unsubscribe</a>"},
+            {"snippet": "Meeting notes... unsubscribe"},
+            {"body_plain": "Please review the contract. Click to unsubscribe."},
+        ]
+        for payload in bare_payloads:
+            assert is_marketing_or_noreply("colleague@company.com", payload) is False, (
+                f"Expected payload with bare unsubscribe (no bulk phrase) to NOT be filtered: {payload}"
+            )
+
+    def test_multiple_unsubscribe_is_filtered(self):
+        """An email with multiple 'unsubscribe' mentions IS filtered even without bulk phrases.
+
+        Real marketing emails often mention 'unsubscribe' more than once (e.g.
+        in a footer link and in a legal disclaimer).  Two or more occurrences
+        is strong enough evidence on its own.
+        """
+        payloads = [
+            {"body_plain": "Great deals! To unsubscribe click below.\nYou can also unsubscribe via settings."},
+            {"body": "Content here. <a>Unsubscribe</a> | <footer>Unsubscribe from all</footer>"},
+        ]
+        for payload in payloads:
+            assert is_marketing_or_noreply("sender@company.com", payload) is True, (
+                f"Expected payload with multiple 'unsubscribe' to be filtered: {payload}"
+            )
 
 
 class TestHumanAddressesNotBlocked:

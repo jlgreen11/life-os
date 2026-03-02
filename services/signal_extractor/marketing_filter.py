@@ -71,7 +71,7 @@ def is_marketing_or_noreply(
     - Marketing subdomain patterns in the domain part (@email., @comms., @alerts., …)
     - Third-party email marketing platform domains (sendgrid.net, mailchimp.com, …)
     - Brand self-mailer pattern: company@company.com
-    - Emails whose body/snippet contains an "Unsubscribe" link
+    - Emails whose body/snippet contains "Unsubscribe" with corroborating bulk phrases
 
     This is the SINGLE SOURCE OF TRUTH for marketing detection.  All services
     that need to distinguish human contacts from automated senders must import
@@ -101,7 +101,7 @@ def is_marketing_or_noreply(
         False
         >>> is_marketing_or_noreply("schwab@mail.schwab.com")
         True
-        >>> is_marketing_or_noreply("john@company.com", {"body": "Unsubscribe"})
+        >>> is_marketing_or_noreply("john@company.com", {"body": "Unsubscribe from our mailing list"})
         True
         >>> is_marketing_or_noreply("team@startup.io",
         ...                         extra_localparts=("team@",))
@@ -415,6 +415,16 @@ def is_marketing_or_noreply(
     # 7. Unsubscribe link in body / snippet
     #
     # Marketing emails are legally required to include unsubscribe links.
+    # However, many legitimate personal and business emails also contain
+    # "unsubscribe" in auto-appended company footers (e.g., emails from
+    # colleagues at companies using email platforms, customer support
+    # replies, SaaS tool notifications you actually want).
+    #
+    # To reduce false positives, we require corroborating evidence: either
+    # multiple "unsubscribe" mentions (typical of marketing templates) or
+    # an accompanying bulk/marketing phrase like "manage your subscription"
+    # or "mailing list".
+    #
     # Only checked when a payload is supplied.
     # -----------------------------------------------------------------------
     if payload:
@@ -424,6 +434,25 @@ def is_marketing_or_noreply(
             payload.get("body", ""),
         ])).lower()
         if "unsubscribe" in text:
-            return True
+            # A single 'unsubscribe' in a footer isn't enough — require
+            # additional marketing signals to reduce false positives from
+            # personal emails sent via corporate email platforms that
+            # auto-append unsubscribe links.
+            bulk_phrases = (
+                "email preferences", "manage your subscription",
+                "opt out", "opt-out",
+                "you are receiving this", "you received this",
+                "you're receiving this", "sent to you because",
+                "subscription preferences", "communication preferences",
+                "manage preferences", "update your preferences",
+                "mailing list", "from our", "from future emails",
+                "no longer wish to receive",
+            )
+            unsubscribe_count = text.count("unsubscribe")
+            has_bulk_signals = any(phrase in text for phrase in bulk_phrases)
+            if unsubscribe_count >= 2 or has_bulk_signals:
+                return True
+            # Single 'unsubscribe' with no other marketing signals — likely a
+            # personal email with a corporate footer.  Don't filter.
 
     return False
