@@ -25,12 +25,15 @@ Supported actions: notify, archive, tag, forward, auto_reply, create_task, suppr
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class RulesEngine:
@@ -57,6 +60,9 @@ class RulesEngine:
         Only active rules (is_active=1) are loaded. Conditions and actions
         are stored as JSON strings in the DB and deserialized here so the
         evaluation path works with native Python dicts.
+
+        Rules with malformed JSON are skipped (logged as warnings) so that
+        one bad rule doesn't prevent all other rules from loading.
         """
         with self.db.get_connection("preferences") as conn:
             rows = conn.execute(
@@ -64,14 +70,29 @@ class RulesEngine:
             ).fetchall()
 
             self._rules_cache = []
+            skipped = 0
             for row in rows:
                 rule = dict(row)
-                # Deserialize JSON-encoded conditions and actions
-                rule["conditions"] = json.loads(rule["conditions"])
-                rule["actions"] = json.loads(rule["actions"])
-                self._rules_cache.append(rule)
+                try:
+                    # Deserialize JSON-encoded conditions and actions
+                    rule["conditions"] = json.loads(rule["conditions"])
+                    rule["actions"] = json.loads(rule["actions"])
+                    self._rules_cache.append(rule)
+                except (json.JSONDecodeError, TypeError) as exc:
+                    skipped += 1
+                    logger.warning(
+                        "Skipping rule %s (%s): malformed JSON — %s",
+                        rule.get("id", "?"), rule.get("name", "?"), exc,
+                    )
 
             self._cache_loaded_at = datetime.now(timezone.utc)
+            if skipped:
+                logger.info(
+                    "Rules cache refreshed: %d active rules loaded (%d skipped due to errors)",
+                    len(self._rules_cache), skipped,
+                )
+            else:
+                logger.info("Rules cache refreshed: %d active rules loaded", len(self._rules_cache))
 
     async def evaluate(self, event: dict) -> list[dict]:
         """
@@ -99,27 +120,40 @@ class RulesEngine:
         event_type = event.get("type", "")
         matching_actions = []
 
+        matched = 0
         for rule in self._rules_cache:
-            # Step 1: Trigger matching — does this rule care about this event type?
-            # Supports exact match, wildcard ("*"), and glob patterns ("email.*").
-            if not self._matches_trigger(rule["trigger_event"], event_type):
-                continue
+            try:
+                # Step 1: Trigger matching — does this rule care about this event type?
+                # Supports exact match, wildcard ("*"), and glob patterns ("email.*").
+                if not self._matches_trigger(rule["trigger_event"], event_type):
+                    continue
 
-            # Step 2: Condition evaluation — all conditions must pass (AND logic)
-            if self._evaluate_conditions(rule["conditions"], event):
-                # Step 3: Action collection — attach rule metadata to each action
-                # so downstream handlers know which rule fired.
-                for action in rule["actions"]:
-                    matching_actions.append({
-                        "rule_id": rule["id"],
-                        "rule_name": rule["name"],
-                        **action,
-                    })
+                # Step 2: Condition evaluation — all conditions must pass (AND logic)
+                if self._evaluate_conditions(rule["conditions"], event):
+                    matched += 1
+                    # Step 3: Action collection — attach rule metadata to each action
+                    # so downstream handlers know which rule fired.
+                    for action in rule["actions"]:
+                        matching_actions.append({
+                            "rule_id": rule["id"],
+                            "rule_name": rule["name"],
+                            **action,
+                        })
 
-                # Record that this rule was triggered (for analytics and
-                # the "times_triggered" display in the rules management UI).
-                await self._record_trigger(rule["id"], rule["name"], event_type, event.get("id"))
+                    # Record that this rule was triggered (for analytics and
+                    # the "times_triggered" display in the rules management UI).
+                    await self._record_trigger(rule["id"], rule["name"], event_type, event.get("id"))
+            except Exception:
+                logger.warning(
+                    "Error evaluating rule %s (%s) against event type '%s', skipping",
+                    rule.get("id", "?"), rule.get("name", "?"), event_type,
+                    exc_info=True,
+                )
 
+        logger.debug(
+            "Evaluated %d rules against '%s': %d matched",
+            len(self._rules_cache), event_type, matched,
+        )
         return matching_actions
 
     async def add_rule(self, name: str, trigger_event: str,
@@ -249,13 +283,19 @@ class RulesEngine:
             return actual != expected
         elif op == "contains":
             # Case-insensitive substring match
+            if not isinstance(expected, str):
+                logger.debug("'contains' operator: expected is not a string (got %s), returning False", type(expected).__name__)
+                return False
             return isinstance(actual, str) and expected.lower() in actual.lower()
         elif op == "contains_any":
             # True if the field string contains ANY of the expected values
             if not isinstance(actual, str):
                 return False
+            if not isinstance(expected, list):
+                logger.debug("'contains_any' operator: expected is not a list (got %s), returning False", type(expected).__name__)
+                return False
             actual_lower = actual.lower()
-            return any(v.lower() in actual_lower for v in expected)
+            return any(isinstance(v, str) and v.lower() in actual_lower for v in expected)
         elif op == "in":
             # Actual value is a member of the expected list
             return actual in expected
@@ -300,15 +340,26 @@ class RulesEngine:
     async def _record_trigger(self, rule_id: str, rule_name: Optional[str] = None,
                               event_type: Optional[str] = None,
                               event_id: Optional[str] = None):
-        """Update the trigger count and last-triggered timestamp for a rule, and publish telemetry."""
+        """Update the trigger count and last-triggered timestamp for a rule, and publish telemetry.
+
+        A DB failure here should never prevent actions from executing,
+        so errors are logged and swallowed.
+        """
         now = datetime.now(timezone.utc).isoformat()
-        with self.db.get_connection("preferences") as conn:
-            conn.execute(
-                """UPDATE rules SET
-                   times_triggered = times_triggered + 1,
-                   last_triggered = ?
-                   WHERE id = ?""",
-                (now, rule_id),
+        try:
+            with self.db.get_connection("preferences") as conn:
+                conn.execute(
+                    """UPDATE rules SET
+                       times_triggered = times_triggered + 1,
+                       last_triggered = ?
+                       WHERE id = ?""",
+                    (now, rule_id),
+                )
+        except Exception:
+            logger.warning(
+                "Failed to record trigger for rule %s (%s), continuing",
+                rule_id, rule_name,
+                exc_info=True,
             )
 
         await self._publish_telemetry("system.rule.triggered", {
