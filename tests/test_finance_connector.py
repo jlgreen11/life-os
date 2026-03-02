@@ -204,6 +204,8 @@ async def test_sync_initial_fetch_empty_cursor(
         mock_plaid_transaction("txn-2", "acct-1", -120.00, merchant_name="Grocery Store"),
         mock_plaid_transaction("txn-3", "acct-2", -15.99, name="Online Service"),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-abc123"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -246,6 +248,8 @@ async def test_sync_incremental_with_cursor(
     mock_response.added = [
         mock_plaid_transaction("txn-4", "acct-1", -299.99, merchant_name="Electronics Store"),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-new"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -278,6 +282,8 @@ async def test_sync_large_transaction_high_priority(
     mock_response.added = [
         mock_plaid_transaction("txn-large", "acct-1", -1500.00, merchant_name="Appliance Store"),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-x"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -303,6 +309,8 @@ async def test_sync_normal_transaction_normal_priority(
     mock_response.added = [
         mock_plaid_transaction("txn-small", "acct-1", -49.99, merchant_name="Restaurant"),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-y"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -336,6 +344,8 @@ async def test_sync_event_payload_structure(
             category_primary="FOOD_AND_DRINK",
         ),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-z"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -373,6 +383,8 @@ async def test_sync_fallback_to_name_when_no_merchant(
             name="Generic Store"
         ),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-fallback"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -399,6 +411,8 @@ async def test_sync_missing_category_none(
             category_primary=None
         ),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-no-cat"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -423,6 +437,8 @@ async def test_sync_currency_defaults_to_usd(
 
     mock_response = MagicMock()
     mock_response.added = [txn]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-curr"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -447,6 +463,8 @@ async def test_sync_positive_amount_credit(
     mock_response.added = [
         mock_plaid_transaction("txn-refund", "acct-1", 150.00, merchant_name="Refund Inc"),
     ]
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-credit"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -475,6 +493,8 @@ async def test_sync_multiple_access_tokens(
     mock_response_1.added = [
         mock_plaid_transaction("txn-1", "acct-1", -10.00),
     ]
+    mock_response_1.modified = []
+    mock_response_1.removed = []
     mock_response_1.next_cursor = "cursor-1"
 
     mock_response_2 = MagicMock()
@@ -482,6 +502,8 @@ async def test_sync_multiple_access_tokens(
         mock_plaid_transaction("txn-2", "acct-2", -20.00),
         mock_plaid_transaction("txn-3", "acct-2", -30.00),
     ]
+    mock_response_2.modified = []
+    mock_response_2.removed = []
     mock_response_2.next_cursor = "cursor-2"
 
     mock_plaid_client.transactions_sync.side_effect = [mock_response_1, mock_response_2]
@@ -507,6 +529,8 @@ async def test_sync_error_one_token_continues_others(
     mock_response_good.added = [
         mock_plaid_transaction("txn-good", "acct-1", -50.00),
     ]
+    mock_response_good.modified = []
+    mock_response_good.removed = []
     mock_response_good.next_cursor = "cursor-good"
 
     mock_plaid_client.transactions_sync.side_effect = [
@@ -540,6 +564,8 @@ async def test_sync_cursor_persistence_per_token(
 
     mock_response = MagicMock()
     mock_response.added = []
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "new-cursor-value"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -564,6 +590,8 @@ async def test_sync_no_new_transactions(
 
     mock_response = MagicMock()
     mock_response.added = []
+    mock_response.modified = []
+    mock_response.removed = []
     mock_response.next_cursor = "cursor-empty"
     mock_plaid_client.transactions_sync.return_value = mock_response
 
@@ -572,6 +600,140 @@ async def test_sync_no_new_transactions(
 
     assert count == 0
     assert event_bus.publish.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Modified Transaction Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_processes_modified_transactions(
+    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
+):
+    """Verify that modified transactions are published with finance.transaction.modified event type.
+
+    Modified transactions occur when e.g. a pending charge clears with a
+    different final amount.  They carry the same payload shape as added
+    transactions but use a distinct event type so downstream consumers can
+    differentiate new vs. updated records.
+    """
+    finance_connector._client = mock_plaid_client
+    finance_connector._access_tokens = ["test-token-1"]
+
+    mock_response = MagicMock()
+    mock_response.added = []
+    mock_response.modified = [
+        # Above threshold — should get high priority
+        mock_plaid_transaction("txn-mod-1", "acct-1", -750.00, merchant_name="Updated Merchant"),
+        # Below threshold — should get normal priority
+        mock_plaid_transaction("txn-mod-2", "acct-1", -25.00, merchant_name="Small Update"),
+    ]
+    mock_response.removed = []
+    mock_response.next_cursor = "cursor-mod"
+    mock_plaid_client.transactions_sync.return_value = mock_response
+
+    with mock_plaid_sync_request():
+        count = await finance_connector.sync()
+
+    assert count == 2
+    assert event_bus.publish.call_count == 2
+
+    # First call: large modified transaction → high priority
+    first_call = event_bus.publish.call_args_list[0]
+    assert first_call[0][0] == "finance.transaction.modified"
+    assert first_call[0][1]["transaction_id"] == "txn-mod-1"
+    assert first_call[0][1]["amount"] == -750.00
+    assert first_call[0][1]["merchant"] == "Updated Merchant"
+    assert first_call[1]["priority"] == "high"
+
+    # Second call: small modified transaction → normal priority
+    second_call = event_bus.publish.call_args_list[1]
+    assert second_call[0][0] == "finance.transaction.modified"
+    assert second_call[0][1]["transaction_id"] == "txn-mod-2"
+    assert second_call[1]["priority"] == "normal"
+
+
+# ---------------------------------------------------------------------------
+# Removed Transaction Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sync_processes_removed_transactions(
+    finance_connector, mock_plaid_client, event_bus
+):
+    """Verify that removed transactions are published with minimal payload.
+
+    Plaid's removed transaction objects only contain a transaction_id — no
+    amount, merchant, or other fields.  The event is published at low
+    priority since removals are informational.
+    """
+    finance_connector._client = mock_plaid_client
+    finance_connector._access_tokens = ["test-token-1"]
+
+    # Removed transactions only have transaction_id
+    removed_txn = MagicMock()
+    removed_txn.transaction_id = "txn-removed-1"
+
+    mock_response = MagicMock()
+    mock_response.added = []
+    mock_response.modified = []
+    mock_response.removed = [removed_txn]
+    mock_response.next_cursor = "cursor-rem"
+    mock_plaid_client.transactions_sync.return_value = mock_response
+
+    with mock_plaid_sync_request():
+        count = await finance_connector.sync()
+
+    assert count == 1
+    assert event_bus.publish.call_count == 1
+
+    call_args = event_bus.publish.call_args
+    assert call_args[0][0] == "finance.transaction.removed"
+    assert call_args[0][1] == {"transaction_id": "txn-removed-1"}
+    assert call_args[1]["priority"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_sync_handles_all_three_lists(
+    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
+):
+    """Verify that sync processes added, modified, and removed in one cycle.
+
+    The total count returned should reflect all three lists, and each list
+    should produce events with the correct event type.
+    """
+    finance_connector._client = mock_plaid_client
+    finance_connector._access_tokens = ["test-token-1"]
+
+    removed_txn = MagicMock()
+    removed_txn.transaction_id = "txn-rem-1"
+
+    mock_response = MagicMock()
+    mock_response.added = [
+        mock_plaid_transaction("txn-add-1", "acct-1", -30.00, merchant_name="New Store"),
+    ]
+    mock_response.modified = [
+        mock_plaid_transaction("txn-mod-1", "acct-1", -45.00, merchant_name="Updated Store"),
+    ]
+    mock_response.removed = [removed_txn]
+    mock_response.next_cursor = "cursor-all"
+    mock_plaid_client.transactions_sync.return_value = mock_response
+
+    with mock_plaid_sync_request():
+        count = await finance_connector.sync()
+
+    assert count == 3
+    assert event_bus.publish.call_count == 3
+
+    # Verify event types published in order: added, modified, removed
+    event_types = [call[0][0] for call in event_bus.publish.call_args_list]
+    assert event_types == [
+        "finance.transaction.new",
+        "finance.transaction.modified",
+        "finance.transaction.removed",
+    ]
 
 
 # ---------------------------------------------------------------------------
