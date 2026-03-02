@@ -32,7 +32,7 @@ async def test_calendar_conflicts_diagnostic_no_events(db, user_model_store, cap
 
     log_text = " ".join(r.getMessage() for r in caplog.records)
     assert "calendar_conflicts" in log_text
-    assert "0 calendar events found" in log_text or "No conflicts possible" in log_text
+    assert "calendar_conflicts" in log_text and "skipping" in log_text
     assert len(predictions) == 0
 
 
@@ -125,7 +125,7 @@ async def test_relationship_maintenance_diagnostic_no_profile(db, user_model_sto
 
     log_text = " ".join(r.getMessage() for r in caplog.records)
     assert "relationship_maintenance" in log_text
-    assert "relationships profile not found" in log_text
+    assert "relationships signal profile unavailable" in log_text
     assert len(predictions) == 0
 
 
@@ -173,7 +173,7 @@ async def test_preparation_needs_diagnostic_no_events(db, user_model_store, capl
 
     log_text = " ".join(r.getMessage() for r in caplog.records)
     assert "preparation_needs" in log_text
-    assert "0 calendar events found" in log_text
+    assert "0 calendar events" in log_text and "skipping" in log_text
     assert len(predictions) == 0
 
 
