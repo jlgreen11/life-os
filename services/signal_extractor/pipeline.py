@@ -52,9 +52,11 @@ class SignalExtractorPipeline:
             DecisionExtractor(db, user_model_store),
         ]
 
-        # A dedicated mood engine instance is kept separately so we can call
-        # compute_current_mood() on demand without iterating the extractor list.
-        self.mood_engine = MoodInferenceEngine(db, user_model_store)
+        # Keep a direct reference to the mood engine already in the extractor
+        # list so we can call compute_current_mood() on demand without iterating.
+        # Using the SAME instance (not a new one) ensures that any in-memory
+        # state updated during extract() is visible to get_current_mood().
+        self.mood_engine = next(e for e in self.extractors if isinstance(e, MoodInferenceEngine))
 
     async def process_event(self, event: dict) -> list[dict]:
         """

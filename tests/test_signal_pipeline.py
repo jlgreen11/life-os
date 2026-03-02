@@ -35,7 +35,7 @@ def test_pipeline_initialization(db, user_model_store):
     assert "SpatialExtractor" in extractor_names
     assert "DecisionExtractor" in extractor_names
 
-    # Verify separate mood engine instance exists
+    # Verify mood engine reference exists (same instance as in extractors list)
     assert pipeline.mood_engine is not None
     assert type(pipeline.mood_engine).__name__ == "MoodInferenceEngine"
 
@@ -172,14 +172,13 @@ def test_get_current_mood_returns_mood_state(db, user_model_store):
 
 
 def test_get_current_mood_uses_dedicated_engine(db, user_model_store):
-    """Test that mood is computed via the dedicated mood engine instance."""
+    """Test that mood is computed via the mood engine reference."""
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     mood = pipeline.get_current_mood()
 
-    # Verify the mood engine is separate from the pipeline extractors
+    # Verify the mood engine reference exists and is callable
     assert pipeline.mood_engine is not None
-    # The dedicated engine should be callable
     assert callable(pipeline.mood_engine.compute_current_mood)
 
 
@@ -513,25 +512,77 @@ async def test_extractors_share_database_connection(db, user_model_store):
         assert extractor.ums is user_model_store
 
 
-def test_mood_engine_separate_from_pipeline_extractors(db, user_model_store):
-    """Test that the dedicated mood engine is separate from pipeline extractors."""
+def test_mood_engine_is_same_instance_as_extractor(db, user_model_store):
+    """Test that self.mood_engine is the SAME object as the MoodInferenceEngine in the extractors list.
+
+    This prevents stale-data bugs: get_current_mood() must see any in-memory
+    state that was updated during extract() in the pipeline's event processing.
+    """
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # The mood engine should exist
     assert pipeline.mood_engine is not None
 
-    # It should be a separate instance from the one in the extractors list
+    # Find the MoodInferenceEngine in the extractors list
     mood_extractors_in_pipeline = [
         e for e in pipeline.extractors
         if type(e).__name__ == "MoodInferenceEngine"
     ]
 
-    # There should be one in the extractors list
+    # There should be exactly one in the extractors list
     assert len(mood_extractors_in_pipeline) == 1
 
-    # But it might be a different instance than the dedicated one
-    # (or the same, depending on implementation - both are valid)
-    assert type(pipeline.mood_engine).__name__ == "MoodInferenceEngine"
+    # It MUST be the same object (identity check, not equality)
+    assert pipeline.mood_engine is mood_extractors_in_pipeline[0]
+
+
+def test_pipeline_still_has_8_extractors_after_mood_dedup(db, user_model_store):
+    """Verify that deduplicating the mood engine didn't remove it from the extractors list."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+    assert len(pipeline.extractors) == 8
+
+
+@pytest.mark.asyncio
+async def test_get_current_mood_reflects_processed_event(db, user_model_store):
+    """Test that get_current_mood() sees state from events processed through the pipeline.
+
+    This verifies there's no stale-data issue: after process_event() runs the
+    mood extractor's extract() method (which persists signals), the same instance
+    is used by get_current_mood() -> compute_current_mood(), so it reads the
+    freshly-written signals.
+    """
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Mood with no data should be neutral (default MoodState)
+    mood_before = pipeline.get_current_mood()
+    assert mood_before.confidence == 0.0  # No signals yet
+
+    # Process a mood-affecting event with negative language (stress signal)
+    event = {
+        "id": "mood-test-1",
+        "type": "email.sent",
+        "source": "test",
+        "timestamp": "2026-03-01T10:00:00+00:00",
+        "priority": "normal",
+        "payload": {
+            "body": (
+                "I am frustrated and stressed about this urgent problem. "
+                "This is an emergency and I'm overwhelmed by this failure. "
+                "The situation is unacceptable and I'm exhausted."
+            ),
+            "to": ["someone@example.com"],
+        },
+        "metadata": {},
+    }
+
+    signals = await pipeline.process_event(event)
+
+    # The pipeline should have extracted mood signals
+    assert len(signals) > 0
+
+    # Now get_current_mood() should reflect those signals
+    mood_after = pipeline.get_current_mood()
+    assert mood_after.confidence > 0.0  # Signals were processed
 
 
 # =============================================================================
