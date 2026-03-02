@@ -125,7 +125,7 @@ class RulesEngine:
         # acceptable because rule changes are infrequent.
         if (
             not self._cache_loaded_at
-            or (datetime.now(timezone.utc) - self._cache_loaded_at).seconds > 60
+            or (datetime.now(timezone.utc) - self._cache_loaded_at).total_seconds() > 60
         ):
             self.load_rules()
 
