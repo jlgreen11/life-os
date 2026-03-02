@@ -94,6 +94,26 @@ class FinanceConnector(BaseConnector):
             logger.error("Auth failed: %s", e)
             return False
 
+    def _normalize_transaction(self, txn) -> dict[str, Any]:
+        """Build a normalised event payload from a Plaid transaction object.
+
+        Used for both newly added and modified transactions, which share the
+        same field set in Plaid's ``transactions/sync`` response.
+        """
+        return {
+            "transaction_id": txn.transaction_id,
+            "account_id": txn.account_id,
+            # Raw signed amount (negative = money out).
+            "amount": txn.amount,
+            "currency": txn.iso_currency_code or "USD",
+            # Prefer the enriched merchant name; fall back to raw name.
+            "merchant": txn.merchant_name or txn.name,
+            # Plaid's personal-finance category (e.g., "FOOD_AND_DRINK").
+            "category": txn.personal_finance_category.primary if txn.personal_finance_category else None,
+            "date": txn.date.isoformat(),
+            "is_pending": txn.pending,
+        }
+
     async def sync(self) -> int:
         """Fetch new transactions using Plaid's cursor-based sync endpoint.
 
@@ -105,10 +125,14 @@ class FinanceConnector(BaseConnector):
               *removed* transactions since that point.
 
         This approach is more efficient than date-range polling and avoids
-        duplicates.  We currently process only *added* transactions; handling
-        modifications and removals is a future improvement.
+        duplicates.  All three transaction lists are processed:
+            - **added**: new transactions → ``finance.transaction.new``
+            - **modified**: updated transactions (e.g. pending→cleared with a
+              different final amount) → ``finance.transaction.modified``
+            - **removed**: reversed/refunded transactions →
+              ``finance.transaction.removed``
 
-        Returns the number of new transaction events published.
+        Returns the number of transaction events published.
         """
         if not self._client:
             return 0
@@ -129,38 +153,39 @@ class FinanceConnector(BaseConnector):
                 )
                 response = self._client.transactions_sync(request)
 
-                # ---- Transaction Normalisation ----
-                # Process only newly added transactions in this cycle.
+                # ---- New Transactions ----
                 for txn in response.added:
-                    # Plaid uses negative amounts for outflows (debits);
-                    # abs() lets us compare against the threshold uniformly.
-                    amount = abs(txn.amount)
-
-                    # Normalise the Plaid transaction into the Life OS schema.
-                    payload = {
-                        "transaction_id": txn.transaction_id,
-                        "account_id": txn.account_id,
-                        # Raw signed amount (negative = money out).
-                        "amount": txn.amount,
-                        "currency": txn.iso_currency_code or "USD",
-                        # Prefer the enriched merchant name; fall back to raw name.
-                        "merchant": txn.merchant_name or txn.name,
-                        # Plaid's personal-finance category (e.g., "FOOD_AND_DRINK").
-                        "category": txn.personal_finance_category.primary if txn.personal_finance_category else None,
-                        "date": txn.date.isoformat(),
-                        "is_pending": txn.pending,
-                    }
-
-                    # ---- Spending Anomaly Detection (simple threshold) ----
+                    payload = self._normalize_transaction(txn)
                     # Transactions above the configured dollar threshold are
-                    # promoted to "high" priority so the agent can alert the
-                    # user about unusually large charges.
-                    priority = "normal"
-                    if amount >= self._large_threshold:
-                        priority = "high"
-
+                    # promoted to "high" priority for anomaly alerting.
+                    amount = abs(txn.amount)
+                    priority = "high" if amount >= self._large_threshold else "normal"
                     await self.publish_event(
                         "finance.transaction.new", payload, priority=priority,
+                    )
+                    count += 1
+
+                # ---- Modified Transactions ----
+                # Pending transactions that clear with a different final
+                # amount, or any other server-side corrections.
+                for txn in response.modified:
+                    payload = self._normalize_transaction(txn)
+                    amount = abs(txn.amount)
+                    priority = "high" if amount >= self._large_threshold else "normal"
+                    await self.publish_event(
+                        "finance.transaction.modified", payload, priority=priority,
+                    )
+                    count += 1
+
+                # ---- Removed Transactions ----
+                # Reversed or refunded transactions.  Plaid only provides
+                # the transaction_id for removals (no amount/merchant/etc.).
+                for txn in response.removed:
+                    payload = {
+                        "transaction_id": txn.transaction_id,
+                    }
+                    await self.publish_event(
+                        "finance.transaction.removed", payload, priority="low",
                     )
                     count += 1
 
