@@ -129,6 +129,169 @@ def register_routes(app: FastAPI, life_os) -> None:
             "feedback_summary": feedback,
         }
 
+    @app.get("/api/diagnostics/pipeline")
+    async def pipeline_diagnostics():
+        """Return comprehensive data-flow health diagnostics.
+
+        Checks each stage of the processing pipeline — signal profiles,
+        user model tables, predictions, notifications, and events — so
+        that broken or degraded stages can be identified without external
+        scripts or direct database access.
+
+        Each section is wrapped in its own try/except so a failure in one
+        area (e.g. a corrupt user_model.db) doesn't prevent the other
+        sections from reporting.  The endpoint always returns 200 with
+        diagnostic data; errors are reported inline.
+        """
+        import asyncio
+
+        EXPECTED_PROFILES = [
+            "relationships", "temporal", "topics", "linguistic",
+            "cadence", "mood_signals", "spatial", "decision",
+        ]
+
+        result: dict = {}
+        has_errors = False
+
+        # --- signal_profiles ---
+        def _check_signal_profiles():
+            """Query each expected signal profile type."""
+            profiles = {}
+            for ptype in EXPECTED_PROFILES:
+                try:
+                    profile = life_os.user_model_store.get_signal_profile(ptype)
+                    if profile:
+                        profiles[ptype] = {
+                            "exists": True,
+                            "samples_count": profile.get("samples_count", 0),
+                            "updated_at": profile.get("updated_at"),
+                        }
+                    else:
+                        profiles[ptype] = {
+                            "exists": False,
+                            "samples_count": 0,
+                            "updated_at": None,
+                        }
+                except Exception as exc:
+                    profiles[ptype] = {"exists": False, "error": str(exc)}
+            return profiles
+
+        try:
+            result["signal_profiles"] = await asyncio.to_thread(_check_signal_profiles)
+        except Exception as exc:
+            result["signal_profiles"] = {"error": str(exc)}
+            has_errors = True
+
+        # --- user_model ---
+        def _check_user_model():
+            """Count rows in core user-model tables."""
+            counts: dict = {}
+            tables = {
+                "episodes_count": "SELECT COUNT(*) as c FROM episodes",
+                "semantic_facts_count": "SELECT COUNT(*) as c FROM semantic_facts",
+                "routines_count": "SELECT COUNT(*) as c FROM routines",
+                "mood_readings_count": "SELECT COUNT(*) as c FROM mood_history",
+            }
+            with life_os.db.get_connection("user_model") as conn:
+                for key, sql in tables.items():
+                    try:
+                        row = conn.execute(sql).fetchone()
+                        counts[key] = row["c"] if row else 0
+                    except Exception as exc:
+                        counts[key] = f"error: {exc}"
+            return counts
+
+        try:
+            result["user_model"] = await asyncio.to_thread(_check_user_model)
+        except Exception as exc:
+            result["user_model"] = {"error": str(exc)}
+            has_errors = True
+
+        # --- predictions (lives in user_model.db) ---
+        def _check_predictions():
+            """Query prediction pipeline health."""
+            with life_os.db.get_connection("user_model") as conn:
+                total_row = conn.execute("SELECT COUNT(*) as c FROM predictions").fetchone()
+                last_24h_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM predictions WHERE created_at > datetime('now', '-1 day')"
+                ).fetchone()
+                last_row = conn.execute("SELECT MAX(created_at) as ts FROM predictions").fetchone()
+                return {
+                    "total_generated": total_row["c"] if total_row else 0,
+                    "last_24h": last_24h_row["c"] if last_24h_row else 0,
+                    "last_prediction_at": last_row["ts"] if last_row else None,
+                }
+
+        try:
+            result["predictions"] = await asyncio.to_thread(_check_predictions)
+        except Exception as exc:
+            result["predictions"] = {"error": str(exc)}
+            has_errors = True
+
+        # --- notifications (lives in state.db) ---
+        def _check_notifications():
+            """Query notification counts."""
+            with life_os.db.get_connection("state") as conn:
+                total_row = conn.execute("SELECT COUNT(*) as c FROM notifications").fetchone()
+                unread_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM notifications WHERE status = 'unread'"
+                ).fetchone()
+                last_24h_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM notifications WHERE created_at > datetime('now', '-1 day')"
+                ).fetchone()
+                return {
+                    "total": total_row["c"] if total_row else 0,
+                    "unread": unread_row["c"] if unread_row else 0,
+                    "last_24h": last_24h_row["c"] if last_24h_row else 0,
+                }
+
+        try:
+            result["notifications"] = await asyncio.to_thread(_check_notifications)
+        except Exception as exc:
+            result["notifications"] = {"error": str(exc)}
+            has_errors = True
+
+        # --- events_pipeline ---
+        def _check_events():
+            """Query event pipeline health."""
+            total = life_os.event_store.get_event_count()
+            with life_os.db.get_connection("events") as conn:
+                last_row = conn.execute("SELECT MAX(timestamp) as ts FROM events").fetchone()
+                last_24h_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM events WHERE timestamp > datetime('now', '-1 day')"
+                ).fetchone()
+                return {
+                    "total_events": total,
+                    "last_event_at": last_row["ts"] if last_row else None,
+                    "last_24h": last_24h_row["c"] if last_24h_row else 0,
+                }
+
+        try:
+            result["events_pipeline"] = await asyncio.to_thread(_check_events)
+        except Exception as exc:
+            result["events_pipeline"] = {"error": str(exc)}
+            has_errors = True
+
+        # --- overall_status ---
+        if has_errors:
+            result["overall_status"] = "error"
+        else:
+            profiles = result.get("signal_profiles", {})
+            existing_count = sum(
+                1 for v in profiles.values()
+                if isinstance(v, dict) and v.get("exists")
+            )
+            preds_24h = result.get("predictions", {}).get("last_24h", 0)
+
+            if existing_count == 0:
+                result["overall_status"] = "broken"
+            elif existing_count < len(EXPECTED_PROFILES) or preds_24h == 0:
+                result["overall_status"] = "degraded"
+            else:
+                result["overall_status"] = "healthy"
+
+        return result
+
     @app.get("/api/system/sources")
     async def get_system_sources():
         """Return per-source event statistics for the System health dashboard.
