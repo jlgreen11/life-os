@@ -1838,6 +1838,21 @@ class LifeOS:
             except Exception as e:
                 logger.error("Source weight tracking error (event_id=%s): %s", event.get("id"), e)
 
+            # Guard — Skip stages 2–6 for system telemetry events.
+            # System events (rule triggered, connector sync, AI actions, etc.)
+            # carry no user content worth extracting signals from, and
+            # re-evaluating them through the rules engine risks infinite
+            # event cascade (e.g. a rule matching "system.*" would amplify
+            # exponentially).  They are still persisted (stage 1) and tracked
+            # for source weights (stage 1.3) above.
+            _SYSTEM_EVENT_PREFIXES = ("system.",)
+            if event_type.startswith(_SYSTEM_EVENT_PREFIXES):
+                logger.debug(
+                    "Skipped pipeline stages 2-6 for system event type=%s",
+                    event_type,
+                )
+                return
+
             # Stage 2 — Learn: the signal extractor passively analyses the
             # event to update the user model (patterns, preferences, etc.).
             try:
