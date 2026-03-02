@@ -445,7 +445,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             try:
                 now = datetime.now(timezone.utc)
                 # Show events in the next 7 days for the feed/badge
-                end_window = (now + timedelta(days=7)).isoformat()
+                end_window = now + timedelta(days=7)
                 with life_os.db.get_connection("events") as conn:
                     rows = conn.execute(
                         """SELECT id, payload, timestamp FROM events
@@ -469,9 +469,24 @@ def register_routes(app: FastAPI, life_os) -> None:
                     seen_eids.add(eid)
 
                     evt_start = payload.get("start_time", "")
-                    if not evt_start or evt_start < now.isoformat():
+                    if not evt_start:
                         continue
-                    if evt_start > end_window:
+
+                    # Parse start_time to a proper datetime for comparison.
+                    # Date-only strings (e.g. '2026-03-05') represent all-day
+                    # events and are treated as midnight UTC on that day.
+                    try:
+                        if len(evt_start) <= 10:
+                            evt_start_dt = datetime.fromisoformat(evt_start).replace(tzinfo=timezone.utc)
+                        else:
+                            evt_start_dt = datetime.fromisoformat(evt_start.replace("Z", "+00:00"))
+                            # Ensure timezone-aware for comparison
+                            if evt_start_dt.tzinfo is None:
+                                evt_start_dt = evt_start_dt.replace(tzinfo=timezone.utc)
+                    except (ValueError, TypeError):
+                        continue
+
+                    if evt_start_dt < now or evt_start_dt > end_window:
                         continue
 
                     start_time = payload.get("start_time", "")
