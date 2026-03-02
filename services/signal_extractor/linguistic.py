@@ -583,6 +583,20 @@ class LinguisticExtractor(BaseExtractor):
         profanity_rate = data["averages"].get("profanity_rate", 0.0)
         data["profanity_comfort"] = round(min(1.0, profanity_rate / 0.02), 4)
 
+        # Map internal rate keys to LinguisticProfile canonical field names.
+        # The averages dict uses short names like "hedge_rate" but the typed
+        # LinguisticProfile model (models/user_model.py) expects "hedge_frequency"
+        # etc.  We copy (not rename) so both the _rate keys and the _frequency
+        # keys are available — existing consumers read _rate directly, while new
+        # code that deserialises into LinguisticProfile gets non-default values.
+        data["hedge_frequency"] = data["averages"].get("hedge_rate", 0.0)
+        data["assertion_frequency"] = data["averages"].get("assertion_rate", 0.0)
+        data["question_frequency"] = data["averages"].get("question_rate", 0.0)
+        data["ellipsis_frequency"] = data["averages"].get("ellipsis_rate", 0.0)
+        data["greeting_patterns"] = data.get("common_greetings", [])
+        data["closing_patterns"] = data.get("common_closings", [])
+        data["formality_spectrum"] = data["averages"].get("formality", 0.5)
+
         # Compute per-contact style averages from the per-contact ring buffers.
         # Only contacts with enough samples (_MIN_PER_CONTACT_SAMPLES) get an
         # entry — thin contacts fall back to the global averages in the draft
