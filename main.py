@@ -824,16 +824,22 @@ class LifeOS:
 
         # ---------------------------------------------------------------
         # Step 1: Probe for corruption.
-        # Reading episodes.content_full is the canary: it spans the same
-        # overflow-page chains as contacts_involved, topics, entities.
-        # A successful read means the DB is healthy.
+        # We check ALL tables with TEXT blob columns that span B-tree
+        # overflow pages.  SUM(LENGTH(...)) forces a full scan of leaf
+        # data — it's instant on empty tables but catches corruption in
+        # any table that has data.  A single failure triggers a rebuild.
         # ---------------------------------------------------------------
         try:
             with self.db.get_connection("user_model") as conn:
                 try:
                     conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
-                    # Also check signal_profiles data (the other common corruption point)
                     conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
+                    # Probe remaining tables with TEXT columns on overflow pages
+                    conn.execute("SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts").fetchone()
+                    conn.execute("SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines").fetchone()
+                    conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
+                    conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
+                    conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
                     logger.debug("       ✓ user_model.db is healthy — no rebuild needed")
                     return
                 except Exception as probe_err:
