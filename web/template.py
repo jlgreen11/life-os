@@ -2571,7 +2571,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         // Extract the sender address as contact_id so the AI engine can look up
         // communication templates for this contact (formality, greeting, style).
-        var contactId = (item && item.metadata && item.metadata.sender) || null;
+        var contactId = (item && item.metadata && item.metadata.from_address) || null;
 
         fetch(API + '/api/draft', {
             method: 'POST',

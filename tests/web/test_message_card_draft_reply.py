@@ -163,16 +163,30 @@ class TestDraftReplyContactId:
             "draftReply() must pass contact_id in the POST body to /api/draft"
         )
 
-    def test_draft_reply_contact_id_from_metadata_sender(self):
-        """draftReply() must derive contact_id from item.metadata.sender.
+    def test_draft_reply_contact_id_from_metadata_from_address(self):
+        """draftReply() must derive contact_id from item.metadata.from_address.
 
-        For message cards the sender address lives in item.metadata.sender.
-        Email cards populate the same field.  Using this as contact_id ensures
-        the AI engine can apply per-contact templates for both channel types.
+        The dashboard feed endpoint populates metadata.from_address (not
+        metadata.sender).  Using this as contact_id ensures the AI engine
+        can apply per-contact communication templates for both email and
+        message channel types.
         """
         func_body = _extract_draft_reply_function()
-        assert "metadata" in func_body and "sender" in func_body, (
-            "draftReply() must extract sender from item.metadata.sender for contact_id"
+        assert "metadata" in func_body and "from_address" in func_body, (
+            "draftReply() must extract sender from item.metadata.from_address for contact_id"
+        )
+
+    def test_draft_reply_does_not_use_metadata_sender(self):
+        """Regression guard: draftReply() must NOT use item.metadata.sender.
+
+        The dashboard feed endpoint sets metadata.from_address, not
+        metadata.sender.  Using .sender would always be undefined, causing
+        contact_id to be null and preventing AI reply personalization.
+        """
+        func_body = _extract_draft_reply_function()
+        assert "metadata.sender" not in func_body, (
+            "draftReply() must use metadata.from_address, not metadata.sender — "
+            "the feed endpoint populates from_address"
         )
 
     def test_draft_reply_contact_id_nullable(self):
