@@ -1725,18 +1725,25 @@ class LifeOS:
             logger.warning("       ⚠ Decision profile backfill failed (non-fatal): %s", e)
 
     async def _verify_and_retry_backfills(self):
-        """Verify signal profiles are populated after backfill and retry any that failed.
+        """Verify signal profiles, episodes, facts, and routines after backfill; retry failures.
 
-        After all 8 backfill methods run, some profiles may still be empty because
-        the backfill silently caught an exception (e.g. stale DB connection after
-        table repair, script error, missing events).  This method:
-          1. Checks each expected profile type via get_signal_profile()
-          2. Logs a summary of populated vs missing profiles
-          3. Retries each missing profile's backfill method ONCE
-          4. Logs final status with a WARNING if any remain empty
+        After all backfill methods run, data may still be missing because a backfill
+        silently caught an exception (e.g. stale DB connection after table repair,
+        script error, missing events).  This method runs six verification phases:
 
-        This closes the silent-failure gap where DB corruption → repair → failed
-        backfill → empty profiles → 0 predictions → dead system.
+          Phase 1: Check which signal profile types are populated
+          Phase 2: Retry missing signal profile backfills ONCE
+          Phase 3: Log final signal profile status
+          Phase 4: Verify episodes — if episodes table is empty but episodic events
+                   exist in events.db, retry episode backfill
+          Phase 5: Verify semantic facts — if facts table is empty but episodes exist,
+                   trigger one round of semantic inference
+          Phase 6: Verify routines — if routines table is empty but episodes exist,
+                   trigger one round of routine detection
+
+        Each phase is wrapped in its own try/except so that a failure in one phase
+        never blocks subsequent phases.  This closes the silent-failure gap where
+        DB corruption → repair → failed backfill → empty data → dead cognitive pipeline.
         """
         try:
             # Map profile types to their corresponding backfill methods.
@@ -1820,6 +1827,104 @@ class LifeOS:
         except Exception as e:
             # Fail-open: verification errors must never crash the startup sequence.
             logger.warning("       ⚠ Signal profile verification failed (non-fatal): %s", e)
+
+        # --- Phase 4: Episode verification ---
+        # Episodes are the foundation of the cognitive pipeline (routines, facts,
+        # predictions).  If the episode backfill silently failed, we retry once.
+        episode_count = 0
+        try:
+            with self.db.get_connection("user_model") as conn:
+                episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+
+            if episode_count == 0:
+                # Check if events.db has episodic events to backfill from
+                from scripts.backfill_episodes_from_events import EPISODIC_EVENT_TYPES
+
+                placeholders = ", ".join("?" for _ in EPISODIC_EVENT_TYPES)
+                with self.db.get_connection("events") as conn:
+                    event_count = conn.execute(
+                        f"SELECT COUNT(*) FROM events WHERE type IN ({placeholders})",
+                        list(EPISODIC_EVENT_TYPES),
+                    ).fetchone()[0]
+
+                if event_count > 0:
+                    logger.info(
+                        "       → Episodes empty but %s episodic events exist, retrying backfill...",
+                        f"{event_count:,}",
+                    )
+                    await self._backfill_episodes_from_events_if_needed()
+
+                    # Re-check after retry
+                    with self.db.get_connection("user_model") as conn:
+                        episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+
+                    if episode_count > 0:
+                        logger.info("       ✓ Episode backfill retry succeeded: %s episodes", f"{episode_count:,}")
+                    else:
+                        logger.warning(
+                            "       ⚠ Episode backfill retry produced 0 episodes "
+                            "(semantic inference and routine detection will have no data)"
+                        )
+                else:
+                    logger.info("       → No episodic events in events.db, skipping episode verification")
+            else:
+                logger.info("       → Episodes: %s already present", f"{episode_count:,}")
+
+        except Exception as e:
+            logger.warning("       ⚠ Episode verification failed (non-fatal): %s", e)
+
+        # --- Phase 5: Semantic fact verification ---
+        # Semantic facts are derived from signal profiles.  If the inference loop
+        # hasn't run yet and the facts table is empty, run one inference round now.
+        try:
+            with self.db.get_connection("user_model") as conn:
+                fact_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+
+            if fact_count == 0 and episode_count > 0:
+                logger.info("       → Semantic facts empty, triggering inference round...")
+                await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
+
+                with self.db.get_connection("user_model") as conn:
+                    fact_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+
+                if fact_count > 0:
+                    logger.info("       ✓ Semantic inference produced %s facts", f"{fact_count:,}")
+                else:
+                    logger.warning("       ⚠ Semantic inference produced 0 facts")
+            elif fact_count > 0:
+                logger.info("       → Semantic facts: %s already present", f"{fact_count:,}")
+
+        except Exception as e:
+            logger.warning("       ⚠ Semantic fact verification failed (non-fatal): %s", e)
+
+        # --- Phase 6: Routine verification ---
+        # Routines are detected from episodic memory.  If the routine detection loop
+        # hasn't run yet and the routines table is empty, run one detection round now.
+        try:
+            with self.db.get_connection("user_model") as conn:
+                routine_count = conn.execute("SELECT COUNT(*) FROM routines").fetchone()[0]
+
+            if routine_count == 0 and episode_count > 0:
+                logger.info("       → Routines empty, triggering detection round...")
+                routines = await asyncio.to_thread(self.routine_detector.detect_routines, 30)
+                if routines:
+                    await asyncio.to_thread(self.routine_detector.store_routines, routines)
+
+                with self.db.get_connection("user_model") as conn:
+                    routine_count = conn.execute("SELECT COUNT(*) FROM routines").fetchone()[0]
+
+                if routine_count > 0:
+                    logger.info("       ✓ Routine detection produced %s routines", f"{routine_count:,}")
+                else:
+                    logger.warning(
+                        "       ⚠ Routine detection produced 0 routines "
+                        "(may need more episodic data to detect patterns)"
+                    )
+            elif routine_count > 0:
+                logger.info("       → Routines: %s already present", f"{routine_count:,}")
+
+        except Exception as e:
+            logger.warning("       ⚠ Routine verification failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
