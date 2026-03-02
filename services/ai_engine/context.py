@@ -14,10 +14,13 @@ Pulls from:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
+
+logger = logging.getLogger(__name__)
 
 
 class ContextAssembler:
@@ -445,7 +448,11 @@ class ContextAssembler:
         except Exception:
             # Fail-open: inbound style is a nice-to-have.  If the profile is
             # missing or malformed, the draft still has all outbound style data.
-            pass
+            logger.warning(
+                "Draft context: failed to load inbound writing style for %s",
+                contact_id,
+                exc_info=True,
+            )
 
         # --- Layer 5: Recent conversation history with this contact ---
         # Query the last 5 episodes where the contact appears in
@@ -497,7 +504,11 @@ class ContextAssembler:
         except Exception:
             # Fail-open: conversation history is enrichment, not critical path.
             # If the user_model DB is unavailable the draft still has style data.
-            pass
+            logger.warning(
+                "Draft context: failed to load conversation history for %s",
+                contact_id,
+                exc_info=True,
+            )
 
         # Finally, append the incoming message that the user needs to reply to.
         # This is the last section so all style context is available first.
@@ -561,7 +572,7 @@ class ContextAssembler:
         except Exception:
             # Fail-open: missing facts degrade search quality slightly but
             # should never prevent the search from returning a result.
-            pass
+            logger.warning("Search context: failed to load semantic facts", exc_info=True)
 
         # Section 5: Recent mood signals (last 3 entries).
         # Gives the LLM soft context about the user's recent emotional state
@@ -575,7 +586,7 @@ class ContextAssembler:
                     parts.append(f"Recent mood context: {recent}")
         except Exception:
             # Fail-open: mood context is a nice-to-have; omit it silently.
-            pass
+            logger.warning("Search context: failed to load mood profile", exc_info=True)
 
         return "\n\n---\n\n".join(parts)
 
