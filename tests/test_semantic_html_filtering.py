@@ -282,17 +282,17 @@ class TestSemanticHTMLFiltering:
         inferrer = SemanticFactInferrer(user_model_store)
 
         # Populate topic profile with tokens that meet interest threshold but not expertise
-        # (5+ count, 5%+ frequency but <10 count or <10% frequency)
+        # (3+ count, 3%+ frequency but <5 count or <8% frequency)
         topic_data = {
             "topic_counts": {
-                "align": 8,       # HTML/CSS token (should be filtered)
-                "style": 7,       # HTML/CSS token (should be filtered)
-                "blockchain": 9,  # Legitimate topic (should create interest fact)
-                "webdev": 6,      # Legitimate topic (should create interest fact)
+                "align": 4,       # HTML/CSS token (should be filtered)
+                "style": 4,       # HTML/CSS token (should be filtered)
+                "blockchain": 4,  # Legitimate topic (should create interest fact)
+                "webdev": 4,      # Legitimate topic (should create interest fact)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",100)
+        _set_samples(user_model_store, "topics", 100)
 
         # Run inference
         inferrer.infer_from_topic_profile()

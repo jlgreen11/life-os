@@ -123,10 +123,10 @@ class TestTemporalInference:
         assert boundary_fact["confidence"] > 0.6
 
     def test_insufficient_temporal_samples(self, user_model_store):
-        """Verify no inference with <50 samples."""
+        """Verify no inference with <25 samples."""
         profile_data = {"activity_by_hour": {"9": 5, "10": 3}, "activity_by_day": {"monday": 8}}
         user_model_store.update_signal_profile("temporal", profile_data)
-        _set_samples(user_model_store, "temporal", 30)  # Below 50-sample threshold
+        _set_samples(user_model_store, "temporal", 20)  # Below 25-sample threshold
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_temporal_profile()
@@ -454,13 +454,13 @@ class TestDecisionInference:
         assert risk_fact["confidence"] > 0.5
 
     def test_insufficient_decision_samples(self, user_model_store):
-        """Verify no inference with <20 samples."""
+        """Verify no inference with <10 samples."""
         profile_data = {
             "decision_speed_by_domain": {"food": 20},
             "research_depth_by_domain": {"food": 0.2},
         }
         user_model_store.update_signal_profile("decision", profile_data)
-        _set_samples(user_model_store, "decision", 10)  # Below 20-sample threshold
+        _set_samples(user_model_store, "decision", 8)  # Below 10-sample threshold
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_decision_profile()

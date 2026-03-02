@@ -101,7 +101,7 @@ class TestGenericStopwordFiltering:
         inferrer = SemanticFactInferrer(user_model_store)
 
         # Use 1000 total samples so thresholds are reachable:
-        # interest: >= 5 count AND > 5% (>50); expertise: >= 10 count AND > 10% (>100).
+        # interest: >= 3 count AND > 3% (>30); expertise: >= 5 count AND > 8% (>80).
         topic_data = {
             "topic_counts": {
                 "email": 150,    # Generic email word — must be filtered (15%)
@@ -111,8 +111,8 @@ class TestGenericStopwordFiltering:
                 "shop": 60,      # Generic marketing word — must be filtered (6%)
                 "account": 55,   # Generic email word — must be filtered (5.5%)
                 "click": 55,     # Generic marketing word — must be filtered (5.5%)
-                "chatgpt": 90,   # Legitimate interest — must pass through (9%)
-                "task": 90,      # Legitimate interest — must pass through (9%)
+                "chatgpt": 90,   # Legitimate topic — must pass through (9% → expertise)
+                "task": 90,      # Legitimate topic — must pass through (9% → expertise)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -131,9 +131,9 @@ class TestGenericStopwordFiltering:
         assert "interest_account" not in all_keys, "'account' became interest fact"
         assert "interest_click" not in all_keys, "'click' became interest fact"
 
-        # Legitimate topics must pass through
-        assert "interest_chatgpt" in all_keys, "'chatgpt' was incorrectly filtered"
-        assert "interest_task" in all_keys, "'task' was incorrectly filtered"
+        # Legitimate topics must pass through (now expertise-level with lowered thresholds)
+        assert "expertise_chatgpt" in all_keys, "'chatgpt' was incorrectly filtered"
+        assert "expertise_task" in all_keys, "'task' was incorrectly filtered"
 
     def test_filters_css_font_whitespace_artifacts(self, user_model_store):
         """CSS font/whitespace tokens seen in HTML email templates must be filtered.
@@ -314,7 +314,7 @@ class TestPurgeNoiseFacts:
         topic_data = {
             "topic_counts": {
                 "more": 15000,    # Still in profile (will be blocked, not re-added)
-                "python": 8000,   # Legitimate — will create new fact
+                "python": 8000,   # Legitimate — will create new fact (8.3% → expertise)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -329,8 +329,8 @@ class TestPurgeNoiseFacts:
         assert "expertise_more" not in all_keys
         assert "interest_please" not in all_keys
 
-        # Legitimate new fact must be present
-        assert "interest_python" in all_keys
+        # Legitimate new fact must be present (expertise with lowered thresholds)
+        assert "expertise_python" in all_keys
 
 
 class TestLogMessageUpdated:

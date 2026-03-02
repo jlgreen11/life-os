@@ -179,14 +179,14 @@ class TestTemporalInferenceKeyFix:
 
     def test_insufficient_samples_still_skips_inference(self, user_model_store):
         """
-        The 50-sample guard must still prevent inference on sparse profiles,
+        The 25-sample guard must still prevent inference on sparse profiles,
         even with correct keys.  This ensures the fix didn't remove the guard.
         """
         _seed_temporal_profile(
             user_model_store,
             activity_by_hour={"9": 5, "10": 3},
             activity_by_day={"monday": 8},
-            samples=30,  # Below the 50-sample threshold
+            samples=20,  # Below the 25-sample threshold
         )
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -198,7 +198,7 @@ class TestTemporalInferenceKeyFix:
             if f["key"] in ("chronotype", "peak_productivity_hour", "temporal_work_boundaries")
         ]
         assert len(temporal_facts) == 0, (
-            "Should not infer temporal facts when samples_count < 50"
+            "Should not infer temporal facts when samples_count < 25"
         )
 
     def test_ambiguous_distribution_produces_no_chronotype(self, user_model_store):
