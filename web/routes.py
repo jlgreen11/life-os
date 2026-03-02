@@ -1087,8 +1087,17 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/briefing")
     async def get_briefing():
-        briefing = await life_os.ai_engine.generate_briefing()
-        return {"briefing": briefing, "generated_at": datetime.now(timezone.utc).isoformat()}
+        """Generate the user's daily briefing via the AI engine."""
+        try:
+            briefing = await life_os.ai_engine.generate_briefing()
+            return {"briefing": briefing, "generated_at": datetime.now(timezone.utc).isoformat()}
+        except Exception as e:
+            logger.warning("Briefing generation failed: %s", e)
+            return {
+                "briefing": None,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "error": "Briefing generation temporarily unavailable",
+            }
 
     # -------------------------------------------------------------------
     # Search
@@ -3319,7 +3328,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 profiles[name] = {
                     "populated": samples >= 1,
                     "samples_count": samples,
-                    "last_updated": profile.get("last_updated"),
+                    "last_updated": profile.get("updated_at"),
                 }
             else:
                 profiles[name] = {
