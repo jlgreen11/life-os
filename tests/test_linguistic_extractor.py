@@ -702,3 +702,82 @@ def test_inbound_contact_resolved_from_from_address(linguistic_extractor):
 
     signals = linguistic_extractor.extract(event)
     assert signals[0]["contact_id"] == "alice@example.com"
+
+
+# ---------------------------------------------------------------------------
+# style_by_contact / samples_analyzed / last_updated Tests
+# ---------------------------------------------------------------------------
+
+
+def test_style_by_contact_populated(linguistic_extractor, user_model_store):
+    """Per-contact averages should be wired to style_by_contact after enough samples."""
+    contact = "alice@example.com"
+    bodies = [
+        "Hey yeah gonna check that out lol haha ok cool btw idk stuff",
+        "Hey nah gonna skip that one lol haha ok cool btw idk things",
+        "Hey yep gonna do it now lol haha ok cool btw idk more things",
+    ]
+    for body in bodies:
+        event = {
+            "type": EventType.EMAIL_SENT.value,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": body,
+                "to_addresses": [contact],
+            },
+        }
+        linguistic_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    style = profile["data"]["style_by_contact"]
+
+    # The contact should appear in style_by_contact since we sent 3 messages
+    # (meeting the _MIN_PER_CONTACT_SAMPLES threshold).
+    assert contact in style
+    # Verify expected metric keys are present.
+    assert "formality" in style[contact]
+    assert "hedge_rate" in style[contact]
+    assert "emoji_rate" in style[contact]
+    assert "samples_count" in style[contact]
+    assert style[contact]["samples_count"] == 3
+
+
+def test_samples_analyzed_tracks_count(linguistic_extractor, user_model_store):
+    """samples_analyzed should reflect the current number of samples in the ring buffer."""
+    n_messages = 5
+    for i in range(n_messages):
+        event = {
+            "type": EventType.EMAIL_SENT.value,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": f"Message number {i} with enough words for processing.",
+                "to_addresses": ["test@example.com"],
+            },
+        }
+        linguistic_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    assert profile["data"]["samples_analyzed"] == n_messages
+
+
+def test_last_updated_set(linguistic_extractor, user_model_store):
+    """last_updated should be a valid ISO datetime string set within the last few seconds."""
+    event = {
+        "type": EventType.EMAIL_SENT.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "payload": {
+            "body": "A message to trigger the profile update and set last_updated.",
+            "to_addresses": ["test@example.com"],
+        },
+    }
+    before = datetime.now(timezone.utc)
+    linguistic_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    last_updated_str = profile["data"]["last_updated"]
+
+    # Must be a valid ISO datetime.
+    parsed = datetime.fromisoformat(last_updated_str)
+    # Must be within a few seconds of "now".
+    assert (parsed - before).total_seconds() < 5
+    assert (parsed - before).total_seconds() >= 0

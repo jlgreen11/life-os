@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import statistics
 from collections import Counter
+from datetime import datetime, timezone
 from typing import Optional
 
 from models.core import EventType
@@ -640,6 +641,18 @@ class LinguisticExtractor(BaseExtractor):
                 "samples_count": len(csamples),
             }
         data["per_contact_averages"] = per_contact_avgs
+
+        # Wire computed per-contact averages to the LinguisticProfile canonical
+        # field name so the AI engine can look up per-contact style when drafting.
+        data["style_by_contact"] = per_contact_avgs
+
+        # Track how many samples are currently in the ring buffer so
+        # LinguisticProfile.samples_analyzed reflects reality.
+        data["samples_analyzed"] = len(data.get("samples", []))
+
+        # Timestamp the profile update so LinguisticProfile.last_updated is
+        # meaningful rather than always reflecting Python object creation time.
+        data["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         self.ums.update_signal_profile("linguistic", data)
 
