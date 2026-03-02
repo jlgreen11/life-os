@@ -188,12 +188,12 @@ def test_badges_task_count(mock_life_os, client):
 
 
 def test_badges_email_count(mock_life_os, client):
-    """Email badge counts only notifications whose source contains 'email'."""
+    """Email badge counts only notifications whose domain contains 'email'."""
     mock_life_os.notification_manager.get_pending = Mock(
         return_value=[
-            {"id": "n1", "source": "google.email", "title": "Email 1"},
-            {"id": "n2", "source": "proton_mail.email", "title": "Email 2"},
-            {"id": "n3", "source": "signal.message", "title": "Message"},
+            {"id": "n1", "domain": "email", "title": "Email 1"},
+            {"id": "n2", "domain": "email", "title": "Email 2"},
+            {"id": "n3", "domain": "message", "title": "Message"},
         ]
     )
     response = client.get("/api/dashboard/badges")
@@ -202,12 +202,12 @@ def test_badges_email_count(mock_life_os, client):
 
 
 def test_badges_messages_count(mock_life_os, client):
-    """Messages badge counts notifications whose source contains 'message' or 'signal'."""
+    """Messages badge counts notifications whose domain contains 'message' or 'signal'."""
     mock_life_os.notification_manager.get_pending = Mock(
         return_value=[
-            {"id": "n1", "source": "signal.message", "title": "Signal msg"},
-            {"id": "n2", "source": "imessage.message", "title": "iMessage"},
-            {"id": "n3", "source": "google.email", "title": "Email"},
+            {"id": "n1", "domain": "message", "title": "Signal msg"},
+            {"id": "n2", "domain": "message", "title": "iMessage"},
+            {"id": "n3", "domain": "email", "title": "Email"},
         ]
     )
     response = client.get("/api/dashboard/badges")
@@ -219,8 +219,8 @@ def test_badges_inbox_aggregates_all(mock_life_os, client):
     """Inbox count = all notifications + tasks + calendar events."""
     mock_life_os.notification_manager.get_pending = Mock(
         return_value=[
-            {"id": "n1", "source": "google.email", "title": "Email"},
-            {"id": "n2", "source": "google.email", "title": "Email 2"},
+            {"id": "n1", "domain": "email", "title": "Email"},
+            {"id": "n2", "domain": "email", "title": "Email 2"},
         ]
     )
     mock_life_os.task_manager.get_pending_tasks = Mock(
