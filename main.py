@@ -161,6 +161,11 @@ class LifeOS:
         # Onboarding
         self.onboarding = OnboardingManager(self.db)
 
+        # Runtime DB health monitoring — counts how many times user_model.db
+        # has been rebuilt during this session.  Capped at 3 to avoid infinite
+        # repair loops when the underlying storage is persistently failing.
+        self._runtime_db_rebuilds = 0
+
         # Connector management
         self.config_encryptor = ConfigEncryptor(data_dir)
         self.connector_map: dict[str, object] = {}  # connector_id -> BaseConnector
@@ -422,6 +427,7 @@ class LifeOS:
         self._start_background_task("behavioral_accuracy_loop", self._behavioral_accuracy_loop())
         self._start_background_task("task_completion_loop", self._task_completion_loop())
         self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
+        self._start_background_task("db_health_loop", self._db_health_loop())
 
         # 7. Launch web server
         logger.info("[7/7] Starting web server...")
@@ -3136,6 +3142,91 @@ class LifeOS:
 
             # Check every 5 minutes for the next digest window
             await asyncio.sleep(300)
+
+    async def _db_health_loop(self):
+        """Periodically probe user_model.db for corruption and auto-repair.
+
+        The system only checks DB integrity at startup via
+        _rebuild_user_model_db_if_corrupted(). If the database becomes
+        corrupted during a live run (e.g., disk I/O error, WAL corruption),
+        the system runs degraded indefinitely: signal_profiles become empty,
+        predictions stop generating, and the user model returns query errors.
+
+        This loop runs every 30 minutes and executes the same 7 probe queries
+        used by the startup check. If any probe fails, it triggers a full
+        rebuild followed by signal profile backfills.
+
+        A session-wide counter (self._runtime_db_rebuilds) caps repairs at 3
+        to prevent infinite rebuild loops when the underlying disk/filesystem
+        is persistently failing.
+
+        Interval: 30 minutes (1800 seconds)
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                if self._runtime_db_rebuilds > 3:
+                    # Already exceeded the rebuild limit — skip probing to
+                    # avoid wasting cycles on a persistently broken disk.
+                    await asyncio.sleep(1800)
+                    continue
+
+                # Run the same 7 probe queries used by _rebuild_user_model_db_if_corrupted
+                corruption_detected = False
+                probe_error = None
+                try:
+                    with self.db.get_connection("user_model") as conn:
+                        conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
+                        conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
+                        conn.execute(
+                            "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts"
+                        ).fetchone()
+                        conn.execute(
+                            "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines"
+                        ).fetchone()
+                        conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
+                        conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
+                        conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
+                except Exception as e:
+                    corruption_detected = True
+                    probe_error = e
+
+                if not corruption_detected:
+                    logger.debug("DB health check: user_model.db is healthy")
+                    await asyncio.sleep(1800)
+                    continue
+
+                # Corruption detected — attempt rebuild
+                self._runtime_db_rebuilds += 1
+                logger.warning(
+                    "DB health check: user_model.db corruption detected (%s) — "
+                    "triggering rebuild (attempt %d/3)",
+                    probe_error,
+                    self._runtime_db_rebuilds,
+                )
+
+                if self._runtime_db_rebuilds > 3:
+                    logger.error(
+                        "DB health check: exceeded 3 runtime rebuilds — "
+                        "the underlying disk/filesystem likely needs attention. "
+                        "Stopping auto-repair attempts for this session."
+                    )
+                    await asyncio.sleep(1800)
+                    continue
+
+                await self._rebuild_user_model_db_if_corrupted()
+                logger.info(
+                    "DB health check: rebuild completed (attempt %d/3) — "
+                    "running backfill verification",
+                    self._runtime_db_rebuilds,
+                )
+
+                await self._verify_and_retry_backfills()
+                logger.info("DB health check: backfill verification completed after rebuild")
+
+            except Exception as e:
+                logger.error("DB health check error: %s", e)
+
+            await asyncio.sleep(1800)  # 30 minutes
 
     async def _start_connectors(self):
         """Initialize and start all configured connectors.
