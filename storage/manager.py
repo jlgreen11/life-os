@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator
 
@@ -152,6 +153,77 @@ class DatabaseManager:
             }
 
         return results
+
+    def _check_and_recover_db(self, db_name: str) -> bool:
+        """Check a database for corruption and recover by resetting if needed.
+
+        Runs ``PRAGMA quick_check`` against the named database.  If corruption
+        is detected the corrupt file (and its WAL/SHM sidecars) are renamed
+        with a ``.corrupt.<timestamp>`` suffix so a fresh database can be
+        created by the subsequent schema initialisation step.
+
+        Only call this for databases whose contents can be rebuilt from the
+        event log (i.e. ``user_model``).  Never use it on ``events`` or
+        ``entities`` which hold irreplaceable data.
+
+        Args:
+            db_name: Logical database name (key in ``self._databases``).
+
+        Returns:
+            True if recovery was performed (corrupt file backed up),
+            False if the database was healthy or did not exist yet.
+        """
+        db_path = Path(self._databases[db_name])
+
+        # Nothing to check if the file doesn't exist yet — it will be
+        # created fresh by the init method.
+        if not db_path.exists():
+            return False
+
+        # Run a quick integrity check (same approach as get_database_health).
+        is_corrupt = False
+        errors: list[str] = []
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("PRAGMA journal_mode=WAL")
+            rows = conn.execute("PRAGMA quick_check(10)").fetchall()
+            conn.close()
+            for row in rows:
+                msg = row[0]
+                if msg != "ok":
+                    errors.append(msg)
+                    is_corrupt = True
+        except Exception as exc:
+            errors.append(str(exc))
+            is_corrupt = True
+
+        if not is_corrupt:
+            return False
+
+        # --- Corrupt: back up the file and let init recreate it. ---
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        suffix = f".corrupt.{timestamp}"
+
+        logger.warning(
+            "Corruption detected in %s.db: %s",
+            db_name,
+            "; ".join(errors),
+        )
+
+        # Rename the main db file and any WAL/SHM sidecars.
+        for ext in ("", "-wal", "-shm"):
+            src = db_path.parent / (db_path.name + ext)
+            if src.exists():
+                dst = db_path.parent / (db_path.name + ext + suffix)
+                src.rename(dst)
+                logger.warning("Backed up %s → %s", src.name, dst.name)
+
+        logger.warning(
+            "%s.db was corrupted and has been reset. "
+            "Learned patterns will be rebuilt automatically from event history.",
+            db_name,
+        )
+        return True
 
     # -----------------------------------------------------------------------
     # events.db — The immutable event log
@@ -505,6 +577,13 @@ class DatabaseManager:
         ensures existing databases are updated when new tables or columns are
         added.
         """
+        # If the database file exists but is corrupted, back it up and let
+        # the schema initialisation below create a fresh one.  user_model.db
+        # is safe to reset because its contents are rebuilt from events.db
+        # by the semantic inference, routine detection, and signal extraction
+        # background loops.
+        self._check_and_recover_db("user_model")
+
         # Current schema version (increment when making schema changes)
         CURRENT_VERSION = 4
 
