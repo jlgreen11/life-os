@@ -745,6 +745,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-size: 12px;
         }
         .person-card:last-child { border-bottom: none; }
+        .person-card:hover {
+            background: var(--bg-card-hover);
+            border-radius: 6px;
+        }
+        .person-card .channel-badge {
+            font-size: 9px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            background: var(--border);
+            color: var(--text-secondary);
+            text-transform: lowercase;
+            white-space: nowrap;
+        }
         .person-avatar {
             width: 28px;
             height: 28px;
@@ -2612,6 +2625,69 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     /**
+     * Start an outreach draft for a People Radar contact.
+     *
+     * Called when the user clicks a person-card in the People Radar sidebar.
+     * Shows a confirmation modal, then calls POST /api/draft to generate an
+     * AI outreach message, and displays it in a follow-up modal with a Copy
+     * button.
+     *
+     * @param {string} contactId    Contact ID for the draft API.
+     * @param {string} name         Display name of the contact.
+     * @param {string} channel      Preferred channel (email, imessage, signal).
+     * @param {string} contactEmail Contact email (for display context).
+     */
+    function startOutreach(contactId, name, channel, contactEmail) {
+        showConfirmModal(
+            'Draft a message to ' + escHtml(name) + '?',
+            'Channel: ' + escHtml(channel) + (contactEmail ? ' (' + escHtml(contactEmail) + ')' : ''),
+            'Draft Message',
+            function() {
+                // Show loading modal while draft generates
+                safeSetContent(document.getElementById('modalTitle'), escHtml('Drafting message to ' + name + '...'));
+                safeSetContent(document.getElementById('modalBody'),
+                    '<div style="opacity:0.5;padding:12px">Generating draft...</div>');
+                safeSetContent(document.getElementById('modalActions'),
+                    '<button class="modal-btn-cancel" onclick="closeModal()">Cancel</button>');
+                document.getElementById('modalOverlay').classList.add('visible');
+
+                fetch(API + '/api/draft', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        incoming_message: 'Reaching out to ' + name,
+                        contact_id: contactId,
+                        channel: channel
+                    })
+                })
+                .then(function(res) { return res.json(); })
+                .then(function(data) {
+                    var draft = data.draft || data.content || 'No draft generated';
+                    safeSetContent(document.getElementById('modalTitle'), escHtml('Outreach to ' + name));
+                    safeSetContent(document.getElementById('modalBody'),
+                        '<div class="draft-area" style="white-space:pre-wrap;padding:8px;background:var(--bg-card);border-radius:6px;font-size:12px;margin-bottom:8px">' + escHtml(draft) + '</div>');
+                    safeSetContent(document.getElementById('modalActions'),
+                        '<button class="modal-btn-cancel" onclick="closeModal()">Close</button>' +
+                        '<button class="modal-btn-confirm" id="modalCopyBtn">Copy</button>');
+                    document.getElementById('modalCopyBtn').onclick = function() {
+                        navigator.clipboard.writeText(draft).then(function() {
+                            document.getElementById('modalCopyBtn').textContent = 'Copied!';
+                            setTimeout(function() {
+                                var btn = document.getElementById('modalCopyBtn');
+                                if (btn) btn.textContent = 'Copy';
+                            }, 2000);
+                        });
+                    };
+                })
+                .catch(function(err) {
+                    safeSetContent(document.getElementById('modalBody'),
+                        '<div style="color:var(--accent-red)">Failed to generate draft: ' + escHtml(err.message) + '</div>');
+                });
+            }
+        );
+    }
+
+    /**
      * Send the text in the quick-reply textarea directly via POST /api/messages/send.
      *
      * The message is routed to the right connector (iMessage or Signal) based on
@@ -2879,10 +2955,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 }
                 var dotColor = overdue ? 'var(--accent-red)' : 'var(--accent-green)';
 
-                html += '<div class="person-card">';
+                var channel = c.preferred_channel || 'email';
+                var contactEmail = (c.emails && c.emails.length > 0) ? c.emails[0] : '';
+                var contactId = c.id || c.contact_id || '';
+
+                html += '<div class="person-card" style="cursor:pointer" onclick="startOutreach(\'' + escAttr(contactId) + '\',\'' + escAttr(name) + '\',\'' + escAttr(channel) + '\',\'' + escAttr(contactEmail) + '\')">';
                 html += '<div class="person-avatar" style="background:' + dotColor + '">' + escHtml(name.charAt(0).toUpperCase()) + '</div>';
                 html += '<div class="person-info">';
-                html += '<div class="person-name">' + escHtml(name) + '</div>';
+                html += '<div class="person-name">' + escHtml(name) + ' <span class="channel-badge">' + escHtml(channel) + '</span></div>';
                 html += '<div class="person-detail">' + escHtml(lastContact) + '</div>';
                 html += '</div></div>';
             }
