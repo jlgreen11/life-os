@@ -39,23 +39,41 @@ class LinguisticExtractor(BaseExtractor):
 
     # Hedge words signal tentativeness / low confidence in the user's writing.
     HEDGE_PATTERNS = [
-        r'\bmaybe\b', r'\bperhaps\b', r'\bI think\b', r'\bsort of\b',
-        r'\bkind of\b', r'\bpossibly\b', r'\bmight\b', r'\bcould be\b',
-        r'\bI guess\b', r'\bnot sure\b', r'\bprobably\b',
+        r"\bmaybe\b",
+        r"\bperhaps\b",
+        r"\bI think\b",
+        r"\bsort of\b",
+        r"\bkind of\b",
+        r"\bpossibly\b",
+        r"\bmight\b",
+        r"\bcould be\b",
+        r"\bI guess\b",
+        r"\bnot sure\b",
+        r"\bprobably\b",
     ]
 
     # Assertion patterns signal directness / high confidence.
     ASSERTION_PATTERNS = [
-        r'\bwe need to\b', r'\bwe must\b', r'\bthis has to\b',
-        r'\bdefinitely\b', r'\bclearly\b', r'\bobviously\b',
-        r'\bwithout a doubt\b', r'\babsolutely\b',
+        r"\bwe need to\b",
+        r"\bwe must\b",
+        r"\bthis has to\b",
+        r"\bdefinitely\b",
+        r"\bclearly\b",
+        r"\bobviously\b",
+        r"\bwithout a doubt\b",
+        r"\babsolutely\b",
     ]
 
     # Profanity patterns — tracked not to censor, but to gauge emotional
     # intensity and how the user's register shifts across contacts/channels.
     PROFANITY_PATTERNS = [
-        r'\bdamn\b', r'\bhell\b', r'\bshit\b', r'\bfuck\b',
-        r'\bass\b', r'\bbullshit\b', r'\bcrap\b',
+        r"\bdamn\b",
+        r"\bhell\b",
+        r"\bshit\b",
+        r"\bfuck\b",
+        r"\bass\b",
+        r"\bbullshit\b",
+        r"\bcrap\b",
     ]
 
     # Broad Unicode emoji regex covering emoticons, symbols, pictographs,
@@ -63,12 +81,12 @@ class LinguisticExtractor(BaseExtractor):
     # is a signal of informality and emotional expressiveness.
     EMOJI_PATTERN = re.compile(
         "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport
-        "\U0001F1E0-\U0001F1FF"  # flags
-        "\U00002702-\U000027B0"
-        "\U000024C2-\U0001F251"
+        "\U0001f600-\U0001f64f"  # emoticons
+        "\U0001f300-\U0001f5ff"  # symbols & pictographs
+        "\U0001f680-\U0001f6ff"  # transport
+        "\U0001f1e0-\U0001f1ff"  # flags
+        "\U00002702-\U000027b0"
+        "\U000024c2-\U0001f251"
         "]+",
         flags=re.UNICODE,
     )
@@ -77,33 +95,57 @@ class LinguisticExtractor(BaseExtractor):
     # Tracking these helps calibrate the AI's tone when drafting replies —
     # a user who frequently says "lol" wants casual drafts, not formal ones.
     HUMOR_PATTERNS = [
-        r'\bhaha\b', r'\bhehe\b', r'\blol\b', r'\blmao\b', r'\blmfao\b',
-        r'\bjk\b', r'\bjust kidding\b', r'\brofl\b', r'\bxd\b',
+        r"\bhaha\b",
+        r"\bhehe\b",
+        r"\blol\b",
+        r"\blmao\b",
+        r"\blmfao\b",
+        r"\bjk\b",
+        r"\bjust kidding\b",
+        r"\brofl\b",
+        r"\bxd\b",
     ]
 
     # Affirmative response patterns reveal how the user says "yes".  Matching
     # these builds a vocabulary the AI can mirror when accepting requests or
     # confirming plans.
     AFFIRMATIVE_PATTERNS = [
-        r'\byes\b', r'\byeah\b', r'\byep\b', r'\bsure\b',
-        r'\babsolutely\b', r'\bsounds good\b', r'\bof course\b',
-        r'\bdefinitely\b', r'\bwill do\b', r'\bperfect\b',
-        r'\bgreat\b', r'\bon it\b',
+        r"\byes\b",
+        r"\byeah\b",
+        r"\byep\b",
+        r"\bsure\b",
+        r"\babsolutely\b",
+        r"\bsounds good\b",
+        r"\bof course\b",
+        r"\bdefinitely\b",
+        r"\bwill do\b",
+        r"\bperfect\b",
+        r"\bgreat\b",
+        r"\bon it\b",
     ]
 
     # Negative/declination patterns reveal how the user says "no" or declines.
     # Useful for drafting polite refusals that match the user's natural voice.
     NEGATIVE_PATTERNS = [
-        r"\bcan't make it\b", r"\bunable to\b", r"\bnot possible\b",
-        r"\bunfortunately\b", r"\bsorry,?\s+i\b", r"\bapologies\b",
-        r"\bI(?:'m| am) not\b", r"\bI (?:don't|can't|won't|couldn't)\b",
+        r"\bcan't make it\b",
+        r"\bunable to\b",
+        r"\bnot possible\b",
+        r"\bunfortunately\b",
+        r"\bsorry,?\s+i\b",
+        r"\bapologies\b",
+        r"\bI(?:'m| am) not\b",
+        r"\bI (?:don't|can't|won't|couldn't)\b",
     ]
 
     # Gratitude patterns reveal how the user expresses appreciation.
     # The AI can mirror these when closing drafted messages.
     GRATITUDE_PATTERNS = [
-        r'\bthank you\b', r'\bthanks\b', r'\bappreciate\b',
-        r'\bgrateful\b', r'\bmuch appreciated\b', r'\bthank\b',
+        r"\bthank you\b",
+        r"\bthanks\b",
+        r"\bappreciate\b",
+        r"\bgrateful\b",
+        r"\bmuch appreciated\b",
+        r"\bthank\b",
     ]
 
     # Oxford comma detection regexes — mutually exclusive by design:
@@ -111,8 +153,8 @@ class LinguisticExtractor(BaseExtractor):
     #   NO_OXFORD_RE:     "eggs, bacon and coffee"   (no comma before conjunction)
     # Both require a preceding comma in the list, so they only fire on actual
     # list constructions (not stray "and" conjunctions).
-    OXFORD_COMMA_RE = re.compile(r'\b\w+,\s+\w+,\s+(?:and|or)\s+\w+', re.IGNORECASE)
-    NO_OXFORD_RE = re.compile(r'\b\w+,\s+\w+\s+(?:and|or)\s+\w+', re.IGNORECASE)
+    OXFORD_COMMA_RE = re.compile(r"\b\w+,\s+\w+,\s+(?:and|or)\s+\w+", re.IGNORECASE)
+    NO_OXFORD_RE = re.compile(r"\b\w+,\s+\w+\s+(?:and|or)\s+\w+", re.IGNORECASE)
 
     def _detect_first(self, text: str, patterns: list[str]) -> Optional[str]:
         """Return the actual matched text of the first pattern that fires, or None.
@@ -195,7 +237,7 @@ class LinguisticExtractor(BaseExtractor):
 
         # --- Sentence analysis ---
         # Split on sentence-ending punctuation to approximate sentence boundaries.
-        sentences = re.split(r'[.!?]+', text)
+        sentences = re.split(r"[.!?]+", text)
         sentences = [s.strip() for s in sentences if s.strip()]
         words = text.split()
         word_count = len(words)
@@ -215,14 +257,42 @@ class LinguisticExtractor(BaseExtractor):
         # Count informal markers (slang, abbreviations) and formal markers
         # (business/academic register words).  The ratio gives a 0-1 formality
         # score; 0.5 is the neutral default when no markers are found.
-        informal_markers = sum(1 for w in words if w.lower() in [
-            "hey", "yeah", "nah", "gonna", "wanna", "lol", "haha",
-            "ok", "yep", "nope", "btw", "idk", "imo", "tbh",
-        ])
-        formal_markers = sum(1 for w in words if w.lower() in [
-            "regarding", "furthermore", "therefore", "accordingly",
-            "sincerely", "respectfully", "per", "pursuant",
-        ])
+        informal_markers = sum(
+            1
+            for w in words
+            if w.lower()
+            in [
+                "hey",
+                "yeah",
+                "nah",
+                "gonna",
+                "wanna",
+                "lol",
+                "haha",
+                "ok",
+                "yep",
+                "nope",
+                "btw",
+                "idk",
+                "imo",
+                "tbh",
+            ]
+        )
+        formal_markers = sum(
+            1
+            for w in words
+            if w.lower()
+            in [
+                "regarding",
+                "furthermore",
+                "therefore",
+                "accordingly",
+                "sincerely",
+                "respectfully",
+                "per",
+                "pursuant",
+            ]
+        )
         formality = 0.5
         if informal_markers + formal_markers > 0:
             formality = formal_markers / (informal_markers + formal_markers)
@@ -230,15 +300,9 @@ class LinguisticExtractor(BaseExtractor):
         # --- Pattern counting ---
         # Aggregate regex hits across each pattern bank and normalise to
         # per-sentence rates so short and long messages are comparable.
-        hedge_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.HEDGE_PATTERNS
-        )
-        assertion_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.ASSERTION_PATTERNS
-        )
-        profanity_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.PROFANITY_PATTERNS
-        )
+        hedge_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.HEDGE_PATTERNS)
+        assertion_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.ASSERTION_PATTERNS)
+        profanity_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.PROFANITY_PATTERNS)
         # Raw punctuation counts — also normalised to per-sentence rates below.
         exclamation_count = text.count("!")
         question_count = text.count("?")
@@ -263,27 +327,19 @@ class LinguisticExtractor(BaseExtractor):
 
         # Humor markers reveal levity and playfulness.  Track the first
         # matching keyword per message so we can build a Top-5 list later.
-        humor_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.HUMOR_PATTERNS
-        )
+        humor_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.HUMOR_PATTERNS)
         humor_type = self._detect_first(text, self.HUMOR_PATTERNS)
 
         # Affirmative patterns capture how the user says "yes".
-        affirmative_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.AFFIRMATIVE_PATTERNS
-        )
+        affirmative_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.AFFIRMATIVE_PATTERNS)
         affirmative_word = self._detect_first(text, self.AFFIRMATIVE_PATTERNS)
 
         # Negative patterns capture how the user declines or says "no".
-        negative_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.NEGATIVE_PATTERNS
-        )
+        negative_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.NEGATIVE_PATTERNS)
         negative_word = self._detect_first(text, self.NEGATIVE_PATTERNS)
 
         # Gratitude patterns capture how the user expresses thanks.
-        gratitude_count = sum(
-            len(re.findall(p, text, re.IGNORECASE)) for p in self.GRATITUDE_PATTERNS
-        )
+        gratitude_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in self.GRATITUDE_PATTERNS)
         gratitude_word = self._detect_first(text, self.GRATITUDE_PATTERNS)
 
         # Oxford comma usage — counts list constructions with and without the
@@ -345,6 +401,9 @@ class LinguisticExtractor(BaseExtractor):
                 "cap_starts": cap_starts,
                 "lower_starts": lower_starts,
                 "all_caps_words": all_caps_words,
+                # Channel is included so profanity_contexts can identify
+                # which channels the user swears in (e.g. "signal" vs "email").
+                "channel": channel,
             },
         }
 
@@ -368,9 +427,13 @@ class LinguisticExtractor(BaseExtractor):
         from greetings embedded mid-sentence.
         """
         greetings = {
-            "hey": "hey", "hi": "hi", "hello": "hello",
-            "good morning": "good morning", "morning": "morning",
-            "yo": "yo", "sup": "sup",
+            "hey": "hey",
+            "hi": "hi",
+            "hello": "hello",
+            "good morning": "good morning",
+            "morning": "morning",
+            "yo": "yo",
+            "sup": "sup",
         }
         for pattern, label in greetings.items():
             if text.startswith(pattern):
@@ -385,9 +448,13 @@ class LinguisticExtractor(BaseExtractor):
         (e.g., "Best regards, Alex").
         """
         closings = {
-            "best": "best", "cheers": "cheers", "thanks": "thanks",
-            "talk soon": "talk soon", "take care": "take care",
-            "regards": "regards", "sincerely": "sincerely",
+            "best": "best",
+            "cheers": "cheers",
+            "thanks": "thanks",
+            "talk soon": "talk soon",
+            "take care": "take care",
+            "regards": "regards",
+            "sincerely": "sincerely",
         }
         for pattern, label in closings.items():
             if pattern in text:
@@ -486,18 +553,12 @@ class LinguisticExtractor(BaseExtractor):
             # New extended rates — use .get() with a 0 default so existing
             # samples (before this feature was added) are treated as zero-count
             # rather than raising a KeyError.
-            "humor_rate": statistics.mean(
-                s.get("humor_count", 0) / max(s["word_count"], 1) for s in samples
-            ),
+            "humor_rate": statistics.mean(s.get("humor_count", 0) / max(s["word_count"], 1) for s in samples),
             "affirmative_rate": statistics.mean(
                 s.get("affirmative_count", 0) / max(s["word_count"], 1) for s in samples
             ),
-            "negative_rate": statistics.mean(
-                s.get("negative_count", 0) / max(s["word_count"], 1) for s in samples
-            ),
-            "gratitude_rate": statistics.mean(
-                s.get("gratitude_count", 0) / max(s["word_count"], 1) for s in samples
-            ),
+            "negative_rate": statistics.mean(s.get("negative_count", 0) / max(s["word_count"], 1) for s in samples),
+            "gratitude_rate": statistics.mean(s.get("gratitude_count", 0) / max(s["word_count"], 1) for s in samples),
         }
 
         # Surface the user's most-used greetings and closings (top 3 each).
@@ -560,6 +621,15 @@ class LinguisticExtractor(BaseExtractor):
         data["top_negative_patterns"] = [w for w, _ in Counter(all_negative).most_common(5)]
         data["top_gratitude_patterns"] = [w for w, _ in Counter(all_gratitude).most_common(5)]
 
+        # Alias top_* keys to the canonical LinguisticProfile field names so
+        # downstream consumers that deserialise into LinguisticProfile see real
+        # data instead of empty defaults.  Keep the top_* keys for backward
+        # compatibility with any code that reads them directly.
+        data["humor_markers"] = data["top_humor_markers"]
+        data["affirmative_patterns"] = data["top_affirmative_patterns"]
+        data["negative_patterns"] = data["top_negative_patterns"]
+        data["gratitude_patterns"] = data["top_gratitude_patterns"]
+
         # emoji_usage: per-emoji relative frequency dict (top 20).
         # Accumulates all emoji characters across the sample window and
         # normalises by total count so values sum to ~1.0.
@@ -569,10 +639,7 @@ class LinguisticExtractor(BaseExtractor):
         if all_emojis:
             emoji_counts = Counter(all_emojis)
             total = sum(emoji_counts.values())
-            data["emoji_usage"] = {
-                emoji: round(count / total, 4)
-                for emoji, count in emoji_counts.most_common(20)
-            }
+            data["emoji_usage"] = {emoji: round(count / total, 4) for emoji, count in emoji_counts.most_common(20)}
         else:
             data["emoji_usage"] = {}
 
@@ -583,6 +650,13 @@ class LinguisticExtractor(BaseExtractor):
         # frequent swearing rarely exceeds ~2% profanity density.
         profanity_rate = data["averages"].get("profanity_rate", 0.0)
         data["profanity_comfort"] = round(min(1.0, profanity_rate / 0.02), 4)
+
+        # profanity_contexts: collect the channel/interaction_type from samples
+        # where profanity was used, so the profile reveals *where* the user
+        # swears (e.g. "signal" but not "email").  Capped at 10 to stay bounded.
+        profanity_samples = [s for s in samples if s.get("profanity_count", 0) > 0]
+        contexts = list(set(s.get("channel", "unknown") for s in profanity_samples))
+        data["profanity_contexts"] = contexts[:10]
 
         # Map internal rate keys to LinguisticProfile canonical field names.
         # The averages dict uses short names like "hedge_rate" but the typed
@@ -612,31 +686,17 @@ class LinguisticExtractor(BaseExtractor):
                 # Insufficient data — skip this contact entirely.
                 continue
             per_contact_avgs[cid] = {
-                "avg_sentence_length": statistics.mean(
-                    s["avg_sentence_length"] for s in csamples
-                ),
+                "avg_sentence_length": statistics.mean(s["avg_sentence_length"] for s in csamples),
                 "formality": statistics.mean(s["formality"] for s in csamples),
                 "hedge_rate": statistics.mean(s["hedge_rate"] for s in csamples),
-                "assertion_rate": statistics.mean(
-                    s["assertion_rate"] for s in csamples
-                ),
-                "exclamation_rate": statistics.mean(
-                    s["exclamation_rate"] for s in csamples
-                ),
-                "question_rate": statistics.mean(
-                    s["question_rate"] for s in csamples
-                ),
-                "ellipsis_rate": statistics.mean(
-                    s["ellipsis_rate"] for s in csamples
-                ),
-                "unique_word_ratio": statistics.mean(
-                    s["unique_word_ratio"] for s in csamples
-                ),
+                "assertion_rate": statistics.mean(s["assertion_rate"] for s in csamples),
+                "exclamation_rate": statistics.mean(s["exclamation_rate"] for s in csamples),
+                "question_rate": statistics.mean(s["question_rate"] for s in csamples),
+                "ellipsis_rate": statistics.mean(s["ellipsis_rate"] for s in csamples),
+                "unique_word_ratio": statistics.mean(s["unique_word_ratio"] for s in csamples),
                 # Normalise emoji by word count so shorter messages don't skew
                 # the rate upward.
-                "emoji_rate": statistics.mean(
-                    s["emoji_count"] / max(s["word_count"], 1) for s in csamples
-                ),
+                "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in csamples),
                 # sample count lets callers gauge confidence (more = more reliable).
                 "samples_count": len(csamples),
             }
