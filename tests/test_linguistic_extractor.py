@@ -174,7 +174,7 @@ def test_detects_formal_language(linguistic_extractor):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": {
             "body": "Regarding your request, furthermore I would like to add that "
-                    "therefore we should proceed accordingly. Sincerely respectfully submitted.",
+            "therefore we should proceed accordingly. Sincerely respectfully submitted.",
             "to_addresses": ["boss@example.com"],
         },
     }
@@ -231,7 +231,7 @@ def test_detects_assertions(linguistic_extractor):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": {
             "body": "We need to act now. This must happen. Definitely the right approach. "
-                    "Clearly obvious without a doubt.",
+            "Clearly obvious without a doubt.",
             "to_addresses": ["test@example.com"],
         },
     }
@@ -781,3 +781,114 @@ def test_last_updated_set(linguistic_extractor, user_model_store):
     # Must be within a few seconds of "now".
     assert (parsed - before).total_seconds() < 5
     assert (parsed - before).total_seconds() >= 0
+
+
+# ---------------------------------------------------------------------------
+# Canonical Field Aliasing Tests
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_pattern_fields_aliased(linguistic_extractor, user_model_store):
+    """Profile data must contain both top_* keys and canonical LinguisticProfile field names.
+
+    The LinguisticProfile model expects humor_markers, affirmative_patterns,
+    negative_patterns, and gratitude_patterns (without a 'top_' prefix).
+    The extractor must write both the top_* keys (for backward compat) and
+    the canonical keys (for correct deserialization into LinguisticProfile).
+    """
+    event = {
+        "type": EventType.EMAIL_SENT.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "payload": {
+            "body": (
+                "Haha that's hilarious! Yeah sure sounds good, thanks so much. "
+                "Unfortunately I can't make it to the other thing. "
+                "Lol appreciate it, definitely will do!"
+            ),
+            "to_addresses": ["test@example.com"],
+        },
+    }
+
+    linguistic_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    data = profile["data"]
+
+    # Both the top_* keys and canonical keys must be present.
+    assert "top_humor_markers" in data
+    assert "top_affirmative_patterns" in data
+    assert "top_negative_patterns" in data
+    assert "top_gratitude_patterns" in data
+
+    assert "humor_markers" in data
+    assert "affirmative_patterns" in data
+    assert "negative_patterns" in data
+    assert "gratitude_patterns" in data
+
+    # Canonical keys must have the same values as their top_* counterparts.
+    assert data["humor_markers"] == data["top_humor_markers"]
+    assert data["affirmative_patterns"] == data["top_affirmative_patterns"]
+    assert data["negative_patterns"] == data["top_negative_patterns"]
+    assert data["gratitude_patterns"] == data["top_gratitude_patterns"]
+
+    # Since the message contains humor/affirmative/negative/gratitude words,
+    # the lists should be non-empty.
+    assert len(data["humor_markers"]) > 0
+    assert len(data["affirmative_patterns"]) > 0
+    assert len(data["negative_patterns"]) > 0
+    assert len(data["gratitude_patterns"]) > 0
+
+
+def test_profanity_contexts_populated(linguistic_extractor, user_model_store):
+    """profanity_contexts should list channels where the user has used profanity."""
+    # Send a message with profanity via "signal" source
+    event_profane = {
+        "type": EventType.MESSAGE_SENT.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "signal",
+        "payload": {
+            "body": "This is so damn frustrating, what the hell happened here.",
+            "to_addresses": ["friend@example.com"],
+        },
+    }
+
+    # Send a clean message via "email" source
+    event_clean = {
+        "type": EventType.EMAIL_SENT.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "email",
+        "payload": {
+            "body": "Please review the attached proposal at your earliest convenience.",
+            "to_addresses": ["boss@example.com"],
+        },
+    }
+
+    linguistic_extractor.extract(event_profane)
+    linguistic_extractor.extract(event_clean)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    data = profile["data"]
+
+    assert "profanity_contexts" in data
+    # The profane message came from "signal", so that should be a context.
+    assert "signal" in data["profanity_contexts"]
+    # "email" had no profanity, so it should NOT appear.
+    assert "email" not in data["profanity_contexts"]
+
+
+def test_profanity_contexts_empty_when_no_profanity(linguistic_extractor, user_model_store):
+    """profanity_contexts should be empty when the user never swears."""
+    event = {
+        "type": EventType.EMAIL_SENT.value,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source": "email",
+        "payload": {
+            "body": "This is a perfectly polite and professional message for testing.",
+            "to_addresses": ["colleague@example.com"],
+        },
+    }
+
+    linguistic_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    assert profile["data"]["profanity_contexts"] == []
