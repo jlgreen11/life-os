@@ -1911,6 +1911,9 @@ class LifeOS:
             tag         — attach a label to the event in event_tags
             suppress    — flag the event so it is hidden from notifications
             create_task — auto-create a task linked to the source event
+            archive     — suppress + tag as archived (like email archive)
+            forward     — forward the event content via the source connector
+            auto_reply  — send an automatic reply via the source connector
         """
         action_type = action.get("type")
 
@@ -1961,12 +1964,96 @@ class LifeOS:
                 source_event_id=event.get("id"),
                 priority=action.get("priority", "normal"),
             )
+        elif action_type == "archive":
+            # Archive = suppress (hide from notifications) + tag for filtering.
+            # This mirrors how email archive works: remove from inbox but keep
+            # in storage. The event remains in the append-only log.
+            event["_suppressed"] = True
+            self.event_store.add_tag(
+                event_id=event["id"],
+                tag="system:archived",
+                rule_id=action.get("rule_id"),
+            )
+        elif action_type == "forward":
+            # Forward the event content via the originating connector's
+            # execute() interface. Connectors that don't support 'forward'
+            # will raise NotImplementedError, which we catch and log.
+            forward_to = action.get("value") or action.get("to")
+            if not forward_to:
+                logger.warning(
+                    "forward action missing target address (rule_id=%r)",
+                    action.get("rule_id"),
+                )
+                return
+            source = event.get("source", "")
+            connector = self.connector_map.get(source)
+            if not connector:
+                logger.warning(
+                    "forward action: no connector for source %r (rule_id=%r)",
+                    source,
+                    action.get("rule_id"),
+                )
+                return
+            try:
+                await connector.execute("forward", {
+                    "to": forward_to,
+                    "event_id": event.get("id"),
+                    "subject": event.get("payload", {}).get("subject", ""),
+                    "body": event.get("payload", {}).get(
+                        "body", event.get("payload", {}).get("snippet", "")
+                    ),
+                })
+            except Exception as e:
+                logger.error(
+                    "forward action failed (rule_id=%r, source=%r): %s",
+                    action.get("rule_id"),
+                    source,
+                    e,
+                )
+        elif action_type == "auto_reply":
+            # Send an automatic reply via the originating connector's
+            # execute() interface. Connectors that don't support 'reply'
+            # will raise NotImplementedError, which we catch and log.
+            reply_text = action.get("value") or action.get("message", "")
+            if not reply_text:
+                logger.warning(
+                    "auto_reply action missing message text (rule_id=%r)",
+                    action.get("rule_id"),
+                )
+                return
+            source = event.get("source", "")
+            connector = self.connector_map.get(source)
+            if not connector:
+                logger.warning(
+                    "auto_reply action: no connector for source %r (rule_id=%r)",
+                    source,
+                    action.get("rule_id"),
+                )
+                return
+            try:
+                await connector.execute("reply", {
+                    "to": event.get("payload", {}).get(
+                        "sender", event.get("payload", {}).get("from", "")
+                    ),
+                    "in_reply_to": event.get("payload", {}).get(
+                        "message_id", event.get("id")
+                    ),
+                    "subject": "Re: " + (
+                        event.get("payload", {}).get("subject", "") or ""
+                    ),
+                    "body": reply_text,
+                })
+            except Exception as e:
+                logger.error(
+                    "auto_reply action failed (rule_id=%r, source=%r): %s",
+                    action.get("rule_id"),
+                    source,
+                    e,
+                )
         else:
             # Log unrecognised action types so operators can catch misconfigured
-            # rules.  Previously these were silently dropped, making it
-            # impossible to diagnose rules that specified unsupported types
-            # such as "forward" or "auto_reply" (documented in the rules engine
-            # but not yet wired here).
+            # rules. Previously these were silently dropped, making it impossible
+            # to diagnose rules that specified unsupported types.
             logger.warning(
                 "Rule action type %r is not implemented; action dropped "
                 "(rule_id=%r, event_type=%r)",
