@@ -7,12 +7,15 @@ Reveals priorities, avoidance patterns, and natural rhythms.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
+
+logger = logging.getLogger(__name__)
 
 
 class CadenceExtractor(BaseExtractor):
@@ -80,10 +83,11 @@ class CadenceExtractor(BaseExtractor):
                 "direction": "outbound" if "sent" in event_type.lower() else "inbound",
                 "channel": source,
             })
-        except (ValueError, AttributeError):
-            # If the timestamp is missing or malformed we silently skip the
-            # activity signal rather than failing the whole extraction.
-            pass
+        except (ValueError, AttributeError) as e:
+            # If the timestamp is missing or malformed we skip the activity
+            # signal rather than failing the whole extraction.
+            logger.debug('cadence_extractor: skipping event %s — malformed timestamp: %s',
+                         event.get('id', 'unknown'), e)
 
         # Persist the signals into the running cadence profile.
         self._update_profile(signals)
