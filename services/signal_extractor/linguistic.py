@@ -757,7 +757,7 @@ class LinguisticExtractor(BaseExtractor):
         # here, causing the draft context to always read 0.0 for every contact
         # despite 100K+ inbound samples.
         samples = data["per_contact"][contact]
-        data["per_contact_averages"][contact] = {
+        avgs: dict = {
             "avg_sentence_length": statistics.mean(s["avg_sentence_length"] for s in samples),
             "formality": statistics.mean(s["formality"] for s in samples),
             "hedge_rate": statistics.mean(s["hedge_rate"] for s in samples),
@@ -775,5 +775,48 @@ class LinguisticExtractor(BaseExtractor):
             "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
             "samples_count": len(samples),
         }
+
+        # --- Derived higher-level fields (parity with outbound profile) ---
+        # These give the AI context assembler the same richness for contacts'
+        # writing style as it has for the user's own style.
+
+        # vocabulary_complexity: blends lexical diversity (unique_word_ratio)
+        # with average word length (normalized to 0–1 on a 2–8 char scale).
+        # Uses .get() defaults so older samples without avg_word_length don't crash.
+        avg_word_len = statistics.mean(s.get("avg_word_length", 4.0) for s in samples)
+        avg_unique = statistics.mean(s["unique_word_ratio"] for s in samples)
+        word_len_norm = min(1.0, max(0.0, (avg_word_len - 2.0) / 6.0))
+        avgs["vocabulary_complexity"] = round(avg_unique * 0.6 + word_len_norm * 0.4, 3)
+
+        # capitalization_style: inferred from the balance of sentence-starting
+        # caps vs. lowercase starts and the frequency of ALL-CAPS emphasis words.
+        total_starts = sum(s.get("cap_starts", 0) + s.get("lower_starts", 0) for s in samples)
+        total_lower_starts = sum(s.get("lower_starts", 0) for s in samples)
+        total_caps_words = sum(s.get("all_caps_words", 0) for s in samples)
+        total_words_all = sum(s["word_count"] for s in samples)
+        if total_starts > 0:
+            lower_ratio = total_lower_starts / total_starts
+            caps_emphasis_rate = total_caps_words / max(total_words_all, 1)
+            if lower_ratio > 0.7:
+                avgs["capitalization_style"] = "all_lower"
+            elif caps_emphasis_rate > 0.05:
+                avgs["capitalization_style"] = "all_caps_emphasis"
+            else:
+                avgs["capitalization_style"] = "standard"
+        else:
+            avgs["capitalization_style"] = "standard"
+
+        # Top-5 characteristic vocabulary per response category.  Mirrors
+        # the outbound profile's humor_markers, affirmative_patterns, etc.
+        all_humor = [s.get("humor_type") for s in samples if s.get("humor_type")]
+        all_affirmative = [s.get("affirmative_word") for s in samples if s.get("affirmative_word")]
+        all_negative = [s.get("negative_word") for s in samples if s.get("negative_word")]
+        all_gratitude = [s.get("gratitude_word") for s in samples if s.get("gratitude_word")]
+        avgs["humor_markers"] = [w for w, _ in Counter(all_humor).most_common(5)]
+        avgs["affirmative_patterns"] = [w for w, _ in Counter(all_affirmative).most_common(5)]
+        avgs["negative_patterns"] = [w for w, _ in Counter(all_negative).most_common(5)]
+        avgs["gratitude_patterns"] = [w for w, _ in Counter(all_gratitude).most_common(5)]
+
+        data["per_contact_averages"][contact] = avgs
 
         self.ums.update_signal_profile("linguistic_inbound", data)
