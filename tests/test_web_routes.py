@@ -1318,3 +1318,44 @@ def test_dashboard_feed_calendar_topic(client, mock_life_os):
     assert len(calendar_items) == 1
     assert calendar_items[0]["title"] == "Sprint Review"
     assert calendar_items[0]["kind"] == "event"
+
+
+# ---------------------------------------------------------------------------
+# Backfill Status — updated_at field mapping
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_status_returns_updated_at(client, mock_life_os):
+    """Test /api/admin/backfills/status maps the DB 'updated_at' column correctly."""
+    mock_life_os.user_model_store.get_signal_profile.return_value = {
+        "profile_type": "relationships",
+        "data": {},
+        "samples_count": 5,
+        "updated_at": "2026-03-01T12:00:00.000Z",
+    }
+    response = client.get("/api/admin/backfills/status")
+    assert response.status_code == 200
+    data = response.json()
+    # The API returns the DB's updated_at value under the key "last_updated"
+    relationships = data["profiles"]["relationships"]
+    assert relationships["last_updated"] == "2026-03-01T12:00:00.000Z"
+    assert relationships["populated"] is True
+    assert relationships["samples_count"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Briefing — graceful error handling
+# ---------------------------------------------------------------------------
+
+
+def test_briefing_returns_200_on_ai_failure(client, mock_life_os):
+    """Test GET /api/briefing returns 200 with error field when AI engine fails."""
+    mock_life_os.ai_engine.generate_briefing = AsyncMock(
+        side_effect=RuntimeError("Ollama connection refused")
+    )
+    response = client.get("/api/briefing")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["briefing"] is None
+    assert "generated_at" in data
+    assert data["error"] == "Briefing generation temporarily unavailable"
