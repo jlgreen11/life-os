@@ -76,9 +76,9 @@ async def test_search_life_uses_vector_store(db, user_model_store, event_store):
     mock_vector_store = Mock(spec=VectorStore)
     mock_vector_store.search.return_value = [
         {
-            "event_id": "evt-semantic-1",
+            "doc_id": "evt-semantic-1",
             "text": "Mike mentioned the Denver project is ahead of schedule.",
-            "similarity": 0.8542
+            "score": 0.8542
         }
     ]
 
@@ -141,8 +141,8 @@ async def test_search_life_formats_vector_results_correctly(db, user_model_store
     # Mock vector store returning both results
     mock_vector_store = Mock(spec=VectorStore)
     mock_vector_store.search.return_value = [
-        {"event_id": "evt-vec-1", "text": "chocolate chip cookie recipe", "similarity": 0.92},
-        {"event_id": "evt-vec-2", "text": "brownie recipe", "similarity": 0.78},
+        {"doc_id": "evt-vec-1", "text": "chocolate chip cookie recipe", "score": 0.92},
+        {"doc_id": "evt-vec-2", "text": "brownie recipe", "score": 0.78},
     ]
 
     engine = AIEngine(db, user_model_store, {}, vector_store=mock_vector_store)
@@ -191,7 +191,7 @@ async def test_search_life_handles_snippet_fallback(db, user_model_store, event_
 
     mock_vector_store = Mock(spec=VectorStore)
     mock_vector_store.search.return_value = [
-        {"event_id": "evt-no-snippet", "text": "Team Meeting", "similarity": 0.85}
+        {"doc_id": "evt-no-snippet", "text": "Team Meeting", "score": 0.85}
     ]
 
     engine = AIEngine(db, user_model_store, {}, vector_store=mock_vector_store)
@@ -224,7 +224,7 @@ async def test_search_life_truncates_snippets_to_100_chars(db, user_model_store,
 
     mock_vector_store = Mock(spec=VectorStore)
     mock_vector_store.search.return_value = [
-        {"event_id": "evt-long", "text": long_snippet, "similarity": 0.90}
+        {"doc_id": "evt-long", "text": long_snippet, "score": 0.90}
     ]
 
     engine = AIEngine(db, user_model_store, {}, vector_store=mock_vector_store)
@@ -356,7 +356,7 @@ async def test_search_life_handles_missing_event_in_db(db, user_model_store):
     # Vector store returns an event ID that doesn't exist in the database
     mock_vector_store = Mock(spec=VectorStore)
     mock_vector_store.search.return_value = [
-        {"event_id": "evt-deleted", "text": "deleted content", "similarity": 0.95}
+        {"doc_id": "evt-deleted", "text": "deleted content", "score": 0.95}
     ]
 
     engine = AIEngine(db, user_model_store, {}, vector_store=mock_vector_store)
@@ -404,11 +404,11 @@ async def test_search_life_handles_malformed_vector_results(db, user_model_store
         "metadata": {}
     })
 
-    # Vector store returns result with missing similarity score
+    # Vector store returns result with missing score field
     mock_vector_store = Mock(spec=VectorStore)
     mock_vector_store.search.return_value = [
-        {"event_id": "evt-malformed", "text": "Test content"}
-        # Missing "similarity" field
+        {"doc_id": "evt-malformed", "text": "Test content"}
+        # Missing "score" field
     ]
 
     engine = AIEngine(db, user_model_store, {}, vector_store=mock_vector_store)
@@ -419,10 +419,10 @@ async def test_search_life_handles_malformed_vector_results(db, user_model_store
 
             await engine.search_life("test")
 
-            # Verify it handles missing similarity gracefully (defaults to 0.0)
+            # Verify it handles missing score gracefully (defaults to 0.0)
             context = mock_local.call_args[0][1]
             results = json.loads(context.split("Search results:\n")[1])
-            assert results[0]["relevance"] == 0.0  # Default when similarity is missing
+            assert results[0]["relevance"] == 0.0  # Default when score is missing
 
 
 @pytest.mark.asyncio

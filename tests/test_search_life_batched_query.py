@@ -9,6 +9,11 @@ This test suite verifies:
 3. Empty vector results produce no DB call and no results.
 4. Similarity scores are preserved on the result objects.
 5. The SQL fallback still works when the vector store is unavailable.
+6. Chunk-suffixed doc_ids (e.g. 'e1_0', 'e1_1') are correctly deduplicated
+   to the base event ID with the best score across chunks.
+
+Mock field names match the real vector store output: 'doc_id' and 'score'
+(see storage/vector_store.py _lancedb_search / _numpy_search).
 """
 
 import json
@@ -64,9 +69,9 @@ async def test_vector_results_use_single_db_query(db, user_model_store, event_st
     engine = _make_engine(db, user_model_store)
     # Vector store returns three hits
     engine.vector_store.search.return_value = [
-        {"event_id": "e1", "similarity": 0.95},
-        {"event_id": "e2", "similarity": 0.85},
-        {"event_id": "e3", "similarity": 0.75},
+        {"doc_id": "e1", "score": 0.95},
+        {"doc_id": "e2", "score": 0.85},
+        {"doc_id": "e3", "score": 0.75},
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -98,9 +103,9 @@ async def test_results_ordered_by_similarity_score(db, user_model_store, event_s
     engine = _make_engine(db, user_model_store)
     # Return in deliberate high→mid→low order
     engine.vector_store.search.return_value = [
-        {"event_id": "high-sim", "similarity": 0.99},
-        {"event_id": "mid-sim",  "similarity": 0.70},
-        {"event_id": "low-sim",  "similarity": 0.30},
+        {"doc_id": "high-sim", "score": 0.99},
+        {"doc_id": "mid-sim",  "score": 0.70},
+        {"doc_id": "low-sim",  "score": 0.30},
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -127,7 +132,7 @@ async def test_similarity_scores_are_attached_to_results(db, user_model_store, e
 
     engine = _make_engine(db, user_model_store)
     engine.vector_store.search.return_value = [
-        {"event_id": "e1", "similarity": 0.876543},
+        {"doc_id": "e1", "score": 0.876543},
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -181,8 +186,8 @@ async def test_vector_results_with_missing_events_are_skipped(db, user_model_sto
 
     engine = _make_engine(db, user_model_store)
     engine.vector_store.search.return_value = [
-        {"event_id": "exists",    "similarity": 0.90},
-        {"event_id": "ghost-id",  "similarity": 0.80},  # Not in DB
+        {"doc_id": "exists",    "score": 0.90},
+        {"doc_id": "ghost-id",  "score": 0.80},  # Not in DB
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -225,7 +230,7 @@ async def test_single_vector_result_still_batched(db, user_model_store, event_st
 
     engine = _make_engine(db, user_model_store)
     engine.vector_store.search.return_value = [
-        {"event_id": "only-one", "similarity": 0.55},
+        {"doc_id": "only-one", "score": 0.55},
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -238,3 +243,66 @@ async def test_single_vector_result_still_batched(db, user_model_store, event_st
     assert len(results) == 1
     assert "The only result" in results[0]["snippet"]
     assert results[0]["relevance"] == 0.55
+
+
+# ---------------------------------------------------------------------------
+# Chunk suffix deduplication
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chunked_doc_ids_are_deduplicated_with_best_score(db, user_model_store, event_store):
+    """Vector results with chunk suffixes ('e1_0', 'e1_1') must be merged
+    into a single event lookup using the best score across chunks."""
+    _insert_events(event_store, [
+        _make_event("e1", "Chunked document"),
+        _make_event("e2", "Another document"),
+    ])
+
+    engine = _make_engine(db, user_model_store)
+    # Simulate chunks: e1 split into 3 chunks, e2 is a single doc
+    engine.vector_store.search.return_value = [
+        {"doc_id": "e1_0", "score": 0.70},
+        {"doc_id": "e1_1", "score": 0.90},  # Best chunk for e1
+        {"doc_id": "e1_2", "score": 0.60},
+        {"doc_id": "e2",   "score": 0.80},
+    ]
+
+    with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = "Chunk results."
+            await engine.search_life("chunked search")
+
+    context_passed = mock_llm.call_args[0][1]
+    results = json.loads(context_passed.split("Search results:\n")[1])
+
+    # Two unique events, not four chunk entries
+    assert len(results) == 2
+    # e1 should use the best chunk score (0.90)
+    e1_result = next(r for r in results if "Chunked" in r["snippet"])
+    assert e1_result["relevance"] == 0.9
+    # e2 keeps its score
+    e2_result = next(r for r in results if "Another" in r["snippet"])
+    assert e2_result["relevance"] == 0.8
+
+
+@pytest.mark.asyncio
+async def test_non_numeric_suffix_doc_id_not_stripped(db, user_model_store, event_store):
+    """A doc_id like 'project-alpha' (non-numeric suffix) must not be stripped."""
+    _insert_events(event_store, [_make_event("project-alpha", "Alpha project doc")])
+
+    engine = _make_engine(db, user_model_store)
+    engine.vector_store.search.return_value = [
+        {"doc_id": "project-alpha", "score": 0.85},
+    ]
+
+    with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = "Found it."
+            await engine.search_life("alpha project")
+
+    context_passed = mock_llm.call_args[0][1]
+    results = json.loads(context_passed.split("Search results:\n")[1])
+    assert len(results) == 1
+    assert "Alpha project" in results[0]["snippet"]
+    assert results[0]["relevance"] == 0.85

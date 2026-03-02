@@ -354,19 +354,28 @@ Respond with exactly one word: critical, high, normal, or low."""
                 vector_results = self.vector_store.search(query, limit=20)
 
                 # Convert vector store results into the common format expected by
-                # the LLM synthesis layer. Vector results include event_id which we
-                # use to fetch full event details from the database.
+                # the LLM synthesis layer. Vector results include doc_id which we
+                # map back to event IDs to fetch full event details from the database.
                 #
                 # Batched IN query: fetch all matching event rows in a single
                 # round-trip rather than issuing one SELECT per result (N+1).
                 # This reduces SQLite overhead from O(N) queries to O(1).
                 if vector_results:
-                    # Build a lookup from event_id → similarity score so we can
-                    # re-attach relevance scores after the batched fetch.
-                    similarity_by_id = {
-                        vr["event_id"]: vr.get("similarity", 0.0)
-                        for vr in vector_results
-                    }
+                    # Build a lookup from event_id → best similarity score.
+                    # The vector store returns 'doc_id' and 'score' fields.
+                    # When documents are chunked, doc_ids have '_N' suffixes
+                    # (e.g. 'evt123_0', 'evt123_1'). Strip these to recover
+                    # the original event ID, keeping the best score per event.
+                    similarity_by_id: dict[str, float] = {}
+                    for vr in vector_results:
+                        doc_id = vr["doc_id"]
+                        score = vr.get("score", 0.0)
+                        # Strip chunk suffix: 'evt_0' → 'evt', but 'evt' stays 'evt'
+                        parts = doc_id.rsplit("_", 1)
+                        event_id = parts[0] if len(parts) == 2 and parts[1].isdigit() else doc_id
+                        # Keep the highest score when multiple chunks match
+                        if event_id not in similarity_by_id or score > similarity_by_id[event_id]:
+                            similarity_by_id[event_id] = score
                     event_ids = list(similarity_by_id.keys())
                     placeholders = ",".join("?" * len(event_ids))
 
