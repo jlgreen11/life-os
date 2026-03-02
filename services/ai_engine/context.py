@@ -278,29 +278,26 @@ class ContextAssembler:
         # this channel. Templates are ranked by samples_analyzed so the most
         # data-rich template wins. The OR query allows fallback from a
         # contact-specific template to a channel-wide default.
-        with self.db.get_connection("user_model") as conn:
-            template = conn.execute(
-                """SELECT * FROM communication_templates
-                   WHERE contact_id = ? OR channel = ?
-                   ORDER BY samples_analyzed DESC LIMIT 1""",
-                (contact_id, channel),
-            ).fetchone()
+        template = self.ums.get_communication_template(
+            contact_id=contact_id, channel=channel
+        )
 
-            # Surface all style dimensions the LLM needs to replicate:
-            # formality level, greeting/closing phrases, message length,
-            # emoji usage, and commonly used phrases.
-            if template:
-                parts.append(f"Communication style for this context:")
-                parts.append(f"  Formality: {template['formality']}")
-                parts.append(f"  Greeting: {template['greeting'] or 'none'}")
-                parts.append(f"  Closing: {template['closing'] or 'none'}")
-                parts.append(f"  Typical length: {template['typical_length']} words")
-                parts.append(f"  Uses emoji: {'yes' if template['uses_emoji'] else 'no'}")
-                # Show up to 5 common phrases the user frequently uses with
-                # this contact/channel, so the LLM can naturally incorporate them.
-                common = json.loads(template['common_phrases'] or '[]')
-                if common:
-                    parts.append(f"  Common phrases: {', '.join(common[:5])}")
+        # Surface all style dimensions the LLM needs to replicate:
+        # formality level, greeting/closing phrases, message length,
+        # emoji usage, and commonly used phrases.
+        if template:
+            parts.append("Communication style for this context:")
+            parts.append(f"  Formality: {template['formality']}")
+            parts.append(f"  Greeting: {template['greeting'] or 'none'}")
+            parts.append(f"  Closing: {template['closing'] or 'none'}")
+            parts.append(f"  Typical length: {template['typical_length']} words")
+            parts.append(f"  Uses emoji: {'yes' if template['uses_emoji'] else 'no'}")
+            # Show up to 5 common phrases the user frequently uses with
+            # this contact/channel, so the LLM can naturally incorporate them.
+            # JSON fields are already deserialized by the store method.
+            common = template.get("common_phrases") or []
+            if common:
+                parts.append(f"  Common phrases: {', '.join(common[:5])}")
 
         # --- Layer 2: Relationship context ---
         # Provides interaction history depth. A contact with 200 interactions
