@@ -1903,6 +1903,56 @@ class LifeOS:
             return "system"  # Fallback for malformed event types
         return event_type.split(".")[0]
 
+    def _build_notification_content(self, event: dict, action: dict) -> tuple[str, str]:
+        """Build a meaningful title and body for a rule-triggered notification.
+
+        Most event types don't have a ``snippet`` payload field, so the old
+        hard-coded ``payload.get("snippet", "")`` produced empty notification
+        bodies for email, calendar, finance, and message events.  This helper
+        inspects the payload for the most informative fields available.
+
+        Args:
+            event: The event dict with ``payload`` and ``type`` fields.
+            action: The rule action dict (used for ``rule_name`` fallback).
+
+        Returns:
+            A (title, body) tuple with the notification content.
+        """
+        payload = event.get("payload", {})
+
+        # --- Title: pick the most descriptive field available ---
+        title = (
+            payload.get("subject")
+            or payload.get("summary")
+            or payload.get("merchant_name")
+            or f"Rule: {action.get('rule_name', 'Unknown')}"
+        )
+
+        # For finance events, append the amount to the merchant name title
+        if payload.get("merchant_name") and payload.get("amount") is not None:
+            title = f"{payload['merchant_name']} — ${payload['amount']}"
+
+        # --- Body: try payload fields in order of usefulness ---
+        body = (
+            payload.get("snippet")
+            or payload.get("body_plain")
+            or payload.get("body")
+            or payload.get("description")
+            or payload.get("content")
+            or ""
+        )
+
+        # For email events, prepend the sender so the user knows who it's from
+        from_address = payload.get("from_address") or payload.get("from")
+        if from_address and event.get("type", "").startswith("email"):
+            body = f"From: {from_address}\n{body}" if body else f"From: {from_address}"
+
+        # Truncate to 200 characters to keep notifications concise
+        if len(body) > 200:
+            body = body[:197] + "..."
+
+        return title, body
+
     async def _execute_rule_action(self, action: dict, event: dict):
         """Execute an action triggered by the rules engine.
 
@@ -1930,9 +1980,10 @@ class LifeOS:
             if not domain:
                 domain = self._infer_domain_from_event_type(event.get("type", ""))
 
+            title, body = self._build_notification_content(event, action)
             await self.notification_manager.create_notification(
-                title=f"Rule: {action.get('rule_name', 'Unknown')}",
-                body=event.get("payload", {}).get("snippet", ""),
+                title=title,
+                body=body,
                 priority=action.get("priority", "normal"),
                 source_event_id=event.get("id"),
                 domain=domain,
