@@ -5,7 +5,11 @@ Verifies that the SemanticFactInferrer correctly derives high-level semantic
 facts from signal profiles across all five extractors.
 """
 
+import logging
+from unittest.mock import patch
+
 import pytest
+
 from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 
 
@@ -392,3 +396,81 @@ class TestSemanticFactInferrer:
         assert "last_confirmed" in fact
         assert "times_confirmed" in fact
         assert "is_user_corrected" in fact
+
+    # -------------------------------------------------------------------
+    # Error Isolation Tests
+    # -------------------------------------------------------------------
+
+    def test_run_all_inference_isolates_single_profile_failure(self, user_model_store):
+        """A single failing profile must not prevent other profiles from running.
+
+        Monkeypatch infer_from_spatial_profile to raise, then verify that
+        run_all_inference() completes without raising and results from the
+        other 7 profiles are still collected.
+        """
+        # Set up linguistic data so it produces a real result
+        user_model_store.update_signal_profile("linguistic", {
+            "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
+        })
+        _set_samples(user_model_store, "linguistic", 25)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+
+        with patch.object(inferrer, "infer_from_spatial_profile", side_effect=RuntimeError("corrupt profile")):
+            # Must NOT raise
+            inferrer.run_all_inference()
+
+        # Linguistic profile should still have produced facts
+        facts = user_model_store.get_semantic_facts(category="implicit_preference")
+        assert any(f["key"] == "communication_style_formality" for f in facts)
+
+    def test_run_all_inference_logs_error_for_failed_profile(self, user_model_store, caplog):
+        """The exception from a failing profile must be logged with full traceback."""
+        inferrer = SemanticFactInferrer(user_model_store)
+
+        with patch.object(inferrer, "infer_from_decision_profile", side_effect=KeyError("missing_key")):
+            with caplog.at_level(logging.ERROR, logger="services.semantic_fact_inferrer.inferrer"):
+                inferrer.run_all_inference()
+
+        assert any("infer_from_decision_profile failed" in record.message for record in caplog.records)
+
+    def test_run_all_inference_error_result_appears_in_summary(self, user_model_store, caplog):
+        """Failed profiles appear as skipped with reason 'error' in the summary log."""
+        inferrer = SemanticFactInferrer(user_model_store)
+
+        with patch.object(inferrer, "infer_from_mood_profile", side_effect=ValueError("bad data")):
+            with caplog.at_level(logging.INFO, logger="services.semantic_fact_inferrer.inferrer"):
+                inferrer.run_all_inference()
+
+        # The summary log line should mention mood as skipped with (error) reason
+        summary_lines = [r.message for r in caplog.records if "inference cycle complete" in r.message]
+        assert len(summary_lines) == 1
+        assert "mood (error)" in summary_lines[0]
+
+    def test_run_all_inference_collects_all_results_despite_multiple_failures(self, user_model_store):
+        """Even with multiple profile failures, results list has 8 entries."""
+        inferrer = SemanticFactInferrer(user_model_store)
+
+        with (
+            patch.object(inferrer, "infer_from_spatial_profile", side_effect=RuntimeError("fail1")),
+            patch.object(inferrer, "infer_from_decision_profile", side_effect=RuntimeError("fail2")),
+            patch.object(inferrer, "infer_from_temporal_profile", side_effect=RuntimeError("fail3")),
+        ):
+            # Must NOT raise even with 3 failing profiles
+            inferrer.run_all_inference()
+
+    def test_run_all_inference_normal_operation_unchanged(self, user_model_store):
+        """Normal operation (no exceptions) produces the same results as before."""
+        user_model_store.update_signal_profile("linguistic", {
+            "averages": {"formality": 0.8, "emoji_rate": 0.0, "hedge_rate": 0.05, "exclamation_rate": 0.0},
+        })
+        _set_samples(user_model_store, "linguistic", 25)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+        inferrer.run_all_inference()
+
+        # Formal style should still be inferred correctly
+        facts = user_model_store.get_semantic_facts(category="implicit_preference")
+        formal_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
+        assert formal_fact is not None
+        assert formal_fact["value"] == "formal"

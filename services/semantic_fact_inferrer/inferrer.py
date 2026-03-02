@@ -1250,7 +1250,8 @@ class SemanticFactInferrer:
 
         This is the main entry point for semantic fact extraction. It
         analyzes all available signal profiles and derives semantic facts
-        from each one.
+        from each one. Each profile is processed independently so that a
+        failure in one profile does not block inference for the others.
 
         Should be called:
           - Periodically (e.g., every 6 hours via background task)
@@ -1259,16 +1260,25 @@ class SemanticFactInferrer:
         """
         logger.info("Starting semantic fact inference across all profiles")
 
-        results = [
-            self.infer_from_linguistic_profile(),
-            self.infer_from_relationship_profile(),
-            self.infer_from_topic_profile(),
-            self.infer_from_cadence_profile(),
-            self.infer_from_mood_profile(),
-            self.infer_from_temporal_profile(),
-            self.infer_from_spatial_profile(),
-            self.infer_from_decision_profile(),
+        methods = [
+            ("linguistic", self.infer_from_linguistic_profile),
+            ("relationship", self.infer_from_relationship_profile),
+            ("topic", self.infer_from_topic_profile),
+            ("cadence", self.infer_from_cadence_profile),
+            ("mood", self.infer_from_mood_profile),
+            ("temporal", self.infer_from_temporal_profile),
+            ("spatial", self.infer_from_spatial_profile),
+            ("decision", self.infer_from_decision_profile),
         ]
+        results = []
+        for name, method in methods:
+            try:
+                results.append(method())
+            except Exception:
+                logger.exception(
+                    "SemanticFactInferrer: infer_from_%s_profile failed, continuing with remaining profiles", name
+                )
+                results.append({"type": name, "processed": False, "reason": "error"})
 
         self._log_inference_summary(results)
         logger.info("Completed semantic fact inference")
