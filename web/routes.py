@@ -276,25 +276,20 @@ def register_routes(app: FastAPI, life_os) -> None:
         # detected" directly explains why routine-deviation predictions are blocked).
         user_model_depth = {"signal_profiles": 0, "routines": 0, "workflows": 0,
                             "semantic_facts": 0, "episodes": 0}
+        # Query each table independently so one missing/broken table
+        # doesn't zero out the counts for all subsequent tables.
         try:
             with life_os.db.get_connection("user_model") as um_conn:
-                user_model_depth["signal_profiles"] = um_conn.execute(
-                    "SELECT COUNT(*) FROM signal_profiles"
-                ).fetchone()[0]
-                user_model_depth["routines"] = um_conn.execute(
-                    "SELECT COUNT(*) FROM routines"
-                ).fetchone()[0]
-                user_model_depth["workflows"] = um_conn.execute(
-                    "SELECT COUNT(*) FROM workflows"
-                ).fetchone()[0]
-                user_model_depth["semantic_facts"] = um_conn.execute(
-                    "SELECT COUNT(*) FROM semantic_facts"
-                ).fetchone()[0]
-                user_model_depth["episodes"] = um_conn.execute(
-                    "SELECT COUNT(*) FROM episodes"
-                ).fetchone()[0]
-        except Exception:
-            pass  # Fail-open: missing counts don't break the endpoint
+                for table_name in ("signal_profiles", "routines", "workflows",
+                                   "semantic_facts", "episodes"):
+                    try:
+                        user_model_depth[table_name] = um_conn.execute(
+                            f"SELECT COUNT(*) FROM {table_name}"  # noqa: S608
+                        ).fetchone()[0]
+                    except Exception as e:
+                        logger.warning("Failed to count %s: %s", table_name, e)
+        except Exception as e:
+            logger.warning("Failed to open user_model connection: %s", e)
 
         diagnostics["user_model_depth"] = user_model_depth
         diagnostics["generated_at"] = datetime.now(timezone.utc).isoformat()
@@ -2342,11 +2337,22 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.post("/api/context/batch")
     async def submit_context_batch(req: ContextBatchRequest):
         """Ingest a batch of context events from a mobile device."""
+        # Same type mapping as the single-event endpoint so batch events
+        # are stored with the correct internal type for pipeline routing.
+        event_type_map = {
+            "context.location": "location.changed",
+            "context.device_nearby": "home.device.state_changed",
+            "context.time": "system.user.command",
+            "context.background_refresh": "system.connector.sync_complete",
+            "context.background_processing": "system.connector.sync_complete",
+        }
+
         event_ids = []
         for event_req in req.events:
             ts = event_req.timestamp or datetime.now(timezone.utc).isoformat()
+            internal_type = event_type_map.get(event_req.type, "system.user.command")
             event = {
-                "type": "system.user.command",
+                "type": internal_type,
                 "source": event_req.source,
                 "timestamp": ts,
                 "priority": "silent",
