@@ -195,22 +195,43 @@ class PredictionEngine:
         # TIME-BASED predictions: Run when time passes (even without new events)
         # These check temporal conditions like approaching events, missed routines,
         # and relationship gaps growing wider.
+        #
+        # Each _check method is wrapped in its own try/except so that a failure
+        # in one detector (e.g. sqlite3.DatabaseError from a corrupted DB) does
+        # not abort the entire pipeline. This follows the fail-open pattern used
+        # by master_event_handler in main.py.
         if time_based_due:
-            calendar_preds = await self._check_calendar_conflicts(current_context)
-            generation_stats['calendar_conflicts'] = len(calendar_preds)
-            predictions.extend(calendar_preds)
+            try:
+                calendar_preds = await self._check_calendar_conflicts(current_context)
+                generation_stats['calendar_conflicts'] = len(calendar_preds)
+                predictions.extend(calendar_preds)
+            except Exception as e:
+                generation_stats['calendar_conflicts'] = f'error: {e}'
+                logger.error("calendar_conflicts check failed: %s", e)
 
-            routine_preds = await self._check_routine_deviations(current_context)
-            generation_stats['routine_deviations'] = len(routine_preds)
-            predictions.extend(routine_preds)
+            try:
+                routine_preds = await self._check_routine_deviations(current_context)
+                generation_stats['routine_deviations'] = len(routine_preds)
+                predictions.extend(routine_preds)
+            except Exception as e:
+                generation_stats['routine_deviations'] = f'error: {e}'
+                logger.error("routine_deviations check failed: %s", e)
 
-            relationship_preds = await self._check_relationship_maintenance(current_context)
-            generation_stats['relationship_maintenance'] = len(relationship_preds)
-            predictions.extend(relationship_preds)
+            try:
+                relationship_preds = await self._check_relationship_maintenance(current_context)
+                generation_stats['relationship_maintenance'] = len(relationship_preds)
+                predictions.extend(relationship_preds)
+            except Exception as e:
+                generation_stats['relationship_maintenance'] = f'error: {e}'
+                logger.error("relationship_maintenance check failed: %s", e)
 
-            prep_preds = await self._check_preparation_needs(current_context)
-            generation_stats['preparation_needs'] = len(prep_preds)
-            predictions.extend(prep_preds)
+            try:
+                prep_preds = await self._check_preparation_needs(current_context)
+                generation_stats['preparation_needs'] = len(prep_preds)
+                predictions.extend(prep_preds)
+            except Exception as e:
+                generation_stats['preparation_needs'] = f'error: {e}'
+                logger.error("preparation_needs check failed: %s", e)
         else:
             # Skip time-based predictions, mark as not run
             generation_stats['calendar_conflicts'] = '(skipped: no time trigger)'
@@ -223,16 +244,24 @@ class PredictionEngine:
         # age past the 3-hour grace period even when no new events arrive (e.g.,
         # after a connector outage). The deduplication logic in _check_follow_up_needs
         # (already_predicted_messages set) prevents duplicate predictions.
-        followup_preds = await self._check_follow_up_needs(current_context)
-        generation_stats['follow_up_needs'] = len(followup_preds)
-        predictions.extend(followup_preds)
+        try:
+            followup_preds = await self._check_follow_up_needs(current_context)
+            generation_stats['follow_up_needs'] = len(followup_preds)
+            predictions.extend(followup_preds)
+        except Exception as e:
+            generation_stats['follow_up_needs'] = f'error: {e}'
+            logger.error("follow_up_needs check failed: %s", e)
 
         # EVENT-BASED predictions: Run when new events arrive
         # These react to specific events like new spending activity.
         if has_new_events:
-            spending_preds = await self._check_spending_patterns(current_context)
-            generation_stats['spending_patterns'] = len(spending_preds)
-            predictions.extend(spending_preds)
+            try:
+                spending_preds = await self._check_spending_patterns(current_context)
+                generation_stats['spending_patterns'] = len(spending_preds)
+                predictions.extend(spending_preds)
+            except Exception as e:
+                generation_stats['spending_patterns'] = f'error: {e}'
+                logger.error("spending_patterns check failed: %s", e)
         else:
             # Skip event-based predictions, mark as not run
             generation_stats['spending_patterns'] = '(skipped: no new events)'
@@ -354,13 +383,19 @@ class PredictionEngine:
                 if not pred.filter_reason:
                     pred.filter_reason = "unknown (should not happen)"
 
-            self.ums.store_prediction(pred.model_dump())
+            try:
+                self.ums.store_prediction(pred.model_dump())
+            except Exception as e:
+                logger.error("Failed to store prediction %s: %s", pred.id, e)
 
         # Summary log for zero-prediction debugging: reports total output,
         # per-method breakdown, and signal profile availability so operators
         # can quickly identify why the intelligence layer isn't producing.
         profile_types = ["relationships", "cadence", "mood_signals", "linguistic", "topics"]
-        available_profiles = [pt for pt in profile_types if self.ums.get_signal_profile(pt)]
+        try:
+            available_profiles = [pt for pt in profile_types if self.ums.get_signal_profile(pt)]
+        except Exception:
+            available_profiles = []
         logger.info(
             "Prediction engine completed: %d predictions generated (from %d raw, %d filtered). "
             "Methods: %s. Signal profiles available: %d/%d (%s)",
