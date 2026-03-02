@@ -532,22 +532,34 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # --- Intent: generate briefing ---
         elif command_type == "briefing":
-            briefing = await life_os.ai_engine.generate_briefing()
-            return {"type": "briefing", "content": briefing}
+            try:
+                briefing = await life_os.ai_engine.generate_briefing()
+                return {"type": "briefing", "content": briefing}
+            except Exception as e:
+                logger.warning("Command briefing failed: %s", e)
+                return {"type": "error", "content": "Briefing generation temporarily unavailable. The AI engine may be offline."}
 
         # --- Intent: draft a message ---
         elif command_type == "draft":
-            context = text.split(" ", 1)[1]
-            draft = await life_os.ai_engine.draft_reply(
-                contact_id=None, channel="email",
-                incoming_message=context,
-            )
-            return {"type": "draft", "content": draft}
+            try:
+                context = text.split(" ", 1)[1]
+                draft = await life_os.ai_engine.draft_reply(
+                    contact_id=None, channel="email",
+                    incoming_message=context,
+                )
+                return {"type": "draft", "content": draft}
+            except Exception as e:
+                logger.warning("Command draft failed: %s", e)
+                return {"type": "error", "content": "Draft generation temporarily unavailable. The AI engine may be offline."}
 
         # --- Fallback: pass to AI engine for open-ended search/response ---
         else:
-            response = await life_os.ai_engine.search_life(text)
-            return {"type": "ai_response", "content": response}
+            try:
+                response = await life_os.ai_engine.search_life(text)
+                return {"type": "ai_response", "content": response}
+            except Exception as e:
+                logger.warning("Command AI response failed: %s", e)
+                return {"type": "error", "content": "AI processing temporarily unavailable. The AI engine may be offline."}
 
     # -------------------------------------------------------------------
     # Dashboard Feed (unified, priority-sorted view)
