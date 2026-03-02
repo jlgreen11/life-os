@@ -205,7 +205,14 @@ class InsightEngine:
         raw = self._apply_source_weights(raw)
 
         # Remove insights that are still within their staleness window
+        before_dedup = len(raw)
         fresh = self._deduplicate(raw)
+        if before_dedup > len(fresh):
+            logger.debug(
+                "Deduplication removed %d of %d insights",
+                before_dedup - len(fresh),
+                before_dedup,
+            )
 
         # Persist the survivors
         for insight in fresh:
@@ -300,10 +307,12 @@ class InsightEngine:
         }
 
         weighted: list[Insight] = []
+        dropped_count = 0
         for insight in insights:
             source_key = category_to_source.get(insight.category)
             if source_key:
                 weight = self.swm.get_effective_weight(source_key)
+                original_confidence = insight.confidence
                 # Store original confidence for transparency
                 insight.evidence.append(f"source_weight={weight:.2f}")
                 insight.confidence = insight.confidence * weight
@@ -322,6 +331,23 @@ class InsightEngine:
             # Filter out insights that have been effectively silenced
             if insight.confidence >= 0.1:
                 weighted.append(insight)
+            else:
+                dropped_count += 1
+                logger.debug(
+                    "Insight dropped by source weight: type=%s source=%s "
+                    "original_confidence=%.3f weighted_confidence=%.3f threshold=0.1",
+                    getattr(insight, "insight_type", insight.type),
+                    source_key or "unmapped",
+                    original_confidence if source_key else insight.confidence,
+                    insight.confidence,
+                )
+
+        if dropped_count:
+            logger.info(
+                "Source weight filtering: kept %d insights, dropped %d below 0.1 threshold",
+                len(weighted),
+                dropped_count,
+            )
 
         return weighted
 
