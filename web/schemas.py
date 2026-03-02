@@ -97,6 +97,15 @@ class FactCorrectionRequest(BaseModel):
     reason: Optional[str] = None
 
 
+# --- POST /api/user-model/facts/{key}/confirm ---
+# Confirm an inferred semantic fact is correct.  This is the positive
+# counterpart to FactCorrectionRequest: it bumps confidence by +0.05
+# (matching the architectural rule in CLAUDE.md) and increments
+# times_confirmed.
+class FactConfirmationRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 # --- PUT /api/preferences ---
 # Update a single user preference (key-value pair).  ``value`` is typed as
 # ``Any`` to support strings, numbers, booleans, and nested objects.
