@@ -591,6 +591,92 @@ async def test_execute_create_event_server_error(event_bus, db, caldav_config):
 
 
 @pytest.mark.asyncio
+async def test_create_event_vcalendar_contains_uid(event_bus, db, caldav_config):
+    """Test that _create_event() generates a VCALENDAR with a UID field (RFC 5545)."""
+    import uuid as uuid_mod
+
+    connector = CalDAVConnector(event_bus, db, caldav_config)
+
+    mock_calendar = Mock()
+    mock_calendar.save_event = Mock()
+    connector._calendars = [mock_calendar]
+
+    params = {
+        "title": "UID Test Meeting",
+        "start_time": "2026-03-15T10:00:00Z",
+        "end_time": "2026-03-15T11:00:00Z",
+    }
+
+    result = await connector.execute("create_event", params)
+
+    assert result["status"] == "created"
+
+    # Verify the VCALENDAR string contains a UID line
+    vcal_str = mock_calendar.save_event.call_args[0][0]
+    assert "UID:" in vcal_str
+
+    # Extract the UID value and verify it's a valid UUID4
+    uid_line = [line for line in vcal_str.split("\n") if line.startswith("UID:")][0]
+    uid_value = uid_line.split("UID:")[1].strip()
+    parsed_uid = uuid_mod.UUID(uid_value)
+    assert parsed_uid.version == 4
+
+    # Verify UID is also returned in the result dict
+    assert "uid" in result
+    assert result["uid"] == uid_value
+
+
+@pytest.mark.asyncio
+async def test_create_event_vcalendar_contains_prodid(event_bus, db, caldav_config):
+    """Test that _create_event() generates a VCALENDAR with a PRODID field (RFC 5545)."""
+    connector = CalDAVConnector(event_bus, db, caldav_config)
+
+    mock_calendar = Mock()
+    mock_calendar.save_event = Mock()
+    connector._calendars = [mock_calendar]
+
+    params = {
+        "title": "PRODID Test Meeting",
+        "start_time": "2026-03-15T10:00:00Z",
+    }
+
+    result = await connector.execute("create_event", params)
+
+    assert result["status"] == "created"
+
+    vcal_str = mock_calendar.save_event.call_args[0][0]
+    assert "PRODID:-//LifeOS//CalDAV Connector//EN" in vcal_str
+
+
+@pytest.mark.asyncio
+async def test_create_event_unique_uids(event_bus, db, caldav_config):
+    """Test that consecutive _create_event() calls produce different UIDs."""
+    connector = CalDAVConnector(event_bus, db, caldav_config)
+
+    mock_calendar = Mock()
+    mock_calendar.save_event = Mock()
+    connector._calendars = [mock_calendar]
+
+    params = {
+        "title": "Event",
+        "start_time": "2026-03-15T10:00:00Z",
+    }
+
+    result1 = await connector.execute("create_event", params)
+    result2 = await connector.execute("create_event", params)
+
+    assert result1["uid"] != result2["uid"]
+
+    # Also verify the UIDs in the VCALENDAR strings are different
+    vcal1 = mock_calendar.save_event.call_args_list[0][0][0]
+    vcal2 = mock_calendar.save_event.call_args_list[1][0][0]
+
+    uid1 = [line for line in vcal1.split("\n") if line.startswith("UID:")][0]
+    uid2 = [line for line in vcal2.split("\n") if line.startswith("UID:")][0]
+    assert uid1 != uid2
+
+
+@pytest.mark.asyncio
 async def test_execute_unknown_action(event_bus, db, caldav_config):
     """Test execute raises ValueError for unknown actions."""
     connector = CalDAVConnector(event_bus, db, caldav_config)
