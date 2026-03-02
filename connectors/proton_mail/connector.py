@@ -350,6 +350,15 @@ class ProtonMailConnector(BaseConnector):
         if params.get("body_html"):
             msg.attach(MIMEText(params["body_html"], "html"))
 
+        # RFC 2822 threading headers — allow replies to thread correctly in
+        # recipients' mail clients.  These are set by _reply_email() before
+        # delegating here, but _send_email can also be called directly with
+        # these params for programmatic threading.
+        if params.get("in_reply_to"):
+            msg["In-Reply-To"] = params["in_reply_to"]
+        if params.get("references"):
+            msg["References"] = params["references"]
+
         # Connect to Bridge SMTP, upgrade to TLS, authenticate, and send.
         with smtplib.SMTP(host, port) as server:
             server.starttls()
@@ -359,14 +368,24 @@ class ProtonMailConnector(BaseConnector):
         return {"status": "sent", "to": params["to"], "subject": params["subject"]}
 
     async def _reply_email(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Reply to an existing email by prepending 'Re:' to the subject.
+        """Reply to an existing email with proper threading headers.
 
-        Currently a thin wrapper around ``_send_email``.  A more complete
-        implementation would also set the ``In-Reply-To`` and ``References``
-        headers so that recipients' mail clients can thread the conversation.
+        Sets the ``In-Reply-To`` and ``References`` RFC 2822 headers so that
+        recipients' mail clients correctly thread the conversation.  The
+        caller should provide ``in_reply_to`` (the Message-ID of the email
+        being replied to) and optionally ``references`` (the full References
+        chain).  If ``references`` is not given, ``in_reply_to`` is used as
+        the sole reference.
         """
-        # Build the reply with proper headers
         params["subject"] = f"Re: {params.get('original_subject', '')}"
+
+        # Resolve threading identifiers.  Prefer explicit params; fall back
+        # to message_id (the original message's ID) for backwards compat.
+        if not params.get("in_reply_to"):
+            params["in_reply_to"] = params.get("message_id", "")
+        if not params.get("references"):
+            params["references"] = params.get("in_reply_to", "")
+
         return await self._send_email(params)
 
     async def health_check(self) -> dict[str, Any]:

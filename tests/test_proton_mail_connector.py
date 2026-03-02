@@ -628,6 +628,112 @@ async def test_execute_reply_email_prepends_re(connector):
 
 
 @pytest.mark.asyncio
+async def test_reply_email_sets_threading_headers(connector):
+    """Test that _reply_email sets In-Reply-To and References headers on the MIME message."""
+    params = {
+        "to": ["original-sender@example.com"],
+        "original_subject": "Test Subject",
+        "body": "This is my reply",
+        "in_reply_to": "<orig-msg-id@example.com>",
+    }
+
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+
+        await connector.execute("reply_email", params)
+
+    # Inspect the MIMEMultipart message passed to send_message()
+    sent_msg = mock_smtp.send_message.call_args[0][0]
+    assert sent_msg["In-Reply-To"] == "<orig-msg-id@example.com>"
+    assert sent_msg["References"] == "<orig-msg-id@example.com>"
+    assert sent_msg["Subject"] == "Re: Test Subject"
+
+
+@pytest.mark.asyncio
+async def test_reply_email_uses_message_id_fallback(connector):
+    """Test that _reply_email falls back to message_id when in_reply_to is absent."""
+    params = {
+        "to": ["original-sender@example.com"],
+        "original_subject": "Fallback Test",
+        "body": "Reply body",
+        "message_id": "<fallback-msg-id@example.com>",
+    }
+
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+
+        await connector.execute("reply_email", params)
+
+    sent_msg = mock_smtp.send_message.call_args[0][0]
+    assert sent_msg["In-Reply-To"] == "<fallback-msg-id@example.com>"
+    assert sent_msg["References"] == "<fallback-msg-id@example.com>"
+
+
+@pytest.mark.asyncio
+async def test_send_email_without_threading_headers(connector):
+    """Test that _send_email does NOT set In-Reply-To/References when not provided (backward compat)."""
+    params = {
+        "to": ["recipient@example.com"],
+        "subject": "New Email",
+        "body": "Fresh conversation, no threading",
+    }
+
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+
+        await connector.execute("send_email", params)
+
+    sent_msg = mock_smtp.send_message.call_args[0][0]
+    assert sent_msg["In-Reply-To"] is None
+    assert sent_msg["References"] is None
+
+
+@pytest.mark.asyncio
+async def test_reply_email_subject_prefix(connector):
+    """Test that _reply_email prepends 'Re:' to the original subject."""
+    params = {
+        "to": ["someone@example.com"],
+        "original_subject": "Original Subject",
+        "body": "Reply content",
+        "in_reply_to": "<msg@example.com>",
+    }
+
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+
+        result = await connector.execute("reply_email", params)
+
+    assert result["subject"] == "Re: Original Subject"
+
+
+@pytest.mark.asyncio
+async def test_reply_email_custom_references_chain(connector):
+    """Test that _reply_email preserves an explicit References chain when provided."""
+    refs_chain = "<first@example.com> <second@example.com> <third@example.com>"
+    params = {
+        "to": ["someone@example.com"],
+        "original_subject": "Thread",
+        "body": "Deep reply",
+        "in_reply_to": "<third@example.com>",
+        "references": refs_chain,
+    }
+
+    with patch("connectors.proton_mail.connector.smtplib.SMTP") as mock_smtp_class:
+        mock_smtp = MagicMock()
+        mock_smtp_class.return_value.__enter__.return_value = mock_smtp
+
+        await connector.execute("reply_email", params)
+
+    sent_msg = mock_smtp.send_message.call_args[0][0]
+    assert sent_msg["In-Reply-To"] == "<third@example.com>"
+    assert sent_msg["References"] == refs_chain
+
+
+@pytest.mark.asyncio
 async def test_execute_unknown_action_raises_error(connector):
     """Test executing an unknown action raises ValueError."""
     with pytest.raises(ValueError, match="Unknown action"):
