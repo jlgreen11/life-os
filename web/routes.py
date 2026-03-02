@@ -110,12 +110,22 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/status")
     async def status():
+        """System status — offload synchronous DB/service calls to threads."""
+        import asyncio
+
+        event_count, vector_stats, user_model, notif_stats, feedback = await asyncio.gather(
+            asyncio.to_thread(life_os.event_store.get_event_count),
+            asyncio.to_thread(life_os.vector_store.get_stats),
+            asyncio.to_thread(life_os.signal_extractor.get_user_summary),
+            asyncio.to_thread(life_os.notification_manager.get_stats),
+            asyncio.to_thread(life_os.feedback_collector.get_feedback_summary),
+        )
         return {
-            "event_count": life_os.event_store.get_event_count(),
-            "vector_store": life_os.vector_store.get_stats(),
-            "user_model": life_os.signal_extractor.get_user_summary(),
-            "notification_stats": life_os.notification_manager.get_stats(),
-            "feedback_summary": life_os.feedback_collector.get_feedback_summary(),
+            "event_count": event_count,
+            "vector_store": vector_stats,
+            "user_model": user_model,
+            "notification_stats": notif_stats,
+            "feedback_summary": feedback,
         }
 
     @app.get("/api/system/sources")
@@ -2662,40 +2672,49 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/admin/connectors/google/auth")
     async def admin_google_auth():
-        """Start the Google OAuth flow — opens browser for user approval."""
-        try:
-            from google_auth_oauthlib.flow import InstalledAppFlow
+        """Start the Google OAuth flow — opens browser for user approval.
 
-            SCOPES = [
-                "https://www.googleapis.com/auth/gmail.modify",
-                "https://www.googleapis.com/auth/calendar",
-                "https://www.googleapis.com/auth/contacts.readonly",
-            ]
+        The OAuth server and subsequent API calls are synchronous and
+        long-running, so the entire blocking section is offloaded to a
+        thread to avoid stalling the FastAPI event loop.
+        """
+        import asyncio
+        import os
 
-            # Get config for file paths
-            config = life_os.get_connector_config("google")
-            credentials_file = config.get("credentials_file", "data/google_credentials.json")
-            token_file = config.get("token_file", "data/google_token.json")
+        from google_auth_oauthlib.flow import InstalledAppFlow
 
-            import os
-            if not os.path.exists(credentials_file):
-                raise HTTPException(400,
-                    f"Credentials file not found at {credentials_file}. "
-                    "Download it from Google Cloud Console and place it there.")
+        SCOPES = [
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/contacts.readonly",
+        ]
+
+        # Get config for file paths
+        config = life_os.get_connector_config("google")
+        credentials_file = config.get("credentials_file", "data/google_credentials.json")
+        token_file = config.get("token_file", "data/google_token.json")
+
+        if not os.path.exists(credentials_file):
+            raise HTTPException(400,
+                f"Credentials file not found at {credentials_file}. "
+                "Download it from Google Cloud Console and place it there.")
+
+        def _run_oauth_flow():
+            """Run the blocking OAuth flow, token save, and profile fetch in a thread."""
+            from googleapiclient.discovery import build
 
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0, open_browser=True)
 
-            # Save token
             with open(token_file, "w") as f:
                 f.write(creds.to_json())
 
-            # Get email from profile
-            from googleapiclient.discovery import build
             service = build("gmail", "v1", credentials=creds)
             profile = service.users().getProfile(userId="me").execute()
-            email_addr = profile.get("emailAddress", "")
+            return profile.get("emailAddress", "")
 
+        try:
+            email_addr = await asyncio.to_thread(_run_oauth_flow)
             return {"status": "authorized", "email": email_addr}
 
         except HTTPException:
