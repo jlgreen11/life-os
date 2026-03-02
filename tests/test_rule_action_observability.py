@@ -4,9 +4,10 @@ Life OS — Rule Action Observability Tests
 Tests for two code-quality fixes shipped together:
 
 1. Unhandled rule action types now emit logger.warning instead of being
-   silently dropped.  Rules that specify "forward", "auto_reply", "archive",
-   or any other unimplemented type would previously do nothing without any
-   indication that the action was ignored.
+   silently dropped.  Rules that specify an unknown/unimplemented type would
+   previously do nothing without any indication that the action was ignored.
+   Note: "forward", "auto_reply", and "archive" are now implemented — see
+   test_rule_actions_extended.py for their specific tests.
 
 2. Bare ``except:`` in the prediction-engine diagnostics endpoint was replaced
    with ``except (json.JSONDecodeError, KeyError, ValueError):`` so that
@@ -36,6 +37,7 @@ def _make_life_os(db, event_store, user_model_store):
     lo.db = db
     lo.event_store = event_store
     lo.user_model_store = user_model_store
+    lo.connector_map = {}
 
     # Stub out every service _execute_rule_action touches
     nm = MagicMock()
@@ -68,30 +70,30 @@ class TestUnhandledRuleActionWarning:
     async def test_unknown_action_emits_warning(self, db, event_store, user_model_store):
         """An unrecognised action type triggers a logger.warning, not a silent no-op."""
         lo = _make_life_os(db, event_store, user_model_store)
-        action = {"type": "forward", "rule_id": "rule-abc"}
+        action = {"type": "send_sms", "rule_id": "rule-abc"}
 
         with patch("main.logger") as mock_logger:
             await lo._execute_rule_action(action, _dummy_event())
             mock_logger.warning.assert_called_once()
             # The warning message should mention the unrecognised action type
             call_args = mock_logger.warning.call_args
-            assert "forward" in str(call_args)
+            assert "send_sms" in str(call_args)
 
     @pytest.mark.asyncio
-    async def test_auto_reply_action_emits_warning(self, db, event_store, user_model_store):
-        """auto_reply (documented but not implemented) emits a warning."""
+    async def test_webhook_action_emits_warning(self, db, event_store, user_model_store):
+        """An unimplemented action type ('webhook') emits a warning."""
         lo = _make_life_os(db, event_store, user_model_store)
-        action = {"type": "auto_reply", "rule_id": "rule-xyz"}
+        action = {"type": "webhook", "rule_id": "rule-xyz"}
 
         with patch("main.logger") as mock_logger:
             await lo._execute_rule_action(action, _dummy_event())
             mock_logger.warning.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_archive_action_emits_warning(self, db, event_store, user_model_store):
-        """archive (documented but not implemented) emits a warning."""
+    async def test_escalate_action_emits_warning(self, db, event_store, user_model_store):
+        """An unimplemented action type ('escalate') emits a warning."""
         lo = _make_life_os(db, event_store, user_model_store)
-        action = {"type": "archive", "rule_id": "rule-arch"}
+        action = {"type": "escalate", "rule_id": "rule-esc"}
 
         with patch("main.logger") as mock_logger:
             await lo._execute_rule_action(action, _dummy_event())
@@ -112,21 +114,30 @@ class TestUnhandledRuleActionWarning:
 
     @pytest.mark.asyncio
     async def test_known_action_does_not_warn(self, db, event_store, user_model_store):
-        """Known action types (notify, tag, suppress, create_task) must not trigger the warning."""
+        """Known action types must not trigger the unhandled-action warning."""
         lo = _make_life_os(db, event_store, user_model_store)
 
-        # Patch event_store.add_tag to avoid DB operations for tag/suppress
+        # Patch event_store.add_tag to avoid DB operations for tag/suppress/archive
         lo.event_store = MagicMock()
         lo.event_store.add_tag = MagicMock()
+
+        # Add a mock connector so forward/auto_reply can dispatch
+        mock_connector = MagicMock()
+        mock_connector.execute = AsyncMock(return_value={"status": "ok"})
+        lo.connector_map = {"test_source": mock_connector}
 
         known_actions = [
             {"type": "tag", "value": "test", "rule_id": "r1"},
             {"type": "suppress", "rule_id": "r2"},
             {"type": "create_task", "title": "Do it", "rule_id": "r3"},
+            {"type": "archive", "rule_id": "r4"},
+            {"type": "forward", "to": "someone@example.com", "rule_id": "r5"},
+            {"type": "auto_reply", "value": "Thanks!", "rule_id": "r6"},
         ]
 
         for action in known_actions:
             event = _dummy_event()
+            event["source"] = "test_source"
             with patch("main.logger") as mock_logger:
                 await lo._execute_rule_action(action, event)
                 mock_logger.warning.assert_not_called(), (
