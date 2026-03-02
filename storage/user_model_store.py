@@ -539,6 +539,99 @@ class UserModelStore:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
 
+    def _deserialize_template_row(self, row) -> dict:
+        """Convert a communication_templates row to a dict with deserialized JSON fields.
+
+        The common_phrases, avoids_phrases, tone_notes, and example_message_ids
+        columns are stored as JSON strings in SQLite. This helper deserializes
+        them back to native Python lists so callers get ready-to-use dicts.
+        """
+        template = dict(row)
+        for field in ("common_phrases", "avoids_phrases", "tone_notes", "example_message_ids"):
+            raw = template.get(field)
+            if raw is not None:
+                try:
+                    template[field] = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    template[field] = []
+            else:
+                template[field] = []
+        return template
+
+    def get_communication_template(
+        self, contact_id: str | None = None, channel: str | None = None
+    ) -> Optional[dict]:
+        """Retrieve the best-matching communication template.
+
+        Looks up a template by contact_id and/or channel, returning the one
+        with the highest ``samples_analyzed`` (most statistically reliable).
+        Uses an OR query so that a contact-specific template or a channel-wide
+        default can both match.
+
+        Args:
+            contact_id: Optional contact identifier to match
+            channel: Optional channel name to match (e.g. "email", "slack")
+
+        Returns:
+            Deserialized template dict, or None if no match found
+        """
+        with self.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                """SELECT * FROM communication_templates
+                   WHERE contact_id = ? OR channel = ?
+                   ORDER BY samples_analyzed DESC LIMIT 1""",
+                (contact_id, channel),
+            ).fetchone()
+
+            if row:
+                return self._deserialize_template_row(row)
+            return None
+
+    def get_communication_templates(
+        self,
+        contact_id: str | None = None,
+        channel: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Retrieve communication templates with optional filtering.
+
+        Builds the WHERE clause dynamically based on which filters are provided:
+        - contact_id only → WHERE contact_id = ?
+        - channel only → WHERE channel = ?
+        - both → WHERE contact_id = ? OR channel = ?
+        - neither → no WHERE clause (returns all templates)
+
+        Results are ordered by samples_analyzed DESC so the most data-rich
+        templates appear first.
+
+        Args:
+            contact_id: Optional contact identifier filter
+            channel: Optional channel name filter
+            limit: Maximum number of templates to return (default 20)
+
+        Returns:
+            List of deserialized template dicts
+        """
+        query = "SELECT * FROM communication_templates"
+        params: list[Any] = []
+
+        if contact_id and channel:
+            query += " WHERE contact_id = ? OR channel = ?"
+            params.extend([contact_id, channel])
+        elif contact_id:
+            query += " WHERE contact_id = ?"
+            params.append(contact_id)
+        elif channel:
+            query += " WHERE channel = ?"
+            params.append(channel)
+
+        query += " ORDER BY samples_analyzed DESC LIMIT ?"
+        params.append(limit)
+
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(query, params).fetchall()
+            return [self._deserialize_template_row(row) for row in rows]
+
     def resolve_prediction(self, prediction_id: str, was_accurate: bool,
                           user_response: str = None, resolution_reason: str = None):
         """Mark a prediction as resolved with user feedback.
