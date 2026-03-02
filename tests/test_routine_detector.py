@@ -20,7 +20,7 @@ class TestRoutineDetector:
         detector = RoutineDetector(db, user_model_store)
         assert detector.db is db
         assert detector.user_model_store is user_model_store
-        assert detector.min_occurrences == 3
+        assert detector.min_occurrences == 2
         assert detector.time_window_hours == 2
         assert detector.consistency_threshold == 0.6
 
@@ -28,17 +28,15 @@ class TestRoutineDetector:
         """Should not detect routines when episode count < min_occurrences."""
         detector = RoutineDetector(db, user_model_store)
 
-        # Create only 2 episodes (below min_occurrences of 3)
-        base_time = datetime.now(timezone.utc) - timedelta(days=7)
-        for i in range(2):
-            episode = {
-                "id": str(uuid.uuid4()),
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "email",
-                "content_summary": "Check email",
-            }
-            user_model_store.store_episode(episode)
+        # Create only 1 episode (below min_occurrences of 2)
+        episode = {
+            "id": str(uuid.uuid4()),
+            "timestamp": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
+            "event_id": str(uuid.uuid4()),
+            "interaction_type": "email",
+            "content_summary": "Check email",
+        }
+        user_model_store.store_episode(episode)
 
         routines = detector.detect_routines(lookback_days=30)
         assert len(routines) == 0
@@ -276,10 +274,10 @@ class TestRoutineDetector:
         """Should not detect routines with consistency below threshold."""
         detector = RoutineDetector(db, user_model_store)
 
-        # Create inconsistent pattern (only 2/10 days)
         base_date = datetime.now(timezone.utc) - timedelta(days=10)
 
-        for day_offset in [0, 5]:  # Only 2 occurrences over 10 days
+        # Create rare_action on only 2 of 10 active days → consistency = 2/10 = 0.2
+        for day_offset in [0, 5]:
             user_model_store.store_episode({
                 "id": str(uuid.uuid4()),
                 "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
@@ -287,10 +285,21 @@ class TestRoutineDetector:
                 "interaction_type": "rare_action", "content_summary": "Rare Action",
             })
 
+        # Pad with unique filler episodes on all 10 days so active_days = 10.
+        # Each filler uses a unique interaction_type (only 1 day each) so it
+        # won't itself be detected as a routine (below min_occurrences=2).
+        for day_offset in range(10):
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (base_date + timedelta(days=day_offset, hours=12)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": f"filler_{day_offset}",
+                "content_summary": f"Filler {day_offset}",
+            })
+
         routines = detector.detect_routines(lookback_days=30)
 
-        # Should not detect a routine (20% < 60% threshold)
-        # Note: might detect other routines from previous tests, so check specifically
+        # rare_action appears on 2/10 active days → consistency = 0.2 < 0.6 threshold
         rare_routines = [r for r in routines if any("rare_action" in step["action"] for step in r["steps"])]
         assert len(rare_routines) == 0
 
@@ -590,3 +599,97 @@ class TestRoutineDetector:
         routine = night_routines[0]
         assert routine["consistency_score"] >= 0.6
         assert len(routine["steps"]) >= 1
+
+    def test_temporal_routine_detected_with_two_occurrences(self, db, user_model_store):
+        """Regression: a pattern appearing on exactly 2 distinct days should be
+        detected as a routine now that min_occurrences has been lowered to 2.
+
+        With the old threshold of 3 this test would fail because 2 day_count < 3.
+        The consistency_threshold (0.6) is the real quality gate; two occurrences
+        over two active days gives consistency = 1.0 which easily passes.
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create a pattern on exactly 2 distinct days — both in the morning bucket
+        base_date = datetime.now(timezone.utc) - timedelta(days=3)
+
+        for day_offset in range(2):
+            day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "sparse_morning_email",
+                "content_summary": "Sparse morning email",
+            })
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (day_start + timedelta(minutes=10)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "sparse_morning_calendar",
+                "content_summary": "Sparse morning calendar",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # The morning bucket should contain both interaction types each on 2 days
+        morning_routines = [r for r in routines if r["trigger"] == "morning"]
+        assert len(morning_routines) >= 1, (
+            "Expected a morning routine from 2-day pattern; min_occurrences=2 should allow it"
+        )
+
+        routine = morning_routines[0]
+        sparse_steps = [s for s in routine["steps"] if s["action"].startswith("sparse_morning_")]
+        assert len(sparse_steps) >= 1
+        assert routine["consistency_score"] >= 0.6
+
+    def test_event_triggered_routine_with_single_followup(self, db, user_model_store):
+        """Regression: an event-triggered routine with exactly 1 consistent
+        follow-up action should now be detected after lowering the guard from
+        >= 2 to >= 1.
+
+        With the old guard (len(following_actions) >= 2) this test would fail
+        because only a single follow-up type appears.  A consistent single
+        follow-up (e.g., always checking email after a meeting) is a valid
+        behavioral pattern.
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        base_date = datetime.now(timezone.utc) - timedelta(days=5)
+
+        # Create trigger event (meeting) followed by exactly ONE follow-up type
+        # on 5 distinct days — well above min_occurrences=2
+        for day_offset in range(5):
+            meeting_time = base_date + timedelta(days=day_offset, hours=14)
+
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": meeting_time.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "video_call",
+            })
+
+            # Single follow-up action: always check email after video call
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (meeting_time + timedelta(minutes=10)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "post_call_email_check",
+                "content_summary": "Check email after call",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # Should detect an event-triggered routine for "after_video_call"
+        event_routines = [r for r in routines if r["trigger"] == "after_video_call"]
+        assert len(event_routines) >= 1, (
+            "Expected event-triggered routine with 1 follow-up action; "
+            "following_actions >= 1 guard should allow it"
+        )
+
+        routine = event_routines[0]
+        assert len(routine["steps"]) == 1
+        assert routine["steps"][0]["action"] == "post_call_email_check"
+        assert routine["consistency_score"] >= 0.6
