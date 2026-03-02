@@ -56,9 +56,18 @@ class PredictionEngine:
         self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
         self._first_follow_up_run: bool = True  # First cycle uses wider lookback (72h vs 24h)
 
-        # Ensure prediction_engine_state table exists and load any persisted state
-        self._ensure_state_table()
-        self._load_persisted_state()
+        # Ensure prediction_engine_state table exists and load any persisted state.
+        # Both are wrapped in try/except so a corrupted user_model.db doesn't
+        # prevent the engine from instantiating at all.
+        try:
+            self._ensure_state_table()
+        except Exception as e:
+            logger.warning("_ensure_state_table failed (will operate without persisted state): %s", e)
+
+        try:
+            self._load_persisted_state()
+        except Exception as e:
+            logger.warning("_load_persisted_state failed (using defaults: cursor=0, last_run=None): %s", e)
 
     def _ensure_state_table(self) -> None:
         """Create the prediction_engine_state table if it doesn't exist."""
@@ -99,12 +108,20 @@ class PredictionEngine:
             logger.info("Prediction engine starting fresh (no persisted state)")
 
     def _persist_state(self, key: str, value: str) -> None:
-        """Persist a single state key-value pair via INSERT OR REPLACE."""
-        with self.db.get_connection("user_model") as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO prediction_engine_state (key, value, updated_at) VALUES (?, ?, ?)",
-                (key, value, datetime.now(timezone.utc).isoformat()),
-            )
+        """Persist a single state key-value pair via INSERT OR REPLACE.
+
+        Wrapped in try/except so a corrupted user_model.db doesn't crash the
+        prediction pipeline. Failure to persist state is non-fatal — the engine
+        will simply re-process some events on the next cycle.
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO prediction_engine_state (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key, value, datetime.now(timezone.utc).isoformat()),
+                )
+        except Exception as e:
+            logger.warning("_persist_state(%s) failed (non-fatal, will retry next cycle): %s", key, e)
 
     def _has_new_events(self) -> bool:
         """Check if any new events have arrived since last prediction run."""
@@ -167,9 +184,25 @@ class PredictionEngine:
         new events) and proactive predictions (detecting temporal conditions) work
         correctly.
         """
-        # Determine which trigger conditions are met
-        has_new_events = self._has_new_events()
-        time_based_due = self._should_run_time_based_predictions()
+        # Determine which trigger conditions are met.
+        # Wrapped in try/except so DB errors (e.g. corrupted user_model.db)
+        # default to True rather than aborting the entire pipeline.
+        generation_stats = {}
+
+        try:
+            has_new_events = self._has_new_events()
+        except Exception as e:
+            logger.warning("_has_new_events failed (defaulting to True): %s", e)
+            has_new_events = True
+            generation_stats["trigger_errors"] = f"has_new_events: {e}"
+
+        try:
+            time_based_due = self._should_run_time_based_predictions()
+        except Exception as e:
+            logger.warning("_should_run_time_based_predictions failed (defaulting to True): %s", e)
+            time_based_due = True
+            prev = generation_stats.get("trigger_errors", "")
+            generation_stats["trigger_errors"] = f"{prev}; time_based: {e}".lstrip("; ")
 
         # Skip entirely if neither trigger is active
         if not has_new_events and not time_based_due:
@@ -188,9 +221,6 @@ class PredictionEngine:
         # category of predictable user need. They run independently and
         # return zero or more Prediction objects. The full set of prediction
         # types covers the most common "blown away" moments:
-
-        # Track prediction generation for observability
-        generation_stats = {}
 
         # TIME-BASED predictions: Run when time passes (even without new events)
         # These check temporal conditions like approaching events, missed routines,
@@ -764,26 +794,32 @@ class PredictionEngine:
         }
 
         # First, quickly check what messages we've already created predictions for
-        # in the last 48 hours (wider than scan window to catch stragglers)
-        prediction_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-        with self.db.get_connection("user_model") as conn:
-            existing_predictions = conn.execute(
-                """SELECT supporting_signals FROM predictions
-                   WHERE prediction_type = 'reminder'
-                   AND created_at > ?""",
-                (prediction_cutoff,),
-            ).fetchall()
+        # in the last 48 hours (wider than scan window to catch stragglers).
+        # Wrapped in try/except so a corrupted user_model.db doesn't prevent
+        # follow-up predictions entirely — better to risk duplicates than silence.
+        already_predicted_messages: set[str] = set()
+        try:
+            prediction_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+            with self.db.get_connection("user_model") as conn:
+                existing_predictions = conn.execute(
+                    """SELECT supporting_signals FROM predictions
+                       WHERE prediction_type = 'reminder'
+                       AND created_at > ?""",
+                    (prediction_cutoff,),
+                ).fetchall()
 
-        # Build a set of message IDs we've already created predictions for
-        already_predicted_messages = set()
-        for pred in existing_predictions:
-            try:
-                signals = json.loads(pred["supporting_signals"]) if pred["supporting_signals"] else {}
-                msg_id = signals.get("message_id")
-                if msg_id:
-                    already_predicted_messages.add(msg_id)
-            except (json.JSONDecodeError, TypeError):
-                pass
+            for pred in existing_predictions:
+                try:
+                    signals = json.loads(pred["supporting_signals"]) if pred["supporting_signals"] else {}
+                    msg_id = signals.get("message_id")
+                    if msg_id:
+                        already_predicted_messages.add(msg_id)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except Exception as e:
+            logger.warning(
+                "follow_up dedup query failed (skipping dedup, may produce duplicates): %s", e
+            )
 
         # Determine lookback window: 72h on first cycle (to catch unreplied emails
         # from startup or after a connector outage), then 24h on subsequent cycles.
@@ -945,25 +981,31 @@ class PredictionEngine:
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Check what routine deviation predictions we've already created today
-        # to avoid duplicate reminders every 15 minutes
-        with self.db.get_connection("user_model") as conn:
-            existing_predictions = conn.execute(
-                """SELECT supporting_signals FROM predictions
-                   WHERE prediction_type = 'routine_deviation'
-                   AND created_at > ?""",
-                (today_start.isoformat(),),
-            ).fetchall()
+        # to avoid duplicate reminders every 15 minutes.
+        # Wrapped in try/except so a corrupted user_model.db doesn't prevent
+        # routine deviation predictions entirely.
+        already_predicted_routines: set[str] = set()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                existing_predictions = conn.execute(
+                    """SELECT supporting_signals FROM predictions
+                       WHERE prediction_type = 'routine_deviation'
+                       AND created_at > ?""",
+                    (today_start.isoformat(),),
+                ).fetchall()
 
-        # Build set of routines we've already created predictions for today
-        already_predicted_routines = set()
-        for pred in existing_predictions:
-            try:
-                signals = json.loads(pred["supporting_signals"]) if pred["supporting_signals"] else {}
-                routine_name = signals.get("routine_name")
-                if routine_name:
-                    already_predicted_routines.add(routine_name)
-            except (json.JSONDecodeError, TypeError):
-                pass
+            for pred in existing_predictions:
+                try:
+                    signals = json.loads(pred["supporting_signals"]) if pred["supporting_signals"] else {}
+                    routine_name = signals.get("routine_name")
+                    if routine_name:
+                        already_predicted_routines.add(routine_name)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except Exception as e:
+            logger.warning(
+                "routine_deviation dedup query failed (skipping dedup, may produce duplicates): %s", e
+            )
 
         # For each routine, check if it should have been completed by now
         for routine in routines:
@@ -1468,20 +1510,31 @@ class PredictionEngine:
         through while still filtering truly annoying interruptions.
         """
         # --- Gather context signals ---
-        # Current mood from the mood_signals profile
-        mood_profile = self.ums.get_signal_profile("mood_signals")
-        mood_data = mood_profile["data"] if mood_profile else {}
+        # Current mood from the mood_signals profile.
+        # Wrapped in try/except so a corrupted user_model.db doesn't crash
+        # reaction prediction. Default to empty data (neutral mood).
+        try:
+            mood_profile = self.ums.get_signal_profile("mood_signals")
+            mood_data = mood_profile["data"] if mood_profile else {}
+        except Exception as e:
+            logger.warning("predict_reaction: mood profile query failed (using defaults): %s", e)
+            mood_data = {}
 
         # Count how many notifications the user dismissed in the last 2 hours.
         # A high count means they're in "leave me alone" mode.
-        with self.db.get_connection("preferences") as conn:
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-            row = conn.execute(
-                """SELECT COUNT(*) as cnt FROM feedback_log
-                   WHERE feedback_type = 'dismissed' AND timestamp > ?""",
-                (cutoff,),
-            ).fetchone()
-            recent_dismissals = row["cnt"] if row else 0
+        # Wrapped in try/except so preferences DB errors don't crash prediction.
+        recent_dismissals = 0
+        try:
+            with self.db.get_connection("preferences") as conn:
+                cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+                row = conn.execute(
+                    """SELECT COUNT(*) as cnt FROM feedback_log
+                       WHERE feedback_type = 'dismissed' AND timestamp > ?""",
+                    (cutoff,),
+                ).fetchone()
+                recent_dismissals = row["cnt"] if row else 0
+        except Exception as e:
+            logger.warning("predict_reaction: dismissal count query failed (using 0): %s", e)
 
         # --- Scoring logic ---
         # Start at 0.3 (slightly positive) to bias toward surfacing by default.
@@ -1532,7 +1585,11 @@ class PredictionEngine:
         # Only used when no explicit quiet hours are configured.
         in_low_activity_hour = False
         if not in_quiet_hours:
-            cadence_profile = self.ums.get_signal_profile("cadence")
+            try:
+                cadence_profile = self.ums.get_signal_profile("cadence")
+            except Exception as e:
+                logger.warning("predict_reaction: cadence profile query failed (skipping): %s", e)
+                cadence_profile = None
             if cadence_profile:
                 hourly_activity: dict = cadence_profile["data"].get("hourly_activity", {})
                 if hourly_activity:
@@ -1680,20 +1737,27 @@ class PredictionEngine:
 
             _get_accuracy_multiplier("routine_deviation")  # 100% accuracy
             # → 0.5 + 1.0 * 0.6 = 1.1
+
+        On DB error, returns 1.0 (no adjustment) so predictions are not
+        penalized or boosted when accuracy data is unavailable.
         """
-        with self.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                """SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
-                   FROM predictions
-                   WHERE prediction_type = ?
-                     AND was_surfaced = 1
-                     AND resolved_at IS NOT NULL
-                     AND (resolution_reason IS NULL
-                          OR resolution_reason != 'automated_sender_fast_path')""",
-                (prediction_type,),
-            ).fetchone()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    """SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                       FROM predictions
+                       WHERE prediction_type = ?
+                         AND was_surfaced = 1
+                         AND resolved_at IS NOT NULL
+                         AND (resolution_reason IS NULL
+                              OR resolution_reason != 'automated_sender_fast_path')""",
+                    (prediction_type,),
+                ).fetchone()
+        except Exception as e:
+            logger.warning("_get_accuracy_multiplier(%s) query failed (returning 1.0): %s", prediction_type, e)
+            return 1.0
 
         total = row["total"] if row else 0
         accurate = row["accurate"] if row else 0
@@ -1771,24 +1835,31 @@ class PredictionEngine:
             _get_contact_accuracy_multiplier("new@example.com")
             # Only 2 resolved predictions → not enough data
             # → 1.0  (no adjustment)
+
+        On DB error, returns 1.0 (no adjustment) so predictions are not
+        penalized or boosted when accuracy data is unavailable.
         """
         # Query resolved opportunity predictions where supporting_signals contains
         # this contact's email.  We use JSON_EXTRACT when available (SQLite >= 3.38)
         # with a string-contains fallback for older builds.
-        with self.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                """SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
-                   FROM predictions
-                   WHERE prediction_type = 'opportunity'
-                     AND was_surfaced = 1
-                     AND resolved_at IS NOT NULL
-                     AND (resolution_reason IS NULL
-                          OR resolution_reason != 'automated_sender_fast_path')
-                     AND supporting_signals LIKE ?""",
-                (f'%"contact_email": "{contact_email.lower()}"%',),
-            ).fetchone()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    """SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate
+                       FROM predictions
+                       WHERE prediction_type = 'opportunity'
+                         AND was_surfaced = 1
+                         AND resolved_at IS NOT NULL
+                         AND (resolution_reason IS NULL
+                              OR resolution_reason != 'automated_sender_fast_path')
+                         AND supporting_signals LIKE ?""",
+                    (f'%"contact_email": "{contact_email.lower()}"%',),
+                ).fetchone()
+        except Exception as e:
+            logger.warning("_get_contact_accuracy_multiplier(%s) query failed (returning 1.0): %s", contact_email, e)
+            return 1.0
 
         total = row["total"] if row else 0
         accurate = row["accurate"] if row else 0
@@ -1831,16 +1902,23 @@ class PredictionEngine:
             predictions that targeted a specific contact (e.g. relationship
             maintenance), the contact_email is extracted from ``supporting_signals``.
             For non-contact predictions, the second element is ``None``.
+
+        On DB error, returns an empty set (fail-open: no suppression rather
+        than crashing the pipeline).
         """
-        with self.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                """SELECT prediction_type, supporting_signals
-                   FROM predictions
-                   WHERE user_response = 'not_relevant'
-                     AND was_surfaced = 1
-                     AND resolved_at IS NOT NULL
-                     AND datetime(resolved_at) > datetime('now', '-90 days')""",
-            ).fetchall()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT prediction_type, supporting_signals
+                       FROM predictions
+                       WHERE user_response = 'not_relevant'
+                         AND was_surfaced = 1
+                         AND resolved_at IS NOT NULL
+                         AND datetime(resolved_at) > datetime('now', '-90 days')""",
+                ).fetchall()
+        except Exception as e:
+            logger.warning("_get_suppressed_prediction_keys query failed (skipping suppression): %s", e)
+            return set()
 
         keys: set[tuple[str, str | None]] = set()
         for row in rows:
