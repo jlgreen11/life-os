@@ -94,7 +94,27 @@ class BaseConnector(ABC):
         # background sync loop and subscribe to inbound action requests.
         success = await self.authenticate()
         if not success:
-            await self._update_state("error", "Authentication failed")
+            # Use descriptive error from subclass (e.g. GoogleConnector sets
+            # self._auth_error) with a generic fallback for connectors that
+            # don't set the attribute.
+            auth_error = getattr(self, "_auth_error", None) or "Authentication failed"
+            await self._update_state("error", auth_error)
+            await self.bus.publish(
+                "system.connector.error",
+                {
+                    "connector_id": self.CONNECTOR_ID,
+                    "error": auth_error,
+                    "error_type": "authentication",
+                    "display_name": self.DISPLAY_NAME,
+                },
+                source=self.CONNECTOR_ID,
+            )
+            logger.warning(
+                "[%s] Authentication failed — connector will not start. "
+                "Re-authenticate via /admin connector panel. Error: %s",
+                self.CONNECTOR_ID,
+                auth_error,
+            )
             return
 
         self._running = True
