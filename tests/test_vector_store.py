@@ -551,3 +551,62 @@ def test_add_document_lancedb_error_handling():
 
         result = store.add_document("doc1", "This should fail.")
         assert result is False
+
+
+# --- Zero-Embedding Detection Tests ---
+
+
+def test_add_document_returns_false_when_embedding_unavailable(vector_store_fallback):
+    """add_document() returns False when embed_text returns None for all chunks."""
+    # vector_store_fallback has _embedder = None, so embed_text always returns None
+    result = vector_store_fallback.add_document("doc1", "This is a valid document that should fail to embed.")
+    assert result is False
+    # Nothing should be stored
+    assert len(vector_store_fallback._fallback_docs) == 0
+    assert len(vector_store_fallback._fallback_embeddings) == 0
+
+
+def test_add_document_returns_true_when_some_chunks_succeed(vector_store_with_embedder):
+    """add_document() returns True when at least one chunk is successfully embedded."""
+    # Create text long enough to produce 2 chunks
+    long_text = "a" * 1500
+
+    call_count = 0
+    original_embed = vector_store_with_embedder.embed_text
+
+    def partial_embed(text):
+        """Return None for the first chunk, valid embedding for the second."""
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return None
+        return original_embed(text)
+
+    vector_store_with_embedder.embed_text = partial_embed
+
+    result = vector_store_with_embedder.add_document("doc1", long_text)
+    assert result is True
+    # Only the second chunk should be stored
+    assert len(vector_store_with_embedder._fallback_docs) == 1
+
+
+def test_add_document_logs_warning_on_zero_embeddings(vector_store_fallback, caplog):
+    """add_document() logs a warning when no chunks could be embedded."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="storage.vector_store"):
+        vector_store_fallback.add_document("doc42", "This document will fail to embed entirely.")
+
+    assert any("add_document(doc42)" in record.message and "no chunks embedded" in record.message
+               for record in caplog.records)
+
+
+def test_add_document_logs_debug_per_failed_chunk(vector_store_fallback, caplog):
+    """add_document() logs a debug message for each chunk that fails to embed."""
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="storage.vector_store"):
+        vector_store_fallback.add_document("doc99", "This text is long enough to be a single chunk for embedding.")
+
+    assert any("Embedding failed for chunk 0 of doc doc99" in record.message
+               for record in caplog.records)
