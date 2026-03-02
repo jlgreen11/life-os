@@ -7,11 +7,11 @@ through the full processing pipeline:
   1. Store (events.db)
   2. Feedback processing (notification responses)
   3. Source weight tracking
-  4. Episode creation (user_model.db)
-  5. Signal extraction (linguistic, cadence, mood, etc.)
-  6. Rules evaluation (deterministic automation)
-  7. Task extraction (AI-identified action items)
-  8. Vector embedding (semantic search)
+  4. Signal extraction (linguistic, cadence, mood, etc.)
+  5. Rules evaluation (deterministic automation)
+  6. Task extraction (AI-identified action items)
+  7. Vector embedding (semantic search)
+  8. Episode creation (user_model.db) — after signals so mood data is current
 
 Individual stages have their own unit tests; these integration tests verify
 the stages execute together in sequence and that errors in one stage do not
@@ -127,7 +127,7 @@ async def test_email_event_stored_and_episode_created(lifeos, db):
     assert row is not None, "Event should be stored in events.db"
     assert dict(row)["type"] == "email.received"
 
-    # Stage 1.5: episode created in user_model.db
+    # Stage 6: episode created in user_model.db
     with db.get_connection("user_model") as conn:
         episodes = conn.execute(
             "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
@@ -277,7 +277,8 @@ async def test_pipeline_error_isolation_signal_extractor(lifeos, db):
         ).fetchone()
     assert row is not None, "Event should be stored despite signal extraction failure"
 
-    # Stage 1.5: episode should still be created (runs before signal extraction)
+    # Stage 6: episode should still be created (runs after signal extraction,
+    # but signal extraction failure doesn't block it due to fail-open)
     with db.get_connection("user_model") as conn:
         episodes = conn.execute(
             "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
@@ -320,7 +321,7 @@ async def test_pipeline_error_isolation_rules_engine(lifeos, db):
         ).fetchone()
     assert row is not None, "Event should be stored despite rules engine failure"
 
-    # Episode should be created (stage 1.5)
+    # Episode should be created (stage 6)
     with db.get_connection("user_model") as conn:
         episodes = conn.execute(
             "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
@@ -488,3 +489,63 @@ async def test_system_event_stored_but_no_episode(lifeos, db):
             "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
         ).fetchall()
     assert len(episodes) == 0, "System event should NOT create an episode"
+
+
+# ---------------------------------------------------------------------------
+# Test 11: Episode creation runs AFTER signal extraction (pipeline ordering)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_episode_creation_runs_after_signal_extraction(lifeos, db):
+    """Verify episode creation (Stage 6) executes after signal extraction (Stage 2).
+
+    This is critical because _create_episode() calls
+    signal_extractor.get_current_mood() to attach mood context to the episode.
+    If episode creation ran before signal extraction, the mood data would be
+    stale by one event.
+    """
+    call_order = []
+
+    # Wrap signal_extractor.process_event to track call order
+    original_process = lifeos.signal_extractor.process_event
+
+    async def tracking_process(event):
+        call_order.append("signal_extraction")
+        return await original_process(event)
+
+    lifeos.signal_extractor.process_event = tracking_process
+
+    # Wrap _create_episode to track call order
+    original_create_episode = lifeos._create_episode
+
+    async def tracking_create_episode(event):
+        call_order.append("episode_creation")
+        return await original_create_episode(event)
+
+    lifeos._create_episode = tracking_create_episode
+
+    event = _make_event(
+        "email.received",
+        from_address="ordering-test@example.com",
+        subject="Pipeline ordering test",
+        body_plain="This event tests that signal extraction runs before episode creation.",
+    )
+
+    await lifeos.master_event_handler(event)
+
+    # Both stages should have run
+    assert "signal_extraction" in call_order, "Signal extraction should have been called"
+    assert "episode_creation" in call_order, "Episode creation should have been called"
+
+    # Signal extraction must come before episode creation
+    signal_idx = call_order.index("signal_extraction")
+    episode_idx = call_order.index("episode_creation")
+    assert signal_idx < episode_idx, (
+        f"Signal extraction (index {signal_idx}) must run before "
+        f"episode creation (index {episode_idx}). "
+        f"Actual call order: {call_order}"
+    )
+
+    # Restore originals
+    lifeos.signal_extractor.process_event = original_process
+    lifeos._create_episode = original_create_episode

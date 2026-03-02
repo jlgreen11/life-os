@@ -1838,17 +1838,6 @@ class LifeOS:
             except Exception as e:
                 logger.error("Source weight tracking error (event_id=%s): %s", event.get("id"), e)
 
-            # Stage 1.5 — Episodic Memory: convert each event into a memory
-            # episode for the user model's Layer 1 (Episodic) storage.
-            # This provides the raw interaction history that feeds semantic
-            # fact extraction and enables the system to answer "when did I
-            # last talk to X" or "what happened in my meeting yesterday".
-            try:
-                await self._create_episode(event)
-            except Exception as e:
-                logger.error("Episode creation error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
-
             # Stage 2 — Learn: the signal extractor passively analyses the
             # event to update the user model (patterns, preferences, etc.).
             try:
@@ -1889,6 +1878,19 @@ class LifeOS:
                 await self._embed_event(event)
             except Exception as e:
                 logger.error("Embedding error (event_id=%s, type=%s): %s",
+                             event.get("id"), event.get("type"), e)
+
+            # Stage 6 — Episodic Memory: convert each event into a memory
+            # episode for the user model's Layer 1 (Episodic) storage.
+            # This provides the raw interaction history that feeds semantic
+            # fact extraction and enables the system to answer "when did I
+            # last talk to X" or "what happened in my meeting yesterday".
+            # Runs after signal extraction so mood/linguistic signals are
+            # current when attached to the episode.
+            try:
+                await self._create_episode(event)
+            except Exception as e:
+                logger.error("Episode creation error (event_id=%s, type=%s): %s",
                              event.get("id"), event.get("type"), e)
 
         # Subscribe with a wildcard so every subject published on the bus
