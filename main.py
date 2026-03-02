@@ -374,6 +374,13 @@ class LifeOS:
         # path is permanently blocked (requires >= 20 samples) after a DB rebuild.
         await self._backfill_decision_profile_if_needed()
 
+        # 1.17. Verify all signal profiles are populated, retry failures once
+        # After DB corruption → repair → backfill, some profiles may still be empty
+        # because their backfill silently failed. This verification step catches the
+        # gap and retries once, preventing the cascade: empty profiles → 0 predictions
+        # → no notifications → dead system.
+        await self._verify_and_retry_backfills()
+
         # 2. Initialize vector store
         logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()
@@ -1716,6 +1723,103 @@ class LifeOS:
         except Exception as e:
             # Fail-open: backfill errors must never crash the startup sequence.
             logger.warning("       ⚠ Decision profile backfill failed (non-fatal): %s", e)
+
+    async def _verify_and_retry_backfills(self):
+        """Verify signal profiles are populated after backfill and retry any that failed.
+
+        After all 8 backfill methods run, some profiles may still be empty because
+        the backfill silently caught an exception (e.g. stale DB connection after
+        table repair, script error, missing events).  This method:
+          1. Checks each expected profile type via get_signal_profile()
+          2. Logs a summary of populated vs missing profiles
+          3. Retries each missing profile's backfill method ONCE
+          4. Logs final status with a WARNING if any remain empty
+
+        This closes the silent-failure gap where DB corruption → repair → failed
+        backfill → empty profiles → 0 predictions → dead system.
+        """
+        try:
+            # Map profile types to their corresponding backfill methods.
+            profile_backfill_map = {
+                "relationships": self._backfill_relationship_profile_if_needed,
+                "temporal": self._backfill_temporal_profile_if_needed,
+                "topics": self._backfill_topic_profile_if_needed,
+                "linguistic": self._backfill_linguistic_profile_if_needed,
+                "cadence": self._backfill_cadence_profile_if_needed,
+                "mood_signals": self._backfill_mood_signals_profile_if_needed,
+                "spatial": self._backfill_spatial_profile_if_needed,
+                "decision": self._backfill_decision_profile_if_needed,
+            }
+
+            expected_types = list(profile_backfill_map.keys())
+
+            # --- Phase 1: Check which profiles are populated ---
+            populated = []
+            missing = []
+            for profile_type in expected_types:
+                try:
+                    profile = self.user_model_store.get_signal_profile(profile_type)
+                    if profile and profile.get("samples_count", 0) > 0:
+                        populated.append(profile_type)
+                    else:
+                        missing.append(profile_type)
+                except Exception:
+                    missing.append(profile_type)
+
+            logger.info(
+                "       → Signal profile status: %d/%d populated, missing: %s",
+                len(populated),
+                len(expected_types),
+                missing if missing else "(none)",
+            )
+
+            if not missing:
+                return
+
+            # --- Phase 2: Retry missing profiles once ---
+            for profile_type in missing:
+                backfill_method = profile_backfill_map[profile_type]
+                logger.info(
+                    "       → Retrying backfill for %s (attempt 2/2)...",
+                    profile_type,
+                )
+                try:
+                    # Touch the user_model connection to ensure the pool is fresh
+                    # after any table repair that may have invalidated cached connections.
+                    self.db.get_connection("user_model")
+                    await backfill_method()
+                except Exception as e:
+                    logger.warning(
+                        "       ⚠ Retry backfill for %s failed (non-fatal): %s",
+                        profile_type,
+                        e,
+                    )
+
+            # --- Phase 3: Final status ---
+            still_missing = []
+            for profile_type in missing:
+                try:
+                    profile = self.user_model_store.get_signal_profile(profile_type)
+                    if not profile or profile.get("samples_count", 0) == 0:
+                        still_missing.append(profile_type)
+                except Exception:
+                    still_missing.append(profile_type)
+
+            if still_missing:
+                logger.warning(
+                    "       ⚠ Signal profiles still empty after retry: %s "
+                    "(predictions depending on these profiles will not fire)",
+                    still_missing,
+                )
+            else:
+                logger.info(
+                    "       ✓ All %d signal profiles now populated after retry",
+                    len(expected_types),
+                )
+
+        except Exception as e:
+            # Fail-open: verification errors must never crash the startup sequence.
+            logger.warning("       ⚠ Signal profile verification failed (non-fatal): %s", e)
 
     async def _clean_relationship_profile_if_needed(self):
         """Remove marketing contacts from the relationships signal profile.
