@@ -23,6 +23,7 @@ from web.schemas import (
     ContextBatchRequest,
     ContextEventRequest,
     DraftRequest,
+    FactConfirmationRequest,
     FactCorrectionRequest,
     FeedbackRequest,
     PreferenceUpdate,
@@ -1254,6 +1255,94 @@ def register_routes(app: FastAPI, life_os) -> None:
             "fact": dict(updated),
             "old_confidence": existing["confidence"],
             "new_confidence": new_confidence,
+        }
+
+    @app.post("/api/user-model/facts/{key}/confirm")
+    async def confirm_fact(key: str, request: FactConfirmationRequest = FactConfirmationRequest()):
+        """Confirm a semantic fact is correct, bumping confidence by +0.05.
+
+        This is the positive counterpart to the correction endpoint: when the
+        user explicitly confirms that an inferred fact is accurate, this
+        endpoint increments ``times_confirmed`` and increases confidence by
+        the architectural standard of +0.05 (capped at 1.0).  This closes
+        the positive feedback loop that was previously missing — confidence
+        could only grow through automated re-inference, never through
+        explicit user validation.
+
+        Args:
+            key: The semantic fact key to confirm
+            request: Optional reason for the confirmation
+
+        Returns:
+            Confirmed fact with old and new confidence values
+        """
+        import json
+        from datetime import datetime, timezone
+
+        with life_os.db.get_connection("user_model") as conn:
+            existing = conn.execute(
+                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+            ).fetchone()
+
+            if not existing:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
+
+            old_confidence = existing["confidence"]
+            # Confidence grows by +0.05 per confirmation, capped at 1.0.
+            # Round to 2 decimal places to avoid floating point drift.
+            new_confidence = round(min(1.0, old_confidence + 0.05), 2)
+
+            conn.execute(
+                """UPDATE semantic_facts
+                   SET confidence = ?,
+                       times_confirmed = times_confirmed + 1,
+                       last_confirmed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                   WHERE key = ?""",
+                (new_confidence, key),
+            )
+
+            updated = conn.execute(
+                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+            ).fetchone()
+
+        # Log confirmation to the feedback collector for analytics
+        if life_os.feedback_collector:
+            await life_os.feedback_collector._store_feedback({
+                "action_id": f"fact_confirmation_{key}",
+                "action_type": "semantic_fact",
+                "feedback_type": "confirmed",
+                "response_latency_seconds": 0,
+                "context": {
+                    "fact_key": key,
+                    "old_confidence": old_confidence,
+                    "new_confidence": new_confidence,
+                    "reason": request.reason,
+                },
+                "notes": request.reason,
+            })
+
+        # Publish telemetry event for the confirmation
+        if life_os.event_bus and life_os.event_bus.is_connected:
+            await life_os.event_bus.publish(
+                "usermodel.fact.confirmed",
+                {
+                    "key": key,
+                    "old_confidence": old_confidence,
+                    "new_confidence": new_confidence,
+                    "category": updated["category"],
+                    "times_confirmed": updated["times_confirmed"],
+                    "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                source="web_api",
+            )
+
+        return {
+            "status": "confirmed",
+            "fact": dict(updated),
+            "old_confidence": old_confidence,
+            "new_confidence": new_confidence,
+            "times_confirmed": updated["times_confirmed"],
         }
 
     @app.get("/api/user-model/mood")
