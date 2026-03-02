@@ -893,14 +893,14 @@ def test_batch_recovery_on_init(db, mock_event_bus):
 
     When the server restarts, the in-memory batch queue is lost. The recovery
     method should re-populate it from notifications that are still 'pending'
-    with normal or low priority in the database.
+    with normal or low priority in the database, including action_url.
     """
     # Pre-populate 3 pending normal-priority notifications BEFORE creating NM
     with db.get_connection("state") as conn:
         for i in range(3):
             conn.execute(
-                "INSERT INTO notifications (id, title, body, priority, domain, status) VALUES (?, ?, ?, ?, ?, ?)",
-                (f"batch-{i}", f"Batch {i}", f"Body {i}", "normal", "email", "pending"),
+                "INSERT INTO notifications (id, title, body, priority, domain, status, action_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (f"batch-{i}", f"Batch {i}", f"Body {i}", "normal", "email", "pending", f"https://example.com/action/{i}"),
             )
 
     # Instantiate a NEW NotificationManager — should recover pending batch
@@ -909,6 +909,11 @@ def test_batch_recovery_on_init(db, mock_event_bus):
     assert len(nm._pending_batch) == 3
     recovered_ids = {item["id"] for item in nm._pending_batch}
     assert recovered_ids == {"batch-0", "batch-1", "batch-2"}
+
+    # Verify action_url is preserved through recovery
+    for item in nm._pending_batch:
+        idx = item["id"].split("-")[1]
+        assert item["action_url"] == f"https://example.com/action/{idx}"
 
 
 def test_batch_recovery_skips_high_priority(db, mock_event_bus):
@@ -978,6 +983,56 @@ async def test_recovered_batch_delivers_on_digest(db, mock_event_bus):
 
     # Batch should be empty after digest
     assert len(nm._pending_batch) == 0
+
+
+@pytest.mark.asyncio
+async def test_batch_queuing_preserves_action_url(
+    notification_manager, set_notification_mode, db
+):
+    """Test that batched notifications preserve action_url through the full lifecycle.
+
+    When a notification with an action_url is routed to batch delivery, the
+    action_url must be preserved in _pending_batch so that get_digest() returns
+    it. This is critical for PR #342's actionable prediction cards (Draft Reply,
+    View Calendar, Done) which depend on action_url being present.
+    """
+    set_notification_mode("batched")
+
+    action_url = "https://example.com/predictions/pred-abc/reply"
+    notif_id = await notification_manager.create_notification(
+        title="Follow up with Alice",
+        body="You might want to reply to Alice's email",
+        priority="normal",
+        source_event_id="pred-abc",
+        domain="prediction",
+        action_url=action_url,
+    )
+
+    # Verify action_url is in the in-memory batch
+    assert len(notification_manager._pending_batch) == 1
+    assert notification_manager._pending_batch[0]["action_url"] == action_url
+
+    # Verify action_url survives through get_digest()
+    digest = await notification_manager.get_digest()
+    assert len(digest) == 1
+    assert digest[0]["action_url"] == action_url
+    assert digest[0]["id"] == notif_id
+
+
+@pytest.mark.asyncio
+async def test_batch_queuing_preserves_none_action_url(
+    notification_manager, set_notification_mode
+):
+    """Test that batched notifications without action_url have it set to None."""
+    set_notification_mode("batched")
+
+    await notification_manager.create_notification(
+        title="No Action URL",
+        priority="normal",
+    )
+
+    assert len(notification_manager._pending_batch) == 1
+    assert notification_manager._pending_batch[0]["action_url"] is None
 
 
 @pytest.mark.asyncio
