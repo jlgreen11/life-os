@@ -32,24 +32,35 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        """Remove a connection from the active set (called on client disconnect)."""
-        self.active_connections.remove(websocket)
+        """Remove a connection from the active set (called on client disconnect).
+
+        Safe to call multiple times for the same websocket — a second call
+        (e.g. from a race between broadcast cleanup and the disconnect handler)
+        is silently ignored.
+        """
+        try:
+            self.active_connections.remove(websocket)
+        except ValueError:
+            pass  # Already removed or never fully connected
 
     async def broadcast(self, message: dict):
         """Send a JSON message to every connected client.
 
-        Errors for individual connections (e.g. a client that disconnected
-        between the iteration start and the send call) are silently caught
-        so that one broken connection does not prevent delivery to the others.
-        A future improvement could remove the failed connection from the list.
+        Dead connections (clients that disconnected between broadcasts) are
+        automatically removed from the active set to prevent error accumulation.
+        Removal happens after the iteration to avoid modifying the list mid-loop.
         """
+        dead: list[WebSocket] = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
             except Exception:
-                # Swallow send errors for disconnected clients to avoid
-                # breaking the broadcast loop for remaining connections.
-                pass
+                dead.append(connection)
+        for ws in dead:
+            try:
+                self.active_connections.remove(ws)
+            except ValueError:
+                pass  # Already removed by a concurrent disconnect call
 
 
 # Module-level singleton — imported by routes.py and any service that needs
