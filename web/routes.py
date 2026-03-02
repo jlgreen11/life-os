@@ -3415,6 +3415,128 @@ def register_routes(app: FastAPI, life_os) -> None:
         }
 
     # -------------------------------------------------------------------
+    # Database Health & Recovery
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/db-integrity")
+    async def check_db_integrity():
+        """Run PRAGMA quick_check on all databases and report integrity status.
+
+        Returns a map of database name → {status, detail} for each of the five
+        SQLite databases.  ``status`` is one of ``"ok"``, ``"corrupted"``, or
+        ``"error"`` (when the file cannot be opened at all).
+
+        Example response::
+
+            {
+                "databases": {
+                    "events": {"status": "ok", "detail": "ok"},
+                    "user_model": {"status": "corrupted", "detail": "..."}
+                },
+                "checked_at": "2026-03-02T14:00:00+00:00"
+            }
+        """
+        results = {}
+        for db_name in ["events", "entities", "state", "user_model", "preferences"]:
+            try:
+                with life_os.db.get_connection(db_name) as conn:
+                    check = conn.execute("PRAGMA quick_check").fetchone()
+                    # sqlite3.Row or tuple — handle both
+                    value = check[0] if check else "unknown"
+                    results[db_name] = {
+                        "status": "ok" if value == "ok" else "corrupted",
+                        "detail": value,
+                    }
+            except Exception as e:
+                results[db_name] = {
+                    "status": "error",
+                    "detail": str(e),
+                }
+        return {"databases": results, "checked_at": datetime.now(timezone.utc).isoformat()}
+
+    @app.post("/api/admin/rebuild-user-model")
+    async def rebuild_user_model():
+        """Rebuild user_model.db from scratch if corrupted.
+
+        Checks integrity first and skips the rebuild when the database is
+        healthy.  When corruption is detected the flow is:
+
+        1. Back up the corrupted file (``user_model.db.corrupted-<ts>``).
+        2. Reinitialise the schema via ``DatabaseManager._init_user_model_db()``.
+        3. Kick off signal-profile backfills in the background.
+
+        The endpoint returns immediately; poll ``GET /api/admin/backfills/status``
+        to track the background backfill progress.
+        """
+        import asyncio as _asyncio
+        import os
+
+        # Step 1: Check if actually corrupted
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                check = conn.execute("PRAGMA quick_check").fetchone()
+                value = check[0] if check else "unknown"
+                if value == "ok":
+                    return {"status": "skipped", "reason": "Database is healthy, no rebuild needed"}
+        except Exception:
+            pass  # Corrupted or unreadable — proceed with rebuild
+
+        # Step 2: Use DatabaseManager's built-in recovery (backs up corrupt file)
+        try:
+            recovered = life_os.db._check_and_recover_db("user_model")
+            if not recovered:
+                # _check_and_recover_db returned False but our quick_check above
+                # failed — force a manual backup as a fallback.
+                db_path = os.path.join(str(life_os.db.data_dir), "user_model.db")
+                backup_suffix = f".corrupted-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                for ext in ("", "-wal", "-shm"):
+                    src = db_path + ext
+                    if os.path.exists(src):
+                        os.rename(src, db_path + ext + backup_suffix)
+                logger.warning("Manually backed up corrupted user_model.db")
+
+            # Step 3: Reinitialise schema (creates fresh tables)
+            life_os.db._init_user_model_db()
+            logger.info("Rebuilt user_model.db schema after runtime recovery")
+
+        except Exception as e:
+            logger.error("Runtime user_model.db rebuild failed: %s", e)
+            return {"status": "error", "detail": str(e)}
+
+        # Step 4: Trigger signal-profile backfill in background
+        async def _post_rebuild_backfill():
+            """Re-run signal profile backfills after a runtime DB rebuild."""
+            try:
+                # Use the same backfill sequence as /api/admin/backfills/trigger
+                for method_name in [
+                    "_backfill_relationship_profile_if_needed",
+                    "_clean_relationship_profile_if_needed",
+                    "_backfill_temporal_profile_if_needed",
+                    "_backfill_topic_profile_if_needed",
+                    "_backfill_linguistic_profile_if_needed",
+                    "_backfill_cadence_profile_if_needed",
+                    "_backfill_mood_signals_profile_if_needed",
+                ]:
+                    if hasattr(life_os, method_name):
+                        try:
+                            await getattr(life_os, method_name)()
+                        except Exception as e:
+                            logger.error("Post-rebuild backfill %s failed: %s", method_name, e)
+            except Exception as e:
+                logger.error("Post-rebuild backfill failed: %s", e)
+
+        _asyncio.create_task(_post_rebuild_backfill())
+
+        return {
+            "status": "rebuilt",
+            "message": (
+                "Database rebuilt with fresh schema. "
+                "Signal profile backfill started in background. "
+                "Poll /api/admin/backfills/status to track progress."
+            ),
+        }
+
+    # -------------------------------------------------------------------
     # Setup / Onboarding
     # -------------------------------------------------------------------
 
