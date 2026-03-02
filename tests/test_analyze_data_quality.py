@@ -331,6 +331,113 @@ def test_user_model_sections_independent_reverse(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Prediction pipeline diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_prediction_pipeline_empty_db(tmp_path):
+    """prediction_pipeline section exists with all zeros when no predictions exist."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    report = analyze(str(tmp_path))
+    pp = report["sections"].get("prediction_pipeline")
+
+    assert pp is not None, "prediction_pipeline section should exist"
+    assert pp["total_generated"] == 0
+    assert pp["surfaced"] == 0
+    assert pp["filtered"] == 0
+    assert pp["surfacing_rate"] == 0
+    assert pp["resolved"] == 0
+    assert pp["user_acted_on"] == 0
+    assert pp["user_dismissed"] == 0
+    assert pp["auto_filtered"] == 0
+    assert pp["filter_reasons"] == {}
+
+
+def test_prediction_pipeline_with_filtered_predictions(tmp_path):
+    """Filtered predictions are counted and categorized by filter_reason."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+    conn.row_factory = sqlite3.Row
+
+    # Insert filtered predictions with various filter_reasons
+    predictions = [
+        ("p1", "NEED", 0, "filtered", "confidence:0.18 (threshold:0.3)", "2026-01-01T00:00:00Z"),
+        ("p2", "NEED", 0, "filtered", "confidence:0.25 (threshold:0.3)", "2026-01-01T00:00:00Z"),
+        ("p3", "RISK", 0, "filtered", "reaction:annoying (too frequent)", "2026-01-01T00:00:00Z"),
+        ("p4", "OPPORTUNITY", 0, "filtered", "duplicate:similar prediction exists", "2026-01-01T00:00:00Z"),
+        ("p5", "REMINDER", 1, "acted_on", None, None),
+    ]
+    for pid, ptype, surfaced, response, reason, resolved in predictions:
+        conn.execute(
+            """INSERT INTO predictions (id, prediction_type, was_surfaced, user_response,
+               filter_reason, resolved_at) VALUES (?, ?, ?, ?, ?, ?)""",
+            (pid, ptype, surfaced, response, reason, resolved),
+        )
+    conn.commit()
+    conn.close()
+
+    report = analyze(str(tmp_path))
+    pp = report["sections"]["prediction_pipeline"]
+
+    assert pp["total_generated"] == 5
+    assert pp["surfaced"] == 1
+    assert pp["filtered"] == 4
+    assert pp["auto_filtered"] == 4  # user_response = 'filtered'
+    assert pp["user_acted_on"] == 1
+
+    # Check filter_reason categorization
+    reasons = pp["filter_reasons"]
+    assert reasons.get("low_confidence") == 2, f"Expected 2 low_confidence, got: {reasons}"
+    assert reasons.get("reaction_gate") == 1, f"Expected 1 reaction_gate, got: {reasons}"
+    assert reasons.get("duplicate") == 1, f"Expected 1 duplicate, got: {reasons}"
+
+
+def test_prediction_pipeline_surfacing_rate(tmp_path):
+    """Surfacing rate is calculated correctly from a mix of surfaced and filtered predictions."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+    conn.row_factory = sqlite3.Row
+
+    # Insert 3 surfaced, 7 filtered → 30% surfacing rate
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO predictions (id, prediction_type, was_surfaced) VALUES (?, 'NEED', 1)",
+            (f"surfaced_{i}",),
+        )
+    for i in range(7):
+        conn.execute(
+            """INSERT INTO predictions (id, prediction_type, was_surfaced, user_response,
+               filter_reason, resolved_at) VALUES (?, 'NEED', 0, 'filtered',
+               'confidence:0.1 (threshold:0.3)', '2026-01-01T00:00:00Z')""",
+            (f"filtered_{i}",),
+        )
+    conn.commit()
+    conn.close()
+
+    report = analyze(str(tmp_path))
+    pp = report["sections"]["prediction_pipeline"]
+
+    assert pp["total_generated"] == 10
+    assert pp["surfaced"] == 3
+    assert pp["filtered"] == 7
+    assert pp["surfacing_rate"] == 0.3  # 3/10 = 0.3
+    assert pp["auto_filtered"] == 7
+    assert pp["filter_reasons"].get("low_confidence") == 7
+
+
+# ---------------------------------------------------------------------------
 # Helper functions to create minimal database files
 # ---------------------------------------------------------------------------
 
@@ -358,11 +465,14 @@ def _create_minimal_user_model_db(tmp_path):
     conn = sqlite3.connect(str(tmp_path / "user_model.db"))
     conn.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER PRIMARY KEY,
+            id TEXT PRIMARY KEY,
             prediction_type TEXT,
             was_surfaced INTEGER DEFAULT 0,
             was_accurate INTEGER,
+            filter_reason TEXT,
             resolution_reason TEXT,
+            user_response TEXT,
+            resolved_at TEXT,
             created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         )
     """)

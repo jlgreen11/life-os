@@ -168,6 +168,66 @@ def analyze(data_dir: str = "./data") -> dict:
         except Exception as e:
             report["sections"]["prediction_accuracy"] = {"error": str(e)}
 
+        # ---------------------------------------------------------------
+        # Prediction pipeline diagnostics — full visibility into why
+        # predictions are or aren't surfacing, independent of accuracy.
+        # ---------------------------------------------------------------
+        try:
+            pipeline_stats = _query_one(
+                um_conn,
+                """SELECT
+                    COUNT(*) as total_generated,
+                    SUM(CASE WHEN was_surfaced = 1 THEN 1 ELSE 0 END) as surfaced,
+                    SUM(CASE WHEN was_surfaced = 0 THEN 1 ELSE 0 END) as filtered,
+                    SUM(CASE WHEN resolved_at IS NOT NULL THEN 1 ELSE 0 END) as resolved,
+                    SUM(CASE WHEN user_response = 'acted_on' THEN 1 ELSE 0 END) as acted_on,
+                    SUM(CASE WHEN user_response = 'dismissed' THEN 1 ELSE 0 END) as dismissed,
+                    SUM(CASE WHEN user_response = 'filtered' THEN 1 ELSE 0 END) as auto_filtered
+                   FROM predictions""",
+            )
+
+            filter_reasons = _query(
+                um_conn,
+                """SELECT
+                    CASE
+                        WHEN filter_reason LIKE 'confidence:%' THEN 'low_confidence'
+                        WHEN filter_reason LIKE 'reaction:%' THEN 'reaction_gate'
+                        WHEN filter_reason LIKE 'duplicate:%' THEN 'duplicate'
+                        WHEN filter_reason IS NOT NULL THEN filter_reason
+                        ELSE 'none'
+                    END as reason_category,
+                    COUNT(*) as count
+                   FROM predictions
+                   WHERE was_surfaced = 0
+                   GROUP BY reason_category
+                   ORDER BY count DESC""",
+                [],
+            )
+
+            total = (pipeline_stats["total_generated"] or 0) if pipeline_stats else 0
+            surfaced = (pipeline_stats["surfaced"] or 0) if pipeline_stats else 0
+            filtered = (pipeline_stats["filtered"] or 0) if pipeline_stats else 0
+            resolved = (pipeline_stats["resolved"] or 0) if pipeline_stats else 0
+            acted_on = (pipeline_stats["acted_on"] or 0) if pipeline_stats else 0
+            dismissed = (pipeline_stats["dismissed"] or 0) if pipeline_stats else 0
+            auto_filtered = (pipeline_stats["auto_filtered"] or 0) if pipeline_stats else 0
+
+            report["sections"]["prediction_pipeline"] = {
+                "total_generated": total,
+                "surfaced": surfaced,
+                "filtered": filtered,
+                "surfacing_rate": round(surfaced / max(total, 1), 3),
+                "resolved": resolved,
+                "user_acted_on": acted_on,
+                "user_dismissed": dismissed,
+                "auto_filtered": auto_filtered,
+                "filter_reasons": {r["reason_category"]: r["count"] for r in filter_reasons}
+                if filter_reasons
+                else {},
+            }
+        except Exception as e:
+            report["sections"]["prediction_pipeline"] = {"error": str(e)}
+
         try:
             # Signal profiles freshness
             profiles = _query(um_conn, "SELECT profile_type, samples_count, updated_at FROM signal_profiles", [])
