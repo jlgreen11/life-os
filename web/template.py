@@ -426,6 +426,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .card-actions button.btn-warn:hover {
             background: rgba(240,160,32,0.1);
         }
+        .card-actions button.btn-success {
+            background: var(--accent-green);
+            border-color: var(--accent-green);
+            color: #000;
+        }
+        .card-actions button.btn-success:hover {
+            opacity: 0.85;
+        }
 
         /* Sentiment dots */
         .sentiment-dot {
@@ -2749,17 +2757,34 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             var html = '';
             for (var i = 0; i < Math.min(preds.length, 5); i++) {
                 var p = preds[i];
+                var prediction_type = p.prediction_type || '';
+                var signals = p.supporting_signals || {};
+                var contactEmail = signals.contact_email || '';
+                var suggestedAction = p.suggested_action || '';
                 html += '<div class="prediction-card" id="pred-' + escAttr(p.id) + '">';
-                html += '<div class="pred-label">' + escHtml(p.prediction_type || 'Prediction') + '</div>';
+                html += '<div class="pred-label">' + escHtml(prediction_type || 'Prediction') + '</div>';
                 html += '<div>' + escHtml(p.description || '') + '</div>';
                 if (p.confidence !== undefined) {
                     html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + escHtml(String(Math.round(p.confidence * 100))) + '% confidence</div>';
                 }
-                html += '<div class="card-actions" style="margin-top:6px;display:flex;gap:4px">';
+                if (suggestedAction) {
+                    html += '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">\u2192 ' + escHtml(suggestedAction) + '</div>';
+                }
+                html += '<div class="card-actions" style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">';
+                if (prediction_type === 'reminder' && contactEmail) {
+                    html += '<button class="btn-small btn-primary" onclick="event.stopPropagation();draftPredictionReply(\'' + escAttr(p.id) + '\',\'' + escAttr(contactEmail) + '\',\'' + escAttr(p.description || '') + '\')">Draft Reply</button>';
+                }
+                if (prediction_type === 'conflict') {
+                    html += '<button class="btn-small btn-primary" onclick="event.stopPropagation();switchTopic(\'calendar\')">View Calendar</button>';
+                }
+                html += '<button class="btn-small btn-success" onclick="event.stopPropagation();predictionActedOn(\'' + escAttr(p.id) + '\')">Done</button>';
                 html += '<button class="btn-small" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',true,null)">Accurate</button>';
                 html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',false,null)">Inaccurate</button>';
-                html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',false,\'not_relevant\')">Not About Me</button>';
+                html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();predictionFeedback(\'' + escAttr(p.id) + '\',false,\'not_relevant\')">Not Me</button>';
                 html += '</div>';
+                if (prediction_type === 'reminder' && contactEmail) {
+                    html += '<div id="pred-draft-' + escAttr(p.id) + '"></div>';
+                }
                 html += '</div>';
             }
             safeSetContent(el, html);
@@ -2783,6 +2808,41 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             setTimeout(function() { resp.className = ''; }, 3000);
         })
         .catch(function(err) { console.error('Prediction feedback failed:', err); });
+    }
+
+    function predictionActedOn(id) {
+        var url = API + '/api/predictions/' + encodeURIComponent(id) + '/feedback?was_accurate=true&user_response=acted_on';
+        fetch(url, {method: 'POST'})
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            var card = document.getElementById('pred-' + id);
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(function() { card.style.display = 'none'; }, 350);
+            }
+        })
+        .catch(function(err) { console.error('Prediction acted-on failed:', err); });
+    }
+
+    function draftPredictionReply(predId, contactEmail, context) {
+        var placeholder = document.getElementById('pred-draft-' + predId);
+        if (placeholder) placeholder.textContent = 'Drafting reply...';
+        fetch(API + '/api/draft', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({incoming_message: context, contact_id: contactEmail, channel: 'email'})
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (placeholder) {
+                // Content is escaped via escHtml before insertion — safe against XSS
+                placeholder.innerHTML = '<div style="margin-top:6px;padding:8px;background:var(--bg-secondary);border-radius:6px;font-size:12px;white-space:pre-wrap">' + escHtml(data.draft || data.content || 'No draft generated') + '</div>';
+            }
+        })
+        .catch(function(err) {
+            if (placeholder) placeholder.textContent = 'Draft failed: ' + err.message;
+        });
     }
 
     function loadPeopleRadar() {
