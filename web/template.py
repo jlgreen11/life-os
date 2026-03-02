@@ -2705,7 +2705,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({text: text})
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+            if (!res.ok) {
+                return res.json().catch(function() { return {}; }).then(function(err) {
+                    throw new Error(err.detail || err.error || 'Command failed (HTTP ' + res.status + ')');
+                });
+            }
+            return res.json();
+        })
         .then(function(data) {
             resp.className = 'visible';
             if (data.type === 'search_results') {
@@ -2717,7 +2724,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 loadFeed();
                 loadBadges();
             } else {
-                resp.textContent = data.content || data.briefing || JSON.stringify(data, null, 2);
+                resp.textContent = data.content || data.briefing || data.message || 'Command processed.';
             }
         })
         .catch(function(err) {
@@ -2738,7 +2745,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             safeSetContent(el, '<div style="white-space:pre-wrap">' + escHtml(text) + '</div>');
         })
         .catch(function() {
-            safeSetContent(el, '<div style="color:var(--text-muted)">Briefing unavailable</div>');
+            safeSetContent(el, '<div style="color:var(--text-muted)">No briefing today. Connect your email or calendar in <a href="/admin" style="color:var(--accent-blue)">Settings</a> to enable daily briefings.</div>');
         });
     }
 
@@ -2751,7 +2758,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             var preds = data.predictions || [];
             if (!Array.isArray(preds)) preds = [];
             if (preds.length === 0) {
-                safeSetContent(el, '<div style="color:var(--text-muted)">No predictions yet</div>');
+                safeSetContent(el, '<div style="color:var(--text-muted)">No predictions yet. Predictions appear as Life OS learns your communication, calendar, and spending patterns.</div>');
                 return;
             }
             var html = '';
@@ -2855,7 +2862,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .then(function(data) {
             var contacts = data.contacts || (Array.isArray(data) ? data : []);
             if (contacts.length === 0) {
-                safeSetContent(el, '<div style="color:var(--text-muted)">No contact data yet</div>');
+                safeSetContent(el, '<div style="color:var(--text-muted)">No contacts tracked yet. Relationship patterns appear after analyzing your emails and messages.</div>');
                 return;
             }
             var html = '';
@@ -3126,10 +3133,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             var msgs = stale.map(function(s) {
                 var hrs = Math.round(s.hours_since || 0);
                 var timeStr = hrs > 48 ? Math.round(hrs / 24) + ' days' : hrs + ' hours';
-                return s.source + ' (' + timeStr + ' ago)';
+                return escHtml(s.source) + ' (' + timeStr + ' ago)';
             });
-            document.getElementById('staleDataMsg').textContent =
-                'Data may be outdated \u2014 ' + msgs.join(', ') + ' not syncing';
+            safeSetContent(document.getElementById('staleDataMsg'),
+                'Data may be outdated \u2014 ' + msgs.join(', ') + ' not syncing. <a href="/admin" style="color:inherit;text-decoration:underline">Check connector settings</a>');
             banner.classList.add('visible');
         })
         .catch(function() {});
