@@ -306,17 +306,17 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
                 <div class="form-checkbox">
                     <input type="checkbox" id="f_${field.name}" data-field="${field.name}"
                            ${value ? 'checked' : ''}>
-                    <label for="f_${field.name}">${field.name}${field.required ? ' *' : ''}</label>
+                    <label for="f_${field.name}">${escapeHtml(field.name)}${field.required ? ' *' : ''}</label>
                 </div>
             `;
             if (field.help_text) {
-                group.innerHTML += `<div class="form-help">${field.help_text}</div>`;
+                group.innerHTML += `<div class="form-help">${escapeHtml(field.help_text)}</div>`;
             }
             return group;
         }
 
-        const label = `<label class="form-label">${field.name}${field.required ? ' *' : ''}</label>`;
-        const help = field.help_text ? `<div class="form-help">${field.help_text}</div>` : '';
+        const label = `<label class="form-label">${escapeHtml(field.name)}${field.required ? ' *' : ''}</label>`;
+        const help = field.help_text ? `<div class="form-help">${escapeHtml(field.help_text)}</div>` : '';
 
         if (field.field_type === 'password') {
             const displayVal = typeof value === 'string' ? value : '';
@@ -363,6 +363,10 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
     // ---------------------------------------------------------------
 
     function escapeAttr(s) {
+        return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function escapeHtml(s) {
         return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
@@ -426,6 +430,7 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
                 body: JSON.stringify({config}),
             });
             const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Server error ' + res.status);
             if (data.success) {
                 showToast('Connection successful', 'success');
             } else {
