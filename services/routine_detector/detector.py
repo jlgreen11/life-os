@@ -52,7 +52,7 @@ class RoutineDetector:
         self.user_model_store = user_model_store
 
         # Detection thresholds
-        self.min_occurrences = 3  # Need at least 3 instances to call it a routine
+        self.min_occurrences = 2  # Need at least 2 instances to call it a routine
         self.time_window_hours = 2  # Actions within 2h can be part of same routine
         self.consistency_threshold = 0.6  # 60% of instances must match for it to be a routine
 
@@ -497,7 +497,7 @@ class RoutineDetector:
 
                 following_actions = cursor.fetchall()
 
-            if len(following_actions) >= 2:  # At least 2 following steps for a sequence
+            if len(following_actions) >= 1:  # At least 1 following step for a sequence
                 avg_day_count = sum(dc for _, dc in following_actions) / len(following_actions)
                 # Consistency = fraction of trigger-event days where the follow-up
                 # actions also appeared.  Use days_occurred as the denominator
