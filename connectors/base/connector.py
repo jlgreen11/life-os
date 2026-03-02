@@ -37,12 +37,18 @@ class BaseConnector(ABC):
     DISPLAY_NAME: str = "Base Connector"
     SYNC_INTERVAL_SECONDS: int = 60
 
+    # Exponential backoff delays for auto-reconnect (seconds):
+    # 1 min → 5 min → 15 min → 1 hr (cap)
+    RECONNECT_DELAYS: list[int] = [60, 300, 900, 3600]
+
     def __init__(self, event_bus: EventBus, db: DatabaseManager, config: dict[str, Any]):
         self.bus = event_bus
         self.db = db
         self.config = config
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._reconnect_task: Optional[asyncio.Task] = None
+        self._reconnect_attempt: int = 0
 
     # -------------------------------------------------------------------
     # Lifecycle methods — Override these in subclasses
@@ -110,11 +116,11 @@ class BaseConnector(ABC):
                 source=self.CONNECTOR_ID,
             )
             logger.warning(
-                "[%s] Authentication failed — connector will not start. "
-                "Re-authenticate via /admin connector panel. Error: %s",
+                "[%s] Authentication failed — starting reconnect loop. Error: %s",
                 self.CONNECTOR_ID,
                 auth_error,
             )
+            self._reconnect_task = asyncio.create_task(self._reconnect_loop())
             return
 
         self._running = True
@@ -129,7 +135,7 @@ class BaseConnector(ABC):
         )
 
     async def stop(self):
-        """Stop the connector's sync loop."""
+        """Stop the connector's sync loop and any reconnect attempts."""
         self._running = False
         if self._task:
             self._task.cancel()
@@ -137,7 +143,75 @@ class BaseConnector(ABC):
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._reconnect_task:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
         await self._update_state("inactive")
+
+    async def _reconnect_loop(self):
+        """Background loop that retries authentication with exponential backoff.
+
+        Started automatically when start() fails to authenticate. Retries
+        at increasing intervals (1 min, 5 min, 15 min, 1 hr cap) until
+        authentication succeeds, then starts the normal sync loop.
+        """
+        while not self._running:
+            delay = self.RECONNECT_DELAYS[min(self._reconnect_attempt, len(self.RECONNECT_DELAYS) - 1)]
+            logger.info(
+                "[%s] Reconnect attempt %d in %ds",
+                self.CONNECTOR_ID,
+                self._reconnect_attempt + 1,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            self._reconnect_attempt += 1
+            try:
+                success = await self.authenticate()
+                if success:
+                    logger.info(
+                        "[%s] Reconnected successfully after %d attempt(s)",
+                        self.CONNECTOR_ID,
+                        self._reconnect_attempt,
+                    )
+                    self._running = True
+                    self._reconnect_attempt = 0
+                    self._reconnect_task = None
+                    await self._update_state("active")
+                    self._task = asyncio.create_task(self._sync_loop())
+                    await self.bus.subscribe(
+                        f"action.{self.CONNECTOR_ID}.*",
+                        self._handle_action_request,
+                        consumer_name=f"connector-{self.CONNECTOR_ID}",
+                    )
+                    await self.bus.publish(
+                        "system.connector.reconnected",
+                        {
+                            "connector_id": self.CONNECTOR_ID,
+                            "attempts": self._reconnect_attempt,
+                        },
+                        source=self.CONNECTOR_ID,
+                    )
+                    return
+                else:
+                    auth_error = getattr(self, "_auth_error", None) or "Authentication failed"
+                    logger.warning(
+                        "[%s] Reconnect attempt %d failed: %s",
+                        self.CONNECTOR_ID,
+                        self._reconnect_attempt,
+                        auth_error,
+                    )
+                    await self._update_state("error", auth_error)
+            except Exception as e:
+                logger.error(
+                    "[%s] Reconnect attempt %d error: %s",
+                    self.CONNECTOR_ID,
+                    self._reconnect_attempt,
+                    e,
+                )
 
     async def _sync_loop(self):
         """Main polling loop."""
