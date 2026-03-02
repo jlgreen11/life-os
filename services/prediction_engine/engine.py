@@ -173,6 +173,12 @@ class PredictionEngine:
 
         # Skip entirely if neither trigger is active
         if not has_new_events and not time_based_due:
+            logger.info(
+                "Prediction engine skipped: no new events (cursor=%d) and "
+                "time-based not due (last_run=%s, interval=15m)",
+                self._last_event_cursor,
+                self._last_time_based_run,
+            )
             return []
 
         predictions = []
@@ -231,7 +237,7 @@ class PredictionEngine:
             # Skip event-based predictions, mark as not run
             generation_stats['spending_patterns'] = '(skipped: no new events)'
 
-        logger.debug(
+        logger.info(
             "Generated predictions by type: %s (total=%d) [triggers: events=%s, time=%s]",
             generation_stats, len(predictions), has_new_events, time_based_due,
         )
@@ -350,6 +356,23 @@ class PredictionEngine:
 
             self.ums.store_prediction(pred.model_dump())
 
+        # Summary log for zero-prediction debugging: reports total output,
+        # per-method breakdown, and signal profile availability so operators
+        # can quickly identify why the intelligence layer isn't producing.
+        profile_types = ["relationships", "cadence", "mood_signals", "linguistic", "topics"]
+        available_profiles = [pt for pt in profile_types if self.ums.get_signal_profile(pt)]
+        logger.info(
+            "Prediction engine completed: %d predictions generated (from %d raw, %d filtered). "
+            "Methods: %s. Signal profiles available: %d/%d (%s)",
+            len(filtered),
+            len(predictions),
+            len(predictions) - len(filtered),
+            generation_stats,
+            len(available_profiles),
+            len(profile_types),
+            ", ".join(available_profiles) if available_profiles else "none",
+        )
+
         return filtered
 
     # -------------------------------------------------------------------
@@ -412,8 +435,9 @@ class PredictionEngine:
 
         # Diagnostic logging for observability
         if len(events) < 2:
-            logger.debug(
-                "calendar_conflicts: No conflicts possible: %d calendar events found (need ≥2)", len(events)
+            logger.info(
+                "calendar_conflicts: %d events fetched (need ≥2 for conflict detection) — skipping",
+                len(events),
             )
             return predictions  # Need at least two events to find conflicts
 
@@ -508,10 +532,10 @@ class PredictionEngine:
         timed_count = len(parsed_events) - all_day_count
 
         if len(parsed_events) < 2:
-            logger.debug(
-                "calendar_conflicts: No conflicts possible: %d events in 48h window "
-                "(all_day=%d, timed=%d, total_synced=%d)",
-                len(parsed_events), all_day_count, timed_count, len(events),
+            logger.info(
+                "calendar_conflicts: %d events fetched, %d in 48h window "
+                "(all_day=%d, timed=%d) — need ≥2 for conflict detection, skipping",
+                len(events), len(parsed_events), all_day_count, timed_count,
             )
             return predictions
 
@@ -606,7 +630,7 @@ class PredictionEngine:
                 ))
 
         # Diagnostic summary
-        logger.debug(
+        logger.info(
             "calendar_conflicts: Analyzed %d synced events → %d in 48h window "
             "(all_day=%d, timed=%d) → %d comparisons (skipped %d all-day pairs) → %d predictions",
             len(events), len(parsed_events), all_day_count, timed_count,
@@ -685,6 +709,13 @@ class PredictionEngine:
         # a higher confidence boost because the user is more likely to need to reply.
         rel_profile = self.ums.get_signal_profile("relationships")
         rel_contacts = rel_profile["data"].get("contacts", {}) if rel_profile else {}
+
+        if not rel_profile or not rel_contacts:
+            logger.info(
+                "follow_up_needs: relationships signal profile is %s — "
+                "priority contact boost disabled",
+                "empty" if rel_profile else "unavailable",
+            )
 
         # Build a fast-lookup set of priority contact addresses.
         # A contact is "priority" if the user has sent at least one outbound message
@@ -872,7 +903,7 @@ class PredictionEngine:
             ).fetchall()
 
         if not routines:
-            logger.debug("routine_deviations: No predictions: 0 routines with consistency_score > 0.6")
+            logger.info("routine_deviations: 0 routines with consistency_score > 0.6 — skipping")
             return predictions
 
         now = datetime.now(timezone.utc)
@@ -984,7 +1015,7 @@ class PredictionEngine:
                 continue
 
         # Diagnostic summary
-        logger.debug(
+        logger.info(
             "routine_deviations: Analyzed %d routines (already_predicted_today=%d) → %d predictions",
             len(routines), len(already_predicted_routines), len(predictions),
         )
@@ -1006,7 +1037,7 @@ class PredictionEngine:
         # Load the relationships signal profile from the user model
         rel_profile = self.ums.get_signal_profile("relationships")
         if not rel_profile:
-            logger.debug("relationship_maintenance: No predictions: relationships profile not found")
+            logger.info("relationship_maintenance: relationships signal profile unavailable — skipping")
             return predictions
 
         contacts = rel_profile["data"].get("contacts", {})
@@ -1121,7 +1152,7 @@ class PredictionEngine:
             and not self._is_marketing_or_noreply(addr, {})
             and data.get("outbound_count", 0) == 0
         )
-        logger.debug(
+        logger.info(
             "relationship_maintenance: Analyzed %d contacts "
             "(eligible=%d, marketing_filtered=%d, inbound_only_filtered=%d) → %d predictions",
             total_contacts, eligible, marketing_filtered, inbound_only_filtered, len(predictions),
@@ -1171,7 +1202,7 @@ class PredictionEngine:
             ).fetchall()
 
         if not events:
-            logger.debug("preparation_needs: No predictions: 0 calendar events found")
+            logger.info("preparation_needs: 0 calendar events found — skipping")
             return predictions
 
         # Parse event payloads and extract actual start times.
@@ -1291,7 +1322,7 @@ class PredictionEngine:
         # Diagnostic summary
         travel_events = sum(1 for e in parsed_events if any(kw in e["payload"].get("title", "").lower() for kw in ["flight", "airport", "hotel", "travel", "trip"]))
         large_meetings = sum(1 for e in parsed_events if len(e["payload"].get("attendees", [])) > 3)
-        logger.debug(
+        logger.info(
             "preparation_needs: Analyzed %d synced events → %d in 12-48h window "
             "(travel=%d, large_meetings=%d) → %d predictions",
             len(events), len(parsed_events), travel_events, large_meetings, len(predictions),
@@ -1322,8 +1353,9 @@ class PredictionEngine:
             ).fetchall()
 
         if len(transactions) < 5:
-            logger.debug(
-                "spending_patterns: No predictions: %d transactions found (need ≥5)", len(transactions)
+            logger.info(
+                "spending_patterns: %d transactions found (need ≥5) — skipping",
+                len(transactions),
             )
             return predictions  # Not enough data for meaningful patterns
 
@@ -1370,7 +1402,7 @@ class PredictionEngine:
 
         # Diagnostic summary
         high_spend_categories = sum(1 for cat, amt in by_category.items() if amt / total > 0.25 and amt > 200)
-        logger.debug(
+        logger.info(
             "spending_patterns: Analyzed %d transactions "
             "(total=$%.0f, categories=%d, high_spend=%d) → %d predictions",
             len(transactions), total, len(by_category), high_spend_categories, len(predictions),
