@@ -235,11 +235,10 @@ async def test_module_singleton_can_connect():
 
 
 def test_disconnect_nonexistent_connection(manager):
-    """Test that disconnecting a non-existent connection raises ValueError."""
+    """Test that disconnecting a non-existent connection is safely ignored."""
     ws = Mock()
-    # Should raise ValueError when trying to remove non-existent connection
-    with pytest.raises(ValueError):
-        manager.disconnect(ws)
+    # Should not raise — disconnect is idempotent and safe for unknown sockets
+    manager.disconnect(ws)
 
 
 @pytest.mark.asyncio
