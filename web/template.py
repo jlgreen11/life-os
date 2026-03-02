@@ -3142,14 +3142,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         /* Refresh the bottom status bar with live health and data-freshness info.
          *
          * Fetches /health (connector health checks) and /api/system/sources
-         * (per-source event stats) in parallel, then updates three status bar
-         * slots:
-         *   1. Connection dot — green when NATS event bus is connected
-         *   2. Event count — total events logged
-         *   3. Data freshness — "N sources syncing" or a stale-source warning
-         *
-         * The stale-source warning (⚠ N stale) links to the System topic so
-         * the user can drill in to see which source stopped and why.
+         * (per-source event stats) in parallel, then updates the status bar:
+         *   1. Connection dot — green when NATS event bus is connected,
+         *      switches to error when DB is degraded
+         *   2. Status text — "Connected" or "Connected (DB degraded)"
+         *   3. Event count — total events logged
+         *   4. Connector status — priority order:
+         *        a) Connector errors (links to /admin)
+         *        b) Stale-source warning (links to System topic)
+         *        c) Normal "N sources syncing" state
          */
         Promise.all([
             fetch(API + '/health').then(function(r) { return r.json(); }),
@@ -3163,26 +3164,59 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             var count = document.getElementById('eventCount');
             var connStatus = document.getElementById('connectorStatus');
 
-            dot.className = 'status-dot ' + (health.status === 'ok' ? 'ok' : 'error');
-            text.textContent = health.event_bus ? 'Connected' : 'Event bus disconnected';
+            // DB degradation overrides the status dot to error state.
+            var dbDegraded = health.db_status === 'degraded';
+            var dotState = (health.status === 'ok' && !dbDegraded) ? 'ok' : 'error';
+            dot.className = 'status-dot ' + dotState;
+
+            // Append DB warning to connection text when databases are unhealthy.
+            var statusLabel = health.event_bus ? 'Connected' : 'Event bus disconnected';
+            if (dbDegraded) {
+                statusLabel += ' (DB degraded)';
+            }
+            text.textContent = statusLabel;
             count.textContent = (health.events_stored || 0).toLocaleString() + ' events';
 
-            // Show stale-source warning if any external connector is silent —
-            // this is the #1 sign the user should check their connector config.
-            var staleCount = sourcesData.stale_count || 0;
-            if (staleCount > 0) {
-                // All values used here are numeric — no XSS risk.
-                connStatus.textContent = '\u26a0\ufe0f ' + staleCount +
-                    ' stale source' + (staleCount > 1 ? 's' : '');
-                connStatus.style.color = 'var(--accent-yellow)';
+            // Detect connector-level errors from the health payload.
+            var errorConnectors = (health.connectors || []).filter(function(c) {
+                return c.status === 'error';
+            });
+
+            if (errorConnectors.length > 0) {
+                // Connector errors take highest priority in the status bar.
+                // Build a safe display string using escHtml for connector names.
+                var names = errorConnectors.map(function(c) {
+                    return escHtml(c.connector || 'unknown');
+                });
+                connStatus.textContent = '\u26a0\ufe0f ' + errorConnectors.length +
+                    ' connector error' + (errorConnectors.length > 1 ? 's' : '') +
+                    ': ' + names.join(', ');
+                // Show error details on hover via title attribute.
+                var details = errorConnectors.map(function(c) {
+                    return (c.connector || 'unknown') + ': ' + (c.details || 'unknown error');
+                });
+                connStatus.title = details.join('\n');
+                connStatus.style.color = 'var(--accent-red, #e74c3c)';
                 connStatus.style.cursor = 'pointer';
-                connStatus.onclick = function() { switchTopic('system'); };
+                connStatus.onclick = function() { window.location.href = '/admin'; };
             } else {
-                var activeCount = (sourcesData.sources || []).filter(function(s) { return !s.stale; }).length;
-                connStatus.textContent = activeCount + ' source' + (activeCount !== 1 ? 's' : '') + ' syncing';
-                connStatus.style.color = '';
-                connStatus.style.cursor = '';
-                connStatus.onclick = null;
+                // No connector errors — fall back to stale-source check.
+                connStatus.title = '';
+                var staleCount = sourcesData.stale_count || 0;
+                if (staleCount > 0) {
+                    // All values used here are numeric — no XSS risk.
+                    connStatus.textContent = '\u26a0\ufe0f ' + staleCount +
+                        ' stale source' + (staleCount > 1 ? 's' : '');
+                    connStatus.style.color = 'var(--accent-yellow)';
+                    connStatus.style.cursor = 'pointer';
+                    connStatus.onclick = function() { switchTopic('system'); };
+                } else {
+                    var activeCount = (sourcesData.sources || []).filter(function(s) { return !s.stale; }).length;
+                    connStatus.textContent = activeCount + ' source' + (activeCount !== 1 ? 's' : '') + ' syncing';
+                    connStatus.style.color = '';
+                    connStatus.style.cursor = '';
+                    connStatus.onclick = null;
+                }
             }
         })
         .catch(function() {
