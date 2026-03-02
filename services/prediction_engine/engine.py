@@ -56,6 +56,56 @@ class PredictionEngine:
         self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
         self._first_follow_up_run: bool = True  # First cycle uses wider lookback (72h vs 24h)
 
+        # Ensure prediction_engine_state table exists and load any persisted state
+        self._ensure_state_table()
+        self._load_persisted_state()
+
+    def _ensure_state_table(self) -> None:
+        """Create the prediction_engine_state table if it doesn't exist."""
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS prediction_engine_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
+
+    def _load_persisted_state(self) -> None:
+        """Load persisted cursor and last-run timestamp from the state table.
+
+        If no persisted state exists (fresh install or first boot), the defaults
+        set in __init__ (cursor=0, last_run=None) are preserved.
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM prediction_engine_state"
+            ).fetchall()
+
+        state = {row["key"]: row["value"] for row in rows}
+
+        if "last_event_cursor" in state:
+            self._last_event_cursor = int(state["last_event_cursor"])
+        if "last_time_based_run" in state:
+            self._last_time_based_run = datetime.fromisoformat(state["last_time_based_run"])
+
+        if state:
+            logger.info(
+                "Prediction engine restored state: cursor=%d, last_time_run=%s",
+                self._last_event_cursor,
+                self._last_time_based_run,
+            )
+        else:
+            logger.info("Prediction engine starting fresh (no persisted state)")
+
+    def _persist_state(self, key: str, value: str) -> None:
+        """Persist a single state key-value pair via INSERT OR REPLACE."""
+        with self.db.get_connection("user_model") as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO prediction_engine_state (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, value, datetime.now(timezone.utc).isoformat()),
+            )
+
     def _has_new_events(self) -> bool:
         """Check if any new events have arrived since last prediction run."""
         with self.db.get_connection("events") as conn:
@@ -68,6 +118,7 @@ class PredictionEngine:
             return False
 
         self._last_event_cursor = current_max
+        self._persist_state("last_event_cursor", str(current_max))
         return True
 
     def _should_run_time_based_predictions(self) -> bool:
@@ -91,12 +142,14 @@ class PredictionEngine:
         # First run always executes
         if self._last_time_based_run is None:
             self._last_time_based_run = now
+            self._persist_state("last_time_based_run", now.isoformat())
             return True
 
         # Run if 15+ minutes have passed since last time-based check
         time_since_last = (now - self._last_time_based_run).total_seconds() / 60
         if time_since_last >= 15:
             self._last_time_based_run = now
+            self._persist_state("last_time_based_run", now.isoformat())
             return True
 
         return False
