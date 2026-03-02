@@ -178,6 +178,20 @@ class PredictionEngine:
             generation_stats, len(predictions), has_new_events, time_based_due,
         )
 
+        # --- Not-relevant suppression ---
+        # Filter out predictions the user has explicitly marked as "not_relevant"
+        # ("Not About Me"). Without this, dismissed predictions regenerate
+        # indefinitely — the feedback is recorded but never acted upon.
+        suppressed_keys = self._get_suppressed_prediction_keys()
+        if suppressed_keys:
+            before_suppression = len(predictions)
+            predictions = [p for p in predictions if not self._is_suppressed(p, suppressed_keys)]
+            suppressed_count = before_suppression - len(predictions)
+            if suppressed_count:
+                logger.debug(
+                    "Suppressed %d predictions based on not_relevant feedback", suppressed_count,
+                )
+
         # --- Accuracy-based confidence decay/boost ---
         # Adjust confidence based on historical accuracy for each prediction type.
         # This closes the feedback loop: predictions that keep getting dismissed
@@ -1664,6 +1678,82 @@ class PredictionEngine:
         # Scale: 50% accuracy → 0.85x, 100% accuracy → 1.2x
         # Ceiling at 1.2 prevents runaway confidence amplification.
         return min(1.2, 0.5 + (accuracy_rate * 0.7))
+
+    def _get_suppressed_prediction_keys(self) -> set[tuple[str, str | None]]:
+        """Return a set of (prediction_type, contact_email_or_None) keys that the user
+        has explicitly marked as ``not_relevant`` within the last 90 days.
+
+        When a user clicks "Not About Me" on a prediction card, the frontend stores
+        ``user_response = 'not_relevant'`` via ``resolve_prediction()``.  This method
+        queries those resolved predictions and builds a suppression set so that
+        ``generate_predictions()`` can filter out predictions the user has already
+        told us are irrelevant.
+
+        The 90-day window ensures suppressions are not permanent — user preferences
+        change over time and we should re-check periodically.
+
+        Returns:
+            A set of ``(prediction_type, contact_email_or_None)`` tuples.  For
+            predictions that targeted a specific contact (e.g. relationship
+            maintenance), the contact_email is extracted from ``supporting_signals``.
+            For non-contact predictions, the second element is ``None``.
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT prediction_type, supporting_signals
+                   FROM predictions
+                   WHERE user_response = 'not_relevant'
+                     AND was_surfaced = 1
+                     AND resolved_at IS NOT NULL
+                     AND datetime(resolved_at) > datetime('now', '-90 days')""",
+            ).fetchall()
+
+        keys: set[tuple[str, str | None]] = set()
+        for row in rows:
+            pred_type = row["prediction_type"]
+            contact_email = None
+            if row["supporting_signals"]:
+                try:
+                    signals = json.loads(row["supporting_signals"])
+                    contact_email = signals.get("contact_email")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            keys.add((pred_type, contact_email))
+        return keys
+
+    @staticmethod
+    def _is_suppressed(prediction: Prediction, suppressed_keys: set[tuple[str, str | None]]) -> bool:
+        """Check whether a prediction matches any not_relevant suppression key.
+
+        A prediction is suppressed if the user has previously marked a prediction
+        of the same type (and, when applicable, the same contact) as ``not_relevant``.
+
+        Matching rules:
+          - (prediction_type, contact_email) — exact match for contact-specific predictions
+          - (prediction_type, None) — type-only suppression for predictions without a contact
+
+        Args:
+            prediction: The candidate prediction to check.
+            suppressed_keys: Set of suppressed keys from ``_get_suppressed_prediction_keys()``.
+
+        Returns:
+            True if the prediction should be suppressed (not surfaced).
+        """
+        pred_type = prediction.prediction_type
+        contact_email = None
+        if prediction.supporting_signals:
+            contact_email = prediction.supporting_signals.get("contact_email")
+
+        # Check exact match (type + contact)
+        if (pred_type, contact_email) in suppressed_keys:
+            return True
+
+        # For contact predictions, also check if the type was suppressed generically
+        # (user marked a non-contact prediction of this type as not_relevant)
+        if contact_email and (pred_type, None) in suppressed_keys:
+            return True
+
+        return False
 
     @staticmethod
     def _is_marketing_or_noreply(from_addr: str, payload: dict) -> bool:
