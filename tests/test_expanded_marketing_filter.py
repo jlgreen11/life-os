@@ -267,7 +267,7 @@ class TestExpandedMarketingFilter:
                 "body_plain": "Sale on knives! Click here to unsubscribe."
             }),
             ("ens@ens.usgs.gov", {
-                "snippet": "Earthquake alert. To unsubscribe from these alerts..."
+                "snippet": "Earthquake alert. To unsubscribe from these alerts... You are receiving this because you signed up."
             }),
         ]
         for email, payload in test_cases:
