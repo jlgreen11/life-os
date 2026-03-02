@@ -84,6 +84,31 @@ class SemanticFactInferrer:
             rows = conn.execute(query, params).fetchall()
             return [row["id"] for row in rows]
 
+    def _early_inference_confidence(self, samples: int, old_threshold: int, base_confidence: float = 0.5) -> float:
+        """Return reduced confidence for inferences below the original sample threshold.
+
+        When sample count is between the new (lowered) threshold and the old threshold,
+        scale confidence proportionally. This ensures early inferences are surfaced
+        but with appropriate uncertainty.
+
+        Args:
+            samples: Current sample count for the profile.
+            old_threshold: The original (pre-lowering) minimum sample threshold.
+            base_confidence: The default confidence used when samples >= old_threshold.
+
+        Returns:
+            Scaled confidence between 0.3 and base_confidence.
+        """
+        try:
+            if samples >= old_threshold:
+                return base_confidence
+            # Linear interpolation: at 0 samples → 0.3, at old_threshold → base_confidence
+            ratio = samples / old_threshold
+            return round(0.3 + (base_confidence - 0.3) * ratio, 2)
+        except Exception:
+            # Fail-open: if confidence calculation fails, use default
+            return base_confidence
+
     def infer_from_linguistic_profile(self):
         """
         Derive semantic facts from linguistic signal profile.
@@ -200,8 +225,9 @@ class SemanticFactInferrer:
           - Active vs. one-sided relationships (inbound/outbound balance)
           - Multi-channel relationships (communication across platforms)
 
-        Confidence threshold: Require 10+ samples for a specific contact
-        before inferring relationship priority.
+        Confidence threshold: Require 5+ samples for a specific contact
+        before inferring relationship priority. Early inferences (5-10 samples)
+        use reduced confidence via _early_inference_confidence scaling.
 
         Filtering:
           - Skip contacts with zero outbound messages (one-way relationships)
@@ -221,9 +247,13 @@ class SemanticFactInferrer:
         self._purge_marketing_relationship_facts()
 
         profile = self.ums.get_signal_profile("relationships")
-        if not profile or profile.get("samples_count", 0) < 10:
-            logger.info("Relationship profile has insufficient samples (<10), skipping inference")
-            return {"type": "relationship", "processed": False, "reason": "insufficient samples (<10)"}
+        if not profile or profile.get("samples_count", 0) < 5:
+            logger.info("Relationship profile has insufficient samples (<5), skipping inference")
+            return {"type": "relationship", "processed": False, "reason": "insufficient samples (<5)"}
+
+        # Scale confidence down for early inferences (between new threshold 5 and old threshold 10)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=10)
 
         data = profile["data"]
         contacts = data.get("contacts", {})
@@ -274,7 +304,7 @@ class SemanticFactInferrer:
 
         for contact_id, contact_data in human_contacts.items():
             interaction_count = contact_data.get("interaction_count", 0)
-            if interaction_count < 5:
+            if interaction_count < 3:
                 continue  # Not enough data
 
             # Link to recent episodes with this contact as source evidence
@@ -287,7 +317,7 @@ class SemanticFactInferrer:
                     key=f"relationship_priority_{contact_id}",
                     category="implicit_preference",
                     value="high_priority",
-                    confidence=min(0.9, 0.6 + min(0.3, (interaction_count / avg_interactions - 2) * 0.1)),
+                    confidence=min(0.9, base_confidence + 0.1 + min(0.3, (interaction_count / avg_interactions - 2) * 0.1)),
                     episode_id=episode_id,
                 )
 
@@ -298,7 +328,7 @@ class SemanticFactInferrer:
                     key=f"relationship_multichannel_{contact_id}",
                     category="implicit_preference",
                     value="multi_channel",
-                    confidence=min(0.85, 0.5 + len(channels_used) * 0.15),
+                    confidence=min(0.85, base_confidence + len(channels_used) * 0.15),
                     episode_id=episode_id,
                 )
 
@@ -315,7 +345,7 @@ class SemanticFactInferrer:
                         key=f"relationship_balance_{contact_id}",
                         category="implicit_preference",
                         value="mutual",
-                        confidence=min(0.85, 0.5 + balance_ratio),
+                        confidence=min(0.85, base_confidence + balance_ratio),
                         episode_id=episode_id,
                     )
                 elif outbound_count > inbound_count * 3:  # User initiates 3x more
@@ -456,13 +486,18 @@ class SemanticFactInferrer:
           - Interest areas (topics mentioned often)
           - Professional vs. personal topic categories
 
-        Confidence threshold: Require 30+ samples before inferring expertise
-        to avoid false positives from temporary interests.
+        Confidence threshold: Require 15+ samples before inferring expertise
+        to avoid false positives from temporary interests. Early inferences
+        (15-30 samples) use reduced confidence via _early_inference_confidence scaling.
         """
         profile = self.ums.get_signal_profile("topics")
-        if not profile or profile.get("samples_count", 0) < 30:
-            logger.info("Topic profile has insufficient samples (<30), skipping inference")
-            return {"type": "topic", "processed": False, "reason": "insufficient samples (<30)"}
+        if not profile or profile.get("samples_count", 0) < 15:
+            logger.info("Topic profile has insufficient samples (<15), skipping inference")
+            return {"type": "topic", "processed": False, "reason": "insufficient samples (<15)"}
+
+        # Scale confidence down for early inferences (between new threshold 15 and old threshold 30)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=30)
 
         data = profile["data"]
         # The topic extractor stores data as "topic_counts", not "topic_frequencies"
@@ -586,22 +621,22 @@ class SemanticFactInferrer:
 
             frequency_ratio = count / total_samples
 
-            if count >= 10 and frequency_ratio > 0.1:
+            if count >= 5 and frequency_ratio > 0.08:
                 # Frequently discussed topic — likely an expertise area
                 self.ums.update_semantic_fact(
                     key=f"expertise_{topic}",
                     category="expertise",
                     value=topic,
-                    confidence=min(0.95, 0.5 + frequency_ratio * 2),  # Higher freq = higher confidence
+                    confidence=min(0.95, base_confidence + frequency_ratio * 2),  # Higher freq = higher confidence
                     episode_id=episode_id,
                 )
-            elif count >= 5 and frequency_ratio > 0.05:
+            elif count >= 3 and frequency_ratio > 0.03:
                 # Moderately discussed topic — area of interest
                 self.ums.update_semantic_fact(
                     key=f"interest_{topic}",
                     category="implicit_preference",
                     value=topic,
-                    confidence=min(0.8, 0.4 + frequency_ratio * 3),
+                    confidence=min(0.8, (base_confidence - 0.1) + frequency_ratio * 3),
                     episode_id=episode_id,
                 )
 
@@ -619,13 +654,18 @@ class SemanticFactInferrer:
           - Peak productivity times
           - Communication rhythm preferences
 
-        Confidence threshold: Require 50+ samples to establish reliable
-        cadence patterns across different times of day.
+        Confidence threshold: Require 25+ samples to establish reliable
+        cadence patterns across different times of day. Early inferences
+        (25-50 samples) use reduced confidence via _early_inference_confidence scaling.
         """
         profile = self.ums.get_signal_profile("cadence")
-        if not profile or profile.get("samples_count", 0) < 50:
-            logger.info("Cadence profile has insufficient samples (<50), skipping inference")
-            return {"type": "cadence", "processed": False, "reason": "insufficient samples (<50)"}
+        if not profile or profile.get("samples_count", 0) < 25:
+            logger.info("Cadence profile has insufficient samples (<25), skipping inference")
+            return {"type": "cadence", "processed": False, "reason": "insufficient samples (<25)"}
+
+        # Scale confidence down for early inferences (between new threshold 25 and old threshold 50)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=50)
 
         data = profile["data"]
         # The cadence extractor stores data as "hourly_activity", not "hourly_distribution"
@@ -659,7 +699,7 @@ class SemanticFactInferrer:
                     key="work_life_boundaries",
                     category="values",
                     value="strict_boundaries",
-                    confidence=min(0.95, 0.5 + (business_hours_ratio - 0.9) * 5),
+                    confidence=min(0.95, base_confidence + (business_hours_ratio - 0.9) * 5),
                     episode_id=episode_id,
                 )
             elif business_hours_ratio < 0.3:
@@ -668,7 +708,7 @@ class SemanticFactInferrer:
                     key="work_life_boundaries",
                     category="values",
                     value="flexible_boundaries",
-                    confidence=min(0.85, 0.5 + (0.3 - business_hours_ratio) * 2),
+                    confidence=min(0.85, base_confidence + (0.3 - business_hours_ratio) * 2),
                     episode_id=episode_id,
                 )
 
@@ -687,7 +727,7 @@ class SemanticFactInferrer:
                     key="peak_communication_hour",
                     category="implicit_preference",
                     value=int(peak_hour),
-                    confidence=min(0.9, 0.5 + peak_ratio * 2),
+                    confidence=min(0.9, base_confidence + peak_ratio * 2),
                     episode_id=episode_id,
                 )
 
@@ -705,7 +745,7 @@ class SemanticFactInferrer:
                 key="peak_communication_hours",
                 category="implicit_preference",
                 value=peak_hours,  # Stored as a JSON-serialisable list, e.g. [9, 10, 11]
-                confidence=min(0.9, 0.5 + len(peak_hours) * 0.04),
+                confidence=min(0.9, base_confidence + len(peak_hours) * 0.04),
                 episode_id=episode_id,
             )
 
@@ -731,7 +771,7 @@ class SemanticFactInferrer:
                     key="observed_quiet_window",
                     category="implicit_preference",
                     value=f"{start_h:02d}:00-{end_h:02d}:00 UTC",
-                    confidence=min(0.85, 0.5 + min(span_len, 10) * 0.035),
+                    confidence=min(0.85, base_confidence + min(span_len, 10) * 0.035),
                     episode_id=episode_id,
                 )
 
@@ -784,15 +824,19 @@ class SemanticFactInferrer:
         shared externally or used in user-facing features without
         explicit consent.
 
-        Confidence threshold: Require 5+ samples to enable early inference.
+        Confidence threshold: Require 3+ samples to enable early inference.
         This low threshold allows the system to start building mood-based
-        semantic facts even with limited history. Initial facts will have
-        lower confidence that grows as more data accumulates.
+        semantic facts even with limited history. Early inferences (3-5 samples)
+        use reduced confidence via _early_inference_confidence scaling.
         """
         profile = self.ums.get_signal_profile("mood_signals")
-        if not profile or profile.get("samples_count", 0) < 5:
-            logger.info("Mood profile has insufficient samples (<5), skipping inference")
-            return {"type": "mood", "processed": False, "reason": "insufficient samples (<5)"}
+        if not profile or profile.get("samples_count", 0) < 3:
+            logger.info("Mood profile has insufficient samples (<3), skipping inference")
+            return {"type": "mood", "processed": False, "reason": "insufficient samples (<3)"}
+
+        # Scale confidence down for early inferences (between new threshold 3 and old threshold 5)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=5)
 
         data = profile["data"]
         recent_signals = data.get("recent_signals", [])
@@ -824,7 +868,7 @@ class SemanticFactInferrer:
                     key="stress_baseline",
                     category="implicit_preference",
                     value="high_stress",
-                    confidence=min(0.75, 0.5 + stress_ratio),
+                    confidence=min(0.75, base_confidence + stress_ratio),
                     episode_id=episode_id,
                 )
             elif stress_ratio < 0.1:  # <10% of signals show negative language
@@ -833,7 +877,7 @@ class SemanticFactInferrer:
                     key="stress_baseline",
                     category="implicit_preference",
                     value="low_stress",
-                    confidence=min(0.8, 0.5 + (0.1 - stress_ratio) * 3),
+                    confidence=min(0.8, base_confidence + (0.1 - stress_ratio) * 3),
                     episode_id=episode_id,
                 )
 
@@ -848,7 +892,7 @@ class SemanticFactInferrer:
                     key="incoming_pressure_exposure",
                     category="implicit_preference",
                     value="high_pressure_environment",
-                    confidence=min(0.8, 0.5 + pressure_ratio * 2),
+                    confidence=min(0.8, base_confidence + pressure_ratio * 2),
                     episode_id=episode_id,
                 )
 
@@ -865,8 +909,10 @@ class SemanticFactInferrer:
           - Work-life boundary preferences (strict vs. flexible)
           - Weekly rhythm patterns (productive days vs. social/recharge days)
 
-        Confidence threshold: Require 50+ samples to establish reliable
+        Confidence threshold: Require 25+ samples to establish reliable
         temporal patterns across different times of day and days of week.
+        Early inferences (25-50 samples) use reduced confidence via
+        _early_inference_confidence scaling.
 
         Semantic facts derived:
           - chronotype: "morning_person" or "night_owl" based on activity peaks
@@ -875,9 +921,13 @@ class SemanticFactInferrer:
           - productive_day_preference: Which days show most work activity
         """
         profile = self.ums.get_signal_profile("temporal")
-        if not profile or profile.get("samples_count", 0) < 50:
-            logger.info("Temporal profile has insufficient samples (<50), skipping inference")
-            return {"type": "temporal", "processed": False, "reason": "insufficient samples (<50)"}
+        if not profile or profile.get("samples_count", 0) < 25:
+            logger.info("Temporal profile has insufficient samples (<25), skipping inference")
+            return {"type": "temporal", "processed": False, "reason": "insufficient samples (<25)"}
+
+        # Scale confidence down for early inferences (between new threshold 25 and old threshold 50)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=50)
 
         data = profile["data"]
         # Keys match what TemporalExtractor._update_profile() actually stores:
@@ -916,7 +966,7 @@ class SemanticFactInferrer:
                     key="chronotype",
                     category="implicit_preference",
                     value="morning_person",
-                    confidence=min(0.9, 0.6 + morning_ratio),
+                    confidence=min(0.9, base_confidence + 0.1 + morning_ratio),
                     episode_id=episode_id,
                 )
             elif evening_ratio > 0.3 and evening_ratio > morning_ratio * 1.5:
@@ -925,7 +975,7 @@ class SemanticFactInferrer:
                     key="chronotype",
                     category="implicit_preference",
                     value="night_owl",
-                    confidence=min(0.9, 0.6 + evening_ratio),
+                    confidence=min(0.9, base_confidence + 0.1 + evening_ratio),
                     episode_id=episode_id,
                 )
 
@@ -941,7 +991,7 @@ class SemanticFactInferrer:
                         key="peak_productivity_hour",
                         category="implicit_preference",
                         value=int(peak_hour),
-                        confidence=min(0.85, 0.5 + peak_ratio * 2),
+                        confidence=min(0.85, base_confidence + peak_ratio * 2),
                         episode_id=episode_id,
                     )
 
@@ -963,7 +1013,7 @@ class SemanticFactInferrer:
                     key="most_productive_day",
                     category="implicit_preference",
                     value=most_productive_day,
-                    confidence=min(0.8, 0.5 + productive_ratio),
+                    confidence=min(0.8, base_confidence + productive_ratio),
                     episode_id=episode_id,
                 )
 
@@ -978,7 +1028,7 @@ class SemanticFactInferrer:
                     key="temporal_work_boundaries",
                     category="values",
                     value="weekday_only_work",
-                    confidence=min(0.9, 0.6 + (0.1 - weekend_ratio) * 5),
+                    confidence=min(0.9, base_confidence + 0.1 + (0.1 - weekend_ratio) * 5),
                     episode_id=episode_id,
                 )
 
@@ -995,8 +1045,9 @@ class SemanticFactInferrer:
           - Travel frequency patterns
           - Location-based domain switching (work/personal by place)
 
-        Confidence threshold: Require 10+ samples to avoid false positives
-        from one-time event locations.
+        Confidence threshold: Require 5+ samples to avoid false positives
+        from one-time event locations. Early inferences (5-10 samples) use
+        reduced confidence via _early_inference_confidence scaling.
 
         Semantic facts derived:
           - primary_work_location: Most frequent work-domain place
@@ -1005,9 +1056,13 @@ class SemanticFactInferrer:
           - location_domain_{place}: Dominant domain (work/personal) per place
         """
         profile = self.ums.get_signal_profile("spatial")
-        if not profile or profile.get("samples_count", 0) < 10:
-            logger.info("Spatial profile has insufficient samples (<10), skipping inference")
-            return {"type": "spatial", "processed": False, "reason": "insufficient samples (<10)"}
+        if not profile or profile.get("samples_count", 0) < 5:
+            logger.info("Spatial profile has insufficient samples (<5), skipping inference")
+            return {"type": "spatial", "processed": False, "reason": "insufficient samples (<5)"}
+
+        # Scale confidence down for early inferences (between new threshold 5 and old threshold 10)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=10)
 
         data = profile["data"]
         # The spatial extractor stores data as JSON-encoded "place_behaviors"
@@ -1052,7 +1107,7 @@ class SemanticFactInferrer:
                     key="primary_work_location",
                     category="implicit_preference",
                     value=place_id,
-                    confidence=min(0.9, 0.5 + min(0.4, visit_count / 100)),
+                    confidence=min(0.9, base_confidence + min(0.4, visit_count / 100)),
                     episode_id=episode_id,
                 )
 
@@ -1064,7 +1119,7 @@ class SemanticFactInferrer:
                         key="work_location_type",
                         category="implicit_preference",
                         value="home_office",
-                        confidence=min(0.85, 0.6 + min(0.25, visit_count / 200)),
+                        confidence=min(0.85, base_confidence + 0.1 + min(0.25, visit_count / 200)),
                         episode_id=episode_id,
                     )
                 elif any(keyword in place_name_lower for keyword in ["office", "building", "campus", "headquarters"]):
@@ -1073,7 +1128,7 @@ class SemanticFactInferrer:
                         key="work_location_type",
                         category="implicit_preference",
                         value="external_office",
-                        confidence=min(0.85, 0.6 + min(0.25, visit_count / 200)),
+                        confidence=min(0.85, base_confidence + 0.1 + min(0.25, visit_count / 200)),
                         episode_id=episode_id,
                     )
 
@@ -1091,7 +1146,7 @@ class SemanticFactInferrer:
                     key=f"frequent_location_{place_id}",
                     category="implicit_preference",
                     value=place_id,
-                    confidence=min(0.9, 0.5 + visit_ratio * 3),
+                    confidence=min(0.9, base_confidence + visit_ratio * 3),
                     episode_id=episode_id,
                 )
 
@@ -1102,7 +1157,7 @@ class SemanticFactInferrer:
                         key=f"location_domain_{place_id}",
                         category="implicit_preference",
                         value=dominant_domain,
-                        confidence=min(0.85, 0.6 + visit_ratio * 2),
+                        confidence=min(0.85, base_confidence + 0.1 + visit_ratio * 2),
                         episode_id=episode_id,
                     )
 
@@ -1119,8 +1174,9 @@ class SemanticFactInferrer:
           - Research depth patterns (gut feel vs. exhaustive research)
           - Delegation preferences (who the user defers to)
 
-        Confidence threshold: Require 20+ samples to establish reliable
-        decision patterns across different contexts.
+        Confidence threshold: Require 10+ samples to establish reliable
+        decision patterns across different contexts. Early inferences
+        (10-20 samples) use reduced confidence via _early_inference_confidence scaling.
 
         Semantic facts derived:
           - decision_speed_{domain}: How quickly user decides in different areas
@@ -1129,9 +1185,13 @@ class SemanticFactInferrer:
           - delegation_preference_{person}: Who user defers to for decisions
         """
         profile = self.ums.get_signal_profile("decision")
-        if not profile or profile.get("samples_count", 0) < 20:
-            logger.info("Decision profile has insufficient samples (<20), skipping inference")
-            return {"type": "decision", "processed": False, "reason": "insufficient samples (<20)"}
+        if not profile or profile.get("samples_count", 0) < 10:
+            logger.info("Decision profile has insufficient samples (<10), skipping inference")
+            return {"type": "decision", "processed": False, "reason": "insufficient samples (<10)"}
+
+        # Scale confidence down for early inferences (between new threshold 10 and old threshold 20)
+        samples = profile.get("samples_count", 0)
+        base_confidence = self._early_inference_confidence(samples, old_threshold=20)
 
         data = profile["data"]
         decision_speeds = data.get("decision_speed_by_domain", {})
@@ -1151,7 +1211,7 @@ class SemanticFactInferrer:
                     key=f"decision_speed_{domain}",
                     category="implicit_preference",
                     value="quick_decision",
-                    confidence=min(0.85, 0.6 + (60 - avg_seconds) / 100),
+                    confidence=min(0.85, base_confidence + 0.1 + (60 - avg_seconds) / 100),
                     episode_id=episode_id,
                 )
             elif avg_seconds > 86400:  # >1 day
@@ -1160,7 +1220,7 @@ class SemanticFactInferrer:
                     key=f"decision_speed_{domain}",
                     category="implicit_preference",
                     value="deliberate_decision",
-                    confidence=min(0.85, 0.5 + min(0.35, avg_seconds / 604800)),  # Cap at 1 week
+                    confidence=min(0.85, base_confidence + min(0.35, avg_seconds / 604800)),  # Cap at 1 week
                     episode_id=episode_id,
                 )
 
@@ -1173,7 +1233,7 @@ class SemanticFactInferrer:
                     key=f"research_preference_{domain}",
                     category="implicit_preference",
                     value="data_driven",
-                    confidence=min(0.9, 0.5 + depth_score / 2),
+                    confidence=min(0.9, base_confidence + depth_score / 2),
                     episode_id=episode_id,
                 )
             elif depth_score < 0.3:
@@ -1182,7 +1242,7 @@ class SemanticFactInferrer:
                     key=f"research_preference_{domain}",
                     category="implicit_preference",
                     value="gut_feel",
-                    confidence=min(0.85, 0.5 + (0.3 - depth_score)),
+                    confidence=min(0.85, base_confidence + (0.3 - depth_score)),
                     episode_id=episode_id,
                 )
 
@@ -1199,7 +1259,7 @@ class SemanticFactInferrer:
                     key="risk_tolerance",
                     category="values",
                     value="high_risk_tolerance",
-                    confidence=min(0.8, 0.5 + (0.3 - avg_research_depth) + (300 - avg_decision_speed) / 600),
+                    confidence=min(0.8, base_confidence + (0.3 - avg_research_depth) + (300 - avg_decision_speed) / 600),
                     episode_id=episode_id,
                 )
             # Low risk: slow decisions + high research
@@ -1208,7 +1268,7 @@ class SemanticFactInferrer:
                     key="risk_tolerance",
                     category="values",
                     value="risk_averse",
-                    confidence=min(0.8, 0.5 + avg_research_depth / 2),
+                    confidence=min(0.8, base_confidence + avg_research_depth / 2),
                     episode_id=episode_id,
                 )
 

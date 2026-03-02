@@ -424,8 +424,8 @@ class TestSemanticFactInferenceThresholds:
         fact = user_model_store.get_semantic_fact("communication_style_formality")
         assert fact is not None, "Should infer with 1 sample"
 
-    def test_relationship_threshold_10_samples(self, user_model_store):
-        """Relationship inference requires 10+ samples."""
+    def test_relationship_threshold_5_samples(self, user_model_store):
+        """Relationship inference requires 5+ samples."""
         user_model_store.update_signal_profile("relationships", {
             "contacts": {
                 # outbound_count must be >0 or the inferrer skips this contact as a
@@ -439,21 +439,21 @@ class TestSemanticFactInferenceThresholds:
             }
         })
 
-        # Test with 9 samples (below threshold)
+        # Test with 4 samples (below threshold)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute("UPDATE signal_profiles SET samples_count = 9 WHERE profile_type = 'relationships'")
+            conn.execute("UPDATE signal_profiles SET samples_count = 4 WHERE profile_type = 'relationships'")
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_relationship_profile()
 
         fact = user_model_store.get_semantic_fact("relationship_multichannel_alice@example.com")
-        assert fact is None, "Should not infer with <10 samples"
+        assert fact is None, "Should not infer with <5 samples"
 
-        # Test with 10 samples (meets threshold)
+        # Test with 5 samples (meets threshold)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute("UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = 'relationships'")
+            conn.execute("UPDATE signal_profiles SET samples_count = 5 WHERE profile_type = 'relationships'")
 
         inferrer.infer_from_relationship_profile()
 
         fact = user_model_store.get_semantic_fact("relationship_multichannel_alice@example.com")
-        assert fact is not None, "Should infer with 10+ samples"
+        assert fact is not None, "Should infer with 5+ samples"

@@ -395,16 +395,16 @@ class TestDomainResponsePriorityInference:
 # ---------------------------------------------------------------------------
 
 class TestInsufficientSamples:
-    """Verify that new inferences don't fire when sample count < 50."""
+    """Verify that new inferences don't fire when sample count < 25."""
 
     def test_all_new_facts_suppressed_with_low_samples(self, user_model_store):
-        """With < 50 samples, none of the new derived-metric facts should be stored."""
+        """With < 25 samples, none of the new derived-metric facts should be stored."""
         _set_cadence_profile(user_model_store, {
             "hourly_activity": {"9": 5, "10": 6},
             "peak_hours": [9, 10],
             "quiet_hours_observed": [[23, 7]],
             "avg_response_time_by_domain": {"work.co": 300.0, "other.co": 500.0},
-        }, sample_count=30)   # Below 50-sample threshold
+        }, sample_count=20)   # Below 25-sample threshold
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()

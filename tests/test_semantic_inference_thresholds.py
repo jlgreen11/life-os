@@ -133,16 +133,16 @@ def test_mood_inference_with_minimal_samples(user_model_store, db):
     This is a simple test to verify that the threshold was changed.
     Full mood inference logic is tested in test_semantic_fact_inferrer.py.
     """
-    # The key improvement is that threshold was lowered from 100 to 5
+    # The key improvement is that threshold was lowered from 100 to 3
     # With real-world data (8 mood samples), inference can now run
     # This test just documents the threshold change
     from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
     import inspect
 
-    # Read the source to verify threshold is 5, not 100
+    # Read the source to verify threshold is 3, not 100
     source = inspect.getsource(SemanticFactInferrer.infer_from_mood_profile)
-    assert "< 5" in source or "samples_count, 0) < 5" in source, \
-        "Mood inference threshold should be 5"
+    assert "< 3" in source or "samples_count, 0) < 3" in source, \
+        "Mood inference threshold should be 3"
     assert "< 100" not in source, \
         "Mood inference threshold should not be 100 anymore"
 
