@@ -53,6 +53,21 @@ from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTrack
 from services.task_completion_detector.detector import TaskCompletionDetector
 
 
+def _prediction_priority(prediction) -> str:
+    """Determine notification priority for a prediction.
+
+    Conflict and risk predictions always get 'high' priority regardless of
+    confidence.  For other types, predictions in the DEFAULT or AUTONOMOUS
+    confidence gate (>= 0.6) also get 'high' so they reach users in minimal
+    notification mode.  Lower-confidence predictions stay 'normal'.
+    """
+    if prediction.prediction_type in ("conflict", "risk"):
+        return "high"
+    if prediction.confidence >= 0.6:
+        return "high"
+    return "normal"
+
+
 class LifeOS:
     """The main application orchestrator."""
 
@@ -2519,7 +2534,7 @@ class LifeOS:
                     await self.notification_manager.create_notification(
                         title=f"{prediction.prediction_type.title()}: {prediction.description[:80]}",
                         body=prediction.description,
-                        priority="high" if prediction.prediction_type in ("conflict", "risk") else "normal",
+                        priority=_prediction_priority(prediction),
                         source_event_id=prediction.id,
                         domain="prediction",
                     )
