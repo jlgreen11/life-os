@@ -2693,22 +2693,22 @@ def register_routes(app: FastAPI, life_os) -> None:
         # Publish to event bus for signal extraction
         try:
             await life_os.event_bus.publish(f"lifeos.context.{req.type}", event)
-        except Exception:
-            pass  # Event bus may not be connected
+        except Exception as e:
+            logger.warning("Context event bus publish failed for %s: %s", req.type, e)
 
         # If location event, update places database
         if req.type == "context.location" and req.payload.latitude is not None:
             try:
                 _update_place_from_context(life_os, req.payload)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Place update from context event failed: %s", e)
 
         # If device event, try to correlate with contacts
         if req.type == "context.device_nearby" and req.payload.device_name:
             try:
                 _correlate_device_with_contact(life_os, req.payload)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Device-contact correlation failed for %s: %s", req.payload.device_name, e)
 
         return {"status": "received", "event_id": event_id}
 
@@ -2726,6 +2726,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         }
 
         event_ids = []
+        publish_fail_count = 0
         for event_req in req.events:
             ts = event_req.timestamp or datetime.now(timezone.utc).isoformat()
             internal_type = event_type_map.get(event_req.type, "system.user.command")
@@ -2747,10 +2748,11 @@ def register_routes(app: FastAPI, life_os) -> None:
             # Publish to event bus
             try:
                 await life_os.event_bus.publish(f"lifeos.context.{event_req.type}", event)
-            except Exception:
-                pass
+            except Exception as e:
+                publish_fail_count += 1
+                logger.warning("Context batch event bus publish failed for %s: %s", event_req.type, e)
 
-        return {"status": "received", "count": len(event_ids), "event_ids": event_ids}
+        return {"status": "received", "count": len(event_ids), "event_ids": event_ids, "publish_failures": publish_fail_count}
 
     @app.get("/api/context/summary")
     async def get_context_summary():
