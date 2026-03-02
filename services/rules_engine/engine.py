@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 class RulesEngine:
     """Evaluates rules against events and executes matching actions."""
 
-    def __init__(self, db: DatabaseManager, event_bus: Any = None):
+    def __init__(self, db: DatabaseManager, event_bus: Any = None, config: dict | None = None):
         self.db = db
         self.bus = event_bus
         # --- Rule caching ---
@@ -47,6 +48,17 @@ class RulesEngine:
         # The cache is refreshed every 60 seconds (see evaluate()).
         self._rules_cache: list[dict] = []
         self._cache_loaded_at: Optional[datetime] = None
+
+        # --- Per-rule telemetry throttle ---
+        # Tracks {rule_id: last_published_monotonic_time} so we avoid
+        # flooding the events table with system.rule.triggered events.
+        # The rules table (last_triggered, times_triggered) is always
+        # updated regardless of throttle state.
+        self._telemetry_last_published: dict[str, float] = {}
+        config = config or {}
+        self._telemetry_throttle_seconds: float = float(
+            config.get("telemetry_throttle_seconds", 300)
+        )
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -337,6 +349,23 @@ class RulesEngine:
                 return None  # Path broken — intermediate value isn't a dict
         return current
 
+    def _should_publish_telemetry(self, rule_id: str) -> bool:
+        """Check whether a system.rule.triggered event should be published for this rule.
+
+        Uses a per-rule monotonic clock throttle so that high-frequency rules
+        don't flood the events table.  A throttle of 0 disables throttling
+        (every trigger publishes).  The rules table (last_triggered,
+        times_triggered) is always updated regardless of this check.
+        """
+        if self._telemetry_throttle_seconds <= 0:
+            return True  # Throttling disabled — publish every time
+        now = time.monotonic()
+        last = self._telemetry_last_published.get(rule_id, 0.0)
+        if now - last >= self._telemetry_throttle_seconds:
+            self._telemetry_last_published[rule_id] = now
+            return True
+        return False
+
     async def _record_trigger(self, rule_id: str, rule_name: Optional[str] = None,
                               event_type: Optional[str] = None,
                               event_id: Optional[str] = None):
@@ -362,13 +391,18 @@ class RulesEngine:
                 exc_info=True,
             )
 
-        await self._publish_telemetry("system.rule.triggered", {
-            "rule_id": rule_id,
-            "rule_name": rule_name,
-            "trigger_event_type": event_type,
-            "trigger_event_id": event_id,
-            "triggered_at": now,
-        })
+        # Only publish telemetry if the per-rule throttle allows it.
+        # The DB record above (times_triggered, last_triggered) is always
+        # updated — this only limits the event bus publication to avoid
+        # flooding the events table with high-frequency rule telemetry.
+        if self._should_publish_telemetry(rule_id):
+            await self._publish_telemetry("system.rule.triggered", {
+                "rule_id": rule_id,
+                "rule_name": rule_name,
+                "trigger_event_type": event_type,
+                "trigger_event_id": event_id,
+                "triggered_at": now,
+            })
 
 
 # -------------------------------------------------------------------
