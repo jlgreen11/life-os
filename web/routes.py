@@ -1117,10 +1117,15 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/search")
     async def search(req: SearchRequest):
-        results = life_os.vector_store.search(
-            req.query, limit=req.limit, filter_metadata=req.filters
-        )
-        return {"query": req.query, "results": results, "count": len(results)}
+        """Perform semantic vector search across ingested events."""
+        try:
+            results = life_os.vector_store.search(
+                req.query, limit=req.limit, filter_metadata=req.filters
+            )
+            return {"query": req.query, "results": results, "count": len(results)}
+        except Exception as e:
+            logger.warning("Search failed: %s", e)
+            return {"query": req.query, "results": [], "count": 0, "error": "Search temporarily unavailable"}
 
     # -------------------------------------------------------------------
     # Tasks
@@ -1283,12 +1288,17 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/draft")
     async def draft_message(req: DraftRequest):
-        draft = await life_os.ai_engine.draft_reply(
-            contact_id=req.contact_id,
-            channel=req.channel,
-            incoming_message=req.incoming_message,
-        )
-        return {"draft": draft}
+        """Generate an AI-drafted reply for a given message."""
+        try:
+            draft = await life_os.ai_engine.draft_reply(
+                contact_id=req.contact_id,
+                channel=req.channel,
+                incoming_message=req.incoming_message,
+            )
+            return {"draft": draft}
+        except Exception as e:
+            logger.warning("Draft generation failed: %s", e)
+            return {"draft": None, "error": "Draft generation temporarily unavailable"}
 
     @app.post("/api/messages/send")
     async def send_message(req: SendMessageRequest):
@@ -2648,11 +2658,25 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/browser/status")
     async def browser_status():
-        return life_os.browser_orchestrator.get_status()
+        """Return the current status of the browser orchestrator."""
+        try:
+            if life_os.browser_orchestrator is None:
+                return {"status": "unavailable", "error": "Browser orchestrator not configured"}
+            return life_os.browser_orchestrator.get_status()
+        except Exception as e:
+            logger.warning("Browser status check failed: %s", e)
+            return {"status": "unavailable", "error": "Browser orchestrator not configured"}
 
     @app.get("/api/browser/vault")
     async def browser_vault_sites():
-        return {"sites": life_os.browser_orchestrator.get_vault_sites()}
+        """Return the list of credential vault sites for browser connectors."""
+        try:
+            if life_os.browser_orchestrator is None:
+                return {"sites": [], "error": "Browser orchestrator not configured"}
+            return {"sites": life_os.browser_orchestrator.get_vault_sites()}
+        except Exception as e:
+            logger.warning("Browser vault lookup failed: %s", e)
+            return {"sites": [], "error": "Browser orchestrator not configured"}
 
     # -------------------------------------------------------------------
     # Context API (iOS / Mobile Device Context Ingestion)
