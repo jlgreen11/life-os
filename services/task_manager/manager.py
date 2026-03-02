@@ -90,6 +90,7 @@ class TaskManager:
         self.db = db  # Database access for tasks, events, and contacts tables
         self.bus = event_bus
         self.ai_engine = ai_engine
+        self._ai_engine_warned = False
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -121,8 +122,9 @@ class TaskManager:
             event: Event dict with type, payload, and metadata
         """
         if not self.ai_engine:
-            # AI engine not wired — skip extraction. This is normal during
-            # tests or minimal deployments that don't need automatic task extraction.
+            if not self._ai_engine_warned:
+                logger.warning('task_manager: AI engine not available — automatic task extraction disabled')
+                self._ai_engine_warned = True
             return
 
         event_type = event.get("type", "")
@@ -165,10 +167,10 @@ class TaskManager:
             try:
                 stripper.feed(text)
                 text = stripper.get_text()
-            except Exception:
+            except Exception as e:
                 # If HTML parsing fails, fall back to the original text.
-                # The LLM will do its best even with malformed markup.
-                pass
+                logger.debug('task_manager: HTML stripping failed for event %s, using raw text: %s',
+                             event.get('id', 'unknown'), e)
 
         # --- Filter: Skip empty or trivial messages ---
         # Don't waste LLM cycles on short messages like "ok", "thanks", etc.

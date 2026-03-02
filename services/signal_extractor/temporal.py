@@ -103,12 +103,12 @@ class TemporalExtractor(BaseExtractor):
                             "scheduled_day": event_dt.strftime("%A").lower(),
                             "advance_planning_days": (event_dt.date() - dt.date()).days if event_dt >= dt else 0,
                         })
-                    except (ValueError, AttributeError):
-                        pass  # Malformed start_time, skip
+                    except (ValueError, AttributeError) as e:
+                        logger.debug('temporal_extractor: skipping calendar event — malformed start_time: %s', e)
 
         except (ValueError, AttributeError) as e:
-            # Malformed timestamp, skip temporal extraction for this event
-            pass
+            logger.debug('temporal_extractor: skipping event %s — malformed timestamp: %s',
+                         event.get('id', 'unknown'), e)
 
         # Update the temporal profile with these signals
         if signals:

@@ -13,10 +13,13 @@ at each place the user frequents.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from services.signal_extractor.base import BaseExtractor
+
+logger = logging.getLogger(__name__)
 
 
 class SpatialExtractor(BaseExtractor):
@@ -107,8 +110,8 @@ class SpatialExtractor(BaseExtractor):
                     start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
                     end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
                     duration_minutes = (end_dt - start_dt).total_seconds() / 60
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug('spatial_extractor: skipping duration calc — malformed time: %s', e)
 
             # Infer domain from calendar event metadata
             # Work indicators: attendees, work hours, work-related keywords
