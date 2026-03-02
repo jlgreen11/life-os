@@ -390,6 +390,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             limit: Max items to return. Default: 50.
         """
         items = []
+        sections_loaded = []
 
         # --- Notifications (all topics except 'system') ---
         if topic in (None, "inbox", "messages", "email"):
@@ -413,8 +414,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                         "domain": n.get("domain"),  # Include domain so UI can identify prediction notifications
                         "metadata": n.get("metadata", {}),
                     })
-            except Exception:
-                pass
+                sections_loaded.append("notifications")
+            except Exception as e:
+                logger.warning("dashboard_feed: failed to load %s section: %s", "notifications", e)
 
         # --- Tasks ---
         if topic in (None, "inbox", "tasks"):
@@ -432,8 +434,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                         "source": t.get("domain", ""),
                         "metadata": {"due_date": t.get("due_date"), "domain": t.get("domain")},
                     })
-            except Exception:
-                pass
+                sections_loaded.append("tasks")
+            except Exception as e:
+                logger.warning("dashboard_feed: failed to load %s section: %s", "tasks", e)
 
         # --- Calendar (upcoming events for badge count) ---
         if topic in (None, "inbox", "calendar"):
@@ -504,8 +507,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                             "is_all_day": payload.get("is_all_day", False),
                         },
                     })
-            except Exception:
-                pass
+                sections_loaded.append("calendar")
+            except Exception as e:
+                logger.warning("dashboard_feed: failed to load %s section: %s", "calendar", e)
 
         # --- Actual email events (email.received) ---
         # The notifications section above only surfaces emails that triggered a
@@ -577,8 +581,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                             "has_attachments": ep.get("has_attachments", False),
                         },
                     })
-            except Exception:
-                pass
+                sections_loaded.append("email")
+            except Exception as e:
+                logger.warning("dashboard_feed: failed to load %s section: %s", "email", e)
 
         # --- Actual message events (message.received) ---
         # Same rationale as email: show real inbound messages even when no
@@ -637,8 +642,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                             "message_id": ep.get("message_id"),
                         },
                     })
-            except Exception:
-                pass
+                sections_loaded.append("messages")
+            except Exception as e:
+                logger.warning("dashboard_feed: failed to load %s section: %s", "messages", e)
 
         # --- Enrich email items with AI-extracted action items ---
         # The task manager extracts actionable tasks from every email it processes
@@ -718,7 +724,12 @@ def register_routes(app: FastAPI, life_os) -> None:
             group_list.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
             sorted_items.extend(group_list)
 
-        return {"items": sorted_items[:limit], "count": len(sorted_items[:limit]), "topic": topic or "inbox"}
+        return {
+            "items": sorted_items[:limit],
+            "count": len(sorted_items[:limit]),
+            "topic": topic or "inbox",
+            "sections_loaded": sections_loaded,
+        }
 
     @app.get("/api/dashboard/badges")
     async def dashboard_badges():
