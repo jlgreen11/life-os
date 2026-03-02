@@ -59,7 +59,7 @@ class NotificationManager:
         try:
             with self.db.get_connection("state") as conn:
                 rows = conn.execute(
-                    """SELECT id, title, body, priority, domain, source_event_id
+                    """SELECT id, title, body, priority, domain, source_event_id, action_url
                        FROM notifications
                        WHERE status = 'pending'
                          AND priority IN ('normal', 'low')""",
@@ -73,6 +73,7 @@ class NotificationManager:
                     "priority": row["priority"],
                     "domain": row["domain"],
                     "source_event_id": row["source_event_id"],
+                    "action_url": row["action_url"],
                 })
 
             if self._pending_batch:
@@ -190,6 +191,7 @@ class NotificationManager:
                 "id": notif_id, "title": title, "body": body,
                 "priority": priority, "domain": domain,
                 "source_event_id": source_event_id,  # Preserve for later surfacing
+                "action_url": action_url,  # Preserve for actionable cards in digest
             })
         elif delivery == "suppress":
             # Mark as suppressed in DB so it shows up in audit logs but is
