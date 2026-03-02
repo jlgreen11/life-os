@@ -434,6 +434,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .card-actions button.btn-success:hover {
             opacity: 0.85;
         }
+        .card-actions button.btn-confirm {
+            border-color: var(--accent-green);
+            color: var(--accent-green);
+        }
+        .card-actions button.btn-confirm:hover {
+            background: rgba(46,204,113,0.1);
+        }
 
         /* Sentiment dots */
         .sentiment-dot {
@@ -2136,6 +2143,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     if (fact.is_user_corrected) html += ' &middot; <span style="color:var(--accent-yellow,#f0a020);font-weight:600">CORRECTED</span>';
                     html += '</div>';
                     html += '<div class="card-actions" style="margin-top:4px;display:flex;gap:4px">';
+                    html += '<button class="btn-small btn-confirm" onclick="event.stopPropagation();confirmFact(\'' + escAttr(fact.key) + '\')">Confirm</button>';
                     html += '<button class="btn-small" onclick="event.stopPropagation();correctFact(\'' + escAttr(fact.key) + '\')">Correct</button>';
                     html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();deleteFact(\'' + escAttr(fact.key) + '\')">Delete</button>';
                     html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();notAboutMeFact(\'' + escAttr(fact.key) + '\')">Not About Me</button>';
@@ -2149,6 +2157,35 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .catch(function(err) {
             safeSetContent(el, '<div class="card"><div class="card-meta" style="color:var(--accent-red)">Failed to load facts: ' + escHtml(err.message) + '</div></div>');
         });
+    }
+
+    /**
+     * Confirm a semantic fact is correct, bumping confidence by +0.05.
+     *
+     * Calls POST /api/user-model/facts/{key}/confirm which increments
+     * times_confirmed and increases confidence (capped at 1.0).  Shows a
+     * toast with the new confidence percentage and refreshes the fact list.
+     *
+     * @param {string} key - The fact key to confirm (e.g. "preferred_language").
+     */
+    function confirmFact(key) {
+        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key) + '/confirm', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error('Failed');
+            return res.json();
+        })
+        .then(function(data) {
+            var resp = document.getElementById('response');
+            resp.className = 'visible';
+            resp.textContent = 'Fact confirmed \u2014 confidence now ' + Math.round((data.new_confidence || 0) * 100) + '%';
+            setTimeout(function() { resp.className = ''; }, 3000);
+            loadFactsFeed();
+        })
+        .catch(function(err) { console.error('Confirm fact failed:', err); });
     }
 
     /**
