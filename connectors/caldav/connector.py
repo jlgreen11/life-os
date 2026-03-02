@@ -19,6 +19,7 @@ Configuration:
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -238,12 +239,18 @@ class CalDAVConnector(BaseConnector):
         # provided.  A future improvement could accept a calendar name/id.
         calendar = self._calendars[0]  # Use first calendar by default
 
-        from datetime import datetime
+        # Generate a unique UID for the VEVENT (required by RFC 5545).
+        # Without a UID, most CalDAV servers will reject the PUT request.
+        uid = str(uuid.uuid4())
+
         # Build a minimal but valid VCALENDAR document containing one VEVENT.
+        # PRODID identifies the creator application (required by RFC 5545).
         # DTEND falls back to DTSTART (zero-duration event) when not supplied.
         vcal = f"""BEGIN:VCALENDAR
 VERSION:2.0
+PRODID:-//LifeOS//CalDAV Connector//EN
 BEGIN:VEVENT
+UID:{uid}
 SUMMARY:{params['title']}
 DTSTART:{params['start_time']}
 DTEND:{params.get('end_time', params['start_time'])}
@@ -255,7 +262,7 @@ END:VCALENDAR"""
         try:
             # save_event performs an HTTP PUT to the CalDAV server.
             calendar.save_event(vcal)
-            return {"status": "created", "title": params["title"]}
+            return {"status": "created", "title": params["title"], "uid": uid}
         except Exception as e:
             return {"status": "error", "details": str(e)}
 
