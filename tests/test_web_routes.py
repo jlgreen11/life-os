@@ -307,8 +307,8 @@ def test_dashboard_feed_with_notifications(client, mock_life_os):
             "body": "Body text",
             "priority": "high",
             "created_at": "2026-02-15T12:00:00Z",
-            "source": "email.received",
-            "metadata": {}
+            "domain": "email",
+            "source_event_id": "evt-1",
         }
     ]
 

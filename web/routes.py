@@ -397,7 +397,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             try:
                 notifications = life_os.notification_manager.get_pending(limit=limit)
                 for n in notifications:
-                    source_type = n.get("source", "")
+                    source_type = n.get("domain", "")
                     if topic == "messages" and "message" not in source_type and "signal" not in source_type:
                         continue
                     if topic == "email" and "email" not in source_type:
@@ -412,7 +412,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                         "timestamp": n.get("created_at", n.get("timestamp", "")),
                         "source": source_type,
                         "domain": n.get("domain"),  # Include domain so UI can identify prediction notifications
-                        "metadata": n.get("metadata", {}),
+                        "metadata": {"source_event_id": n.get("source_event_id")},
                     })
                 sections_loaded.append("notifications")
             except Exception as e:
@@ -771,11 +771,11 @@ def register_routes(app: FastAPI, life_os) -> None:
             all_notifications = []
 
         email_count = sum(
-            1 for n in all_notifications if "email" in n.get("source", "")
+            1 for n in all_notifications if "email" in n.get("domain", "")
         )
         msg_count = sum(
             1 for n in all_notifications
-            if "message" in n.get("source", "") or "signal" in n.get("source", "")
+            if "message" in n.get("domain", "") or "signal" in n.get("domain", "")
         )
 
         # --- Tasks ---
