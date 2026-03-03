@@ -340,9 +340,18 @@ class InsightEngine:
                 before_dedup,
             )
 
-        # Persist the survivors
+        # Persist the survivors — wrap each call so a corrupted user_model.db
+        # does not discard insights that were computed from healthy sources
+        # (events.db correlators like email_volume, meeting_density, etc.).
         for insight in fresh:
-            self._store_insight(insight)
+            try:
+                self._store_insight(insight)
+            except Exception as e:
+                logger.warning(
+                    "Failed to persist insight %s (user_model.db may be corrupted): %s",
+                    insight.id,
+                    e,
+                )
 
         # When no insights are produced, log a data sufficiency report so
         # operators can see exactly which correlators are blocked and why.
@@ -651,7 +660,9 @@ class InsightEngine:
 
         rel_profile = self.ums.get_signal_profile("relationships")
         if not rel_profile:
-            return []
+            # Fallback: build contact-gap insights directly from events.db
+            # when user_model.db is corrupted or has no relationship profile.
+            return self._contact_gap_insights_from_events()
 
         contacts = rel_profile["data"].get("contacts", {})
         now = datetime.now(timezone.utc)
@@ -753,6 +764,114 @@ class InsightEngine:
             skipped_marketing,
             skipped_inbound_only,
         )
+        return insights
+
+    def _contact_gap_insights_from_events(self) -> list[Insight]:
+        """Fallback contact-gap correlator using events.db directly.
+
+        Called when the relationships signal profile is unavailable (e.g.
+        user_model.db is corrupted or has not been populated yet).  Mirrors
+        the approach in ``PredictionEngine._build_contacts_from_events()``
+        by querying inbound email events from the last 90 days.
+
+        For each sender with >= 5 inbound emails, checks whether the user
+        has replied in the last 14 days.  If not, generates a contact_gap
+        insight.  Marketing/no-reply addresses are filtered out via the
+        shared ``is_marketing_or_noreply`` helper.
+
+        Returns:
+            A list of contact_gap :class:`Insight` objects, or an empty list
+            on any database error.
+        """
+        insights: list[Insight] = []
+        try:
+            with self.db.get_connection("events") as conn:
+                # Find contacts with 5+ inbound emails in the last 90 days
+                rows = conn.execute(
+                    """SELECT
+                           json_extract(payload, '$.from_address') AS sender,
+                           COUNT(*) AS cnt,
+                           MAX(timestamp) AS last_seen
+                       FROM events
+                       WHERE type = 'email.received'
+                         AND timestamp > datetime('now', '-90 days')
+                         AND json_extract(payload, '$.from_address') IS NOT NULL
+                       GROUP BY sender
+                       HAVING cnt >= 5"""
+                ).fetchall()
+
+                now = datetime.now(timezone.utc)
+                name_map = self._load_contact_name_map()
+                skipped_marketing = 0
+
+                for row in rows:
+                    addr = row["sender"]
+                    if not addr:
+                        continue
+
+                    # Skip marketing/automated senders
+                    if is_marketing_or_noreply(addr):
+                        skipped_marketing += 1
+                        continue
+
+                    # Check if user has replied to this contact recently
+                    reply_row = conn.execute(
+                        """SELECT 1 FROM events
+                           WHERE type = 'email.sent'
+                             AND json_extract(payload, '$.to_address') = ?
+                             AND timestamp > datetime('now', '-14 days')
+                           LIMIT 1""",
+                        (addr,),
+                    ).fetchone()
+
+                    if reply_row:
+                        continue  # User has been in touch recently
+
+                    # Compute days since last interaction
+                    try:
+                        last_dt = datetime.fromisoformat(
+                            row["last_seen"].replace("Z", "+00:00")
+                        )
+                        days_since = (now - last_dt).total_seconds() / 86400
+                    except (ValueError, TypeError):
+                        continue
+
+                    # Only flag contacts silent for 14+ days
+                    if days_since < 14:
+                        continue
+
+                    confidence = min(0.7, 0.35 + (days_since / 30) * 0.1)
+                    label = self._display_name(addr, name_map)
+                    insight = Insight(
+                        type="relationship_intelligence",
+                        summary=(
+                            f"It has been {int(days_since)} days since you last "
+                            f"heard from {label} ({row['cnt']} emails in 90 days). "
+                            f"Consider reaching out."
+                        ),
+                        confidence=confidence,
+                        evidence=[
+                            f"days_since_last={int(days_since)}",
+                            f"inbound_count_90d={row['cnt']}",
+                            "source=events_db_fallback",
+                        ],
+                        category="contact_gap",
+                        entity=addr,
+                    )
+                    insight.compute_dedup_key()
+                    insights.append(insight)
+
+            logger.debug(
+                "contact_gap_insights_from_events: %d insights generated "
+                "(skipped_marketing=%d)",
+                len(insights),
+                skipped_marketing,
+            )
+        except Exception as e:
+            logger.warning(
+                "contact_gap_insights_from_events fallback failed: %s", e
+            )
+
         return insights
 
     def _get_contact_last_topics(self, email_addr: str, limit: int = 3) -> list[str]:
