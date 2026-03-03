@@ -3029,7 +3029,18 @@ class LifeOS:
         )
 
     async def _prediction_loop(self):
-        """Run the prediction engine every 15 minutes."""
+        """Run the prediction engine every 15 minutes.
+
+        Includes a 180-second warmup delay on startup to allow connector
+        syncs, episode backfills, and signal extraction to populate the
+        database before the first prediction cycle runs.  Without this
+        delay the first cycle runs against empty/stale data and produces
+        nothing useful, pushing the earliest useful predictions out to
+        15 minutes after startup.
+        """
+        logger.info("PredictionLoop: warming up for 180s to allow data population...")
+        await asyncio.sleep(180)
+
         while not self.shutdown_event.is_set():
             try:
                 # Generate new predictions based on current context and patterns
@@ -3172,7 +3183,14 @@ class LifeOS:
         Also runs the source weight bulk drift recalculation once per
         cycle so that AI drift adjusts based on aggregate engagement
         patterns, not just individual feedback events.
+
+        Includes a 180-second warmup delay on startup to allow connector
+        syncs and signal extraction to populate data before the first
+        insight generation cycle.
         """
+        logger.info("InsightLoop: warming up for 180s to allow data population...")
+        await asyncio.sleep(180)
+
         while not self.shutdown_event.is_set():
             try:
                 insights = await self.insight_engine.generate_insights()
@@ -3200,6 +3218,9 @@ class LifeOS:
         memory). It runs more frequently than the default to keep the user model
         current and ensure the My Profile feedback loop has fresh data.
 
+        Includes a 180-second warmup delay on startup to allow signal
+        extraction to populate profiles before the first inference cycle.
+
         Examples of derived facts:
           - "User prefers casual communication" (from linguistic formality < 0.3)
           - "User has expertise in Python" (from topic frequency + depth)
@@ -3210,6 +3231,9 @@ class LifeOS:
           - Keeps the user model current with recent activity
           - Ensures My Profile tab has fresh data for the feedback loop
         """
+        logger.info("SemanticInferenceLoop: warming up for 180s to allow data population...")
+        await asyncio.sleep(180)
+
         while not self.shutdown_event.is_set():
             try:
                 # Run inference across all signal profiles to extract semantic facts.
@@ -3389,11 +3413,17 @@ class LifeOS:
         instead of waiting for explicit feedback, dramatically accelerating the
         calibration loop.
 
+        Includes a 180-second warmup delay on startup to allow predictions
+        to be generated before attempting to infer their accuracy.
+
         Interval: 15 minutes (900 seconds)
           - Same cadence as prediction engine for responsive feedback
           - Predictions can be validated within 1-2 cycles of user action
           - Balances responsiveness against compute cost
         """
+        logger.info("BehavioralAccuracyLoop: warming up for 180s to allow data population...")
+        await asyncio.sleep(180)
+
         while not self.shutdown_event.is_set():
             try:
                 # Run inference cycle over all unresolved predictions
@@ -3504,18 +3534,23 @@ class LifeOS:
                     task_priority = task.get("priority", "normal")
                     task_domain = task.get("domain")
 
-                    # Publish task.overdue event for downstream pipeline processing
-                    await self.event_bus.publish(
-                        "task.overdue",
-                        {
-                            "task_id": task_id,
-                            "title": task_title,
-                            "due_date": due_date_str,
-                            "priority": task_priority,
-                            "overdue_by": overdue_delta,
-                        },
-                        source="task_manager",
-                    )
+                    # Publish task.overdue event for downstream pipeline processing.
+                    # Wrapped in its own try/except so that NATS outages do not
+                    # prevent the more important user-facing notification below.
+                    try:
+                        await self.event_bus.publish(
+                            "task.overdue",
+                            {
+                                "task_id": task_id,
+                                "title": task_title,
+                                "due_date": due_date_str,
+                                "priority": task_priority,
+                                "overdue_by": overdue_delta,
+                            },
+                            source="task_manager",
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to publish task.overdue event: %s", e)
 
                     # Create a user-facing notification
                     await self.notification_manager.create_notification(
