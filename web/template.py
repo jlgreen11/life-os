@@ -1921,8 +1921,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     html += '<div class="card-title">' + escHtml(r.name || r.trigger || 'Routine') + '</div>';
                     html += '<div class="insight-meta-row">';
                     if (r.trigger) html += '<span>Trigger: ' + escHtml(r.trigger) + '</span>';
-                    if (r.consistency !== undefined) html += '<span>Consistency: ' + Math.round(r.consistency * 100) + '%</span>';
-                    if (r.observation_count) html += '<span>' + r.observation_count + ' observations</span>';
+                    if (r.consistency_score !== undefined) html += '<span>Consistency: ' + Math.round(r.consistency_score * 100) + '%</span>';
+                    if (r.times_observed) html += '<span>' + r.times_observed + ' observations</span>';
                     if (r.typical_duration_minutes) html += '<span>~' + Math.round(r.typical_duration_minutes) + ' min</span>';
                     html += '</div>';
                     html += '</div></div></div>';
@@ -1945,7 +1945,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     var stepCount = (w.steps ? w.steps.length : 0) || w.step_count || 0;
                     if (stepCount) html += '<span>' + stepCount + ' steps</span>';
                     if (w.success_rate !== undefined) html += '<span>Success: ' + Math.round(w.success_rate * 100) + '%</span>';
-                    if (w.observation_count) html += '<span>' + w.observation_count + ' observations</span>';
+                    if (w.times_observed) html += '<span>' + w.times_observed + ' observations</span>';
                     html += '</div>';
                     html += '</div></div></div>';
                 }
