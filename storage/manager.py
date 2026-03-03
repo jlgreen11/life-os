@@ -43,6 +43,10 @@ class DatabaseManager:
         #   1. Independent backup/restore — e.g. wipe state without losing the event history.
         #   2. Reduced write contention — high-throughput event writes don't block task reads.
         #   3. Clear ownership boundaries — each store module touches only its own DB.
+        # Guard against infinite recursion in _init_user_model_db() when
+        # post-initialisation verification fails and triggers a fresh start.
+        self._user_model_verify_retries = 0
+
         self._databases: dict[str, str] = {
             "events": str(self.data_dir / "events.db"),
             "entities": str(self.data_dir / "entities.db"),
@@ -511,6 +515,87 @@ class DatabaseManager:
             "Learned patterns will be rebuilt automatically from event history.",
             db_name,
         )
+        return True
+
+    def _verify_db_functional(self, db_name: str) -> bool:
+        """Verify a database is functional by probing its key tables.
+
+        Runs ``SELECT COUNT(*) FROM <table>`` on each key table to confirm
+        the database can actually serve queries.  This catches corruption
+        that survives ``PRAGMA integrity_check`` — e.g. WAL contamination,
+        incomplete file replacement, or filesystem-level damage that only
+        manifests when reading actual row data.
+
+        Tables that do not exist yet (``no such table``) are silently
+        skipped — that is expected for a freshly-created database where
+        schema creation has not yet populated all tables.
+
+        Args:
+            db_name: Logical database name (key in ``self._databases``).
+
+        Returns:
+            True if all existing tables respond to queries successfully,
+            False if any query raises a corruption-related error.
+        """
+        table_map: dict[str, list[str]] = {
+            "user_model": [
+                "episodes",
+                "signal_profiles",
+                "semantic_facts",
+                "routines",
+                "mood_history",
+                "predictions",
+                "insights",
+                "communication_templates",
+            ],
+        }
+        tables = table_map.get(db_name, [])
+        if not tables:
+            return True
+
+        corruption_keywords = ("malformed", "corrupt", "disk i/o error")
+
+        try:
+            with self.get_connection(db_name) as conn:
+                for table in tables:
+                    try:
+                        conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()  # noqa: S608
+                    except Exception as exc:
+                        err_msg = str(exc).lower()
+                        if "no such table" in err_msg:
+                            # Table hasn't been created yet — expected for
+                            # fresh databases; not a corruption signal.
+                            continue
+                        if any(kw in err_msg for kw in corruption_keywords):
+                            logger.error(
+                                "Post-init verification failed for %s.db table '%s': %s",
+                                db_name,
+                                table,
+                                exc,
+                            )
+                            return False
+                        # Unknown error — log but don't treat as corruption
+                        logger.warning(
+                            "Unexpected error probing %s.db table '%s': %s",
+                            db_name,
+                            table,
+                            exc,
+                        )
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            if any(kw in err_msg for kw in corruption_keywords):
+                logger.error(
+                    "Post-init verification: connection to %s.db failed with corruption: %s",
+                    db_name,
+                    exc,
+                )
+                return False
+            logger.warning(
+                "Post-init verification: unexpected connection error for %s.db: %s",
+                db_name,
+                exc,
+            )
+
         return True
 
     # -----------------------------------------------------------------------
@@ -1057,6 +1142,37 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_insights_dedup ON insights(dedup_key);
                 CREATE INDEX IF NOT EXISTS idx_insights_created ON insights(created_at);
             """)
+
+        # --- Post-initialisation functional verification ---
+        # The pre-init _check_and_recover_db() catches corruption BEFORE
+        # schema creation, but WAL contamination or filesystem issues can
+        # leave a freshly-recreated DB in a broken state.  Probe every key
+        # table to confirm the database actually works.
+        if not self._verify_db_functional("user_model"):
+            if self._user_model_verify_retries >= 1:
+                logger.critical(
+                    "user_model.db failed post-init verification even after "
+                    "a fresh-start attempt. Giving up — manual intervention "
+                    "is required."
+                )
+                return
+
+            self._user_model_verify_retries += 1
+            logger.critical(
+                "user_model.db failed post-initialisation verification. "
+                "Attempting last-resort fresh start."
+            )
+
+            # Remove the corrupt file and its WAL/SHM sidecars so the
+            # recursive call recreates from scratch.
+            db_path = Path(self._databases["user_model"])
+            for ext in ("", "-wal", "-shm"):
+                p = db_path.parent / (db_path.name + ext)
+                if p.exists():
+                    p.unlink()
+
+            # Recursively recreate from schema.
+            self._init_user_model_db()
 
     def _migrate_user_model_db(self, conn: sqlite3.Connection, from_version: int, to_version: int):
         """Apply schema migrations to user_model.db.
