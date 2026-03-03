@@ -4185,13 +4185,27 @@ def register_routes(app: FastAPI, life_os) -> None:
             except Exception as e:
                 logger.error("Post-rebuild backfill failed: %s", e)
 
+            # Backfill episodes from events.db (foundation of cognitive pipeline)
+            try:
+                if hasattr(life_os, "_backfill_episodes_from_events_if_needed"):
+                    await life_os._backfill_episodes_from_events_if_needed()
+            except Exception as e:
+                logger.error("Post-rebuild episode backfill failed: %s", e)
+
+            # Backfill communication templates (Layer 3 procedural memory)
+            try:
+                if hasattr(life_os, "_backfill_communication_templates_if_needed"):
+                    await life_os._backfill_communication_templates_if_needed()
+            except Exception as e:
+                logger.error("Post-rebuild communication template backfill failed: %s", e)
+
         _asyncio.create_task(_post_rebuild_backfill())
 
         return {
             "status": "rebuilt",
             "message": (
                 "Database rebuilt with fresh schema. "
-                "Signal profile backfill started in background. "
+                "Signal profile, episode, and communication template backfills started in background. "
                 "Poll /api/admin/backfills/status to track progress."
             ),
         }
