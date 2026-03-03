@@ -282,6 +282,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-weight: 500;
         }
         .new-items-banner.visible { display: block; }
+        .db-degraded-banner {
+            display: none;
+            background: #7f1d1d;
+            color: #fca5a5;
+            padding: 10px 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            align-items: center;
+            gap: 4px;
+        }
+        .db-degraded-banner.visible { display: flex; }
         .stale-data-banner {
             display: none;
             background: var(--accent-yellow);
@@ -1217,6 +1229,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <!-- Center: Main Feed -->
         <main class="main-feed" id="mainFeed">
             <div class="new-items-banner" id="newItemsBanner" onclick="scrollToTop()">New items available</div>
+            <div id="dbDegradedBanner" class="db-degraded-banner">
+                <strong>AI features limited</strong> &mdash; The user model database needs repair.
+                Predictions, insights, and behavioral patterns are unavailable.
+                <a href="/admin" style="color:#fbbf24;margin-left:8px;">Repair in Admin &rarr;</a>
+                <button onclick="document.getElementById('dbDegradedBanner').style.display='none'" style="background:none;border:none;color:#999;cursor:pointer;margin-left:auto;font-size:16px;">&times;</button>
+            </div>
             <div class="stale-data-banner" id="staleDataBanner">
                 <span id="staleDataMsg"></span>
                 <button onclick="dismissStaleWarning()" style="background:none;border:none;color:inherit;cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
@@ -3214,6 +3232,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             text.textContent = statusLabel;
             count.textContent = (health.events_stored || 0).toLocaleString() + ' events';
 
+            // Show or hide the degraded-database banner based on user_model health.
+            var dbBanner = document.getElementById('dbDegradedBanner');
+            if (dbBanner) {
+                if (health.db_health && health.db_health.user_model && health.db_health.user_model.status !== 'ok') {
+                    dbBanner.classList.add('visible');
+                } else {
+                    dbBanner.classList.remove('visible');
+                }
+            }
+
             // Detect connector-level errors from the health payload.
             var errorConnectors = (health.connectors || []).filter(function(c) {
                 return c.status === 'error';
@@ -3336,6 +3364,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 // Refresh mood bars when a mood_update event is pushed.
                 if (data.type === 'mood_update') {
                     loadMood();
+                }
+                // Refresh predictions panel when new predictions are generated.
+                if (data.type === 'new_prediction') {
+                    loadPredictions();
+                }
+                // Update badge counts when a new task is created.
+                if (data.type === 'new_task') {
+                    loadBadges();
                 }
             } catch(err) {}
         };
