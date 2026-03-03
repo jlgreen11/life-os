@@ -396,6 +396,12 @@ class InsightEngine:
             # email events, location signals), weighted against the broadest applicable
             # source key.  Routines shift slowly, so a 7-day staleness TTL is appropriate.
             "routine_pattern": "email.work",
+            # Email timing insights derive from email send/receive timestamps,
+            # weighted against work email (broadest applicable email source key).
+            "email_timing": "email.work",
+            # Meeting density insights derive from calendar event frequency,
+            # weighted against calendar meetings — the source that produces them.
+            "meeting_density": "calendar.meetings",
             # Spatial insights derive from the spatial signal profile (calendar location
             # fields, iOS context updates, explicit location events).  All three sub-types
             # use the location.visits source key — the same key used by the
@@ -1249,7 +1255,11 @@ class InsightEngine:
         # Source 2: Calendar events starting within the next 24 hours
         # ----------------------------------------------------------------
         try:
-            cutoff_past = (now - timedelta(hours=24)).isoformat()
+            # Use a 90-day lower bound on timestamp to avoid scanning the
+            # entire events table, but filter on the *payload* start_time
+            # so events synced long ago but starting within 24h are found.
+            long_cutoff = (now - timedelta(days=90)).isoformat()
+            cutoff_now = now.isoformat()
             cutoff_future = (now + timedelta(hours=24)).isoformat()
 
             with self.db.get_connection("events") as conn:
@@ -1257,10 +1267,15 @@ class InsightEngine:
                     """SELECT payload FROM events
                        WHERE type = 'calendar.event.created'
                          AND timestamp > ?
-                         AND timestamp <= ?
+                         AND (
+                           COALESCE(json_extract(payload, '$.start_time'),
+                                    json_extract(payload, '$.start')) > ?
+                           AND COALESCE(json_extract(payload, '$.start_time'),
+                                        json_extract(payload, '$.start')) <= ?
+                         )
                        ORDER BY timestamp DESC
                        LIMIT 200""",
-                    (cutoff_past, cutoff_future),
+                    (long_cutoff, cutoff_now, cutoff_future),
                 ).fetchall()
         except Exception:
             logger.exception("actionable_alert: failed to query calendar events")
