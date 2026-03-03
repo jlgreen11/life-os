@@ -7,6 +7,7 @@ High-level operations on the immutable event log.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from storage.manager import DatabaseManager
@@ -97,6 +98,85 @@ class EventStore:
         with self.db.get_connection("events") as conn:
             row = conn.execute("SELECT COUNT(*) as cnt FROM events").fetchone()
             return row["cnt"]
+
+    def get_event_flow_stats(self, stale_threshold_hours: int = 6) -> dict:
+        """Return event flow statistics for monitoring data freshness.
+
+        Aggregates the event log by source to produce:
+        - Per-source event counts in the last 24 hours and last-event timestamps
+        - A list of sources whose most recent event is older than
+          ``stale_threshold_hours``
+        - Overall throughput (total events in the last 24 h, events/hour)
+
+        This powers the ``data_flow`` section of the ``/health`` endpoint,
+        enabling the dashboard to surface stale connectors before downstream
+        features (predictions, insights) silently degrade.
+
+        Args:
+            stale_threshold_hours: Number of hours after which a source is
+                considered stale.  Defaults to 6.
+
+        Returns:
+            Dict with keys ``sources``, ``stale_sources``, ``total_24h``,
+            and ``events_per_hour``.
+        """
+        with self.db.get_connection("events") as conn:
+            # Per-source counts for events within the last 24 hours
+            recent_rows = conn.execute(
+                """SELECT source,
+                          COUNT(*) AS count_24h,
+                          MAX(timestamp) AS last_event
+                   FROM events
+                   WHERE timestamp > datetime('now', '-24 hours')
+                   GROUP BY source
+                   ORDER BY count_24h DESC"""
+            ).fetchall()
+
+            sources: dict[str, dict] = {}
+            for row in recent_rows:
+                sources[row["source"]] = {
+                    "count_24h": row["count_24h"],
+                    "last_event": row["last_event"],
+                }
+
+            # Check ALL sources for staleness (including those with zero
+            # events in the last 24 h that wouldn't appear above).
+            all_source_rows = conn.execute(
+                """SELECT source, MAX(timestamp) AS last_event
+                   FROM events
+                   GROUP BY source"""
+            ).fetchall()
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=stale_threshold_hours)
+            stale_sources: list[str] = []
+
+            for row in all_source_rows:
+                source = row["source"]
+                last_event = row["last_event"]
+                # Backfill sources that had no events in the last 24 h
+                if source not in sources:
+                    sources[source] = {"count_24h": 0, "last_event": last_event}
+                # Determine staleness by comparing the last event timestamp
+                try:
+                    ts = datetime.fromisoformat(last_event.replace("Z", "+00:00"))
+                    if ts < cutoff:
+                        stale_sources.append(source)
+                except (ValueError, TypeError):
+                    stale_sources.append(source)
+
+            # Overall throughput in the last 24 hours
+            total_row = conn.execute(
+                """SELECT COUNT(*) AS c FROM events
+                   WHERE timestamp > datetime('now', '-24 hours')"""
+            ).fetchone()
+            total_24h = total_row["c"]
+
+        return {
+            "sources": sources,
+            "stale_sources": sorted(stale_sources),
+            "total_24h": total_24h,
+            "events_per_hour": round(total_24h / 24.0, 1),
+        }
 
     # -------------------------------------------------------------------
     # Event tagging — stored in event_tags (separate from the immutable

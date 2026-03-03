@@ -95,6 +95,12 @@ def register_routes(app: FastAPI, life_os) -> None:
             asyncio.to_thread(life_os.db.get_database_health),
         )
 
+        # Event flow stats — wrapped so a failure doesn't break /health
+        try:
+            flow_stats = await asyncio.to_thread(life_os.event_store.get_event_flow_stats)
+        except Exception:
+            flow_stats = None
+
         # Derive overall DB status: "ok" if all databases are healthy,
         # "degraded" if one or more are corrupted.  Callers can inspect
         # db_health for per-database detail.
@@ -106,6 +112,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_bus": life_os.event_bus.is_connected,
             "events_stored": events_stored,
+            "data_flow": flow_stats,
             "vector_store": vector_stats,
             "connectors": list(connectors),
             "db_health": db_health,
