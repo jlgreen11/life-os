@@ -51,6 +51,7 @@ from services.workflow_detector.detector import WorkflowDetector
 from services.insight_engine.source_weights import SourceWeightManager
 from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
 from services.task_completion_detector.detector import TaskCompletionDetector
+from web.websocket import ws_manager
 
 
 def _prediction_priority(prediction) -> str:
@@ -2023,6 +2024,19 @@ class LifeOS:
                 logger.error("Event store error (event_id=%s, type=%s): %s",
                              event.get("id"), event.get("type"), e)
 
+            # WebSocket broadcast — push the new event to all connected
+            # dashboard clients so the UI updates in real time instead of
+            # relying on 60-second polling.  Non-critical: failures are
+            # silently swallowed to protect the event pipeline.
+            try:
+                await ws_manager.broadcast({
+                    "type": "event",
+                    "event_type": event.get("type"),
+                    "event_id": event.get("id"),
+                })
+            except Exception:
+                pass
+
             # Stage 1.2 — Feedback Loop: process notification feedback events
             # (acted_on, dismissed) to close the learning loop. This enables
             # the system to learn which notifications are useful vs annoying.
@@ -2083,6 +2097,15 @@ class LifeOS:
             except Exception as e:
                 logger.error("Signal extractor error (event_id=%s, type=%s): %s",
                              event.get("id"), event.get("type"), e)
+
+            # WebSocket mood broadcast — content-bearing events (email, message,
+            # chat) may shift the detected mood.  Push an update so the
+            # dashboard mood widget refreshes instantly.
+            try:
+                if event_type.startswith(("email.", "message.", "chat.")):
+                    await ws_manager.broadcast({"type": "mood_update"})
+            except Exception:
+                pass
 
             # Stage 3 — React: the rules engine evaluates deterministic,
             # user-defined rules and returns a list of actions to execute
@@ -2266,6 +2289,15 @@ class LifeOS:
                 source_event_id=event.get("id"),
                 domain=domain,
             )
+            # Push the notification to connected dashboard clients in real time.
+            try:
+                await ws_manager.broadcast({
+                    "type": "notification",
+                    "title": title,
+                    "source_event_id": event.get("id"),
+                })
+            except Exception:
+                pass
         elif action_type == "tag":
             # Persist the tag in the event_tags table (separate from the
             # append-only events table to preserve its immutability).
@@ -2801,6 +2833,17 @@ class LifeOS:
                         source_event_id=prediction.id,
                         domain="prediction",
                     )
+
+                # Notify connected dashboards about new predictions so the
+                # prediction widget refreshes without waiting for the next poll.
+                if predictions:
+                    try:
+                        await ws_manager.broadcast({
+                            "type": "new_prediction",
+                            "count": len(predictions),
+                        })
+                    except Exception:
+                        pass
 
                 # Auto-resolve stale prediction notifications to close the feedback loop.
                 # Predictions that users ignore for 24+ hours are marked inaccurate so
