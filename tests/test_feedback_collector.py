@@ -64,7 +64,7 @@ async def test_notification_dismissed_quick(db, user_model_store):
 
 @pytest.mark.asyncio
 async def test_notification_dismissed_slow(db, user_model_store):
-    """Test that slow dismissals (>10 sec) are recorded but don't create strong signal."""
+    """Test that slow dismissals (>10 sec) create a mild negative signal."""
     collector = FeedbackCollector(db, user_model_store)
 
     # Create a test notification
@@ -95,10 +95,105 @@ async def test_notification_dismissed_slow(db, user_model_store):
         assert feedback is not None
         assert feedback["response_latency_seconds"] == 15.0
 
-    # Verify NO semantic fact was created (slow dismissal doesn't trigger learning)
+    # Verify mild negative semantic fact was created (low_value, not irrelevant)
     facts = user_model_store.get_semantic_facts(category="notification_preference")
     calendar_fact = next((f for f in facts if "calendar" in f["key"]), None)
-    assert calendar_fact is None
+    assert calendar_fact is not None
+    assert calendar_fact["key"] == "notification_low_value_calendar"
+    assert calendar_fact["confidence"] == 0.2
+    assert "reads but dismisses" in calendar_fact["value"]
+
+
+@pytest.mark.asyncio
+async def test_notification_dismissed_neutral_zone(db, user_model_store):
+    """Test that dismissals in the 2-10 sec neutral zone create no semantic fact."""
+    collector = FeedbackCollector(db, user_model_store)
+
+    # Create a test notification
+    with db.get_connection("state") as conn:
+        notif_id = "test-notif-neutral"
+        conn.execute(
+            """INSERT INTO notifications
+               (id, priority, domain, title, body, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (notif_id, Priority.NORMAL.value, "weather", "Weather", "Rain expected",
+             "delivered", datetime.now(timezone.utc).isoformat())
+        )
+
+    # Process dismissal at 5 seconds (in the neutral zone: 2-10 sec)
+    await collector.process_notification_response(
+        notification_id=notif_id,
+        response_type=FeedbackType.DISMISSED.value,
+        response_time_seconds=5.0
+    )
+
+    # Verify feedback was stored
+    with db.get_connection("preferences") as conn:
+        feedback = conn.execute(
+            "SELECT * FROM feedback_log WHERE action_id = ?",
+            (notif_id,)
+        ).fetchone()
+
+        assert feedback is not None
+        assert feedback["response_latency_seconds"] == 5.0
+
+    # Verify NO semantic fact was created (neutral zone = ambiguous, no learning)
+    facts = user_model_store.get_semantic_facts(category="notification_preference")
+    weather_fact = next((f for f in facts if "weather" in f["key"]), None)
+    assert weather_fact is None
+
+
+@pytest.mark.asyncio
+async def test_dismissal_facts_reflect_domain_and_priority(db, user_model_store):
+    """Test that dismissal facts correctly include the notification's domain and priority."""
+    collector = FeedbackCollector(db, user_model_store)
+
+    # Create notifications with distinct domain/priority combos
+    with db.get_connection("state") as conn:
+        conn.execute(
+            """INSERT INTO notifications
+               (id, priority, domain, title, body, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("notif-fast-finance", Priority.HIGH.value, "finance", "Alert", "Big charge",
+             "delivered", datetime.now(timezone.utc).isoformat())
+        )
+        conn.execute(
+            """INSERT INTO notifications
+               (id, priority, domain, title, body, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("notif-slow-social", Priority.LOW.value, "social", "Update", "New post",
+             "delivered", datetime.now(timezone.utc).isoformat())
+        )
+
+    # Fast dismiss on the finance notification
+    await collector.process_notification_response(
+        notification_id="notif-fast-finance",
+        response_type=FeedbackType.DISMISSED.value,
+        response_time_seconds=0.5
+    )
+
+    # Slow dismiss on the social notification
+    await collector.process_notification_response(
+        notification_id="notif-slow-social",
+        response_type=FeedbackType.DISMISSED.value,
+        response_time_seconds=20.0
+    )
+
+    facts = user_model_store.get_semantic_facts(category="notification_preference")
+
+    # Verify fast-dismiss fact has correct domain and priority
+    finance_fact = next((f for f in facts if f["key"] == "notification_irrelevant_finance"), None)
+    assert finance_fact is not None
+    assert finance_fact["confidence"] == 0.4
+    assert "high" in finance_fact["value"].lower()
+    assert "finance" in finance_fact["value"]
+
+    # Verify slow-dismiss fact has correct domain and priority
+    social_fact = next((f for f in facts if f["key"] == "notification_low_value_social"), None)
+    assert social_fact is not None
+    assert social_fact["confidence"] == 0.2
+    assert "low" in social_fact["value"].lower()
+    assert "social" in social_fact["value"]
 
 
 @pytest.mark.asyncio

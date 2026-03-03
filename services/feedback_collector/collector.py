@@ -277,12 +277,20 @@ class FeedbackCollector:
 
         # Quick dismissal (<2 sec) = "this was irrelevant"
         # Slow dismissal (>10 sec) = "I read it but don't need to act"
+        # Middle ground (2-10 sec) = ambiguous, no learning signal
         if response_time < 2:
             self.ums.update_semantic_fact(
                 key=f"notification_irrelevant_{domain}",
                 category="notification_preference",
                 value=f"User quickly dismisses {priority} notifications about {domain}",
                 confidence=0.4,
+            )
+        elif response_time > 10:
+            self.ums.update_semantic_fact(
+                key=f"notification_low_value_{domain}",
+                category="notification_preference",
+                value=f"User reads but dismisses {priority} notifications about {domain}",
+                confidence=0.2,
             )
 
     def _learn_from_engagement(self, notification: dict, response_time: float):
