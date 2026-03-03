@@ -171,6 +171,10 @@ class LifeOS:
         # repair loops when the underlying storage is persistently failing.
         self._runtime_db_rebuilds = 0
 
+        # Timestamp of the last successful user_model.db backup, used by
+        # _db_health_loop to trigger a daily backup.
+        self._last_backup_time: float | None = None
+
         # Tracks whether NATS event handlers (master_event_handler pipeline)
         # have been registered.  Used by _nats_reconnect_loop to re-register
         # handlers after a NATS restart without requiring a full Life OS restart.
@@ -3380,6 +3384,21 @@ class LifeOS:
         """
         while not self.shutdown_event.is_set():
             try:
+                # --- Daily backup of user_model.db ---
+                # Create a timestamped copy before the corruption probe so
+                # we preserve a known-good snapshot that can be restored if
+                # the next rebuild loses data.
+                try:
+                    now_ts = datetime.now(timezone.utc).timestamp()
+                    if self._last_backup_time is None or (now_ts - self._last_backup_time) > 86400:
+                        backup_path = self.db.backup_database("user_model")
+                        if backup_path:
+                            self._last_backup_time = now_ts
+                            logger.info("Daily backup of user_model.db created: %s", backup_path)
+                except Exception as e:
+                    # Fail-open: backup failure must never crash the health loop.
+                    logger.warning("Daily backup of user_model.db failed: %s", e)
+
                 if self._runtime_db_rebuilds > 3:
                     # Already exceeded the rebuild limit — skip probing to
                     # avoid wasting cycles on a persistently broken disk.
