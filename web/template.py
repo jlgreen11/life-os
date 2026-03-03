@@ -1058,6 +1058,35 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             line-height: 1.5;
         }
 
+        /* Calendar conflict indicators */
+        .calendar-event.conflict {
+            border-left: 3px solid #e74c3c;
+            background: rgba(231, 76, 60, 0.15);
+        }
+        .calendar-detail-card.conflict {
+            border-left: 3px solid #e74c3c;
+            background: rgba(231, 76, 60, 0.08);
+        }
+        .conflict-badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: rgba(231, 76, 60, 0.15);
+            color: #e74c3c;
+            margin-left: 6px;
+            font-weight: 500;
+            vertical-align: middle;
+        }
+        .calendar-conflict-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #e74c3c;
+            display: inline-block;
+            margin-left: 2px;
+        }
+
         /* --- Animations --- */
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(8px); }
@@ -1712,6 +1741,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function renderCalendarEvents() {
+        // Group events by date for conflict detection
+        var eventsByDate = {};
+        for (var i = 0; i < calendarEvents.length; i++) {
+            var startDate = calendarEvents[i].start_time.substring(0, 10);
+            if (!eventsByDate[startDate]) eventsByDate[startDate] = [];
+            eventsByDate[startDate].push(calendarEvents[i]);
+        }
+
+        // Detect conflicts per day and build a set of conflicting event indices
+        var conflictingEvents = new Set();
+        for (var date in eventsByDate) {
+            var dayEvts = eventsByDate[date];
+            var dayConflicts = detectDayConflicts(dayEvts);
+            if (dayConflicts.size > 0) {
+                // Map local day indices back to global calendarEvents indices
+                for (var ci = 0; ci < dayEvts.length; ci++) {
+                    if (dayConflicts.has(ci)) {
+                        conflictingEvents.add(calendarEvents.indexOf(dayEvts[ci]));
+                    }
+                }
+            }
+        }
+
         for (var i = 0; i < calendarEvents.length; i++) {
             var evt = calendarEvents[i];
             var startDate = evt.start_time.substring(0, 10); // YYYY-MM-DD
@@ -1737,8 +1789,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 continue;
             }
 
+            var hasConflict = conflictingEvents.has(i);
             var pill = document.createElement('div');
-            pill.className = 'calendar-event ' + (evt.is_all_day ? 'all-day' : 'timed');
+            pill.className = 'calendar-event ' + (evt.is_all_day ? 'all-day' : 'timed') + (hasConflict ? ' conflict' : '');
             var label = '';
             if (!evt.is_all_day && evt.start_time.length > 10) {
                 var t = new Date(evt.start_time);
@@ -1749,6 +1802,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             pill.textContent = label + (evt.title || 'Event');
             pill.title = evt.title || '';
             cell.appendChild(pill);
+        }
+
+        // Add conflict indicator dots to days with overlapping events
+        for (var date in eventsByDate) {
+            var dayConflicts = detectDayConflicts(eventsByDate[date]);
+            if (dayConflicts.size > 0) {
+                var cell = document.getElementById('cal-' + date);
+                if (cell && !cell.querySelector('.calendar-conflict-dot')) {
+                    var dot = document.createElement('span');
+                    dot.className = 'calendar-conflict-dot';
+                    dot.title = 'Overlapping events';
+                    cell.appendChild(dot);
+                }
+            }
         }
     }
 
@@ -1779,6 +1846,25 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
     }
 
+    function detectDayConflicts(dayEvents) {
+        // Returns a Set of event indices that have time overlaps.
+        // All-day events are excluded from conflict detection since
+        // multiple all-day events on the same day are normal (e.g., birthdays + holidays).
+        var conflicting = new Set();
+        for (var i = 0; i < dayEvents.length; i++) {
+            if (dayEvents[i].is_all_day) continue;
+            for (var j = i + 1; j < dayEvents.length; j++) {
+                if (dayEvents[j].is_all_day) continue;
+                // Two events overlap when A.start < B.end AND B.start < A.end
+                if (dayEvents[i].start_time < dayEvents[j].end_time && dayEvents[j].start_time < dayEvents[i].end_time) {
+                    conflicting.add(i);
+                    conflicting.add(j);
+                }
+            }
+        }
+        return conflicting;
+    }
+
     function renderDayDetail(day) {
         var dateStr = day.getFullYear() + '-' + String(day.getMonth()+1).padStart(2,'0') + '-' + String(day.getDate()).padStart(2,'0');
         var dayEvents = calendarEvents.filter(function(evt) {
@@ -1798,14 +1884,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             return a.start_time < b.start_time ? -1 : 1;
         });
 
+        var conflicts = detectDayConflicts(dayEvents);
+
         var html = '<div style="font-size:13px;color:var(--text-secondary);margin-bottom:8px;font-weight:500">' +
                    escHtml(day.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'})) +
                    ' — ' + dayEvents.length + ' event' + (dayEvents.length !== 1 ? 's' : '') + '</div>';
 
         for (var i = 0; i < dayEvents.length; i++) {
             var evt = dayEvents[i];
-            html += '<div class="calendar-detail-card">';
-            html += '<div class="cal-evt-title">' + escHtml(evt.title || 'Untitled Event') + '</div>';
+            var isConflict = conflicts.has(i);
+            html += '<div class="calendar-detail-card' + (isConflict ? ' conflict' : '') + '">';
+            html += '<div class="cal-evt-title">' + escHtml(evt.title || 'Untitled Event') + (isConflict ? '<span class="conflict-badge">Overlap</span>' : '') + '</div>';
 
             // Time
             if (evt.is_all_day) {
