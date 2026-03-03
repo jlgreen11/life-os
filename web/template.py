@@ -509,6 +509,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-weight: 600;
         }
         .draft-btn:hover { opacity: 0.85; }
+        .rebuild-btn {
+            padding: 4px 12px;
+            font-size: 11px;
+            background: var(--accent-red);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 6px;
+            font-weight: 600;
+        }
+        .rebuild-btn:hover { opacity: 0.85; }
+        .rebuild-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* --- Quick-reply inline compose box (message cards) --- */
         /* Shown in the drill-down of message cards so the user can type and send
@@ -2378,6 +2391,48 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .catch(function(err) { console.error('Not about me failed:', err); });
     }
 
+    /**
+     * Trigger a rebuild of user_model.db via the admin API.
+     *
+     * Called from the inline rebuild button in the database integrity section
+     * when user_model.db shows as corrupted.  Shows loading/success/error
+     * states inline and refreshes the health panel on success.
+     */
+    function rebuildUserModel() {
+        var btn = document.getElementById('rebuild-um-btn');
+        var resultEl = document.getElementById('rebuild-um-result');
+        if (!btn || !resultEl) return;
+        btn.disabled = true;
+        btn.textContent = 'Rebuilding\u2026';
+        resultEl.textContent = '';
+        fetch(API + '/api/admin/rebuild-user-model', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status === 'rebuilt') {
+                resultEl.style.color = 'var(--accent-green)';
+                resultEl.textContent = 'Database rebuilt, backfills running in background';
+                // Refresh health panel after a short delay to show updated status
+                setTimeout(function() { loadSystemFeed(); }, 2000);
+            } else if (data.status === 'skipped') {
+                resultEl.style.color = 'var(--accent-yellow)';
+                resultEl.textContent = 'Skipped: ' + (data.reason || 'database is healthy');
+                btn.disabled = false;
+                btn.textContent = 'Rebuild Database';
+            } else {
+                resultEl.style.color = 'var(--accent-red)';
+                resultEl.textContent = 'Error: ' + (data.detail || 'unknown error');
+                btn.disabled = false;
+                btn.textContent = 'Rebuild Database';
+            }
+        })
+        .catch(function(err) {
+            resultEl.style.color = 'var(--accent-red)';
+            resultEl.textContent = 'Request failed: ' + err.message;
+            btn.disabled = false;
+            btn.textContent = 'Rebuild Database';
+        });
+    }
+
     function loadSystemFeed() {
         /* Load the System health dashboard.
          *
@@ -2502,7 +2557,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             }
 
             // ── Section 4: Database integrity ─────────────────────────────
-            // Reports the output of PRAGMA quick_check per database file.
+            // Reports database integrity status from /health endpoint.
             // A "corrupted" status means certain tables or pages are unreadable,
             // which silently degrades features like signal profiles and routines.
             var dbHealth = health.db_health || {};
@@ -2536,6 +2591,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                         if (dinfo.errors.length > 2) {
                             html += '<div class="sys-stale-msg" style="color:var(--text-muted)">... and ' + (dinfo.errors.length - 2) + ' more errors</div>';
                         }
+                    }
+                    // Show a one-click rebuild button for corrupted user_model.db
+                    if (dname === 'user_model' && !dOk) {
+                        var btnId = 'rebuild-um-btn';
+                        var resultId = 'rebuild-um-result';
+                        html += '<button id="' + btnId + '" class="rebuild-btn" onclick="rebuildUserModel()">Rebuild Database</button>';
+                        html += '<div id="' + resultId + '" style="font-size:11px;margin-top:4px"></div>';
                     }
                     html += '</div>';
                 }
