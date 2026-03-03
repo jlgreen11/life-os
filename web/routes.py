@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -230,18 +230,24 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # --- notifications (lives in state.db) ---
         def _check_notifications():
-            """Query notification counts."""
+            """Query notification counts.
+
+            'actionable' counts notifications the user hasn't interacted with yet
+            (pending or delivered). The old query used status='unread' which doesn't
+            exist in the schema — valid statuses are: pending, delivered, read,
+            acted_on, dismissed, suppressed, expired.
+            """
             with life_os.db.get_connection("state") as conn:
                 total_row = conn.execute("SELECT COUNT(*) as c FROM notifications").fetchone()
-                unread_row = conn.execute(
-                    "SELECT COUNT(*) as c FROM notifications WHERE status = 'unread'"
+                actionable_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM notifications WHERE status IN ('pending', 'delivered')"
                 ).fetchone()
                 last_24h_row = conn.execute(
                     "SELECT COUNT(*) as c FROM notifications WHERE created_at > datetime('now', '-1 day')"
                 ).fetchone()
                 return {
                     "total": total_row["c"] if total_row else 0,
-                    "unread": unread_row["c"] if unread_row else 0,
+                    "actionable": actionable_row["c"] if actionable_row else 0,
                     "last_24h": last_24h_row["c"] if last_24h_row else 0,
                 }
 
@@ -1262,17 +1268,29 @@ def register_routes(app: FastAPI, life_os) -> None:
         pending tasks, tasks completed today, overdue tasks,
         and a breakdown of pending tasks by life domain.
         """
-        return life_os.task_manager.get_task_stats()
+        try:
+            return life_os.task_manager.get_task_stats()
+        except Exception as e:
+            logger.warning("Failed to get task stats: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, req: TaskUpdateRequest):
-        await life_os.task_manager.update_task(task_id, **req.model_dump(exclude_none=True))
-        return {"status": "updated"}
+        try:
+            await life_os.task_manager.update_task(task_id, **req.model_dump(exclude_none=True))
+            return {"status": "updated"}
+        except Exception as e:
+            logger.warning("Failed to update task '%s': %s", task_id, e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.post("/api/tasks/{task_id}/complete")
     async def complete_task(task_id: str):
-        await life_os.task_manager.complete_task(task_id)
-        return {"status": "completed"}
+        try:
+            await life_os.task_manager.complete_task(task_id)
+            return {"status": "completed"}
+        except Exception as e:
+            logger.warning("Failed to complete task '%s': %s", task_id, e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     # -------------------------------------------------------------------
     # Notifications
@@ -1346,13 +1364,21 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/notifications")
     async def list_notifications(limit: int = 50):
-        notifications = life_os.notification_manager.get_pending(limit=limit)
-        return {"notifications": notifications}
+        try:
+            notifications = life_os.notification_manager.get_pending(limit=limit)
+            return {"notifications": notifications}
+        except Exception as e:
+            logger.warning("Failed to list notifications: %s", e)
+            return JSONResponse(status_code=500, content={"notifications": [], "error": str(e)})
 
     @app.post("/api/notifications/{notif_id}/read")
     async def mark_read(notif_id: str):
-        await life_os.notification_manager.mark_read(notif_id)
-        return {"status": "read"}
+        try:
+            await life_os.notification_manager.mark_read(notif_id)
+            return {"status": "read"}
+        except Exception as e:
+            logger.warning("Failed to mark notification '%s' as read: %s", notif_id, e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.post("/api/notifications/{notif_id}/dismiss")
     async def dismiss_notification(notif_id: str):
@@ -1382,8 +1408,12 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/notifications/digest")
     async def get_digest():
-        digest = await life_os.notification_manager.get_digest()
-        return {"digest": digest}
+        try:
+            digest = await life_os.notification_manager.get_digest()
+            return {"digest": digest}
+        except Exception as e:
+            logger.warning("Failed to get notification digest: %s", e)
+            return JSONResponse(status_code=500, content={"digest": None, "error": str(e)})
 
     # -------------------------------------------------------------------
     # Draft Messages
@@ -1510,20 +1540,32 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.get("/api/user-model")
     async def get_user_model():
         """Return the full user model summary from the signal extractor."""
-        return life_os.signal_extractor.get_user_summary()
+        try:
+            return life_os.signal_extractor.get_user_summary()
+        except Exception as e:
+            logger.warning("Failed to get user model summary: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.get("/api/user-model/facts")
     async def get_facts(min_confidence: float = 0.0):
         """Return semantic facts, optionally filtered by minimum confidence."""
-        facts = life_os.user_model_store.get_semantic_facts(min_confidence=min_confidence)
-        return {"facts": facts}
+        try:
+            facts = life_os.user_model_store.get_semantic_facts(min_confidence=min_confidence)
+            return {"facts": facts}
+        except Exception as e:
+            logger.warning("Failed to get semantic facts: %s", e)
+            return JSONResponse(status_code=500, content={"facts": [], "error": str(e)})
 
     @app.delete("/api/user-model/facts/{key}")
     async def delete_fact(key: str):
         """Delete a single semantic fact by key (user correction flow)."""
-        with life_os.db.get_connection("user_model") as conn:
-            conn.execute("DELETE FROM semantic_facts WHERE key = ?", (key,))
-        return {"status": "deleted"}
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                conn.execute("DELETE FROM semantic_facts WHERE key = ?", (key,))
+            return {"status": "deleted"}
+        except Exception as e:
+            logger.warning("Failed to delete fact '%s': %s", key, e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     @app.patch("/api/user-model/facts/{key}")
     async def correct_fact(key: str, request: FactCorrectionRequest):
@@ -2692,34 +2734,42 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/preferences")
     async def get_preferences():
-        with life_os.db.get_connection("preferences") as conn:
-            rows = conn.execute("SELECT key, value, set_by, updated_at FROM user_preferences").fetchall()
-            return {"preferences": [dict(r) for r in rows]}
+        try:
+            with life_os.db.get_connection("preferences") as conn:
+                rows = conn.execute("SELECT key, value, set_by, updated_at FROM user_preferences").fetchall()
+                return {"preferences": [dict(r) for r in rows]}
+        except Exception as e:
+            logger.warning("Failed to get preferences: %s", e)
+            return JSONResponse(status_code=500, content={"preferences": [], "error": str(e)})
 
     @app.put("/api/preferences")
     async def update_preference(req: PreferenceUpdate):
-        now = datetime.now(timezone.utc).isoformat()
-        serialized_value = json.dumps(req.value) if not isinstance(req.value, str) else req.value
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            serialized_value = json.dumps(req.value) if not isinstance(req.value, str) else req.value
 
-        with life_os.db.get_connection("preferences") as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO user_preferences (key, value, set_by, updated_at)
-                   VALUES (?, ?, 'user', ?)""",
-                (req.key, serialized_value, now),
-            )
+            with life_os.db.get_connection("preferences") as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO user_preferences (key, value, set_by, updated_at)
+                       VALUES (?, ?, 'user', ?)""",
+                    (req.key, serialized_value, now),
+                )
 
-        # Publish preference update telemetry
-        if life_os.event_bus.is_connected:
-            await life_os.event_bus.publish(
-                "system.preference.updated",
-                {
-                    "key": req.key,
-                    "updated_at": now,
-                },
-                source="web_api",
-            )
+            # Publish preference update telemetry
+            if life_os.event_bus.is_connected:
+                await life_os.event_bus.publish(
+                    "system.preference.updated",
+                    {
+                        "key": req.key,
+                        "updated_at": now,
+                    },
+                    source="web_api",
+                )
 
-        return {"status": "updated"}
+            return {"status": "updated"}
+        except Exception as e:
+            logger.warning("Failed to update preference '%s': %s", req.key, e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     # -------------------------------------------------------------------
     # Feedback
@@ -2727,8 +2777,12 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.post("/api/feedback")
     async def submit_feedback(req: FeedbackRequest):
-        await life_os.feedback_collector.process_explicit_feedback(req.message)
-        return {"status": "received"}
+        try:
+            await life_os.feedback_collector.process_explicit_feedback(req.message)
+            return {"status": "received"}
+        except Exception as e:
+            logger.warning("Failed to process feedback: %s", e)
+            return JSONResponse(status_code=500, content={"error": str(e)})
 
     # -------------------------------------------------------------------
     # Events (debug/inspection)
