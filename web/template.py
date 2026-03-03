@@ -395,6 +395,49 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             color: var(--text-secondary);
         }
         .card.expanded .card-detail { display: block; }
+        .contact-history {
+            margin: 8px 0;
+            padding: 8px;
+            border-radius: 6px;
+            background: var(--card-bg, #f8f9fa);
+        }
+        .contact-history-header {
+            font-size: 0.9em;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: var(--text-primary);
+        }
+        .contact-history-meta {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        .interaction-item {
+            display: flex;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }
+        .interaction-direction {
+            font-weight: bold;
+            min-width: 20px;
+        }
+        .interaction-time {
+            min-width: 70px;
+            white-space: nowrap;
+        }
+        .interaction-subject {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .contact-history a {
+            font-size: 0.8em;
+            color: var(--accent);
+            text-decoration: none;
+        }
         .card-actions {
             display: flex;
             gap: 8px;
@@ -1551,6 +1594,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             html += '<div class="card-detail">';
             html += '<div style="margin-bottom:8px">' + escHtml(item.body) + '</div>';
 
+            // Contact interaction history — lazy-loaded when the card is
+            // expanded.  loadContactHistory() fetches the last 5 interactions
+            // from /api/contacts/{fromAddr}/interactions and renders them.
+            html += '<div id="contact-history-' + escAttr(id) + '" class="contact-history" data-contact="' + escAttr(fromAddr) + '">Loading...</div>';
+
             // Quick-reply compose box: lets the user type and send a reply directly
             // without leaving the dashboard.  sendQuickReply() posts to /api/messages/send.
             html += '<div class="quick-reply-area">';
@@ -2706,7 +2754,76 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             // revealing the detail panel — no inline style needed.
             expandedCardId = id;
             card.classList.add('expanded');
+
+            // Lazy-load contact interaction history for message cards.
+            var historyEl = document.getElementById('contact-history-' + id);
+            if (historyEl && !historyEl.dataset.loaded) {
+                loadContactHistory(id, historyEl);
+            }
         }
+    }
+
+    /**
+     * Lazy-load contact interaction history for a message card.
+     *
+     * Fetches the last 5 interactions with the contact from
+     * /api/contacts/{email}/interactions and renders them into the
+     * placeholder element.  Sets data-loaded="1" to avoid re-fetching.
+     *
+     * @param {string} cardId   The feed item ID (used to find the placeholder).
+     * @param {Element} el      The contact-history placeholder element.
+     */
+    function loadContactHistory(cardId, el) {
+        var contactAddr = el.dataset.contact;
+        if (!contactAddr) {
+            safeSetContent(el, '');
+            return;
+        }
+        el.dataset.loaded = '1';
+
+        fetch(API + '/api/contacts/' + encodeURIComponent(contactAddr) + '/interactions?limit=5')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var html = '';
+
+            // Contact profile header
+            if (data.contact) {
+                html += '<div class="contact-history-header">' + escHtml(data.contact.name || contactAddr) + '</div>';
+                var metaParts = [];
+                if (data.contact.relationship) metaParts.push(escHtml(data.contact.relationship));
+                if (data.contact.is_priority) metaParts.push('Priority contact');
+                if (metaParts.length) {
+                    html += '<div class="contact-history-meta">' + metaParts.join(' &middot; ') + '</div>';
+                }
+            } else {
+                html += '<div class="contact-history-header">' + escHtml(contactAddr) + '</div>';
+            }
+
+            // Interaction list
+            if (data.interactions && data.interactions.length) {
+                for (var i = 0; i < data.interactions.length; i++) {
+                    var ix = data.interactions[i];
+                    var direction = (ix.type && ix.type.indexOf('.sent') !== -1) ? '\u2192' : '\u2190';
+                    var label = ix.subject || ix.snippet || ix.channel || '';
+                    html += '<div class="interaction-item">';
+                    html += '<span class="interaction-direction">' + direction + '</span>';
+                    html += '<span class="interaction-time">' + escHtml(timeAgo(ix.timestamp)) + '</span>';
+                    html += '<span class="interaction-subject">' + escHtml(label) + '</span>';
+                    html += '</div>';
+                }
+                if (data.total_interactions > 5) {
+                    html += '<a href="#" onclick="event.stopPropagation();event.preventDefault()">View all ' + data.total_interactions + ' interactions</a>';
+                }
+            } else {
+                html += '<div class="contact-history-meta">No recent interactions found</div>';
+            }
+
+            safeSetContent(el, html);
+        })
+        .catch(function(err) {
+            console.error('Failed to load contact history:', err);
+            safeSetContent(el, '<div class="contact-history-meta">Could not load history</div>');
+        });
     }
 
     function completeTask(id) {

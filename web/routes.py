@@ -2311,6 +2311,157 @@ def register_routes(app: FastAPI, life_os) -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    @app.get("/api/contacts/{contact_email}/interactions")
+    async def get_contact_interactions(
+        contact_email: str,
+        limit: int = 5,
+    ):
+        """Return recent interactions with a specific contact.
+
+        Queries the events database for the last N email/message exchanges
+        with the given contact, plus the contact's profile from entities.db
+        if one exists.
+
+        Args:
+            contact_email: URL-decoded email address or identifier to match.
+            limit: Number of interactions to return (default 5, max 20).
+
+        Returns:
+            ``{"contact_email": "...", "contact": {...}|null,
+              "interactions": [...], "total_interactions": N}``
+        """
+        import json as _json
+        from urllib.parse import unquote
+
+        decoded_email = unquote(contact_email)
+        effective_limit = min(max(limit, 1), 20)
+
+        # --- Contact lookup from entities.db ---
+        contact = None
+        try:
+            with life_os.db.get_connection("entities") as conn:
+                row = conn.execute(
+                    """
+                    SELECT id, name, aliases, emails, phones, channels,
+                           relationship, is_priority, preferred_channel,
+                           always_surface, typical_response_time,
+                           last_contact, contact_frequency_days,
+                           communication_style, notes, created_at
+                    FROM contacts
+                    WHERE id IN (
+                        SELECT contacts.id FROM contacts, json_each(contacts.emails)
+                        WHERE json_each.value = ?
+                    )
+                    LIMIT 1
+                    """,
+                    (decoded_email,),
+                ).fetchone()
+                if row:
+                    contact = dict(row)
+                    for json_field in ("aliases", "emails", "phones", "notes"):
+                        raw = contact.get(json_field)
+                        if isinstance(raw, str):
+                            try:
+                                contact[json_field] = _json.loads(raw)
+                            except (_json.JSONDecodeError, ValueError):
+                                contact[json_field] = []
+                    contact["is_priority"] = bool(contact.get("is_priority", 0))
+                    contact["always_surface"] = bool(contact.get("always_surface", 0))
+        except Exception as e:
+            logger.warning("Contact lookup failed for %s: %s", decoded_email, e)
+
+        # --- Interaction history from events.db ---
+        interaction_types = (
+            "email.received", "email.sent",
+            "message.received", "message.sent",
+            "imessage.received", "imessage.sent",
+        )
+        type_placeholders = ",".join("?" for _ in interaction_types)
+
+        # Match contact on from_address (inbound), to_addresses (outbound),
+        # or sender (fallback).  to_addresses is a JSON array so we use LIKE.
+        interaction_query = f"""
+            SELECT id, type, timestamp, payload
+            FROM events
+            WHERE type IN ({type_placeholders})
+              AND (
+                  json_extract(payload, '$.from_address') = ?
+                  OR payload LIKE ?
+                  OR json_extract(payload, '$.sender') = ?
+              )
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """
+
+        # Count query uses same WHERE clause but no LIMIT.
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM events
+            WHERE type IN ({type_placeholders})
+              AND (
+                  json_extract(payload, '$.from_address') = ?
+                  OR payload LIKE ?
+                  OR json_extract(payload, '$.sender') = ?
+              )
+        """
+
+        # The LIKE pattern wraps the email in quotes to match within a JSON
+        # array value like ["alice@example.com", "bob@example.com"].
+        like_pattern = f'%"{decoded_email}"%'
+        base_params = list(interaction_types) + [decoded_email, like_pattern, decoded_email]
+
+        interactions = []
+        total_interactions = 0
+        try:
+            with life_os.db.get_connection("events") as conn:
+                total_interactions = conn.execute(
+                    count_query, base_params
+                ).fetchone()[0]
+
+                rows = conn.execute(
+                    interaction_query, base_params + [effective_limit]
+                ).fetchall()
+
+            for row in rows:
+                row_dict = dict(row)
+                payload = {}
+                if isinstance(row_dict.get("payload"), str):
+                    try:
+                        payload = _json.loads(row_dict["payload"])
+                    except (_json.JSONDecodeError, ValueError):
+                        pass
+
+                # Determine channel from event type
+                evt_type = row_dict.get("type", "")
+                if "email" in evt_type:
+                    channel = "email"
+                elif "imessage" in evt_type:
+                    channel = "imessage"
+                else:
+                    channel = "message"
+
+                # Build snippet from body/text content
+                body = payload.get("body") or payload.get("text") or payload.get("content") or ""
+                snippet = body[:100] + ("..." if len(body) > 100 else "")
+
+                interactions.append({
+                    "id": row_dict["id"],
+                    "type": evt_type,
+                    "timestamp": row_dict.get("timestamp", ""),
+                    "subject": payload.get("subject", ""),
+                    "snippet": snippet,
+                    "channel": channel,
+                })
+        except Exception as e:
+            logger.error("Failed to query interactions for %s: %s", decoded_email, e)
+
+        return {
+            "contact_email": decoded_email,
+            "contact": contact,
+            "interactions": interactions,
+            "total_interactions": total_interactions,
+        }
+
     # -------------------------------------------------------------------
     # Insights (aggregated signal profiles → human-readable summaries)
     # -------------------------------------------------------------------
