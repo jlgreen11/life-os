@@ -2485,6 +2485,24 @@ class PredictionEngine:
 
         prediction_type_counts = {row["prediction_type"]: row["count"] for row in pred_counts}
 
+        # --- Data source health probes ---
+        # Probe each signal profile the engine depends on so the admin can
+        # see which are accessible vs corrupted or empty.
+        data_source_health = {}
+        for profile_name in ["relationships", "cadence", "mood_signals", "linguistic", "topics"]:
+            try:
+                profile = self.ums.get_signal_profile(profile_name)
+                data_source_health[profile_name] = {
+                    "status": "available" if profile else "empty",
+                    "samples": profile.get("samples_count", 0) if profile else 0,
+                }
+            except Exception as e:
+                data_source_health[profile_name] = {
+                    "status": "error",
+                    "error": str(e),
+                }
+        diagnostics["data_sources"] = data_source_health
+
         # --- Follow-up needs (reminder) ---
         with self.db.get_connection("events") as conn:
             unreplied_count = conn.execute(
@@ -2559,7 +2577,11 @@ class PredictionEngine:
         }
 
         # --- Relationship maintenance (opportunity) ---
-        rel_profile = self.ums.get_signal_profile("relationships")
+        try:
+            rel_profile = self.ums.get_signal_profile("relationships")
+        except Exception as e:
+            logger.warning("get_diagnostics: failed to read relationships profile: %s", e)
+            rel_profile = None
         if rel_profile:
             contacts = rel_profile["data"].get("contacts", {})
             eligible_contacts = sum(1 for data in contacts.values()
@@ -2699,12 +2721,27 @@ class PredictionEngine:
         else:
             health = "broken"
 
+        overall_blockers = []
+        # Flag data source errors as an overall blocker
+        errored_sources = [
+            name for name, info in data_source_health.items()
+            if info["status"] == "error"
+        ]
+        if errored_sources:
+            overall_blockers.append(
+                f"user_model.db may be corrupted (failed profiles: {', '.join(errored_sources)})"
+            )
+            # Data source errors cap health at degraded or worse
+            if health == "healthy":
+                health = "degraded"
+
         diagnostics["overall"] = {
             "total_predictions_7d": total_predictions_7d,
             "active_types": active_types,
             "blocked_types": blocked_types,
             "total_types": len(diagnostics["prediction_types"]),
             "health": health,
+            "blockers": overall_blockers,
         }
 
         return diagnostics
