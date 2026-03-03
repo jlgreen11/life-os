@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -1601,46 +1602,66 @@ def register_routes(app: FastAPI, life_os) -> None:
         import json
         from datetime import datetime, timezone
 
-        with life_os.db.get_connection("user_model") as conn:
-            # Retrieve the existing fact to compute new confidence
-            existing = conn.execute(
-                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-            ).fetchone()
-
-            if not existing:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
-
-            # Compute new confidence: reduce by 0.30 (significant penalty),
-            # but never go below 0.0. This ensures corrected facts are
-            # de-prioritized but remain visible for audit purposes.
-            # Round to 2 decimal places to avoid floating point precision issues.
-            new_confidence = round(max(0.0, existing["confidence"] - 0.30), 2)
-
-            # Update the fact with correction metadata
-            update_params = {
-                "is_user_corrected": 1,
-                "confidence": new_confidence,
-                "last_confirmed": datetime.now(timezone.utc).isoformat(),
-            }
-
-            # If the user provided a corrected value, replace the existing one
-            if request.corrected_value is not None:
-                update_params["value"] = json.dumps(request.corrected_value)
-
-            # Build the UPDATE query dynamically based on provided fields
-            set_clause = ", ".join([f"{k} = ?" for k in update_params.keys()])
-            values = list(update_params.values()) + [key]
-
-            conn.execute(
-                f"UPDATE semantic_facts SET {set_clause} WHERE key = ?",
-                values,
+        # Fast-path: skip query if user_model.db is known to be corrupted
+        if getattr(life_os.db, "user_model_degraded", False) is True:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
             )
 
-            # Retrieve the updated fact to return to the client
-            updated = conn.execute(
-                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-            ).fetchone()
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                # Retrieve the existing fact to compute new confidence
+                existing = conn.execute(
+                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+                ).fetchone()
+
+                if not existing:
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
+
+                # Compute new confidence: reduce by 0.30 (significant penalty),
+                # but never go below 0.0. This ensures corrected facts are
+                # de-prioritized but remain visible for audit purposes.
+                # Round to 2 decimal places to avoid floating point precision issues.
+                new_confidence = round(max(0.0, existing["confidence"] - 0.30), 2)
+
+                # Update the fact with correction metadata
+                update_params = {
+                    "is_user_corrected": 1,
+                    "confidence": new_confidence,
+                    "last_confirmed": datetime.now(timezone.utc).isoformat(),
+                }
+
+                # If the user provided a corrected value, replace the existing one
+                if request.corrected_value is not None:
+                    update_params["value"] = json.dumps(request.corrected_value)
+
+                # Build the UPDATE query dynamically based on provided fields
+                set_clause = ", ".join([f"{k} = ?" for k in update_params.keys()])
+                values = list(update_params.values()) + [key]
+
+                conn.execute(
+                    f"UPDATE semantic_facts SET {set_clause} WHERE key = ?",
+                    values,
+                )
+
+                # Retrieve the updated fact to return to the client
+                updated = conn.execute(
+                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+                ).fetchone()
+        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
+            logger.warning("correct_fact: user_model.db query failed: %s", e)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
+            )
 
         # Log the correction to the feedback collector for analytics
         if life_os.feedback_collector:
@@ -1702,32 +1723,52 @@ def register_routes(app: FastAPI, life_os) -> None:
         import json
         from datetime import datetime, timezone
 
-        with life_os.db.get_connection("user_model") as conn:
-            existing = conn.execute(
-                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-            ).fetchone()
-
-            if not existing:
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
-
-            old_confidence = existing["confidence"]
-            # Confidence grows by +0.05 per confirmation, capped at 1.0.
-            # Round to 2 decimal places to avoid floating point drift.
-            new_confidence = round(min(1.0, old_confidence + 0.05), 2)
-
-            conn.execute(
-                """UPDATE semantic_facts
-                   SET confidence = ?,
-                       times_confirmed = times_confirmed + 1,
-                       last_confirmed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                   WHERE key = ?""",
-                (new_confidence, key),
+        # Fast-path: skip query if user_model.db is known to be corrupted
+        if getattr(life_os.db, "user_model_degraded", False) is True:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
             )
 
-            updated = conn.execute(
-                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-            ).fetchone()
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                existing = conn.execute(
+                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+                ).fetchone()
+
+                if not existing:
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
+
+                old_confidence = existing["confidence"]
+                # Confidence grows by +0.05 per confirmation, capped at 1.0.
+                # Round to 2 decimal places to avoid floating point drift.
+                new_confidence = round(min(1.0, old_confidence + 0.05), 2)
+
+                conn.execute(
+                    """UPDATE semantic_facts
+                       SET confidence = ?,
+                           times_confirmed = times_confirmed + 1,
+                           last_confirmed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                       WHERE key = ?""",
+                    (new_confidence, key),
+                )
+
+                updated = conn.execute(
+                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+                ).fetchone()
+        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
+            logger.warning("confirm_fact: user_model.db query failed: %s", e)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
+            )
 
         # Log confirmation to the feedback collector for analytics
         if life_os.feedback_collector:
@@ -2583,16 +2624,36 @@ def register_routes(app: FastAPI, life_os) -> None:
         if feedback not in ("useful", "dismissed", "not_relevant", "negative"):
             raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful', 'dismissed', or 'not_relevant'.")
 
+        # Fast-path: skip query if user_model.db is known to be corrupted
+        if getattr(life_os.db, "user_model_degraded", False) is True:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
+            )
+
         # Look up the insight to find its source category for weight feedback
         source_key = None
-        with life_os.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT category, entity FROM insights WHERE id = ?",
-                (insight_id,),
-            ).fetchone()
-            conn.execute(
-                "UPDATE insights SET feedback = ? WHERE id = ?",
-                (feedback, insight_id),
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT category, entity FROM insights WHERE id = ?",
+                    (insight_id,),
+                ).fetchone()
+                conn.execute(
+                    "UPDATE insights SET feedback = ? WHERE id = ?",
+                    (feedback, insight_id),
+                )
+        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
+            logger.warning("insight_feedback: user_model.db query failed: %s", e)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
             )
 
         # Map insight category back to source_key for weight learning.
@@ -2737,6 +2798,17 @@ def register_routes(app: FastAPI, life_os) -> None:
             GET /api/predictions?prediction_type=opportunity&min_confidence=0.5
             GET /api/predictions?include_resolved=true&limit=100
         """
+        # Fast-path: skip query if user_model.db is known to be corrupted
+        if getattr(life_os.db, "user_model_degraded", False) is True:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "predictions": [],
+                    "count": 0,
+                    "error": "User model database is temporarily unavailable",
+                },
+            )
+
         # Clamp limit to prevent unbounded queries
         limit = min(limit, 200)
 
@@ -2766,19 +2838,30 @@ def register_routes(app: FastAPI, life_os) -> None:
         where_clause = " AND ".join(conditions)
         params.append(limit)
 
-        with life_os.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                f"""SELECT id, prediction_type, description, confidence, confidence_gate,
-                           time_horizon, suggested_action, supporting_signals,
-                           was_surfaced, user_response, was_accurate,
-                           filter_reason, resolution_reason,
-                           created_at, resolved_at
-                    FROM predictions
-                    WHERE {where_clause}
-                    ORDER BY confidence DESC, created_at DESC
-                    LIMIT ?""",
-                params,
-            ).fetchall()
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    f"""SELECT id, prediction_type, description, confidence, confidence_gate,
+                               time_horizon, suggested_action, supporting_signals,
+                               was_surfaced, user_response, was_accurate,
+                               filter_reason, resolution_reason,
+                               created_at, resolved_at
+                        FROM predictions
+                        WHERE {where_clause}
+                        ORDER BY confidence DESC, created_at DESC
+                        LIMIT ?""",
+                    params,
+                ).fetchall()
+        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
+            logger.warning("list_predictions: user_model.db query failed: %s", e)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "predictions": [],
+                    "count": 0,
+                    "error": "User model database is temporarily unavailable",
+                },
+            )
 
         results = []
         for row in rows:
@@ -2832,12 +2915,32 @@ def register_routes(app: FastAPI, life_os) -> None:
             POST /api/predictions/abc123/feedback?was_accurate=true
             POST /api/predictions/abc123/feedback?was_accurate=false&user_response=not_relevant
         """
+        # Fast-path: skip query if user_model.db is known to be corrupted
+        if getattr(life_os.db, "user_model_degraded", False) is True:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
+            )
+
         # Verify the prediction exists before resolving to give a clear 404
-        with life_os.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT id FROM predictions WHERE id = ?",
-                (prediction_id,),
-            ).fetchone()
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT id FROM predictions WHERE id = ?",
+                    (prediction_id,),
+                ).fetchone()
+        except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
+            logger.warning("prediction_feedback: user_model.db query failed: %s", e)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "User model database is temporarily unavailable",
+                    "detail": "Database corruption detected. The system is attempting automatic recovery.",
+                },
+            )
 
         if not row:
             raise HTTPException(
