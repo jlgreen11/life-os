@@ -51,6 +51,7 @@ from services.workflow_detector.detector import WorkflowDetector
 from services.insight_engine.source_weights import SourceWeightManager
 from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
 from services.task_completion_detector.detector import TaskCompletionDetector
+from services.conflict_detector.detector import ConflictDetector
 from web.websocket import ws_manager
 
 
@@ -154,6 +155,9 @@ class LifeOS:
         self.task_completion_detector = TaskCompletionDetector(
             self.db, self.task_manager, self.event_bus
         )
+        # ConflictDetector scans calendar events for scheduling overlaps and
+        # publishes calendar.conflict.detected events for the rules engine
+        self.conflict_detector = ConflictDetector(db=self.db)
 
         # --- Browser automation layer ---
         # Wraps Playwright and manages browser-based connectors separately
@@ -429,6 +433,7 @@ class LifeOS:
         self._start_background_task("task_completion_loop", self._task_completion_loop())
         self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
         self._start_background_task("db_health_loop", self._db_health_loop())
+        self._start_background_task("conflict_detection_loop", self._conflict_detection_loop())
 
         # 7. Launch web server
         logger.info("[7/7] Starting web server...")
@@ -1806,7 +1811,8 @@ class LifeOS:
                 try:
                     # Touch the user_model connection to ensure the pool is fresh
                     # after any table repair that may have invalidated cached connections.
-                    self.db.get_connection("user_model")
+                    with self.db.get_connection("user_model"):
+                        pass
                     await backfill_method()
                 except Exception as e:
                     logger.warning(
@@ -2868,6 +2874,22 @@ class LifeOS:
             # 900 seconds = 15 minutes.  This interval balances freshness
             # against compute cost; predictions depend on aggregated patterns,
             # so sub-minute granularity is unnecessary.
+            await asyncio.sleep(900)  # 15 minutes
+
+    async def _conflict_detection_loop(self):
+        """Run calendar conflict detection every 15 minutes.
+
+        Scans upcoming calendar events (48-hour window) for scheduling overlaps
+        and publishes ``calendar.conflict.detected`` events so the rules engine's
+        default 'High priority: calendar conflict' rule can notify the user.
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                published = await self.conflict_detector.check_and_publish(self.event_bus)
+                if published:
+                    logger.info("  ConflictDetector: published %d new conflict(s)", published)
+            except Exception as e:
+                logger.error("Conflict detection error: %s", e)
             await asyncio.sleep(900)  # 15 minutes
 
     async def _insight_loop(self):
