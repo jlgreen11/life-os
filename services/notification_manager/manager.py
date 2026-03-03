@@ -419,8 +419,9 @@ class NotificationManager:
         """Get the user's notification preference.
 
         Returns one of: "minimal", "batched", "frequent".
-        Defaults to "batched" if the user hasn't set a preference yet
-        (safest default — avoids overwhelming a new user).
+        Defaults to "immediate" if the user hasn't set a preference yet,
+        ensuring notifications are delivered out-of-the-box on fresh
+        installations that haven't completed onboarding.
 
         Preferences can be stored in two formats depending on how they were
         written:
@@ -436,14 +437,15 @@ class NotificationManager:
 
         Example:
             >>> mgr._get_notification_mode()
-            'batched'
+            'immediate'
         """
         with self.db.get_connection("preferences") as conn:
             row = conn.execute(
                 "SELECT value FROM user_preferences WHERE key = 'notification_mode'"
             ).fetchone()
             if not row:
-                return "batched"
+                logger.info("No notification_mode preference set — defaulting to 'immediate'")
+                return "immediate"
 
         raw = row["value"]
         try:
