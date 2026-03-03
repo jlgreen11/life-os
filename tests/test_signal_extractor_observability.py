@@ -161,16 +161,16 @@ class TestTaskManagerObservability:
         assert "AI engine not available" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_ai_engine_warned_flag_is_instance_attr(self, db):
-        """The _ai_engine_warned flag should be per-instance, not shared."""
+    async def test_ai_engine_skip_count_is_instance_attr(self, db):
+        """The _ai_engine_skip_count counter should be per-instance, not shared."""
         tm1 = TaskManager(db, ai_engine=None)
         tm2 = TaskManager(db, ai_engine=None)
 
-        assert tm1._ai_engine_warned is False
-        assert tm2._ai_engine_warned is False
+        assert tm1._ai_engine_skip_count == 0
+        assert tm2._ai_engine_skip_count == 0
 
-        # Trigger warning on tm1
+        # Trigger skip on tm1
         await tm1.process_event({"id": "e1", "type": "email.received", "payload": {"body": "test"}})
-        assert tm1._ai_engine_warned is True
+        assert tm1._ai_engine_skip_count == 1
         # tm2 should be unaffected
-        assert tm2._ai_engine_warned is False
+        assert tm2._ai_engine_skip_count == 0

@@ -130,9 +130,9 @@ async def test_process_event_extracts_tasks_from_calendar_event(db):
 
     await manager.process_event(event)
 
-    # Verify AI extraction was called with the description
+    # Verify AI extraction was called with description + summary
     mock_ai.extract_action_items.assert_called_once_with(
-        "Agenda: Q4 planning. TODO: Prepare slides. Book conference room.",
+        "Agenda: Q4 planning. TODO: Prepare slides. Book conference room. Team meeting",
         "calendar.event.created"
     )
 
