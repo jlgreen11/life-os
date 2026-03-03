@@ -615,17 +615,21 @@ class ContextAssembler:
             - [reminder] Prepare for "Q1 Planning" starting in 2 hours (confidence: 0.75)
             - [conflict] Calendar conflict: "Standup" overlaps "Team Lunch" on 2026-02-19 (confidence: 0.91)
         """
-        with self.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                """SELECT prediction_type, description, confidence, suggested_action
-                   FROM predictions
-                   WHERE was_surfaced = 1
-                     AND resolved_at IS NULL
-                     AND filter_reason IS NULL
-                     AND datetime(created_at) > datetime('now', '-7 days')
-                   ORDER BY confidence DESC
-                   LIMIT 10"""
-            ).fetchall()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT prediction_type, description, confidence, suggested_action
+                       FROM predictions
+                       WHERE was_surfaced = 1
+                         AND resolved_at IS NULL
+                         AND filter_reason IS NULL
+                         AND datetime(created_at) > datetime('now', '-7 days')
+                       ORDER BY confidence DESC
+                       LIMIT 10"""
+                ).fetchall()
+        except Exception as e:
+            logger.debug("context: _get_predictions_context unavailable, skipping: %s", e)
+            return ""
 
         if not rows:
             return ""
@@ -666,16 +670,20 @@ class ContextAssembler:
             - [behavioral_pattern] You typically send emails on Tuesday and Thursday mornings (confidence: 0.81)
             - [communication_style] Your writing to the marketing team is 30% more casual than average (confidence: 0.72)
         """
-        with self.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                """SELECT type, summary, confidence, category, entity
-                   FROM insights
-                   WHERE feedback IS NOT 'negative'
-                     AND datetime(created_at) >
-                         datetime('now', '-' || staleness_ttl_hours || ' hours')
-                   ORDER BY confidence DESC
-                   LIMIT 10"""
-            ).fetchall()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT type, summary, confidence, category, entity
+                       FROM insights
+                       WHERE feedback IS NOT 'negative'
+                         AND datetime(created_at) >
+                             datetime('now', '-' || staleness_ttl_hours || ' hours')
+                       ORDER BY confidence DESC
+                       LIMIT 10"""
+                ).fetchall()
+        except Exception as e:
+            logger.debug("context: _get_insights_context unavailable, skipping: %s", e)
+            return ""
 
         if not rows:
             return ""
@@ -698,12 +706,16 @@ class ContextAssembler:
         notification preferences, etc. These are key-value pairs stored in the
         preferences database. Returns a fallback string if none are configured.
         """
-        with self.db.get_connection("preferences") as conn:
-            rows = conn.execute("SELECT key, value FROM user_preferences").fetchall()
-            if rows:
-                # Flatten rows into a dict for compact JSON representation.
-                prefs = {row["key"]: row["value"] for row in rows}
-                return f"User preferences: {json.dumps(prefs)}"
+        try:
+            with self.db.get_connection("preferences") as conn:
+                rows = conn.execute("SELECT key, value FROM user_preferences").fetchall()
+                if rows:
+                    # Flatten rows into a dict for compact JSON representation.
+                    prefs = {row["key"]: row["value"] for row in rows}
+                    return f"User preferences: {json.dumps(prefs)}"
+                return "User preferences: not yet configured"
+        except Exception as e:
+            logger.debug("context: _get_preference_context unavailable, skipping: %s", e)
             return "User preferences: not yet configured"
 
     def _get_calendar_context(self) -> str:
@@ -767,27 +779,31 @@ class ContextAssembler:
         The secondary sort (due_date ASC) ensures earlier deadlines appear first
         within the same priority tier. Capped at 20 to respect token budget.
         """
-        with self.db.get_connection("state") as conn:
-            tasks = conn.execute(
-                """SELECT title, priority, due_date, domain
-                   FROM tasks WHERE status = 'pending'
-                   ORDER BY
-                       CASE priority
-                           WHEN 'critical' THEN 1
-                           WHEN 'high' THEN 2
-                           WHEN 'normal' THEN 3
-                           ELSE 4
-                       END,
-                       due_date ASC
-                   LIMIT 20"""
-            ).fetchall()
+        try:
+            with self.db.get_connection("state") as conn:
+                tasks = conn.execute(
+                    """SELECT title, priority, due_date, domain
+                       FROM tasks WHERE status = 'pending'
+                       ORDER BY
+                           CASE priority
+                               WHEN 'critical' THEN 1
+                               WHEN 'high' THEN 2
+                               WHEN 'normal' THEN 3
+                               ELSE 4
+                           END,
+                           due_date ASC
+                       LIMIT 20"""
+                ).fetchall()
 
-            if tasks:
-                # Format each task as a concise bullet with priority tag and due date.
-                lines = [f"- [{t['priority']}] {t['title']} (due: {t['due_date'] or 'no date'})"
-                         for t in tasks]
-                return "Pending tasks:\n" + "\n".join(lines)
-            return "Pending tasks: none"
+                if tasks:
+                    # Format each task as a concise bullet with priority tag and due date.
+                    lines = [f"- [{t['priority']}] {t['title']} (due: {t['due_date'] or 'no date'})"
+                             for t in tasks]
+                    return "Pending tasks:\n" + "\n".join(lines)
+                return "Pending tasks: none"
+        except Exception as e:
+            logger.debug("context: _get_task_context unavailable, skipping: %s", e)
+            return ""
 
     def _get_recent_episodes_context(self) -> str:
         """Fetch recent episodic memories to surface in the morning briefing.
@@ -908,16 +924,20 @@ class ContextAssembler:
         """
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
-        with self.db.get_connection("state") as conn:
-            tasks = conn.execute(
-                """SELECT title, priority, domain, completed_at
-                   FROM tasks
-                   WHERE status = 'completed'
-                     AND completed_at >= ?
-                   ORDER BY completed_at DESC
-                   LIMIT 10""",
-                (cutoff,),
-            ).fetchall()
+        try:
+            with self.db.get_connection("state") as conn:
+                tasks = conn.execute(
+                    """SELECT title, priority, domain, completed_at
+                       FROM tasks
+                       WHERE status = 'completed'
+                         AND completed_at >= ?
+                       ORDER BY completed_at DESC
+                       LIMIT 10""",
+                    (cutoff,),
+                ).fetchall()
+        except Exception as e:
+            logger.debug("context: _get_recent_completions_context unavailable, skipping: %s", e)
+            return ""
 
         if not tasks:
             return ""
