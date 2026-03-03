@@ -62,8 +62,8 @@ def test_reply_request_rule_in_default_rules():
 
 
 def test_default_rules_count():
-    """DEFAULT_RULES should contain exactly 7 rules."""
-    assert len(DEFAULT_RULES) == 7
+    """DEFAULT_RULES should contain exactly 8 rules."""
+    assert len(DEFAULT_RULES) == 8
 
 
 # ---------------------------------------------------------------
@@ -71,13 +71,13 @@ def test_default_rules_count():
 # ---------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_install_default_rules_installs_all_seven(db):
-    """install_default_rules should create all 7 rules in the database."""
+async def test_install_default_rules_installs_all_eight(db):
+    """install_default_rules should create all 8 rules in the database."""
     await install_default_rules(db)
 
     engine = RulesEngine(db)
     rules = engine.get_all_rules()
-    assert len(rules) == 7
+    assert len(rules) == 8
 
     rule_names = {r["name"] for r in rules}
     assert "Notify on urgent emails" in rule_names
