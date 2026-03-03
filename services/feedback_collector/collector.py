@@ -40,10 +40,12 @@ class FeedbackCollector:
         - Explicit feedback ("that was helpful" / "don't do that")
     """
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore, event_bus: Any = None):
+    def __init__(self, db: DatabaseManager, ums: UserModelStore, event_bus: Any = None,
+                 source_weight_manager: Any = None):
         self.db = db   # Database access for feedback_log and notification tables
         self.ums = ums  # User-model store for updating semantic facts from feedback
         self.bus = event_bus
+        self.swm = source_weight_manager  # SourceWeightManager for updating source weights on feedback
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -259,6 +261,84 @@ class FeedbackCollector:
             )
 
     # -------------------------------------------------------------------
+    # Source weight integration
+    # -------------------------------------------------------------------
+
+    def _classify_notification_source(self, notification: dict) -> Optional[str]:
+        """Classify a notification into a source_key for weight tracking.
+
+        Traces from notification -> source_event_id -> event -> source_key
+        using SourceWeightManager.classify_event(). Falls back to domain-based
+        mapping when no source event is available.
+
+        Returns the source_key string (e.g. "email.work") or None if
+        classification is not possible.
+        """
+        if not self.swm:
+            return None
+
+        # Step 1: If there's a source event, look it up and classify via SWM
+        source_event_id = notification.get("source_event_id")
+        if source_event_id:
+            try:
+                with self.db.get_connection("events") as conn:
+                    event_row = conn.execute(
+                        "SELECT type, payload, metadata FROM events WHERE id = ?",
+                        (source_event_id,),
+                    ).fetchone()
+
+                if event_row:
+                    import json as _json
+                    event = {
+                        "type": event_row["type"],
+                        "payload": _json.loads(event_row["payload"] or "{}"),
+                        "metadata": _json.loads(event_row["metadata"] or "{}"),
+                    }
+                    source_key = self.swm.classify_event(event)
+                    if source_key:
+                        return source_key
+            except Exception:
+                logger.debug("Failed to classify notification source event %s", source_event_id)
+
+        # Step 2: Fallback to domain-based classification
+        domain = notification.get("domain")
+        if domain:
+            domain_to_source = {
+                "email": "email.work",
+                "messaging": "messaging.direct",
+                "calendar": "calendar.meetings",
+                "finance": "finance.transactions",
+                "health": "health.activity",
+                "location": "location.visits",
+                "home": "home.devices",
+            }
+            return domain_to_source.get(domain)
+
+        return None
+
+    def _update_source_weight_dismissal(self, notification: dict):
+        """Record a dismissal signal in source weights (non-critical)."""
+        if not self.swm:
+            return
+        try:
+            source_key = self._classify_notification_source(notification)
+            if source_key:
+                self.swm.record_dismissal(source_key)
+        except Exception as e:
+            logger.debug("Source weight dismissal feedback failed: %s", e)
+
+    def _update_source_weight_engagement(self, notification: dict):
+        """Record an engagement signal in source weights (non-critical)."""
+        if not self.swm:
+            return
+        try:
+            source_key = self._classify_notification_source(notification)
+            if source_key:
+                self.swm.record_engagement(source_key)
+        except Exception as e:
+            logger.debug("Source weight engagement feedback failed: %s", e)
+
+    # -------------------------------------------------------------------
     # Learning methods
     # -------------------------------------------------------------------
 
@@ -293,6 +373,9 @@ class FeedbackCollector:
                 confidence=0.2,
             )
 
+        # Update source weights — dismissal is a negative signal
+        self._update_source_weight_dismissal(notification)
+
     def _learn_from_engagement(self, notification: dict, response_time: float):
         """
         User engaged with a notification — reinforce similar actions.
@@ -312,6 +395,9 @@ class FeedbackCollector:
                 confidence=0.6,
             )
 
+        # Update source weights — engagement is a positive signal
+        self._update_source_weight_engagement(notification)
+
     def _learn_from_ignore(self, notification: dict):
         """
         User ignored a notification completely — strongest negative signal.
@@ -327,6 +413,9 @@ class FeedbackCollector:
             value=f"User ignores notifications about {domain}",
             confidence=0.5,
         )
+
+        # Update source weights — ignored is the strongest negative signal
+        self._update_source_weight_dismissal(notification)
 
     def _update_template_from_edit(self, contact_id: Optional[str],
                                    channel: Optional[str],

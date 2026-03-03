@@ -128,11 +128,15 @@ class LifeOS:
         self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}),
                                   vector_store=self.vector_store)
         self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
-        self.feedback_collector = FeedbackCollector(self.db, self.user_model_store, event_bus=self.event_bus)
+        self.source_weight_manager = SourceWeightManager(self.db)
+        self.feedback_collector = FeedbackCollector(
+            self.db, self.user_model_store,
+            event_bus=self.event_bus,
+            source_weight_manager=self.source_weight_manager,
+        )
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store, timezone=self.user_tz
         )
-        self.source_weight_manager = SourceWeightManager(self.db)
         self.insight_engine = InsightEngine(
             self.db, self.user_model_store,
             source_weight_manager=self.source_weight_manager,
