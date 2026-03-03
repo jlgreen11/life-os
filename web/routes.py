@@ -2443,6 +2443,10 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "workflow_pattern_task": "email.work",
                 "workflow_pattern_calendar": "email.work",
                 "workflow_pattern_interaction": "messaging.direct",
+                # Email peak-hour insights (from _email_peak_hour_insights)
+                "email_timing": "email.work",
+                # Meeting density insights (from _meeting_density_insights)
+                "meeting_density": "calendar.meetings",
                 # actionable_alert categories (overdue_task, upcoming_calendar) are
                 # intentionally absent: they bypass source-weight tuning entirely.
             }
