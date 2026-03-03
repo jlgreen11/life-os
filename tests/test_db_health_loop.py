@@ -5,6 +5,7 @@ Verifies that the background loop:
 - detects user_model.db corruption via probe queries and triggers rebuild
 - skips rebuild when the database is healthy
 - caps runtime rebuilds at 3 to prevent infinite repair loops
+- sends user notifications and WebSocket broadcasts on corruption events
 """
 
 import asyncio
@@ -21,6 +22,7 @@ def lifeos_instance(db):
 
     Uses dependency injection to provide a real DatabaseManager backed
     by temporary SQLite databases, avoiding any NATS or Ollama dependency.
+    Includes mocked notification_manager and event_bus for notification tests.
     """
     from main import LifeOS
 
@@ -29,6 +31,9 @@ def lifeos_instance(db):
         db=db,
     )
     instance.shutdown_event = asyncio.Event()
+    instance.notification_manager = AsyncMock()
+    instance.event_bus = AsyncMock()
+    instance.event_bus.is_connected = True
     return instance
 
 
@@ -61,8 +66,24 @@ async def test_healthy_db_skips_rebuild(lifeos_instance):
     assert lifeos_instance._runtime_db_rebuilds == 0
 
 
+async def test_healthy_db_sends_no_notification(lifeos_instance):
+    """When the DB is healthy, no notifications should be created."""
+    with (
+        patch.object(
+            lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
+        ),
+        patch("main.ws_manager") as mock_ws,
+    ):
+        await _run_loop_once(lifeos_instance)
+
+    lifeos_instance.notification_manager.create_notification.assert_not_called()
+    lifeos_instance.event_bus.publish.assert_not_called()
+    mock_ws.broadcast.assert_not_called()
+
+
 async def test_corrupted_db_triggers_rebuild(lifeos_instance):
-    """When a probe query raises an exception, rebuild should be called."""
+    """When a probe query raises an exception, rebuild should be called
+    and a success notification should be created."""
     original_get_connection = lifeos_instance.db.get_connection
 
     @contextmanager
@@ -85,12 +106,33 @@ async def test_corrupted_db_triggers_rebuild(lifeos_instance):
         patch.object(
             lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
         ) as mock_backfill,
+        patch("main.ws_manager") as mock_ws,
     ):
         await _run_loop_once(lifeos_instance)
 
     mock_rebuild.assert_called_once()
     mock_backfill.assert_called_once()
     assert lifeos_instance._runtime_db_rebuilds == 1
+
+    # Verify success notification was created
+    lifeos_instance.notification_manager.create_notification.assert_called_once()
+    call_kwargs = lifeos_instance.notification_manager.create_notification.call_args[1]
+    assert "auto-repaired" in call_kwargs["title"].lower()
+    assert call_kwargs["priority"] == "normal"
+    assert call_kwargs["domain"] == "system"
+
+    # Verify system event was published
+    lifeos_instance.event_bus.publish.assert_called_once()
+    pub_args = lifeos_instance.event_bus.publish.call_args
+    assert pub_args[0][0] == "system.database.corruption_detected"
+    assert pub_args[0][1]["database"] == "user_model"
+    assert pub_args[1]["priority"] == "critical"
+
+    # Verify WebSocket broadcast was sent
+    mock_ws.broadcast.assert_called_once()
+    ws_data = mock_ws.broadcast.call_args[0][0]
+    assert ws_data["type"] == "db_corruption"
+    assert ws_data["database"] == "user_model"
 
 
 async def test_rebuild_counter_limits_retries(lifeos_instance):
@@ -135,6 +177,7 @@ async def test_rebuild_counter_increments_on_each_corruption(lifeos_instance):
             patch.object(
                 lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
             ),
+            patch("main.ws_manager"),
         ):
             await _run_loop_once(lifeos_instance)
 
@@ -142,7 +185,8 @@ async def test_rebuild_counter_increments_on_each_corruption(lifeos_instance):
 
 
 async def test_fourth_corruption_stops_rebuilds(lifeos_instance):
-    """On the 4th corruption, the counter exceeds limit and rebuild stops."""
+    """On the 4th corruption, the counter exceeds limit, rebuild stops,
+    and a critical notification is created for the user."""
     # Set counter to 3, one more corruption should increment to 4 and log error
     lifeos_instance._runtime_db_rebuilds = 3
 
@@ -168,6 +212,7 @@ async def test_fourth_corruption_stops_rebuilds(lifeos_instance):
         patch.object(
             lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
         ) as mock_backfill,
+        patch("main.ws_manager"),
     ):
         await _run_loop_once(lifeos_instance)
 
@@ -175,6 +220,13 @@ async def test_fourth_corruption_stops_rebuilds(lifeos_instance):
     mock_rebuild.assert_not_called()
     mock_backfill.assert_not_called()
     assert lifeos_instance._runtime_db_rebuilds == 4
+
+    # Verify critical notification was created for the user
+    lifeos_instance.notification_manager.create_notification.assert_called_once()
+    call_kwargs = lifeos_instance.notification_manager.create_notification.call_args[1]
+    assert "manual intervention" in call_kwargs["title"].lower()
+    assert call_kwargs["priority"] == "critical"
+    assert call_kwargs["domain"] == "system"
 
 
 async def test_connection_failure_triggers_rebuild(lifeos_instance):
@@ -194,6 +246,7 @@ async def test_connection_failure_triggers_rebuild(lifeos_instance):
         patch.object(
             lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
         ) as mock_backfill,
+        patch("main.ws_manager"),
     ):
         await _run_loop_once(lifeos_instance)
 
