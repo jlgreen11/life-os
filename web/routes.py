@@ -3125,7 +3125,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         try:
             with life_os.db.get_connection("state") as conn:
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM notifications WHERE read = 0 AND dismissed = 0"
+                    "SELECT COUNT(*) FROM notifications WHERE status IN ('pending', 'delivered')"
                 ).fetchone()[0]
             health["pipeline"]["pending_notifications"] = count
         except Exception as e:
@@ -3443,7 +3443,9 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         In production, inference runs automatically every 6 hours via background task.
         """
-        life_os.semantic_fact_inferrer.run_all_inference()
+        import asyncio
+
+        await asyncio.to_thread(life_os.semantic_fact_inferrer.run_all_inference)
 
         # Return count of facts after inference
         facts = life_os.user_model_store.get_semantic_facts()
