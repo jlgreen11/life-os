@@ -796,8 +796,8 @@ class PredictionEngine:
                         eid = signals.get("calendar_event_id")
                         if eid:
                             existing_event_ids.add(eid)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.debug("calendar_reminders: skipping malformed dedup entry: %s", e)
         except Exception as e:
             logger.debug("calendar_reminders: could not check existing predictions: %s", e)
 
@@ -950,8 +950,8 @@ class PredictionEngine:
                     msg_id = signals.get("message_id")
                     if msg_id:
                         already_predicted_messages.add(msg_id)
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug("follow_up: skipping malformed dedup entry: %s", e)
         except Exception as e:
             logger.warning(
                 "follow_up dedup query failed (skipping dedup, may produce duplicates): %s", e
@@ -1136,8 +1136,8 @@ class PredictionEngine:
                     routine_name = signals.get("routine_name")
                     if routine_name:
                         already_predicted_routines.add(routine_name)
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug("routine_deviation: skipping malformed dedup entry: %s", e)
         except Exception as e:
             logger.warning(
                 "routine_deviation dedup query failed (skipping dedup, may produce duplicates): %s", e
@@ -1932,9 +1932,9 @@ class PredictionEngine:
                     if current_time >= start or current_time <= end:
                         return True
 
-        except (json.JSONDecodeError, KeyError, ValueError, Exception):
+        except Exception as e:
             # Malformed data or DB error — fail open.
-            pass
+            logger.debug("quiet_hours: could not parse quiet hours config, failing open: %s", e)
 
         return False
 
@@ -2180,8 +2180,8 @@ class PredictionEngine:
                 try:
                     signals = json.loads(row["supporting_signals"])
                     contact_email = signals.get("contact_email")
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug("suppression: skipping malformed supporting_signals: %s", e)
             keys.add((pred_type, contact_email))
         return keys
 
@@ -2237,7 +2237,7 @@ class PredictionEngine:
 
         Scans up to 1000 ``calendar.event.created`` event payloads and
         classifies each as all-day or timed based on the ``is_all_day``
-        field.  Malformed or unparseable payloads are silently skipped.
+        field.  Malformed or unparseable payloads are skipped with a debug log.
 
         Returns:
             Tuple of (all_day_count, timed_count).
@@ -2255,8 +2255,8 @@ class PredictionEngine:
                     all_day_count += 1
                 else:
                     timed_count += 1
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                pass
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+                logger.debug("calendar_stats: skipping malformed event payload: %s", e)
         return all_day_count, timed_count
 
     async def get_diagnostics(self) -> dict:
