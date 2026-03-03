@@ -458,6 +458,40 @@ DEFAULT_RULES = [
             {"type": "tag", "value": "large-transaction"},
         ],
     },
+    # Notify on emails with urgent keywords in the subject line.
+    # Marketing emails are safe: the "Archive marketing emails" rule's
+    # suppress action fires first (main.py processes suppress before notify),
+    # so suppressed events skip the notify action automatically.
+    {
+        "name": "Notify on urgent emails",
+        "trigger_event": "email.received",
+        "conditions": [
+            {"field": "payload.subject", "op": "contains_any",
+             "value": ["urgent", "action required", "action needed",
+                       "immediate", "asap", "time sensitive",
+                       "deadline", "past due", "overdue"]},
+        ],
+        "actions": [
+            {"type": "notify", "priority": "high"},
+            {"type": "tag", "value": "urgent"},
+        ],
+    },
+    # Notify when the email body contains phrases requesting a reply.
+    # Same suppress-before-notify protection as the urgent rule above.
+    {
+        "name": "Notify on direct reply requests",
+        "trigger_event": "email.received",
+        "conditions": [
+            {"field": "payload.body_plain", "op": "contains_any",
+             "value": ["please reply", "please respond", "let me know",
+                       "can you confirm", "your thoughts",
+                       "waiting for your", "need your input",
+                       "rsvp", "please get back"]},
+        ],
+        "actions": [
+            {"type": "notify", "priority": "medium"},
+        ],
+    },
 ]
 
 
