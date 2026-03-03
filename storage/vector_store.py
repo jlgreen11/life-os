@@ -217,7 +217,6 @@ class VectorStore:
 
             if self._use_lancedb and self._table is not None:
                 try:
-                    import pyarrow as pa
                     self._table.add([doc])
                     chunks_stored += 1
                 except Exception as e:
@@ -270,25 +269,47 @@ class VectorStore:
 
     def _lancedb_search(self, query_embedding: list[float], limit: int,
                         filter_metadata: Optional[dict]) -> list[dict]:
-        """Search using LanceDB's built-in vector search."""
+        """Search using LanceDB's built-in vector search.
+
+        When ``filter_metadata`` is provided, over-fetches by 3x and applies
+        post-retrieval filtering in Python.  This avoids depending on LanceDB's
+        SQL filter syntax for JSON-encoded metadata fields while keeping the
+        behaviour consistent with the NumPy fallback backend.
+        """
         try:
+            # Over-fetch when filtering so we have enough candidates after
+            # post-retrieval metadata filtering removes non-matching rows.
+            fetch_limit = limit * 3 if filter_metadata else limit
+
             results = (
                 self._table
                 .search(query_embedding)
-                .limit(limit)
+                .limit(fetch_limit)
                 .to_list()
             )
 
-            return [
-                {
+            filtered: list[dict] = []
+            for r in results:
+                meta = json.loads(r["metadata"]) if isinstance(r["metadata"], str) else r["metadata"]
+
+                # Post-retrieval metadata filter: check that every requested
+                # key-value pair is present in the document's metadata.
+                if filter_metadata:
+                    if not all(meta.get(k) == v for k, v in filter_metadata.items()):
+                        continue
+
+                filtered.append({
                     "doc_id": r["doc_id"],
                     "text": r["text"],
-                    "metadata": json.loads(r["metadata"]) if isinstance(r["metadata"], str) else r["metadata"],
+                    "metadata": meta,
                     "score": float(r.get("_distance", 0)),
                     "created_at": r.get("created_at"),
-                }
-                for r in results
-            ]
+                })
+
+                if len(filtered) >= limit:
+                    break
+
+            return filtered
         except Exception as e:
             logger.error("LanceDB search error: %s", e)
             return []
