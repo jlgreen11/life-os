@@ -756,34 +756,117 @@ async def test_execute_raises_on_any_action(finance_connector):
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def mock_item_get_request():
+    """Context manager that mocks the ItemGetRequest import for health_check.
+
+    The FinanceConnector lazily imports ItemGetRequest inside health_check(),
+    so we need to mock it at the sys.modules level.
+    """
+    mock_request_class = MagicMock()
+    mock_module = MagicMock()
+    mock_module.ItemGetRequest = mock_request_class
+
+    with patch.dict("sys.modules", {"plaid.model.item_get_request": mock_module}):
+        yield mock_request_class
+
+
 @pytest.mark.asyncio
-async def test_health_check_ok_when_configured(finance_connector):
-    """Verify health_check() returns 'ok' when client and tokens are present."""
+async def test_health_check_ok_all_tokens_valid(finance_connector):
+    """Verify health_check returns 'ok' when Item.get succeeds for all tokens."""
     finance_connector._client = MagicMock()
     finance_connector._access_tokens = ["token-1", "token-2"]
 
-    result = await finance_connector.health_check()
+    # Mock successful Item.get responses
+    mock_response_1 = MagicMock()
+    mock_response_1.item.institution_id = "ins_chase"
+    mock_response_2 = MagicMock()
+    mock_response_2.item.institution_id = "ins_bofa"
+    finance_connector._client.item_get = MagicMock(side_effect=[mock_response_1, mock_response_2])
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
 
     assert result["status"] == "ok"
     assert result["connector"] == "finance"
-    assert result["accounts"] == 2
+    assert result["accounts"]["total"] == 2
+    assert result["accounts"]["healthy"] == 2
+    assert result["accounts"]["errors"] == 0
+    assert len(result["account_details"]) == 2
+    assert result["account_details"][0]["status"] == "ok"
+    assert result["account_details"][0]["institution"] == "ins_chase"
+    assert result["account_details"][1]["status"] == "ok"
+    assert result["account_details"][1]["institution"] == "ins_bofa"
 
 
 @pytest.mark.asyncio
-async def test_health_check_error_no_client(finance_connector):
-    """Verify health_check() returns 'error' when client is missing."""
+async def test_health_check_degraded_some_tokens_fail(finance_connector):
+    """Verify health_check returns 'degraded' when some tokens fail with ITEM_LOGIN_REQUIRED."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["good-token", "bad-token"]
+
+    # First token succeeds, second raises ITEM_LOGIN_REQUIRED
+    mock_response_ok = MagicMock()
+    mock_response_ok.item.institution_id = "ins_chase"
+
+    api_error = Exception("Plaid API error")
+    api_error.body = json.dumps({"error_code": "ITEM_LOGIN_REQUIRED", "error_message": "Login required"})
+
+    finance_connector._client.item_get = MagicMock(side_effect=[mock_response_ok, api_error])
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
+
+    assert result["status"] == "degraded"
+    assert result["accounts"]["total"] == 2
+    assert result["accounts"]["healthy"] == 1
+    assert result["accounts"]["errors"] == 1
+    assert result["account_details"][0]["status"] == "ok"
+    assert result["account_details"][1]["status"] == "error"
+    assert result["account_details"][1]["error_type"] == "ITEM_LOGIN_REQUIRED"
+    assert "Plaid Link" in result["account_details"][1]["hint"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_error_all_tokens_fail(finance_connector):
+    """Verify health_check returns 'error' when all tokens fail."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["bad-token-1", "bad-token-2"]
+
+    api_error_1 = Exception("Invalid token")
+    api_error_1.body = json.dumps({"error_code": "INVALID_ACCESS_TOKEN", "error_message": "Invalid"})
+    api_error_2 = Exception("Login required")
+    api_error_2.body = json.dumps({"error_code": "ITEM_LOGIN_REQUIRED", "error_message": "Login"})
+
+    finance_connector._client.item_get = MagicMock(side_effect=[api_error_1, api_error_2])
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
+
+    assert result["status"] == "error"
+    assert result["accounts"]["total"] == 2
+    assert result["accounts"]["healthy"] == 0
+    assert result["accounts"]["errors"] == 2
+    assert result["account_details"][0]["error_type"] == "INVALID_ACCESS_TOKEN"
+    assert result["account_details"][1]["error_type"] == "ITEM_LOGIN_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_health_check_error_not_configured_no_client(finance_connector):
+    """Verify health_check returns 'error' with details when client is missing."""
     finance_connector._client = None
     finance_connector._access_tokens = ["token-1"]
 
     result = await finance_connector.health_check()
 
     assert result["status"] == "error"
+    assert result["connector"] == "finance"
     assert "Not configured" in result["details"]
 
 
 @pytest.mark.asyncio
-async def test_health_check_error_no_tokens(finance_connector):
-    """Verify health_check() returns 'error' when tokens are missing."""
+async def test_health_check_error_not_configured_no_tokens(finance_connector):
+    """Verify health_check returns 'error' when tokens list is empty."""
     finance_connector._client = MagicMock()
     finance_connector._access_tokens = []
 
@@ -795,13 +878,131 @@ async def test_health_check_error_no_tokens(finance_connector):
 
 @pytest.mark.asyncio
 async def test_health_check_error_neither(finance_connector):
-    """Verify health_check() returns 'error' when both client and tokens are missing."""
+    """Verify health_check returns 'error' when both client and tokens are missing."""
     finance_connector._client = None
     finance_connector._access_tokens = []
 
     result = await finance_connector.health_check()
 
     assert result["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_health_check_fallback_when_plaid_sdk_missing(finance_connector):
+    """Verify health_check falls back to shallow check when plaid SDK is not importable."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["token-1", "token-2"]
+
+    # Simulate plaid.model.item_get_request not being importable by patching
+    # sys.modules so the import fails.
+    with patch.dict("sys.modules", {"plaid.model.item_get_request": None}):
+        result = await finance_connector.health_check()
+
+    assert result["status"] == "ok"
+    assert result["connector"] == "finance"
+    assert result["accounts"]["total"] == 2
+    assert result["accounts"]["healthy"] == 2
+    assert result["accounts"]["errors"] == 0
+    assert "plaid SDK not installed" in result["details"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_handles_timeout(finance_connector):
+    """Verify health_check handles timeout/slow API responses gracefully."""
+    import asyncio
+
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["slow-token"]
+
+    # Patch asyncio.wait_for to raise TimeoutError immediately
+    # (avoids actually waiting 5 seconds in tests).
+    with mock_item_get_request():
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            result = await finance_connector.health_check()
+
+    assert result["status"] == "error"
+    assert result["accounts"]["errors"] == 1
+    assert result["account_details"][0]["error_type"] == "TIMEOUT"
+    assert "5 seconds" in result["account_details"][0]["hint"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_handles_network_error(finance_connector):
+    """Verify health_check handles network/connection errors gracefully."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["token-1"]
+
+    # Simulate a connection error
+    conn_error = ConnectionError("Failed to establish connection to Plaid")
+    finance_connector._client.item_get = MagicMock(side_effect=conn_error)
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
+
+    assert result["status"] == "error"
+    assert result["accounts"]["errors"] == 1
+    assert result["account_details"][0]["error_type"] == "NETWORK_ERROR"
+    assert "connectivity" in result["account_details"][0]["hint"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_rate_limit_is_warning(finance_connector):
+    """Verify health_check treats RATE_LIMIT_EXCEEDED as a warning, not error."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["token-1"]
+
+    rate_limit_error = Exception("Rate limited")
+    rate_limit_error.body = json.dumps({"error_code": "RATE_LIMIT_EXCEEDED", "error_message": "Too many requests"})
+
+    finance_connector._client.item_get = MagicMock(side_effect=rate_limit_error)
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
+
+    # Rate limit counts as an error in the tally (status != "ok")
+    # but the detail itself says "warning".
+    assert result["accounts"]["errors"] == 1
+    assert result["account_details"][0]["status"] == "warning"
+    assert result["account_details"][0]["error_type"] == "RATE_LIMIT_EXCEEDED"
+    assert "retry" in result["account_details"][0]["hint"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_invalid_access_token_error(finance_connector):
+    """Verify health_check correctly classifies INVALID_ACCESS_TOKEN errors."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["revoked-token"]
+
+    api_error = Exception("Invalid access token")
+    api_error.body = json.dumps({"error_code": "INVALID_ACCESS_TOKEN", "error_message": "Token invalid"})
+
+    finance_connector._client.item_get = MagicMock(side_effect=api_error)
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
+
+    assert result["status"] == "error"
+    assert result["account_details"][0]["error_type"] == "INVALID_ACCESS_TOKEN"
+    assert "Plaid Link" in result["account_details"][0]["hint"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_unknown_error_includes_message(finance_connector):
+    """Verify health_check reports unknown errors with the exception message."""
+    finance_connector._client = MagicMock()
+    finance_connector._access_tokens = ["token-1"]
+
+    # An error without a structured body
+    finance_connector._client.item_get = MagicMock(
+        side_effect=RuntimeError("Something unexpected went wrong")
+    )
+
+    with mock_item_get_request():
+        result = await finance_connector.health_check()
+
+    assert result["status"] == "error"
+    assert result["account_details"][0]["error_type"] == "UNKNOWN"
+    assert "Something unexpected went wrong" in result["account_details"][0]["hint"]
 
 
 # ---------------------------------------------------------------------------

@@ -205,12 +205,152 @@ class FinanceConnector(BaseConnector):
         raise ValueError("Finance connector is read-only")
 
     async def health_check(self) -> dict[str, Any]:
-        """Return status based on whether the client and tokens are present.
+        """Validate each Plaid access token by calling the Item.get API endpoint.
 
-        A full health check would call Plaid's ``/item/get`` endpoint for each
-        token; for now we only verify local configuration.
+        Returns rich diagnostics including per-account status, error
+        classification, and actionable recovery hints.  Falls back to a
+        shallow configuration check when the ``plaid`` SDK is not installed.
+
+        Overall status logic:
+            - ``"ok"``      — all tokens validated successfully
+            - ``"degraded"`` — some tokens healthy, some failed
+            - ``"error"``   — all tokens failed, or connector not configured
         """
-        if self._client and self._access_tokens:
-            return {"status": "ok", "connector": self.CONNECTOR_ID,
-                    "accounts": len(self._access_tokens)}
-        return {"status": "error", "details": "Not configured"}
+        if not self._client or not self._access_tokens:
+            return {"status": "error", "connector": self.CONNECTOR_ID, "details": "Not configured"}
+
+        # Lazy-import the Plaid SDK; fall back to shallow check if unavailable.
+        try:
+            from plaid.model.item_get_request import ItemGetRequest
+        except Exception:
+            return {
+                "status": "ok",
+                "connector": self.CONNECTOR_ID,
+                "accounts": {"total": len(self._access_tokens), "healthy": len(self._access_tokens), "errors": 0},
+                "details": "plaid SDK not installed, cannot validate tokens",
+            }
+
+        account_details: list[dict[str, Any]] = []
+        healthy_count = 0
+        error_count = 0
+
+        for token in self._access_tokens:
+            detail = await self._validate_token(token, ItemGetRequest)
+            account_details.append(detail)
+            if detail["status"] == "ok":
+                healthy_count += 1
+            else:
+                error_count += 1
+
+        # Determine overall status.
+        if error_count == 0:
+            overall_status = "ok"
+        elif healthy_count > 0:
+            overall_status = "degraded"
+        else:
+            overall_status = "error"
+
+        return {
+            "status": overall_status,
+            "connector": self.CONNECTOR_ID,
+            "accounts": {"total": len(self._access_tokens), "healthy": healthy_count, "errors": error_count},
+            "account_details": account_details,
+        }
+
+    async def _validate_token(self, token: str, item_get_request_cls) -> dict[str, Any]:
+        """Validate a single Plaid access token via the Item.get endpoint.
+
+        Wraps the synchronous Plaid SDK call in ``asyncio.to_thread`` with a
+        5-second timeout to avoid blocking the event loop or hanging on slow
+        networks.
+
+        Args:
+            token: The Plaid access token to validate.
+            item_get_request_cls: The ``ItemGetRequest`` class (passed in to
+                avoid repeated lazy imports).
+
+        Returns:
+            A dict with ``"status"`` (``"ok"`` or ``"error"``), plus
+            ``"institution"`` on success or ``"error_type"`` / ``"hint"``
+            on failure.
+        """
+        import asyncio as _asyncio
+
+        try:
+            request = item_get_request_cls(access_token=token)
+            response = await _asyncio.wait_for(
+                _asyncio.to_thread(self._client.item_get, request),
+                timeout=5.0,
+            )
+            # Extract institution name when available.
+            institution = getattr(response.get("item", None), "institution_id", None) if isinstance(response, dict) else None
+            if institution is None:
+                try:
+                    institution = response.item.institution_id
+                except Exception:
+                    institution = None
+            return {"status": "ok", "institution": institution}
+
+        except _asyncio.TimeoutError:
+            return {
+                "status": "error",
+                "error_type": "TIMEOUT",
+                "hint": "Plaid API did not respond within 5 seconds — check network connectivity",
+            }
+        except Exception as exc:
+            return self._classify_plaid_error(exc)
+
+    @staticmethod
+    def _classify_plaid_error(exc: Exception) -> dict[str, Any]:
+        """Classify a Plaid API exception into an actionable error detail.
+
+        Inspects the ``error_code`` on ``plaid.ApiException`` instances to
+        provide specific recovery hints.  Unknown exceptions are reported
+        with their message so they remain debuggable.
+        """
+        # plaid.ApiException carries structured error info.
+        error_code = None
+        try:
+            # plaid.ApiException stores the body as a JSON string.
+            import json as _json
+
+            body = getattr(exc, "body", None)
+            if body:
+                parsed = _json.loads(body)
+                error_code = parsed.get("error_code")
+        except Exception:
+            pass
+
+        error_hints = {
+            "ITEM_LOGIN_REQUIRED": "Re-authenticate this account through Plaid Link",
+            "INVALID_ACCESS_TOKEN": "Access token is invalid or revoked — run a new Plaid Link flow",
+        }
+
+        if error_code == "RATE_LIMIT_EXCEEDED":
+            return {
+                "status": "warning",
+                "error_type": "RATE_LIMIT_EXCEEDED",
+                "hint": "Plaid rate limit hit — will retry on next health check cycle",
+            }
+
+        if error_code and error_code in error_hints:
+            return {
+                "status": "error",
+                "error_type": error_code,
+                "hint": error_hints[error_code],
+            }
+
+        # Connection / network errors
+        exc_type = type(exc).__name__
+        if "connection" in exc_type.lower() or "timeout" in str(exc).lower():
+            return {
+                "status": "error",
+                "error_type": "NETWORK_ERROR",
+                "hint": "Network error communicating with Plaid — check connectivity",
+            }
+
+        return {
+            "status": "error",
+            "error_type": error_code or "UNKNOWN",
+            "hint": str(exc),
+        }
