@@ -171,6 +171,11 @@ class LifeOS:
         # repair loops when the underlying storage is persistently failing.
         self._runtime_db_rebuilds = 0
 
+        # Tracks whether NATS event handlers (master_event_handler pipeline)
+        # have been registered.  Used by _nats_reconnect_loop to re-register
+        # handlers after a NATS restart without requiring a full Life OS restart.
+        self._event_handlers_registered = False
+
         # Connector management
         self.config_encryptor = ConfigEncryptor(data_dir)
         self.connector_map: dict[str, object] = {}  # connector_id -> BaseConnector
@@ -415,9 +420,11 @@ class LifeOS:
         # 4. Register core event handlers
         logger.info("[4/7] Registering event handlers...")
         # Only register handlers when the bus is actually connected;
-        # in degraded mode this block is skipped entirely.
+        # in degraded mode this block is skipped entirely.  The reconnect
+        # loop (started below) will register them later if NATS comes up.
         if self.event_bus.is_connected:
             await self._register_event_handlers()
+            self._event_handlers_registered = True
 
         # 5. Start connectors
         logger.info("[5/7] Starting connectors...")
@@ -434,6 +441,7 @@ class LifeOS:
         self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
         self._start_background_task("db_health_loop", self._db_health_loop())
         self._start_background_task("conflict_detection_loop", self._conflict_detection_loop())
+        self._start_background_task("nats_reconnect_loop", self._nats_reconnect_loop())
 
         # 7. Launch web server
         logger.info("[7/7] Starting web server...")
@@ -3242,6 +3250,42 @@ class LifeOS:
 
             # Check every 5 minutes for the next digest window
             await asyncio.sleep(300)
+
+    async def _nats_reconnect_loop(self):
+        """Monitor NATS connectivity and re-register event handlers after reconnection.
+
+        In a Docker environment, NATS can restart independently of Life OS.  When
+        this happens, the event_bus.is_connected property goes False and the NATS
+        client may internally reconnect — but the JetStream subscriptions that drive
+        the master_event_handler pipeline are lost.  Without this loop, the entire
+        event processing pipeline (storage, signal extraction, rules, tasks, vectors,
+        episodes, notifications) stays dead until Life OS is manually restarted.
+
+        This loop checks every 30 seconds and:
+        - If NATS is connected but handlers aren't registered → registers them
+        - If NATS is disconnected but handlers were registered → resets the flag
+          so they'll be re-registered once NATS comes back
+
+        Interval: 30 seconds
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                if self.event_bus.is_connected and not self._event_handlers_registered:
+                    # NATS is back (or was available but handlers weren't registered
+                    # at startup due to timing).  Wire up the event pipeline.
+                    await self._register_event_handlers()
+                    self._event_handlers_registered = True
+                    logger.info("NATS reconnected — event handlers registered")
+                elif not self.event_bus.is_connected and self._event_handlers_registered:
+                    # NATS went down — flag handlers as needing re-registration
+                    # so the next reconnect will re-subscribe.
+                    self._event_handlers_registered = False
+                    logger.warning("NATS disconnected — will re-register handlers on reconnect")
+            except Exception as e:
+                # Fail-open: never let reconnect monitoring crash the system.
+                logger.error("NATS reconnect loop error: %s", e)
+
+            await asyncio.sleep(30)
 
     async def _db_health_loop(self):
         """Periodically probe user_model.db for corruption and auto-repair.
