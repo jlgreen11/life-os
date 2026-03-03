@@ -47,6 +47,11 @@ class DatabaseManager:
         # post-initialisation verification fails and triggers a fresh start.
         self._user_model_verify_retries = 0
 
+        # Degraded-mode flag: set to True when user_model.db fails post-init
+        # verification twice and cannot be recovered.  Callers can check this
+        # to skip futile operations instead of rediscovering the failure.
+        self.user_model_degraded: bool = False
+
         self._databases: dict[str, str] = {
             "events": str(self.data_dir / "events.db"),
             "entities": str(self.data_dir / "entities.db"),
@@ -194,14 +199,29 @@ class DatabaseManager:
                     errors.append(f"blob probe connection failed: {exc}")
                     status = "corrupted"
 
-            results[db_name] = {
+            entry: dict = {
                 "status": status,
                 "errors": errors,
                 "path": db_path,
                 "size_bytes": size_bytes,
             }
 
+            # Expose the persistent degraded-mode flag for user_model so
+            # the /health endpoint shows it without re-running init checks.
+            if db_name == "user_model":
+                entry["degraded_mode"] = self.user_model_degraded
+
+            results[db_name] = entry
+
         return results
+
+    def is_user_model_healthy(self) -> bool:
+        """Check whether user_model.db is in a healthy (non-degraded) state.
+
+        Convenience method for callers (prediction engine, background loops)
+        to skip futile work when the database is known to be broken.
+        """
+        return not self.user_model_degraded
 
     def backup_database(self, db_name: str = "user_model") -> str | None:
         """Create a timestamped backup of a database file.
@@ -515,6 +535,13 @@ class DatabaseManager:
             "Learned patterns will be rebuilt automatically from event history.",
             db_name,
         )
+
+        # Clear the degraded flag — the corrupt file has been removed and
+        # the caller will recreate it from scratch.  If the recreation also
+        # fails, _init_user_model_db() will re-set the flag.
+        if db_name == "user_model":
+            self.user_model_degraded = False
+
         return True
 
     def _verify_db_functional(self, db_name: str) -> bool:
@@ -1155,6 +1182,7 @@ class DatabaseManager:
                     "a fresh-start attempt. Giving up — manual intervention "
                     "is required."
                 )
+                self.user_model_degraded = True
                 return
 
             self._user_model_verify_retries += 1
