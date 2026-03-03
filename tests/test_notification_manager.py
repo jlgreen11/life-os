@@ -1133,3 +1133,120 @@ async def test_mark_status_with_unknown_status_code(notification_manager, db):
     with db.get_connection("state") as conn:
         row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
         assert row["status"] == "unknown_status"
+
+
+# ============================================================================
+# Stale Notification Auto-Expiry
+# ============================================================================
+
+
+def test_expire_stale_notifications_marks_old_pending_as_expired(db, mock_event_bus):
+    """Insert 3 notifications at 1h, 24h, and 72h ago. Only the 72h one should expire."""
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    # Insert notifications AFTER NM init so expire isn't called during construction
+    now = datetime.now(timezone.utc)
+    with db.get_connection("state") as conn:
+        for notif_id, age_hours in [("n-1h", 1), ("n-24h", 24), ("n-72h", 72)]:
+            created = (now - timedelta(hours=age_hours)).strftime("%Y-%m-%dT%H:%M:%fZ")
+            conn.execute(
+                """INSERT INTO notifications (id, title, priority, status, created_at)
+                   VALUES (?, ?, 'normal', 'pending', ?)""",
+                (notif_id, f"Notif {age_hours}h", created),
+            )
+
+    expired = nm.expire_stale_notifications(max_age_hours=48)
+
+    assert expired == 1
+
+    with db.get_connection("state") as conn:
+        for notif_id, expected_status in [("n-1h", "pending"), ("n-24h", "pending"), ("n-72h", "expired")]:
+            row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
+            assert row["status"] == expected_status, f"{notif_id} should be {expected_status}, got {row['status']}"
+
+
+def test_expire_stale_notifications_skips_non_pending(db, mock_event_bus):
+    """Old notifications with status != 'pending' should NOT be expired."""
+    now = datetime.now(timezone.utc)
+    old_time = (now - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%fZ")
+
+    with db.get_connection("state") as conn:
+        conn.execute(
+            """INSERT INTO notifications (id, title, priority, status, created_at)
+               VALUES (?, ?, 'normal', 'delivered', ?)""",
+            ("n-delivered-old", "Old Delivered", old_time),
+        )
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    expired = nm.expire_stale_notifications(max_age_hours=48)
+
+    assert expired == 0
+
+    with db.get_connection("state") as conn:
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-delivered-old",)).fetchone()
+        assert row["status"] == "delivered"
+
+
+def test_recover_pending_batch_skips_stale_notifications(db, mock_event_bus):
+    """Only recent pending notifications should be recovered into the batch."""
+    now = datetime.now(timezone.utc)
+    recent_time = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%fZ")
+    stale_time = (now - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%fZ")
+
+    with db.get_connection("state") as conn:
+        conn.execute(
+            """INSERT INTO notifications (id, title, priority, status, created_at)
+               VALUES (?, ?, 'normal', 'pending', ?)""",
+            ("n-recent", "Recent", recent_time),
+        )
+        conn.execute(
+            """INSERT INTO notifications (id, title, priority, status, created_at)
+               VALUES (?, ?, 'normal', 'pending', ?)""",
+            ("n-stale", "Stale", stale_time),
+        )
+
+    # Creating the NM triggers _recover_pending_batch which calls expire first
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    assert len(nm._pending_batch) == 1
+    assert nm._pending_batch[0]["id"] == "n-recent"
+
+    # The stale notification should be expired in DB
+    with db.get_connection("state") as conn:
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-stale",)).fetchone()
+        assert row["status"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_get_digest_expires_stale_before_flushing(db, mock_event_bus):
+    """Stale items in _pending_batch should be expired before digest delivery."""
+    now = datetime.now(timezone.utc)
+    stale_time = (now - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%fZ")
+
+    # Insert a notification with a very old created_at
+    with db.get_connection("state") as conn:
+        conn.execute(
+            """INSERT INTO notifications (id, title, priority, status, created_at)
+               VALUES (?, ?, 'normal', 'pending', ?)""",
+            ("n-digest-stale", "Stale Digest Item", stale_time),
+        )
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+
+    # Manually add the stale item to the in-memory batch (simulating it was
+    # added during a long-running session before expiry existed).
+    nm._pending_batch.append({
+        "id": "n-digest-stale",
+        "title": "Stale Digest Item",
+        "body": None,
+        "priority": "normal",
+        "domain": None,
+        "source_event_id": None,
+        "action_url": None,
+    })
+
+    digest = await nm.get_digest()
+
+    # The stale item should have been expired and excluded from the digest
+    assert len(digest) == 0
