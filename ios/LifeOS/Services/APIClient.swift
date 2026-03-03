@@ -101,7 +101,7 @@ actor APIClient {
 
         let (data, response) = try await session.data(for: request)
         try validateResponse(response)
-        return try decoder.decode(T.self, from: data)
+        return try decodeResponse(T.self, from: data, path: path)
     }
 
     private func post<T: Decodable>(_ path: String, body: some Encodable) async throws -> T {
@@ -114,7 +114,7 @@ actor APIClient {
 
         let (data, response) = try await session.data(for: request)
         try validateResponse(response)
-        return try decoder.decode(T.self, from: data)
+        return try decodeResponse(T.self, from: data, path: path)
     }
 
     private func post(_ path: String, body: [String: Any]) async throws -> Data {
@@ -127,6 +127,17 @@ actor APIClient {
         let (data, response) = try await session.data(for: request)
         try validateResponse(response)
         return data
+    }
+
+    /// Decodes a response, wrapping DecodingError with endpoint context for debuggability.
+    private func decodeResponse<T: Decodable>(_ type: T.Type, from data: Data, path: String) throws -> T {
+        do {
+            return try decoder.decode(type, from: data)
+        } catch let error as DecodingError {
+            let preview = String(data: data.prefix(500), encoding: .utf8) ?? "<non-UTF8 data>"
+            print("APIClient decode error on \(path): \(error)\nResponse body preview: \(preview)")
+            throw APIError.decodingError(error)
+        }
     }
 
     private func validateResponse(_ response: URLResponse) throws {

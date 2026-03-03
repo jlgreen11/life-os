@@ -7,6 +7,8 @@ final class WebSocketManager: NSObject {
     private var isConnected = false
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 10
+    private let connectionTimeout: TimeInterval = 10
+    private var connectionTimeoutWork: DispatchWorkItem?
 
     var onMessage: ((WebSocketMessage) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
@@ -25,13 +27,23 @@ final class WebSocketManager: NSObject {
         guard let url = URL(string: "\(baseURL)/ws") else { return }
         webSocketTask = session?.webSocketTask(with: url)
         webSocketTask?.resume()
-        isConnected = true
         reconnectAttempts = 0
-        onConnectionChange?(true)
         receiveMessage()
+
+        // Schedule a connection timeout — if not connected after 10s, trigger reconnection
+        connectionTimeoutWork?.cancel()
+        let timeoutWork = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.isConnected else { return }
+            print("WebSocket connection timeout after \(self.connectionTimeout)s")
+            self.handleDisconnect()
+        }
+        connectionTimeoutWork = timeoutWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + connectionTimeout, execute: timeoutWork)
     }
 
     func disconnect() {
+        connectionTimeoutWork?.cancel()
+        connectionTimeoutWork = nil
         isConnected = false
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
@@ -98,6 +110,8 @@ final class WebSocketManager: NSObject {
 
 extension WebSocketManager: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        connectionTimeoutWork?.cancel()
+        connectionTimeoutWork = nil
         isConnected = true
         reconnectAttempts = 0
         DispatchQueue.main.async {

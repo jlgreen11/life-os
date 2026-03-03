@@ -18,7 +18,9 @@ final class ContextEngine: ObservableObject {
     private var eventBuffer: [ContextEvent] = []
     private var cancellables = Set<AnyCancellable>()
 
-    private let snapshotInterval: TimeInterval = 300  // 5 minutes
+    /// Interval between automatic context snapshots. Settable via SettingsView slider.
+    /// Persisted to UserDefaults under "contextSnapshotInterval".
+    var snapshotInterval: TimeInterval = UserDefaults.standard.double(forKey: "contextSnapshotInterval").nonZeroOrDefault(300)
     private let batchSize = 10
     private let maxBufferSize = 100
 
@@ -213,6 +215,23 @@ final class ContextEngine: ObservableObject {
         return "unknown"
     }
 
+    /// Updates the snapshot interval and restarts the timer if currently collecting.
+    /// Persists the new value to UserDefaults.
+    func updateSnapshotInterval(_ interval: TimeInterval) {
+        snapshotInterval = interval
+        UserDefaults.standard.set(interval, forKey: "contextSnapshotInterval")
+
+        // Restart the timer with the new interval if actively collecting
+        if isCollecting {
+            snapshotTimer?.invalidate()
+            snapshotTimer = Timer.scheduledTimer(withTimeInterval: snapshotInterval, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.captureAndSendSnapshot()
+                }
+            }
+        }
+    }
+
     private func setupObservers() {
         // Listen for significant location changes to trigger immediate context capture
         NotificationCenter.default.publisher(for: .didEnterMonitoredRegion)
@@ -237,5 +256,15 @@ final class ContextEngine: ObservableObject {
                 self?.flushBuffer()
             }
             .store(in: &cancellables)
+    }
+}
+
+// MARK: - Helpers
+
+private extension Double {
+    /// Returns self if non-zero, otherwise returns the provided default value.
+    /// Useful for UserDefaults which returns 0.0 for unset keys.
+    func nonZeroOrDefault(_ defaultValue: Double) -> Double {
+        self != 0 ? self : defaultValue
     }
 }
