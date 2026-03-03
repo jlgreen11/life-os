@@ -118,6 +118,13 @@ class ContextAssembler:
         episodes_context = self._get_recent_episodes_context()
         if episodes_context:
             parts.append(episodes_context)
+        else:
+            # Fallback: when episodes are unavailable (user_model.db corrupted
+            # or empty), produce an activity summary from events.db instead.
+            # This gives the LLM concrete material even without episodic memory.
+            activity_summary = self._get_recent_activity_summary()
+            if activity_summary:
+                parts.append(activity_summary)
 
         # Section 10: Semantic facts (Layer 2 — Semantic Memory) learned about
         # the user, organized into human-readable categories: values, behavioral
@@ -129,6 +136,13 @@ class ContextAssembler:
         semantic_context = self._get_semantic_facts_context()
         if semantic_context:
             parts.append(semantic_context)
+        else:
+            # Fallback: when semantic facts are unavailable (user_model.db
+            # corrupted or empty), produce a contact activity summary from
+            # events.db to give the LLM a mini people-radar.
+            contact_summary = self._get_contact_activity_summary()
+            if contact_summary:
+                parts.append(contact_summary)
 
         # Section 11: Habitual behavioral routines (Layer 3 Procedural Memory).
         # Routines are time- or location-triggered behavioral patterns detected
@@ -563,16 +577,25 @@ class ContextAssembler:
         # name, "the project" could map to a known employer or project fact.
         # Only facts with confidence >= 0.6 are included to keep the context
         # signal-rich and avoid injecting speculative noise.
+        facts_found = False
         try:
             facts = self.ums.get_semantic_facts(min_confidence=0.6)
             if facts:
                 fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:15]]
                 parts.append("Known facts about user (use for disambiguation):\n"
                              + "\n".join(fact_lines))
+                facts_found = True
         except Exception:
             # Fail-open: missing facts degrade search quality slightly but
             # should never prevent the search from returning a result.
             logger.warning("Search context: failed to load semantic facts", exc_info=True)
+
+        # Fallback: when semantic facts are unavailable, provide contact activity
+        # from events.db so the LLM can still disambiguate people references.
+        if not facts_found:
+            contact_summary = self._get_contact_activity_summary()
+            if contact_summary:
+                parts.append(contact_summary)
 
         # Section 5: Recent mood signals (last 3 entries).
         # Gives the LLM soft context about the user's recent emotional state
@@ -1326,3 +1349,183 @@ class ContextAssembler:
             pass
 
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Degraded-mode fallback helpers (events.db-based)
+    # ------------------------------------------------------------------
+
+    def _get_recent_activity_summary(self) -> str:
+        """Produce an activity summary from events.db for the last 24 hours.
+
+        Used as a fallback when episodic memory (user_model.db) is unavailable
+        due to corruption or simply having no data.  Queries the healthy
+        events.db to give the LLM concrete material about what happened
+        recently, grouped by event type with top email senders/subjects.
+
+        Returns an empty string when events.db has no recent data or on error,
+        which causes the caller to skip this section entirely.
+
+        Example output::
+
+            Recent activity summary (last 24h, from event log):
+            - email.received: 15 events
+            - calendar.event.created: 2 events
+            - message.received: 4 events
+            Top senders: alice@example.com (5), bob@work.com (3)
+            Recent subjects: "Q1 Budget Review", "Team Lunch Tomorrow"
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+            with self.db.get_connection("events") as conn:
+                # Group events by type for the last 24 hours
+                type_rows = conn.execute(
+                    """SELECT type, COUNT(*) AS cnt
+                       FROM events
+                       WHERE timestamp > ?
+                       GROUP BY type
+                       ORDER BY cnt DESC
+                       LIMIT 10""",
+                    (cutoff,),
+                ).fetchall()
+
+                if not type_rows:
+                    return ""
+
+                lines = ["Recent activity summary (last 24h, from event log):"]
+                for row in type_rows:
+                    lines.append(f"- {row['type']}: {row['cnt']} events")
+
+                # Extract top email senders and recent subjects for personalization
+                email_rows = conn.execute(
+                    """SELECT
+                           json_extract(payload, '$.from_address') AS sender,
+                           json_extract(payload, '$.subject') AS subject
+                       FROM events
+                       WHERE type IN ('email.received', 'message.received')
+                         AND timestamp > ?
+                       ORDER BY timestamp DESC
+                       LIMIT 50""",
+                    (cutoff,),
+                ).fetchall()
+
+                if email_rows:
+                    # Count interactions per sender
+                    sender_counts: dict[str, int] = {}
+                    subjects: list[str] = []
+                    for row in email_rows:
+                        sender = row["sender"]
+                        if sender:
+                            sender_counts[sender] = sender_counts.get(sender, 0) + 1
+                        subj = row["subject"]
+                        if subj and len(subjects) < 3:
+                            subjects.append(subj)
+
+                    # Top 3 senders by count
+                    if sender_counts:
+                        top_senders = sorted(
+                            sender_counts.items(), key=lambda x: -x[1]
+                        )[:3]
+                        sender_strs = [f"{addr} ({cnt})" for addr, cnt in top_senders]
+                        lines.append("Top senders: " + ", ".join(sender_strs))
+
+                    if subjects:
+                        subj_strs = [f'"{s}"' for s in subjects]
+                        lines.append("Recent subjects: " + ", ".join(subj_strs))
+
+            return "\n".join(lines)
+        except Exception:
+            logger.warning(
+                "context: _get_recent_activity_summary failed, skipping",
+                exc_info=True,
+            )
+            return ""
+
+    def _get_contact_activity_summary(self) -> str:
+        """Produce a mini people-radar from events.db for the last 7 days.
+
+        Used as a fallback when semantic facts / relationship signal profiles
+        from user_model.db are unavailable.  Queries events.db for email and
+        message events, groups by contact address, and returns the top 5
+        most-interacted contacts.
+
+        Returns an empty string when no contact activity exists or on error,
+        which causes the caller to skip this section entirely.
+
+        Example output::
+
+            Active contacts this week (from event log):
+            - alice@example.com: 8 interactions (5 received, 3 sent)
+            - bob@work.com: 3 interactions (2 received, 1 sent)
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+            with self.db.get_connection("events") as conn:
+                # Gather inbound contacts (from_address) and outbound (to_address)
+                rows = conn.execute(
+                    """SELECT type,
+                              json_extract(payload, '$.from_address') AS from_addr,
+                              json_extract(payload, '$.to_address') AS to_addr,
+                              json_extract(payload, '$.sender') AS sender
+                       FROM events
+                       WHERE type IN (
+                           'email.received', 'email.sent',
+                           'message.received', 'message.sent'
+                       )
+                         AND timestamp > ?
+                       ORDER BY timestamp DESC
+                       LIMIT 500""",
+                    (cutoff,),
+                ).fetchall()
+
+            if not rows:
+                return ""
+
+            # Tally interactions per contact
+            contact_stats: dict[str, dict[str, int]] = {}
+            for row in rows:
+                event_type = row["type"]
+                is_inbound = event_type in ("email.received", "message.received")
+
+                # Determine the contact address
+                if is_inbound:
+                    addr = row["from_addr"] or row["sender"]
+                else:
+                    addr = row["to_addr"]
+
+                if not addr:
+                    continue
+
+                if addr not in contact_stats:
+                    contact_stats[addr] = {"received": 0, "sent": 0}
+
+                if is_inbound:
+                    contact_stats[addr]["received"] += 1
+                else:
+                    contact_stats[addr]["sent"] += 1
+
+            if not contact_stats:
+                return ""
+
+            # Sort by total interactions descending, take top 5
+            sorted_contacts = sorted(
+                contact_stats.items(),
+                key=lambda x: -(x[1]["received"] + x[1]["sent"]),
+            )[:5]
+
+            lines = ["Active contacts this week (from event log):"]
+            for addr, stats in sorted_contacts:
+                total = stats["received"] + stats["sent"]
+                lines.append(
+                    f"- {addr}: {total} interactions "
+                    f"({stats['received']} received, {stats['sent']} sent)"
+                )
+
+            return "\n".join(lines)
+        except Exception:
+            logger.warning(
+                "context: _get_contact_activity_summary failed, skipping",
+                exc_info=True,
+            )
+            return ""
