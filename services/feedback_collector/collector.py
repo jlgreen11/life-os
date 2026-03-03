@@ -18,12 +18,15 @@ people behave differently than they self-report.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from models.core import FeedbackType, Priority
 from storage.database import DatabaseManager, UserModelStore
+
+logger = logging.getLogger(__name__)
 
 
 class FeedbackCollector:
@@ -56,6 +59,7 @@ class FeedbackCollector:
 
         response_type: "acted_on", "dismissed", "ignored", "delayed"
         """
+        logger.info("feedback: notification %s response_type=%s", notification_id, response_type)
         # Retrieve the original notification so we can correlate feedback
         # with the notification's domain, priority, and other metadata.
         with self.db.get_connection("state") as conn:
@@ -105,6 +109,12 @@ class FeedbackCollector:
         Process the diff between an AI-generated draft and what the user
         actually sent. Every edit is a learning signal.
         """
+        accepted_as_is = original_draft == final_message
+        logger.info(
+            "feedback: draft edit contact=%s accepted_as_is=%s",
+            contact_id,
+            accepted_as_is,
+        )
         if original_draft == final_message:
             # User accepted the draft as-is — strong positive signal.
             # This means the AI's tone, length, and content were all on target.
@@ -179,6 +189,7 @@ class FeedbackCollector:
         provides their own alternative. Both signals are stored so the
         prediction engine can measure its accuracy over time.
         """
+        logger.info("feedback: suggestion %s accepted=%s", suggestion_id, accepted)
         feedback = {
             "action_id": suggestion_id,
             "action_type": "suggestion",
@@ -195,17 +206,23 @@ class FeedbackCollector:
         # Close the loop: mark the prediction record with the user's actual
         # response so the prediction engine can compute its hit rate and
         # recalibrate confidence thresholds over time.
-        with self.db.get_connection("user_model") as conn:
-            conn.execute(
-                """UPDATE predictions SET
-                   user_response = ?, was_accurate = ?, resolved_at = ?
-                   WHERE id = ?""",
-                (
-                    "accepted" if accepted else "rejected",
-                    1 if accepted else 0,
-                    datetime.now(timezone.utc).isoformat(),
-                    suggestion_id,
-                ),
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    """UPDATE predictions SET
+                       user_response = ?, was_accurate = ?, resolved_at = ?
+                       WHERE id = ?""",
+                    (
+                        "accepted" if accepted else "rejected",
+                        1 if accepted else 0,
+                        datetime.now(timezone.utc).isoformat(),
+                        suggestion_id,
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "feedback: could not update prediction %s in user_model.db (non-fatal)",
+                suggestion_id,
             )
 
     async def process_explicit_feedback(self, message: str):
@@ -320,31 +337,38 @@ class FeedbackCollector:
         if formality_shift != "neutral":
             # Look up the matching communication template for this
             # contact/channel pair, then nudge its formality score.
-            with self.db.get_connection("user_model") as conn:
-                template_query = "SELECT * FROM communication_templates WHERE 1=1"
-                params = []
-                if contact_id:
-                    template_query += " AND contact_id = ?"
-                    params.append(contact_id)
-                if channel:
-                    template_query += " AND channel = ?"
-                    params.append(channel)
+            try:
+                with self.db.get_connection("user_model") as conn:
+                    template_query = "SELECT * FROM communication_templates WHERE 1=1"
+                    params = []
+                    if contact_id:
+                        template_query += " AND contact_id = ?"
+                        params.append(contact_id)
+                    if channel:
+                        template_query += " AND channel = ?"
+                        params.append(channel)
 
-                template = conn.execute(template_query, params).fetchone()
-                if template:
-                    current_formality = template["formality"]
-                    # Nudge formality down (toward 0.0 = casual) or up
-                    # (toward 1.0 = formal) by a small step. The clamp
-                    # ensures we stay within [0.0, 1.0].
-                    if formality_shift == "more_informal":
-                        new_formality = max(0.0, current_formality - 0.05)
-                    else:
-                        new_formality = min(1.0, current_formality + 0.05)
+                    template = conn.execute(template_query, params).fetchone()
+                    if template:
+                        current_formality = template["formality"]
+                        # Nudge formality down (toward 0.0 = casual) or up
+                        # (toward 1.0 = formal) by a small step. The clamp
+                        # ensures we stay within [0.0, 1.0].
+                        if formality_shift == "more_informal":
+                            new_formality = max(0.0, current_formality - 0.05)
+                        else:
+                            new_formality = min(1.0, current_formality + 0.05)
 
-                    conn.execute(
-                        "UPDATE communication_templates SET formality = ? WHERE id = ?",
-                        (new_formality, template["id"]),
-                    )
+                        conn.execute(
+                            "UPDATE communication_templates SET formality = ? WHERE id = ?",
+                            (new_formality, template["id"]),
+                        )
+            except Exception:
+                logger.warning(
+                    "feedback: could not update communication template for %s/%s (non-fatal)",
+                    contact_id,
+                    channel,
+                )
 
     def _classify_explicit_feedback(self, message: str) -> str:
         """
@@ -402,6 +426,8 @@ class FeedbackCollector:
                     feedback.get("notes"),
                 ),
             )
+
+        logger.info("feedback: stored %s action=%s type=%s", feedback_id, feedback["action_id"], feedback["feedback_type"])
 
         await self._publish_telemetry("system.feedback.recorded", {
             "feedback_id": feedback_id,
