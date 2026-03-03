@@ -2566,12 +2566,32 @@ class LifeOS:
                 rule_id=action.get("rule_id"),
             )
         elif action_type == "create_task":
+            task_title = action.get("title", "Auto-created task")
+            task_priority = action.get("priority", "normal")
             await self.task_manager.create_task(
-                title=action.get("title", "Auto-created task"),
+                title=task_title,
                 source="rule",
                 source_event_id=event.get("id"),
-                priority=action.get("priority", "normal"),
+                priority=task_priority,
             )
+            # Notify the user about the auto-created task so it doesn't go
+            # unnoticed.  Follows the same pattern as the "notify" action above.
+            domain = self._infer_domain_from_event_type(event.get("type", ""))
+            await self.notification_manager.create_notification(
+                title=f"Task created: {task_title}",
+                body=f"Auto-created from {event.get('source', 'system')} rule",
+                priority=task_priority,
+                source_event_id=event.get("id"),
+                domain=domain,
+            )
+            try:
+                await ws_manager.broadcast({
+                    "type": "notification",
+                    "title": f"Task created: {task_title}",
+                    "source_event_id": event.get("id"),
+                })
+            except Exception:
+                pass
         elif action_type == "archive":
             # Archive = suppress (hide from notifications) + tag for filtering.
             # This mirrors how email archive works: remove from inbox but keep
