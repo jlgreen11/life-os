@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -98,11 +99,14 @@ class InsightEngine:
 
     def __init__(self, db: DatabaseManager, ums: UserModelStore,
                  source_weight_manager: Optional[SourceWeightManager] = None,
-                 timezone: str = "America/Los_Angeles"):
+                 timezone: str = "America/Los_Angeles",
+                 cache_ttl_seconds: float = 300.0):
         self.db = db
         self.ums = ums
         self.swm = source_weight_manager
         self._tz = ZoneInfo(timezone)
+        self._insight_cache_ttl: float = cache_ttl_seconds
+        self._last_insight_run: float = 0.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -210,7 +214,18 @@ class InsightEngine:
         return report
 
     async def generate_insights(self) -> list[Insight]:
-        """Main loop: run all correlators, deduplicate, store, return new insights."""
+        """Main loop: run all correlators, deduplicate, store, return new insights.
+
+        Skips correlator execution if the last successful run was within
+        ``_insight_cache_ttl`` seconds.  The caller (e.g. the ``/api/insights/summary``
+        route) still reads stored insights from the database, so returning an
+        empty list here simply means "no new insights computed this call".
+        """
+        if self._insight_cache_ttl > 0 and (time.monotonic() - self._last_insight_run) < self._insight_cache_ttl:
+            logger.debug("Skipping correlator run — last run %.1fs ago (TTL %.0fs)",
+                         time.monotonic() - self._last_insight_run, self._insight_cache_ttl)
+            return []
+
         raw: list[Insight] = []
 
         # Each correlator handles its own errors gracefully and returns
@@ -346,6 +361,9 @@ class InsightEngine:
                 )
             except Exception as e:
                 logger.warning("Failed to generate data sufficiency report: %s", e)
+
+        # Mark successful run so subsequent calls within the TTL are skipped.
+        self._last_insight_run = time.monotonic()
 
         return fresh
 

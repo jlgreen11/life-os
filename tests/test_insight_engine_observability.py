@@ -190,6 +190,9 @@ async def test_deduplication_logs_removed_count(db, user_model_store, caplog):
                 first_result = await engine.generate_insights()
             assert len(first_result) == 2
 
+    # Reset the correlator cache so the second call actually runs correlators
+    engine._last_insight_run = 0.0
+
     # Second call: same dedup_keys → should be deduplicated
     insights_b = [
         Insight(
