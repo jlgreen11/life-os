@@ -50,6 +50,9 @@ def mock_life_os():
     life_os.event_store.get_event_count = Mock(return_value=100)
     life_os.event_store.get_events = Mock(return_value=[])
     life_os.event_store.store_event = Mock(return_value="evt-123")
+    life_os.event_store.get_event_flow_stats = Mock(return_value={
+        "sources": {}, "stale_sources": [], "total_24h": 0, "events_per_hour": 0.0,
+    })
 
     # Mock vector store
     life_os.vector_store = Mock()
