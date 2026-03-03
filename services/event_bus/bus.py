@@ -62,12 +62,62 @@ class EventBus:
         # Track active subscriptions so they can be cleanly unsubscribed
         # during disconnect().
         self._subscriptions: list = []
+        # Flag set when the client reconnects after a disconnect. Consumers
+        # can poll this to detect connectivity blips (resets on read).
+        self._reconnected_flag: bool = False
+
+    async def _on_disconnect(self):
+        """Called when the NATS client loses its connection.
+
+        Logs a warning so operators can see connectivity blips in the logs.
+        Without this callback, disconnections are completely silent.
+        """
+        logger.warning("NATS disconnected — event pipeline paused")
+
+    async def _on_reconnect(self):
+        """Called when the NATS client re-establishes a lost connection.
+
+        Re-obtains the JetStream context (the old one may be stale) and sets
+        the reconnected flag so callers can detect the blip.
+        """
+        logger.info("NATS reconnected — event pipeline resumed")
+        # Re-obtain JetStream context after reconnection
+        self._js = self._nc.jetstream()
+        self._reconnected_flag = True
+
+    async def _on_error(self, e):
+        """Called for asynchronous NATS errors (e.g., slow consumer warnings).
+
+        Logs the error so it surfaces in monitoring rather than being silently
+        swallowed by the nats-py client.
+        """
+        logger.error("NATS async error: %s", e)
+
+    @property
+    def was_reconnected(self) -> bool:
+        """True if the connection was lost and re-established since last check.
+
+        Reading this property resets the flag, so it returns True only once
+        per reconnection event. Useful for health-check endpoints that need
+        to report recent connectivity issues.
+        """
+        val = self._reconnected_flag
+        self._reconnected_flag = False
+        return val
 
     async def connect(self):
         """Connect to NATS and ensure the JetStream stream exists."""
-        # Establish the TCP connection to the NATS server. If the server is
-        # unreachable, this will raise a ConnectionRefusedError.
-        self._nc = await nats.connect(self.url)
+        # Establish the TCP connection to the NATS server with resilient
+        # reconnection options. Without these, the client gives up after
+        # 60 attempts (~2 minutes) and permanently disconnects.
+        self._nc = await nats.connect(
+            self.url,
+            max_reconnect_attempts=-1,  # Never give up reconnecting
+            reconnect_time_wait=5,  # 5 seconds between attempts
+            disconnected_cb=self._on_disconnect,
+            reconnected_cb=self._on_reconnect,
+            error_cb=self._on_error,
+        )
         # Obtain the JetStream context for persistent messaging (as opposed
         # to core NATS which is fire-and-forget).
         self._js = self._nc.jetstream()
