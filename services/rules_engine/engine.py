@@ -492,6 +492,17 @@ DEFAULT_RULES = [
             {"type": "notify", "priority": "medium"},
         ],
     },
+    # Notify when a connector enters error state (auth failure, sync failure, etc.).
+    # This surfaces infrastructure problems on the dashboard instead of hiding
+    # them behind the /admin page.
+    {
+        "name": "Notify on connector errors",
+        "trigger_event": "system.connector.error",
+        "conditions": [],
+        "actions": [
+            {"type": "notify", "priority": "high"},
+        ],
+    },
 ]
 
 
