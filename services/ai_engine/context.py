@@ -733,43 +733,47 @@ class ContextAssembler:
         Returns a human-readable multi-line string capped at 20 events, or a
         "no events" message if the calendar is empty for the period.
         """
-        with self.db.get_connection("events") as conn:
-            rows = conn.execute(
-                """SELECT DISTINCT
-                       json_extract(payload, '$.title')       AS title,
-                       json_extract(payload, '$.start_time')  AS start_time,
-                       json_extract(payload, '$.end_time')    AS end_time,
-                       json_extract(payload, '$.is_all_day')  AS is_all_day,
-                       json_extract(payload, '$.location')    AS location
-                   FROM events
-                   WHERE type = 'calendar.event.created'
-                     AND date(json_extract(payload, '$.start_time'))
-                         BETWEEN date('now') AND date('now', '+7 days')
-                   ORDER BY json_extract(payload, '$.start_time') ASC
-                   LIMIT 20"""
-            ).fetchall()
+        try:
+            with self.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """SELECT DISTINCT
+                           json_extract(payload, '$.title')       AS title,
+                           json_extract(payload, '$.start_time')  AS start_time,
+                           json_extract(payload, '$.end_time')    AS end_time,
+                           json_extract(payload, '$.is_all_day')  AS is_all_day,
+                           json_extract(payload, '$.location')    AS location
+                       FROM events
+                       WHERE type = 'calendar.event.created'
+                         AND date(json_extract(payload, '$.start_time'))
+                             BETWEEN date('now') AND date('now', '+7 days')
+                       ORDER BY json_extract(payload, '$.start_time') ASC
+                       LIMIT 20"""
+                ).fetchall()
 
-        if not rows:
-            return "Upcoming calendar events (next 7 days): none"
+            if not rows:
+                return "Upcoming calendar events (next 7 days): none"
 
-        lines: list[str] = []
-        for row in rows:
-            title = row["title"] or "(untitled)"
-            start = row["start_time"] or ""
-            location = row["location"]
+            lines: list[str] = []
+            for row in rows:
+                title = row["title"] or "(untitled)"
+                start = row["start_time"] or ""
+                location = row["location"]
 
-            if row["is_all_day"]:
-                # All-day entries: show date and title only; no time noise.
-                entry = f"- [all-day] {start}: {title}"
-            else:
-                # Timed entries: include location when available.
-                entry = f"- {start}: {title}"
-                if location:
-                    entry += f" @ {location}"
+                if row["is_all_day"]:
+                    # All-day entries: show date and title only; no time noise.
+                    entry = f"- [all-day] {start}: {title}"
+                else:
+                    # Timed entries: include location when available.
+                    entry = f"- {start}: {title}"
+                    if location:
+                        entry += f" @ {location}"
 
-            lines.append(entry)
+                lines.append(entry)
 
-        return "Upcoming calendar events (next 7 days):\n" + "\n".join(lines)
+            return "Upcoming calendar events (next 7 days):\n" + "\n".join(lines)
+        except Exception as e:
+            logger.warning("_get_calendar_context failed: %s", e)
+            return "Upcoming calendar events (next 7 days): unavailable (data error)"
 
     def _get_task_context(self) -> str:
         """Fetch pending tasks, sorted by priority then due date.
@@ -1233,22 +1237,26 @@ class ContextAssembler:
         # Passing a Python isoformat() string as a parameter keeps both sides in
         # the same format so string comparison is semantically correct.
         cutoff_12h = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
-        with self.db.get_connection("events") as conn:
-            # Fetch all recent messages with subjects, sorted newest-first.
-            # We group per-sender and collect subjects in Python rather than
-            # using a GROUP BY + LIMIT per-sender SQL pattern, which would
-            # require complex correlated subqueries.  The row count is bounded
-            # by the 12-hour window, so loading all rows into Python is safe.
-            rows = conn.execute(
-                """SELECT
-                       json_extract(payload, '$.from_address') AS from_address,
-                       json_extract(payload, '$.subject') AS subject
-                   FROM events
-                   WHERE type IN ('email.received', 'message.received')
-                     AND timestamp > ?
-                   ORDER BY timestamp DESC""",
-                (cutoff_12h,),
-            ).fetchall()
+        try:
+            with self.db.get_connection("events") as conn:
+                # Fetch all recent messages with subjects, sorted newest-first.
+                # We group per-sender and collect subjects in Python rather than
+                # using a GROUP BY + LIMIT per-sender SQL pattern, which would
+                # require complex correlated subqueries.  The row count is bounded
+                # by the 12-hour window, so loading all rows into Python is safe.
+                rows = conn.execute(
+                    """SELECT
+                           json_extract(payload, '$.from_address') AS from_address,
+                           json_extract(payload, '$.subject') AS subject
+                       FROM events
+                       WHERE type IN ('email.received', 'message.received')
+                         AND timestamp > ?
+                       ORDER BY timestamp DESC""",
+                    (cutoff_12h,),
+                ).fetchall()
+        except Exception as e:
+            logger.warning("_get_unread_context failed: %s", e)
+            return "Messages in last 12 hours: unavailable (data error)"
 
         if not rows:
             return "Messages in last 12 hours: 0"
