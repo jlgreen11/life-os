@@ -14,6 +14,7 @@ Database Architecture:
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -197,6 +198,57 @@ class DatabaseManager:
             }
 
         return results
+
+    def backup_database(self, db_name: str = "user_model") -> str | None:
+        """Create a timestamped backup of a database file.
+
+        Flushes the WAL (Write-Ahead Log) before copying so the backup
+        contains all committed writes.  Old backups are pruned to keep
+        only the 3 most recent copies.
+
+        Args:
+            db_name: Logical database name (e.g. ``"user_model"``).
+
+        Returns:
+            Absolute path to the backup file on success, or ``None`` if
+            the source database doesn't exist or an error occurred.
+        """
+        db_path_str = self._databases.get(db_name)
+        if db_path_str is None:
+            logger.warning("backup_database: unknown database '%s'", db_name)
+            return None
+
+        db_path = Path(db_path_str)
+        if not db_path.exists():
+            logger.info("backup_database: %s does not exist yet — skipping", db_path)
+            return None
+
+        backup_dir = self.data_dir / "backups"
+        try:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+
+            # Flush all WAL writes into the main DB file so the copy is
+            # self-contained and doesn't depend on the -wal/-shm files.
+            with self.get_connection(db_name) as conn:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            backup_path = backup_dir / f"{db_name}_{timestamp}.db"
+            shutil.copy2(str(db_path), str(backup_path))
+
+            # Prune old backups — keep only the 3 most recent.
+            existing = sorted(backup_dir.glob(f"{db_name}_*.db"))
+            for old_backup in existing[:-3]:
+                try:
+                    old_backup.unlink()
+                except OSError as exc:
+                    logger.warning("backup_database: failed to prune %s: %s", old_backup, exc)
+
+            logger.info("backup_database: created %s", backup_path)
+            return str(backup_path)
+        except Exception as exc:
+            logger.error("backup_database: failed for %s: %s", db_name, exc)
+            return None
 
     def _check_and_recover_db(self, db_name: str) -> bool:
         """Check a database for corruption and recover by resetting if needed.
