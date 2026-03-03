@@ -312,11 +312,14 @@ class TestAutoResolveStaleCorruption:
                 f"Notification notif-stale-{i} should be expired even when user_model.db is corrupt"
             )
 
-    async def test_feedback_still_logged_when_prediction_update_fails(
+    async def test_feedback_not_logged_when_prediction_update_fails(
         self, notification_manager, db, create_prediction, corrupt_user_model
     ):
-        """Even when the prediction update in user_model.db fails,
-        _log_automatic_feedback should still write to the preferences DB."""
+        """When user_model.db is corrupt and the prediction UPDATE fails,
+        _log_automatic_feedback should NOT be called because we cannot
+        determine whether the prediction was already resolved by user action.
+        Logging a spurious 'dismissed' entry would falsely depress the
+        prediction accuracy multiplier."""
         old_time = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
         create_prediction("pred-fb-1", was_surfaced=1)
         with db.get_connection("state") as conn:
@@ -333,14 +336,14 @@ class TestAutoResolveStaleCorruption:
 
         await notification_manager.auto_resolve_stale_predictions(timeout_hours=24)
 
-        # Feedback should still be logged in the preferences DB
+        # Feedback should NOT be logged — we don't know if the prediction was
+        # already resolved, so logging 'dismissed' could be spurious.
         with db.get_connection("preferences") as conn:
             rows = conn.execute(
                 "SELECT * FROM feedback_log WHERE action_id = ?",
                 ("notif-fb-1",),
             ).fetchall()
-        assert len(rows) == 1
-        assert rows[0]["feedback_type"] == "dismissed"
+        assert len(rows) == 0
 
 
 # ---------------------------------------------------------------------------

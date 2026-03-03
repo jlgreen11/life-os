@@ -62,8 +62,11 @@ class NotificationManager:
             Number of notifications expired.
         """
         try:
+            # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            # where %f = SS.SSS (seconds with 3-digit fractional part).
+            # Sub-second precision is irrelevant for a 48-hour cutoff.
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).strftime(
-                "%Y-%m-%dT%H:%M:%fZ"
+                "%Y-%m-%dT%H:%M:%S.000Z"
             )
             with self.db.get_connection("state") as conn:
                 result = conn.execute(
@@ -106,8 +109,10 @@ class NotificationManager:
         try:
             # Only recover notifications from the last 48 hours as a
             # belt-and-suspenders safeguard alongside expire_stale_notifications().
+            # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            # where %f = SS.SSS (seconds with 3-digit fractional part).
             age_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
-                "%Y-%m-%dT%H:%M:%fZ"
+                "%Y-%m-%dT%H:%M:%S.000Z"
             )
             with self.db.get_connection("state") as conn:
                 rows = conn.execute(
@@ -783,6 +788,7 @@ class NotificationManager:
             # Use was_accurate=0, user_response='ignored' to distinguish from
             # explicit dismissals (user_response='dismissed').
             prediction_id = notif["source_event_id"]
+            was_resolved = False
             try:
                 with self.db.get_connection("user_model") as conn:
                     conn.execute(
@@ -795,29 +801,30 @@ class NotificationManager:
                     )
                     if conn.total_changes > 0:
                         resolved_count += 1
+                        was_resolved = True
             except (sqlite3.DatabaseError, sqlite3.OperationalError):
                 # Fail-open: skip this prediction but continue processing remaining items.
-                # The _mark_status and _log_automatic_feedback calls below use the state/preferences
-                # DBs and should still work.
+                # Skip feedback logging on DB error — we don't know whether the prediction
+                # was already resolved or not.
                 logger.warning(
                     "Failed to auto-resolve stale prediction %s (user_model.db may be corrupted)",
                     prediction_id, exc_info=True,
                 )
 
-            # Log automatic feedback for the ignored prediction. This closes the
-            # feedback loop by recording implicit dismissals in feedback_log, which
-            # enables the reaction prediction system to learn from patterns even
-            # without explicit user clicks. Ignored predictions are treated as
-            # dismissed for feedback purposes since the user didn't find them
-            # compelling enough to act on.
-            self._log_automatic_feedback(
-                action_id=notif["id"],
-                action_type="notification",
-                feedback_type="dismissed",
-                context={"auto_resolved": True, "reason": "ignored", "timeout_hours": timeout_hours}
-            )
+            # Only log automatic feedback when we actually resolved the prediction.
+            # If the prediction was already resolved (e.g., user acted on it), the
+            # UPDATE matched zero rows and we must NOT log a spurious 'dismissed'
+            # entry — doing so would falsely depress the accuracy multiplier.
+            if was_resolved:
+                self._log_automatic_feedback(
+                    action_id=notif["id"],
+                    action_type="notification",
+                    feedback_type="dismissed",
+                    context={"auto_resolved": True, "reason": "ignored", "timeout_hours": timeout_hours}
+                )
 
-            # Mark the notification as expired so it doesn't clutter the UI.
+            # Always mark the notification as expired so it doesn't clutter the UI,
+            # regardless of whether the prediction was already resolved.
             self._mark_status(notif["id"], "expired")
 
         return resolved_count
