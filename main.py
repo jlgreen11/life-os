@@ -2032,19 +2032,21 @@ class LifeOS:
                     # User acted on a notification - strong positive signal
                     notif_id = event.get("payload", {}).get("notification_id")
                     if notif_id:
+                        response_time = self._get_notification_response_time(notif_id)
                         await self.feedback_collector.process_notification_response(
                             notification_id=notif_id,
                             response_type="engaged",
-                            response_time_seconds=0,  # We don't track timing yet
+                            response_time_seconds=response_time,
                         )
                 elif event_type == "notification.dismissed":
                     # User dismissed a notification - negative signal
                     notif_id = event.get("payload", {}).get("notification_id")
                     if notif_id:
+                        response_time = self._get_notification_response_time(notif_id)
                         await self.feedback_collector.process_notification_response(
                             notification_id=notif_id,
                             response_type="dismissed",
-                            response_time_seconds=0,
+                            response_time_seconds=response_time,
                         )
             except Exception as e:
                 logger.error("Feedback collector error (event_id=%s): %s", event.get("id"), e)
@@ -2132,6 +2134,29 @@ class LifeOS:
         # Subscribe with a wildcard so every subject published on the bus
         # is routed to master_event_handler.
         await self.event_bus.subscribe_all(master_event_handler)
+
+    def _get_notification_response_time(self, notif_id: str) -> float:
+        """Compute how many seconds elapsed since a notification was created.
+
+        Looks up the notification's ``created_at`` timestamp in state.db and
+        returns ``(now - created_at).total_seconds()``.  If the notification
+        cannot be found or the timestamp is missing / unparseable, returns
+        ``0.0`` so the caller always has a safe fallback.
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                row = conn.execute(
+                    "SELECT created_at FROM notifications WHERE id = ?",
+                    (notif_id,),
+                ).fetchone()
+                if row and row["created_at"]:
+                    created = datetime.fromisoformat(
+                        row["created_at"].replace("Z", "+00:00")
+                    )
+                    return max(0.0, (datetime.now(timezone.utc) - created).total_seconds())
+        except Exception:
+            pass  # Fall back to 0 if lookup fails
+        return 0.0
 
     def _infer_domain_from_event_type(self, event_type: str) -> str:
         """Infer notification domain from event type.
