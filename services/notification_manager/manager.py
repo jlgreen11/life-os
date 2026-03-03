@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -43,6 +43,45 @@ class NotificationManager:
         # destined for batch delivery but their in-memory references were lost.
         self._recover_pending_batch()
 
+    def expire_stale_notifications(self, max_age_hours: int = 48) -> int:
+        """Expire pending notifications that are older than max_age_hours.
+
+        Stale pending notifications (e.g., "You have a meeting at 2pm" from
+        days ago) create noise in digests and erode user trust. This method
+        marks them as 'expired' so they are excluded from future delivery.
+
+        Only affects notifications with status='pending' — delivered, read,
+        acted-on, and dismissed notifications are left untouched.
+
+        Args:
+            max_age_hours: Maximum age in hours before a pending notification
+                          is considered stale. Default is 48 hours.
+
+        Returns:
+            Number of notifications expired.
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).strftime(
+                "%Y-%m-%dT%H:%M:%fZ"
+            )
+            with self.db.get_connection("state") as conn:
+                result = conn.execute(
+                    """UPDATE notifications
+                       SET status = 'expired'
+                       WHERE status = 'pending'
+                         AND created_at < ?""",
+                    (cutoff,),
+                )
+                expired_count = result.rowcount
+
+            if expired_count > 0:
+                logger.info("Expired %d stale pending notifications (older than %dh)", expired_count, max_age_hours)
+            return expired_count
+        except Exception:
+            # Fail-open: expiry failures must never block notification delivery.
+            logger.warning("Failed to expire stale notifications", exc_info=True)
+            return 0
+
     def _recover_pending_batch(self):
         """Recover batched notifications from the database after a restart.
 
@@ -56,13 +95,27 @@ class NotificationManager:
         high priority notifications are always delivered immediately and would
         never be in a pending-batch state.
         """
+        # Expire stale pending notifications before loading, so old items
+        # don't get pulled into the in-memory batch.
         try:
+            self.expire_stale_notifications()
+        except Exception:
+            logger.warning("Failed to expire stale notifications during recovery", exc_info=True)
+
+        try:
+            # Only recover notifications from the last 48 hours as a
+            # belt-and-suspenders safeguard alongside expire_stale_notifications().
+            age_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
+                "%Y-%m-%dT%H:%M:%fZ"
+            )
             with self.db.get_connection("state") as conn:
                 rows = conn.execute(
                     """SELECT id, title, body, priority, domain, source_event_id, action_url
                        FROM notifications
                        WHERE status = 'pending'
-                         AND priority IN ('normal', 'low')""",
+                         AND priority IN ('normal', 'low')
+                         AND created_at > ?""",
+                    (age_cutoff,),
                 ).fetchall()
 
             for row in rows:
@@ -544,8 +597,33 @@ class NotificationManager:
         timer — e.g., morning briefing, lunch digest, evening wrap-up).
         Each item is marked "delivered" upon retrieval, and the in-memory
         queue is reset so the next digest starts fresh.
+
+        Before flushing, stale notifications are expired so that items that
+        aged out during a long-running session don't appear in the digest.
         """
-        digest = list(self._pending_batch)
+        # Expire stale notifications that accumulated during a long session.
+        try:
+            self.expire_stale_notifications()
+        except Exception:
+            logger.warning("Failed to expire stale notifications during digest", exc_info=True)
+
+        # Filter in-memory batch to exclude items that were just expired in DB.
+        # Check each item's current DB status — if it was expired, skip it.
+        fresh_batch = []
+        for item in self._pending_batch:
+            try:
+                with self.db.get_connection("state") as conn:
+                    row = conn.execute(
+                        "SELECT status FROM notifications WHERE id = ?",
+                        (item["id"],),
+                    ).fetchone()
+                if row and row["status"] == "pending":
+                    fresh_batch.append(item)
+            except Exception:
+                # Fail-open: if we can't check, include the item
+                fresh_batch.append(item)
+
+        digest = list(fresh_batch)
         for item in digest:
             self._mark_status(item["id"], "delivered")
             # Mark prediction as surfaced when batched notification is delivered.
