@@ -16,7 +16,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from storage.manager import DatabaseManager
 
@@ -36,6 +36,8 @@ class ConflictDetector:
         # Key is a frozenset of (event_a_id, event_b_id) to handle pair ordering.
         # Populated from state.db on init so restarts don't lose dedup state.
         self._published_conflicts: set[frozenset[str]] = set()
+        # Tracks when the last automatic cleanup ran so we only clean once per day.
+        self._last_cleanup: Optional[datetime] = None
         self._load_published_conflicts()
 
     def _load_published_conflicts(self):
@@ -71,20 +73,25 @@ class ConflictDetector:
         except Exception as e:
             logger.warning("Could not persist conflict pair: %s", e)
 
-    def cleanup_old_conflicts(self, days: int = 30):
+    def cleanup_old_conflicts(self, days: int = 30) -> int:
         """Remove conflict pairs older than *days* from state.db.
 
         Prevents the published_conflicts table from growing without bound.
         Only removes entries from the 'conflict_detector' source.
+
+        Returns:
+            The number of rows deleted.
         """
         try:
             with self.db.get_connection("state") as conn:
-                conn.execute(
+                cursor = conn.execute(
                     "DELETE FROM published_conflicts WHERE source = 'conflict_detector' AND detected_at < datetime('now', ?)",
                     (f"-{days} days",),
                 )
+                return cursor.rowcount
         except Exception as e:
             logger.warning("Could not clean up old conflicts: %s", e)
+            return 0
 
     def detect_conflicts(self, forward_hours: int = 48) -> list[dict[str, Any]]:
         """Find overlapping calendar events in the upcoming time window.
@@ -228,6 +235,17 @@ class ConflictDetector:
         Returns:
             The number of newly published conflict events.
         """
+        # Run daily cleanup of stale conflict pairs (at most once per 24 hours).
+        now = datetime.now(timezone.utc)
+        if self._last_cleanup is None or (now - self._last_cleanup).total_seconds() > 86400:
+            try:
+                removed = self.cleanup_old_conflicts(days=30)
+                self._last_cleanup = now
+                if removed:
+                    logger.info("ConflictDetector: cleaned up %d stale conflicts", removed)
+            except Exception as e:
+                logger.warning("ConflictDetector: cleanup failed (non-fatal): %s", e)
+
         conflicts = self.detect_conflicts()
         published_count = 0
 
