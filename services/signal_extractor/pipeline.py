@@ -8,6 +8,7 @@ Subscribes to the NATS event bus and processes every event.
 from __future__ import annotations
 
 import logging
+import sqlite3
 
 from models.user_model import MoodState
 from storage.database import DatabaseManager, UserModelStore
@@ -144,28 +145,46 @@ class SignalExtractorPipeline:
         relationships, topics) and merges it with high-confidence semantic facts
         from the user-model store.  The result is a lightweight snapshot
         suitable for the orchestrator's system prompt or for a debugging UI.
+
+        Returns a degraded response with empty data if user_model.db is
+        corrupted or unavailable, rather than propagating the exception to
+        callers (briefing generation, web API routes).
         """
-        # Gather per-dimension profile summaries (sample counts and freshness).
-        profiles = {}
-        for profile_type in ["linguistic", "cadence", "mood_signals", "relationships", "topics", "temporal", "spatial", "decision"]:
-            profile = self.ums.get_signal_profile(profile_type)
-            if profile:
-                profiles[profile_type] = {
-                    "samples_count": profile["samples_count"],
-                    "last_updated": profile["updated_at"],
-                }
+        try:
+            # Gather per-dimension profile summaries (sample counts and freshness).
+            profiles = {}
+            for profile_type in ["linguistic", "cadence", "mood_signals", "relationships", "topics", "temporal", "spatial", "decision"]:
+                profile = self.ums.get_signal_profile(profile_type)
+                if profile:
+                    profiles[profile_type] = {
+                        "samples_count": profile["samples_count"],
+                        "last_updated": profile["updated_at"],
+                    }
 
-        # Pull semantic facts that have accumulated enough confidence (>= 0.3)
-        # to be worth mentioning, then surface only the high-confidence ones
-        # (>= 0.7) in the summary payload so the orchestrator can rely on them.
-        facts = self.ums.get_semantic_facts(min_confidence=0.3)
+            # Pull semantic facts that have accumulated enough confidence (>= 0.3)
+            # to be worth mentioning, then surface only the high-confidence ones
+            # (>= 0.7) in the summary payload so the orchestrator can rely on them.
+            facts = self.ums.get_semantic_facts(min_confidence=0.3)
 
-        return {
-            "profiles": profiles,
-            "semantic_facts_count": len(facts),
-            "high_confidence_facts": [
-                {"key": f["key"], "value": f["value"], "confidence": f["confidence"]}
-                for f in facts
-                if f["confidence"] >= 0.7
-            ],
-        }
+            return {
+                "profiles": profiles,
+                "semantic_facts_count": len(facts),
+                "high_confidence_facts": [
+                    {"key": f["key"], "value": f["value"], "confidence": f["confidence"]}
+                    for f in facts
+                    if f["confidence"] >= 0.7
+                ],
+            }
+        except (sqlite3.DatabaseError, Exception) as e:
+            # Fail-open: user_model.db corruption must never crash briefing
+            # generation or web API routes.  Return an empty but valid summary
+            # with a degraded flag so callers can detect the fallback.
+            logger.warning(
+                "get_user_summary: user_model.db unavailable (%s), returning empty summary", e
+            )
+            return {
+                "profiles": {},
+                "semantic_facts_count": 0,
+                "high_confidence_facts": [],
+                "degraded": True,
+            }
