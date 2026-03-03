@@ -84,6 +84,7 @@ def test_initialization(event_bus, db, caldav_config):
     assert connector._client is None
     assert connector._calendars == []
     assert connector.config == caldav_config
+    assert connector._published_conflicts == set()
 
 
 # ---------------------------------------------------------------------------
@@ -1124,6 +1125,173 @@ async def test_detect_conflicts_error_handled(event_bus, db, caldav_config):
 
     # No conflicts should be published due to error
     assert connector.publish_event.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_conflict_detection_dedup_across_sync_cycles(event_bus, db, caldav_config):
+    """Test that _detect_conflicts() deduplicates across calls.
+
+    Calling _detect_conflicts() twice with the same overlapping events should
+    only publish the conflict event on the first call.  The second call must
+    recognise the pair via self._published_conflicts and skip re-publishing.
+    This prevents duplicate conflict notifications on every 60-second sync cycle.
+    """
+    import uuid
+    from datetime import datetime, timedelta, timezone
+
+    from storage.event_store import EventStore
+
+    connector = CalDAVConnector(event_bus, db, caldav_config)
+    connector.publish_event = AsyncMock()
+
+    event_store = EventStore(db)
+
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Event A: base+0:00 to base+1:00
+    payload_a = {
+        "event_id": "event-a",
+        "title": "Meeting A",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
+        "is_all_day": False,
+        "calendar_id": "Personal",
+    }
+    event_store.store_event({
+        "id": str(uuid.uuid4()),
+        "type": "calendar.event.created",
+        "source": "caldav",
+        "timestamp": now.isoformat(),
+        "payload": payload_a,
+    })
+
+    # Event B: base+0:30 to base+1:30 (overlaps with A)
+    payload_b = {
+        "event_id": "event-b",
+        "title": "Meeting B",
+        "start_time": (base + timedelta(minutes=30)).isoformat(),
+        "end_time": (base + timedelta(hours=1, minutes=30)).isoformat(),
+        "is_all_day": False,
+        "calendar_id": "Work",
+    }
+    event_store.store_event({
+        "id": str(uuid.uuid4()),
+        "type": "calendar.event.created",
+        "source": "caldav",
+        "timestamp": now.isoformat(),
+        "payload": payload_b,
+    })
+
+    # First call: should detect and publish the A-B conflict
+    await connector._detect_conflicts()
+    assert connector.publish_event.call_count == 1
+
+    # Reset the mock call count but keep the connector's state
+    connector.publish_event.reset_mock()
+
+    # Second call: same overlapping events, should publish ZERO new conflicts
+    await connector._detect_conflicts()
+    assert connector.publish_event.call_count == 0
+
+    # The pair should be tracked in the instance attribute
+    assert len(connector._published_conflicts) == 1
+
+
+@pytest.mark.asyncio
+async def test_conflict_detection_new_conflict_published_after_dedup(event_bus, db, caldav_config):
+    """Test that new conflicts are still published after existing ones are deduped.
+
+    First call detects A-B overlap.  Then a new event C is added that overlaps
+    with both A and B.  The second call should only publish the new A-C and B-C
+    conflicts, not re-publish the already-seen A-B conflict.
+    """
+    import uuid
+    from datetime import datetime, timedelta, timezone
+
+    from storage.event_store import EventStore
+
+    connector = CalDAVConnector(event_bus, db, caldav_config)
+    connector.publish_event = AsyncMock()
+
+    event_store = EventStore(db)
+
+    now = datetime.now(timezone.utc)
+    base = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # Event A: base+0:00 to base+2:00 (long meeting)
+    payload_a = {
+        "event_id": "event-a",
+        "title": "Long Meeting A",
+        "start_time": base.isoformat(),
+        "end_time": (base + timedelta(hours=2)).isoformat(),
+        "is_all_day": False,
+        "calendar_id": "Personal",
+    }
+    event_store.store_event({
+        "id": str(uuid.uuid4()),
+        "type": "calendar.event.created",
+        "source": "caldav",
+        "timestamp": now.isoformat(),
+        "payload": payload_a,
+    })
+
+    # Event B: base+0:30 to base+1:00 (overlaps with A)
+    payload_b = {
+        "event_id": "event-b",
+        "title": "Short Meeting B",
+        "start_time": (base + timedelta(minutes=30)).isoformat(),
+        "end_time": (base + timedelta(hours=1)).isoformat(),
+        "is_all_day": False,
+        "calendar_id": "Work",
+    }
+    event_store.store_event({
+        "id": str(uuid.uuid4()),
+        "type": "calendar.event.created",
+        "source": "caldav",
+        "timestamp": now.isoformat(),
+        "payload": payload_b,
+    })
+
+    # First call: should detect A-B conflict only
+    await connector._detect_conflicts()
+    assert connector.publish_event.call_count == 1
+    assert len(connector._published_conflicts) == 1
+
+    # Reset mock and add a new overlapping event C
+    connector.publish_event.reset_mock()
+
+    # Event C: base+1:30 to base+2:30 (overlaps with A's tail, not with B)
+    payload_c = {
+        "event_id": "event-c",
+        "title": "New Meeting C",
+        "start_time": (base + timedelta(hours=1, minutes=30)).isoformat(),
+        "end_time": (base + timedelta(hours=2, minutes=30)).isoformat(),
+        "is_all_day": False,
+        "calendar_id": "Personal",
+    }
+    event_store.store_event({
+        "id": str(uuid.uuid4()),
+        "type": "calendar.event.created",
+        "source": "caldav",
+        "timestamp": now.isoformat(),
+        "payload": payload_c,
+    })
+
+    # Second call: should publish only the NEW A-C conflict (B-C don't overlap)
+    await connector._detect_conflicts()
+
+    # Only 1 new conflict (A-C), not re-publishing A-B
+    assert connector.publish_event.call_count == 1
+
+    # Verify the published conflict involves event C
+    conflict_payload = connector.publish_event.call_args[0][1]
+    titles = {conflict_payload["event1"]["title"], conflict_payload["event2"]["title"]}
+    assert "New Meeting C" in titles
+    assert "Long Meeting A" in titles
+
+    # Total tracked conflicts: A-B from first call + A-C from second call
+    assert len(connector._published_conflicts) == 2
 
 
 # ---------------------------------------------------------------------------
