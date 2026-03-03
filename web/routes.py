@@ -1320,7 +1320,10 @@ def register_routes(app: FastAPI, life_os) -> None:
                 if source_key:
                     return source_key
 
-        # Step 3: Fallback for prediction-domain notifications — use domain-based mapping
+        # Step 3: Fallback for domain-based classification.
+        # Domains that map naturally to a single source weight key get classified;
+        # cross-domain origins like "prediction" return None to avoid misattributing
+        # weight updates to an unrelated source (e.g. email.work).
         if domain:
             domain_to_source = {
                 "email": "email.work",
@@ -1330,7 +1333,6 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "health": "health.activity",
                 "location": "location.visits",
                 "home": "home.devices",
-                "prediction": "email.work",  # Predictions are cross-domain; default to email
             }
             return domain_to_source.get(domain)
 
@@ -3588,6 +3590,10 @@ def register_routes(app: FastAPI, life_os) -> None:
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    # Guard against concurrent backfill invocations.  Since asyncio is
+    # single-threaded this simple variable check is race-free — no lock needed.
+    _backfill_task: Optional["asyncio.Task"] = None  # noqa: F821 — asyncio imported inside handler
+
     @app.post("/api/admin/backfills/trigger")
     async def trigger_signal_profile_backfills():
         """
@@ -3608,6 +3614,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         To force a re-run on an already-populated profile, first clear it via the
         database browser, then call this endpoint again.
 
+        If a backfill is already running, returns HTTP 409 Conflict instead of
+        starting a duplicate run (which would cause double-counted signal samples).
+
         Backfills triggered (in order):
           1. relationship  — per-contact interaction graph (People Radar, maintenance predictions)
           2. temporal      — activity-hour patterns (preparation needs, routine detection)
@@ -3620,6 +3629,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         Returns:
             {"status": "started", "backfills": [...], "message": "..."}
+            or HTTP 409 with {"status": "already_running", "message": "..."}
 
         Example::
 
@@ -3631,6 +3641,20 @@ def register_routes(app: FastAPI, life_os) -> None:
               }
         """
         import asyncio as _asyncio
+
+        nonlocal _backfill_task
+
+        # Reject concurrent invocations to prevent double-counted signal samples
+        if _backfill_task is not None and not _backfill_task.done():
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "already_running",
+                    "message": "A backfill is already in progress. Poll /api/admin/backfills/status for progress.",
+                },
+            )
 
         async def _run_all_backfills():
             """Run all signal profile backfills sequentially in the background.
@@ -3651,7 +3675,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # Fire-and-forget: background task so the HTTP response returns immediately.
         # The caller should poll /api/admin/backfills/status to track completion.
-        _asyncio.create_task(_run_all_backfills())
+        _backfill_task = _asyncio.create_task(_run_all_backfills())
 
         return {
             "status": "started",
