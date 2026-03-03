@@ -786,8 +786,7 @@ class PredictionEngine:
                 rows = conn.execute(
                     """SELECT supporting_signals FROM predictions
                        WHERE prediction_type = 'reminder'
-                       AND created_at > ?
-                       AND (resolved_at IS NULL OR user_response != 'filtered')""",
+                       AND created_at > ?""",
                     ((now - timedelta(hours=48)).isoformat(),),
                 ).fetchall()
                 for row in rows:

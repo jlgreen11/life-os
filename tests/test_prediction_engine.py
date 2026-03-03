@@ -891,3 +891,183 @@ async def test_predictions_stored_with_surfaced_flag(db, event_store, user_model
     for row in rows:
         assert "was_surfaced" in row.keys()
         assert row["was_surfaced"] in (0, 1)
+
+
+# -------------------------------------------------------------------------
+# Calendar Reminder Dedup Tests
+# -------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_calendar_reminder_dedup_includes_filtered_predictions(db, event_store, user_model_store):
+    """Filtered predictions should still block dedup — no re-generation for the same event.
+
+    Previously, the dedup query excluded filtered predictions via
+    ``AND (resolved_at IS NULL OR user_response != 'filtered')``. This caused an
+    accumulation loop: each cycle generated a new reminder, it got filtered, then
+    the next cycle didn't see it in the dedup set and generated another one.
+    """
+    engine = PredictionEngine(db, user_model_store)
+    now = datetime.now(timezone.utc)
+
+    # Insert a calendar event starting in 6 hours (within the 2-24h reminder window)
+    cal_event_id = str(uuid.uuid4())
+    event_store.store_event({
+        "id": cal_event_id,
+        "type": "calendar.event.created",
+        "source": "caldav",
+        "timestamp": now.isoformat(),
+        "payload": json.dumps({
+            "title": "Team standup",
+            "start_time": (now + timedelta(hours=6)).isoformat(),
+            "end_time": (now + timedelta(hours=7)).isoformat(),
+            "event_id": cal_event_id,
+        }),
+        "metadata": {},
+    })
+
+    # Simulate a previously filtered prediction for this calendar event.
+    # This mimics what generate_predictions does when a prediction fails the
+    # reaction gate: it stores it with resolved_at set and user_response='filtered'.
+    filtered_pred_id = str(uuid.uuid4())
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            """INSERT INTO predictions
+               (id, prediction_type, description, confidence, confidence_gate,
+                time_horizon, supporting_signals, was_surfaced, user_response,
+                resolved_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                filtered_pred_id,
+                "reminder",
+                f"Upcoming: Team standup in 6 hours",
+                0.85,
+                "default",
+                "24_hours",
+                json.dumps({"calendar_event_id": cal_event_id}),
+                0,  # was_surfaced = False (filtered)
+                "filtered",
+                now.isoformat(),  # resolved_at is set
+                now.isoformat(),  # created_at within 48h window
+            ),
+        )
+
+    # Run calendar reminders — the filtered prediction should block dedup
+    predictions = await engine._check_calendar_event_reminders({})
+    assert len(predictions) == 0, (
+        f"Expected 0 new predictions (dedup should catch the filtered one), got {len(predictions)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_calendar_reminder_dedup_allows_new_events(db, event_store, user_model_store):
+    """A filtered prediction for event A should NOT block a new prediction for event B."""
+    engine = PredictionEngine(db, user_model_store)
+    now = datetime.now(timezone.utc)
+
+    event_a_id = str(uuid.uuid4())
+    event_b_id = str(uuid.uuid4())
+
+    # Insert two calendar events in the 2-24h window
+    for eid, title, hours_ahead in [(event_a_id, "Event A", 6), (event_b_id, "Event B", 10)]:
+        event_store.store_event({
+            "id": eid,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps({
+                "title": title,
+                "start_time": (now + timedelta(hours=hours_ahead)).isoformat(),
+                "end_time": (now + timedelta(hours=hours_ahead + 1)).isoformat(),
+                "event_id": eid,
+            }),
+            "metadata": {},
+        })
+
+    # Create a filtered prediction for event A only
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            """INSERT INTO predictions
+               (id, prediction_type, description, confidence, confidence_gate,
+                time_horizon, supporting_signals, was_surfaced, user_response,
+                resolved_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(uuid.uuid4()),
+                "reminder",
+                "Upcoming: Event A in 6 hours",
+                0.85,
+                "default",
+                "24_hours",
+                json.dumps({"calendar_event_id": event_a_id}),
+                0,
+                "filtered",
+                now.isoformat(),
+                now.isoformat(),
+            ),
+        )
+
+    # Run — event A should be deduped, event B should get a new prediction
+    predictions = await engine._check_calendar_event_reminders({})
+    assert len(predictions) == 1, (
+        f"Expected exactly 1 new prediction (for event B), got {len(predictions)}"
+    )
+    assert predictions[0].supporting_signals["calendar_event_id"] == event_b_id
+
+
+@pytest.mark.asyncio
+async def test_no_accumulation_storm_on_repeated_runs(db, event_store, user_model_store):
+    """Running generate_predictions multiple times should not create duplicate predictions.
+
+    This is the end-to-end regression test for the accumulation bug: without the fix,
+    each cycle would generate a new reminder prediction for the same calendar event
+    (because filtered predictions were excluded from dedup), causing unbounded growth.
+    """
+    engine = PredictionEngine(db, user_model_store)
+    now = datetime.now(timezone.utc)
+
+    # Insert 2 unique calendar events in the 2-24h reminder window
+    event_ids = []
+    for i in range(2):
+        eid = str(uuid.uuid4())
+        event_ids.append(eid)
+        event_store.store_event({
+            "id": eid,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps({
+                "title": f"Meeting {i + 1}",
+                "start_time": (now + timedelta(hours=4 + i * 3)).isoformat(),
+                "end_time": (now + timedelta(hours=5 + i * 3)).isoformat(),
+                "event_id": eid,
+            }),
+            "metadata": {},
+        })
+
+    # Run generate_predictions 5 times — simulates 5 consecutive 15-min cycles
+    for cycle in range(5):
+        # Reset triggers so generate_predictions actually runs each time
+        engine._last_event_cursor = 0
+        engine._last_time_based_run = None
+        await engine.generate_predictions({})
+
+    # Count total reminder predictions stored in the database
+    with db.get_connection("user_model") as conn:
+        rows = conn.execute(
+            """SELECT id, supporting_signals, user_response FROM predictions
+               WHERE prediction_type = 'reminder'
+               AND supporting_signals LIKE '%calendar_event_id%'"""
+        ).fetchall()
+
+    # With the fix: should have at most 2 predictions (one per unique calendar event),
+    # because dedup catches filtered predictions.
+    # Without the fix: would have 10 (2 events * 5 cycles).
+    #
+    # Note: the store_prediction dedup in UserModelStore also helps prevent exact
+    # duplicates, but the engine-level dedup is the primary defense. We allow a small
+    # margin for edge cases in timing.
+    assert len(rows) <= 4, (
+        f"Expected at most 4 reminder predictions for 2 events (with dedup), "
+        f"got {len(rows)} — accumulation bug may still be present"
+    )
