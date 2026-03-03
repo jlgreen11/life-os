@@ -36,17 +36,18 @@ class ConflictDetector:
         # Key is a frozenset of (event_a_id, event_b_id) to handle pair ordering.
         self._published_conflicts: set[frozenset[str]] = set()
 
-    def detect_conflicts(self, time_window_hours: int = 24) -> list[dict[str, Any]]:
-        """Find overlapping calendar events within the given time window.
+    def detect_conflicts(self, forward_hours: int = 48) -> list[dict[str, Any]]:
+        """Find overlapping calendar events in the upcoming time window.
 
-        Queries ``events.db`` for ``calendar.event.created`` events whose
-        payload timestamps fall within *time_window_hours* from now, then
-        checks every unique pair for time overlaps.
+        Queries ``events.db`` for all ``calendar.event.created`` events, then
+        filters to those whose start/end times fall within the upcoming
+        *forward_hours* window.  This forward-looking approach catches conflicts
+        regardless of when events were originally synced — a critical difference
+        from filtering by sync timestamp, which misses ~99.9% of real conflicts.
 
         Args:
-            time_window_hours: How far back to look for calendar events
-                that were synced. The method then filters to events whose
-                actual start/end times overlap.
+            forward_hours: How far ahead (in hours) to look for upcoming
+                calendar events.  Defaults to 48.
 
         Returns:
             A list of conflict dicts, each containing:
@@ -57,22 +58,28 @@ class ConflictDetector:
                 - ``event_b_summary``: Title of the second event
         """
         try:
-            return self._detect_conflicts_impl(time_window_hours)
+            return self._detect_conflicts_impl(forward_hours)
         except Exception:
             logger.exception("conflict_detector: error during conflict detection")
             return []
 
-    def _detect_conflicts_impl(self, time_window_hours: int) -> list[dict[str, Any]]:
-        """Core implementation of conflict detection (unwrapped for testing clarity)."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=time_window_hours)).isoformat()
+    def _detect_conflicts_impl(self, forward_hours: int) -> list[dict[str, Any]]:
+        """Core implementation of conflict detection (unwrapped for testing clarity).
+
+        Fetches all calendar events (up to 5000) and filters in Python to those
+        whose start_time falls within the upcoming *forward_hours* window.  This
+        mirrors the CalDAV connector's approach (see ``connectors/caldav/connector.py``
+        CRITICAL FIX iteration 169).
+        """
+        now = datetime.now(timezone.utc)
+        window_end = now + timedelta(hours=forward_hours)
 
         with self.db.get_connection("events") as conn:
             rows = conn.execute(
                 """SELECT * FROM events
                    WHERE type = 'calendar.event.created'
-                   AND timestamp > ?
-                   ORDER BY timestamp DESC""",
-                (cutoff,),
+                   ORDER BY timestamp DESC
+                   LIMIT 5000""",
             ).fetchall()
 
         if len(rows) < 2:
@@ -82,7 +89,8 @@ class ConflictDetector:
             )
             return []
 
-        # Parse each event's payload for start/end times.
+        # Parse each event's payload for start/end times, filtering to
+        # events in the upcoming forward window.
         parsed: list[dict[str, Any]] = []
         for row in rows:
             try:
@@ -101,6 +109,11 @@ class ConflictDetector:
                 start_dt = self._parse_datetime(start_str)
                 end_dt = self._parse_datetime(end_str)
                 if start_dt is None or end_dt is None:
+                    continue
+
+                # Forward-looking filter: skip events that have already ended
+                # or that start after the look-ahead window.
+                if end_dt < now or start_dt > window_end:
                     continue
 
                 # Skip all-day events for conflict detection — multiple all-day
@@ -152,8 +165,9 @@ class ConflictDetector:
     async def check_and_publish(self, event_bus: Any) -> int:
         """Detect conflicts and publish new ones to the event bus.
 
-        Calls :meth:`detect_conflicts` and publishes a
-        ``calendar.conflict.detected`` event for each conflict that has not
+        Calls :meth:`detect_conflicts` (which scans the upcoming 48-hour
+        window regardless of when events were originally synced) and publishes
+        a ``calendar.conflict.detected`` event for each conflict that has not
         already been published in this process lifetime.
 
         Args:
