@@ -429,7 +429,8 @@ async def test_relationship_maintenance_detects_cold_contacts(db, user_model_sto
     assert len(predictions) >= 1
     rel_pred = predictions[0]
     assert rel_pred.prediction_type == "opportunity"
-    assert "old-friend@example.com" in rel_pred.description
+    # Description now uses resolved contact name (email prefix as fallback)
+    assert "old-friend" in rel_pred.description
     assert "45 days" in rel_pred.description
 
 

@@ -205,9 +205,10 @@ async def test_follow_up_predictions_allow_personal_finance_contacts(db, user_mo
     predictions = await engine._check_follow_up_needs({})
 
     # Should generate a prediction for the personal contact
+    # Description now uses resolved contact name (email prefix as fallback)
     personal_pred = [
         p for p in predictions
-        if "john.advisor@financialfirm.com" in p.description
+        if "john.advisor" in p.description
     ]
 
     assert len(personal_pred) == 1, "Personal finance contacts should generate predictions"

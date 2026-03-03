@@ -65,6 +65,11 @@ class PredictionEngine:
         self._total_predictions_surfaced: int = 0
         self._consecutive_zero_runs: int = 0
 
+        # Lazy-loaded cache mapping lowercase email addresses → contact names
+        # from the entities.db contacts table.  Refreshed every 30 minutes.
+        self._contact_email_map: dict[str, str] = {}
+        self._contact_email_map_loaded_at: Optional[datetime] = None
+
         # Ensure prediction_engine_state table exists and load any persisted state.
         # Both are wrapped in try/except so a corrupted user_model.db doesn't
         # prevent the engine from instantiating at all.
@@ -141,6 +146,64 @@ class PredictionEngine:
                 )
         except Exception as e:
             logger.warning("_persist_state(%s) failed (non-fatal, will retry next cycle): %s", key, e)
+
+    def _load_contact_email_map(self) -> None:
+        """Lazily build a mapping from lowercase email addresses to contact names.
+
+        Queries the entities.db contacts table and parses each contact's
+        ``emails`` JSON array.  The result is cached in ``self._contact_email_map``
+        and refreshed at most every 30 minutes so that newly-added contacts
+        are picked up without requiring a restart.
+        """
+        now = datetime.now(timezone.utc)
+        if (
+            self._contact_email_map_loaded_at is not None
+            and (now - self._contact_email_map_loaded_at).total_seconds() < 1800
+        ):
+            return  # Cache is still fresh
+
+        email_map: dict[str, str] = {}
+        try:
+            with self.db.get_connection("entities") as conn:
+                rows = conn.execute("SELECT name, emails FROM contacts").fetchall()
+            for row in rows:
+                name = row["name"]
+                if not name:
+                    continue
+                try:
+                    emails = json.loads(row["emails"]) if row["emails"] else []
+                except (json.JSONDecodeError, TypeError):
+                    emails = []
+                for email in emails:
+                    if isinstance(email, str) and email.strip():
+                        email_map[email.strip().lower()] = name
+        except Exception as e:
+            logger.warning("_load_contact_email_map failed (will use email-prefix fallback): %s", e)
+
+        self._contact_email_map = email_map
+        self._contact_email_map_loaded_at = now
+
+    def _resolve_contact_name(self, email: str) -> str:
+        """Resolve an email address to a human-readable contact name.
+
+        Looks up the address in the entities.db contacts cache.  Returns the
+        stored contact name when available, otherwise falls back to the local
+        part of the email address (everything before the ``@``).
+
+        Args:
+            email: The email address to resolve.
+
+        Returns:
+            The contact's display name, or the email prefix as a fallback.
+        """
+        try:
+            self._load_contact_email_map()
+            name = self._contact_email_map.get(email.lower().strip())
+            if name:
+                return name
+        except Exception:
+            pass  # Any error falls through to heuristic
+        return email.split("@")[0] if "@" in email else email
 
     def get_runtime_diagnostics(self) -> dict[str, Any]:
         """Return prediction engine runtime diagnostic information for monitoring.
@@ -1124,20 +1187,21 @@ class PredictionEngine:
                 confidence = min(confidence + 0.2, 0.9)  # Explicit response request
 
             subject = payload.get("subject", "No subject")
+            resolved_name = self._resolve_contact_name(from_addr)
             predictions.append(Prediction(
                 prediction_type="reminder",
                 description=(
-                    f"Unreplied message from {from_addr}: \"{subject}\" "
+                    f"Unreplied message from {resolved_name}: \"{subject}\" "
                     f"({int(hours_ago)} hours ago)"
                 ),
                 confidence=confidence,
                 confidence_gate=self._gate_from_confidence(confidence),
                 time_horizon="2_hours",
-                suggested_action=f"Reply to {from_addr}",
+                suggested_action=f"Reply to {resolved_name} ({from_addr})",
                 relevant_contacts=[from_addr],
                 supporting_signals={
                     "contact_email": from_addr,
-                    "contact_name": from_addr.split("@")[0],  # Simple heuristic
+                    "contact_name": resolved_name,
                     "message_id": message_id,
                     "hours_since_received": hours_ago,
                     "is_priority_contact": is_priority,
@@ -1423,16 +1487,17 @@ class PredictionEngine:
                 # Confidence scales linearly with how far past the threshold.
                 if days_since > avg_gap * 1.5 and days_since > 7:
                     confidence = min(0.6, 0.3 + (days_since / avg_gap - 1.5) * 0.2)
+                    resolved_name = self._resolve_contact_name(addr)
                     predictions.append(Prediction(
                         prediction_type="opportunity",
                         description=(
                             f"It's been {days_since} days since you last "
-                            f"contacted {addr} (you usually connect every ~{int(avg_gap)} days)"
+                            f"contacted {resolved_name} (you usually connect every ~{int(avg_gap)} days)"
                         ),
                         confidence=confidence,
                         confidence_gate=self._gate_from_confidence(confidence),
                         time_horizon="this_week",
-                        suggested_action=f"Reach out to {addr}",
+                        suggested_action=f"Reach out to {resolved_name} ({addr})",
                         relevant_contacts=[addr],
                         # supporting_signals enables BehavioralAccuracyTracker._infer_opportunity_accuracy()
                         # to reliably match this prediction to outbound emails/messages.
@@ -1441,7 +1506,7 @@ class PredictionEngine:
                         # Also enables the automated-sender fast-path (PR #189) to fire correctly.
                         supporting_signals={
                             "contact_email": addr,
-                            "contact_name": addr.split("@")[0] if "@" in addr else addr,
+                            "contact_name": resolved_name,
                             "days_since_last_contact": days_since,
                             "avg_contact_gap_days": round(avg_gap, 1),
                         },

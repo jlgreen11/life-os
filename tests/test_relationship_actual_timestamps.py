@@ -375,10 +375,11 @@ def test_relationship_maintenance_predictions_after_fix(
     predictions = asyncio.run(engine.generate_predictions({}))
 
     # Filter to relationship maintenance predictions for Dave
+    # Description now uses resolved contact name (may be title-cased via entities.db lookup)
     dave_preds = [
         p for p in predictions
         if p.prediction_type == "opportunity"
-        and "dave@example.com" in p.description
+        and "dave" in p.description.lower()
     ]
 
     assert len(dave_preds) > 0, \
@@ -514,14 +515,16 @@ def test_multiple_contacts_different_frequencies(
         if p.prediction_type == "opportunity"
     ]
 
-    # Extract contact emails from predictions
+    # Extract contact names from predictions (descriptions now use resolved names, not emails)
     contacts_with_preds = set()
     for pred in maintenance_preds:
-        if "alice@example.com" in pred.description:
+        # Use supporting_signals.contact_email for reliable matching
+        contact_email = pred.supporting_signals.get("contact_email", "")
+        if contact_email == "alice@example.com":
             contacts_with_preds.add("alice")
-        if "bob@example.com" in pred.description:
+        if contact_email == "bob@example.com":
             contacts_with_preds.add("bob")
-        if "carol@example.com" in pred.description:
+        if contact_email == "carol@example.com":
             contacts_with_preds.add("carol")
 
     # Alice should NOT have prediction (contacted today, avg=1 day, threshold=1.5 days)
