@@ -112,7 +112,8 @@ async def test_create_notification_basic(notification_manager, db, mock_event_bu
         assert row["title"] == "Test Notification"
         assert row["body"] == "This is a test"
         assert row["priority"] == "normal"
-        assert row["status"] == "pending"
+        # Default mode is 'immediate', so normal-priority notifications are delivered right away
+        assert row["status"] == "delivered"
 
 
 @pytest.mark.asyncio
@@ -1110,15 +1111,19 @@ async def test_quiet_hours_with_malformed_json(notification_manager, db, mock_ev
 
 
 @pytest.mark.asyncio
-async def test_notification_mode_defaults_to_batched(notification_manager, db):
-    """Test that notification mode defaults to 'batched' when not set."""
-    # Don't set any preference - should default to batched
+async def test_notification_mode_defaults_to_immediate(notification_manager, db):
+    """Test that notification mode defaults to 'immediate' when not set.
 
-    # Normal priority should be batched by default
+    Fresh installations without onboarding should deliver notifications
+    immediately so users actually see them.
+    """
+    # Don't set any preference - should default to immediate
     notif_id = await notification_manager.create_notification("Default Mode", priority="normal")
 
-    # Should be in batch queue
-    assert len(notification_manager._pending_batch) == 1
+    # Should be delivered immediately, not batched
+    with db.get_connection("state") as conn:
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
+        assert row["status"] == "delivered"
 
 
 @pytest.mark.asyncio
