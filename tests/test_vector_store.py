@@ -550,7 +550,7 @@ def test_lancedb_search_applies_metadata_filter():
         store._use_lancedb = True
         store._table = Mock()
 
-        # Simulate LanceDB returning 3 documents with different metadata types
+        # Use low _distance values (high similarity) so results pass the 0.1 threshold
         store._table.search.return_value.limit.return_value.to_list.return_value = [
             {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
             {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
@@ -571,6 +571,7 @@ def test_lancedb_search_no_filter_returns_all():
         store._use_lancedb = True
         store._table = Mock()
 
+        # Use low _distance values so results pass the 0.1 similarity threshold
         store._table.search.return_value.limit.return_value.to_list.return_value = [
             {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
             {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
@@ -590,6 +591,8 @@ def test_lancedb_search_filter_no_matches():
         store._use_lancedb = True
         store._table = Mock()
 
+        # Use low _distance so the results would pass the similarity threshold
+        # — the metadata filter is what should exclude them.
         store._table.search.return_value.limit.return_value.to_list.return_value = [
             {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
             {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
@@ -714,3 +717,129 @@ def test_add_document_logs_debug_per_failed_chunk(vector_store_fallback, caplog)
 
     assert any("Embedding failed for chunk 0 of doc doc99" in record.message
                for record in caplog.records)
+
+
+# --- Score Inversion Fix Tests (Bug A) ---
+
+
+def test_lancedb_search_score_is_similarity_not_distance():
+    """LanceDB search converts _distance to similarity (1.0 - distance).
+
+    Verifies that scores are in the similarity domain (higher = more relevant)
+    rather than the distance domain (lower = more similar).  A document with
+    _distance=0.2 should get score=0.8, not score=0.2.
+    """
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": "doc1", "text": "Very relevant", "metadata": "{}", "_distance": 0.05, "created_at": "2026-01-01"},
+            {"doc_id": "doc2", "text": "Somewhat relevant", "metadata": "{}", "_distance": 0.3, "created_at": "2026-01-01"},
+            {"doc_id": "doc3", "text": "Barely relevant", "metadata": "{}", "_distance": 0.7, "created_at": "2026-01-01"},
+        ]
+
+        results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata=None)
+
+        # doc1: score = 1.0 - 0.05 = 0.95
+        assert results[0]["doc_id"] == "doc1"
+        assert abs(results[0]["score"] - 0.95) < 1e-6
+
+        # doc2: score = 1.0 - 0.3 = 0.7
+        assert results[1]["doc_id"] == "doc2"
+        assert abs(results[1]["score"] - 0.7) < 1e-6
+
+        # doc3: score = 1.0 - 0.7 = 0.3
+        assert results[2]["doc_id"] == "doc3"
+        assert abs(results[2]["score"] - 0.3) < 1e-6
+
+        # All scores should be higher-is-better (descending since LanceDB
+        # returns results sorted by ascending distance)
+        for i in range(len(results) - 1):
+            assert results[i]["score"] >= results[i + 1]["score"]
+
+
+def test_lancedb_search_filters_low_relevance():
+    """LanceDB search excludes results with very high distance (very low similarity).
+
+    Results where 1.0 - _distance < 0.1 should be filtered out, consistent
+    with the NumPy fallback's 0.1 similarity threshold.
+    """
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": "good", "text": "Relevant result", "metadata": "{}", "_distance": 0.2, "created_at": "2026-01-01"},
+            {"doc_id": "bad1", "text": "Irrelevant result", "metadata": "{}", "_distance": 0.95, "created_at": "2026-01-01"},
+            {"doc_id": "bad2", "text": "Totally unrelated", "metadata": "{}", "_distance": 1.0, "created_at": "2026-01-01"},
+            {"doc_id": "bad3", "text": "Missing distance", "metadata": "{}", "created_at": "2026-01-01"},
+        ]
+
+        results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata=None)
+
+        # Only "good" should pass (score=0.8 >= 0.1)
+        # "bad1" has score=0.05 < 0.1 — filtered
+        # "bad2" has score=0.0 < 0.1 — filtered
+        # "bad3" has no _distance, defaults to 1.0, score=0.0 — filtered
+        assert len(results) == 1
+        assert results[0]["doc_id"] == "good"
+        assert abs(results[0]["score"] - 0.8) < 1e-6
+
+
+# --- Early Return Fix Tests (Bug B) ---
+
+
+def test_add_document_continues_after_chunk_error():
+    """LanceDB add_document continues to remaining chunks after one fails.
+
+    When the first chunk fails to add (transient error), the method should
+    continue attempting subsequent chunks rather than aborting the entire
+    document.  The method should return True if at least one chunk succeeds.
+    """
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._embedder = Mock()
+        store._embedder.encode.return_value = np.ones(384)
+        store._table = Mock()
+
+        # First add() call fails, subsequent calls succeed
+        store._table.add.side_effect = [Exception("Transient error"), None, None]
+
+        # Use text long enough to produce 3 chunks
+        long_text = "a" * 2500
+        result = store.add_document("doc1", long_text)
+
+        # Should succeed because chunks 1 and 2 were stored
+        assert result is True
+        # add() should have been called 3 times (once per chunk)
+        assert store._table.add.call_count == 3
+
+
+# --- Score Ordering Consistency Tests ---
+
+
+def test_search_score_ordering_consistency(vector_store_with_embedder):
+    """Search results are ordered highest-score-first in the NumPy backend.
+
+    Adds multiple documents, searches, and verifies results come back in
+    descending score order regardless of insertion order.
+    """
+    vector_store_with_embedder.add_document("doc_a", "machine learning algorithms for text classification")
+    vector_store_with_embedder.add_document("doc_b", "cooking recipes for Italian pasta dishes tonight")
+    vector_store_with_embedder.add_document("doc_c", "deep learning neural network text processing models")
+
+    results = vector_store_with_embedder.search("machine learning text", limit=10)
+
+    # Verify descending score order
+    for i in range(len(results) - 1):
+        assert results[i]["score"] >= results[i + 1]["score"], (
+            f"Result {i} (score={results[i]['score']}) should be >= "
+            f"result {i + 1} (score={results[i + 1]['score']})"
+        )
