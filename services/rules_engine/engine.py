@@ -503,6 +503,18 @@ DEFAULT_RULES = [
             {"type": "notify", "priority": "high"},
         ],
     },
+    # Alert when the health monitor detects a degraded connector — either an
+    # error status or a stale sync (no successful sync in 24+ hours).  This
+    # catches silent pipeline failures that the instant error rule above misses,
+    # e.g. a connector whose auth expired overnight while no sync was attempted.
+    {
+        "name": "Alert on degraded connector",
+        "trigger_event": "system.connector.health_degraded",
+        "conditions": [],
+        "actions": [
+            {"type": "notify", "priority": "high"},
+        ],
+    },
 ]
 
 

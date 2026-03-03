@@ -74,6 +74,7 @@ class EventType(str, Enum):
     # System
     CONNECTOR_SYNC_COMPLETE = "system.connector.sync_complete"
     CONNECTOR_ERROR = "system.connector.error"
+    CONNECTOR_HEALTH_DEGRADED = "system.connector.health_degraded"
     USER_COMMAND = "system.user.command"
     AI_SUGGESTION = "system.ai.suggestion"
     AI_ACTION_TAKEN = "system.ai.action_taken"

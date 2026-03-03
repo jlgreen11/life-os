@@ -774,8 +774,8 @@ async def test_default_rules_installation(db):
     engine = RulesEngine(db)
     rules = engine.get_all_rules()
 
-    # Should have exactly 7 default rules
-    assert len(rules) == 7
+    # Should have exactly 8 default rules
+    assert len(rules) == 8
     rule_names = {r["name"] for r in rules}
     assert rule_names == {
         "Archive marketing emails",
@@ -785,6 +785,7 @@ async def test_default_rules_installation(db):
         "Notify on urgent emails",
         "Notify on direct reply requests",
         "Notify on connector errors",
+        "Alert on degraded connector",
     }
 
     # All default rules should be created by "system"
@@ -794,7 +795,7 @@ async def test_default_rules_installation(db):
     # Running install again should be idempotent (no duplicates)
     await install_default_rules(db)
     rules_after_second_install = engine.get_all_rules()
-    assert len(rules_after_second_install) == 7
+    assert len(rules_after_second_install) == 8
 
 
 @pytest.mark.asyncio

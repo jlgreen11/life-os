@@ -441,6 +441,7 @@ class LifeOS:
         self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
         self._start_background_task("db_health_loop", self._db_health_loop())
         self._start_background_task("conflict_detection_loop", self._conflict_detection_loop())
+        self._start_background_task("connector_health_monitor_loop", self._connector_health_monitor_loop())
         self._start_background_task("nats_reconnect_loop", self._nats_reconnect_loop())
 
         # 7. Launch web server
@@ -2909,6 +2910,77 @@ class LifeOS:
             except Exception as e:
                 logger.error("Conflict detection error: %s", e)
             await asyncio.sleep(900)  # 15 minutes
+
+    async def _connector_health_monitor_loop(self):
+        """Monitor connector health and notify users of degraded connectors.
+
+        Checks the ``connector_state`` table in state.db every hour for:
+        1. Connectors with ``status='error'`` (auth failures, sync crashes)
+        2. Connectors whose ``last_sync`` is older than 24 hours (stale sync)
+
+        Publishes a ``system.connector.health_degraded`` event for each
+        degraded connector so the rules engine can generate a user-facing
+        notification.  Tracks already-alerted connectors to avoid duplicate
+        alerts, and clears the alert when a connector recovers so it can
+        re-fire if the connector degrades again later.
+        """
+        alerted_connectors: set[str] = set()
+        while not self.shutdown_event.is_set():
+            try:
+                with self.db.get_connection("state") as conn:
+                    cursor = conn.execute(
+                        "SELECT connector_id, status, last_sync, last_error FROM connector_state"
+                    )
+                    rows = cursor.fetchall()
+
+                now = datetime.now(timezone.utc)
+                for row in rows:
+                    connector_id = row["connector_id"]
+                    is_degraded = False
+                    reason = ""
+
+                    # Check for error status (auth failure, sync crash, etc.)
+                    if row["status"] == "error":
+                        is_degraded = True
+                        reason = f"status=error: {row['last_error'] or 'unknown'}"
+                    # Check for stale sync (no sync in 24+ hours)
+                    elif row["last_sync"]:
+                        try:
+                            last_sync = datetime.fromisoformat(
+                                row["last_sync"].replace("Z", "+00:00")
+                            )
+                            stale_seconds = (now - last_sync).total_seconds()
+                            if stale_seconds > 86400:  # 24 hours
+                                is_degraded = True
+                                hours_stale = int(stale_seconds / 3600)
+                                reason = f"no sync for {hours_stale}h"
+                        except (ValueError, TypeError):
+                            pass
+
+                    if is_degraded and connector_id not in alerted_connectors:
+                        # Publish degraded event for rules engine to create notification
+                        if self.event_bus and self.event_bus.is_connected:
+                            await self.event_bus.publish(
+                                "system.connector.health_degraded",
+                                {
+                                    "connector_id": connector_id,
+                                    "status": row["status"],
+                                    "last_sync": row["last_sync"],
+                                    "error": row["last_error"],
+                                    "reason": reason,
+                                },
+                                source="connector_health_monitor",
+                                priority="high",
+                            )
+                        alerted_connectors.add(connector_id)
+                        logger.info("Connector %s degraded: %s", connector_id, reason)
+                    elif not is_degraded and connector_id in alerted_connectors:
+                        # Connector recovered — clear alert so it can re-fire
+                        alerted_connectors.discard(connector_id)
+                        logger.info("Connector %s recovered", connector_id)
+            except Exception as e:
+                logger.error("Connector health monitor error: %s", e)
+            await asyncio.sleep(3600)  # check every hour
 
     async def _insight_loop(self):
         """Run the insight engine every 15 minutes.
