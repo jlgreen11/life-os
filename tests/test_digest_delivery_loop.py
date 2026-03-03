@@ -13,6 +13,9 @@ These tests verify that:
 3. Predictions are marked as "surfaced" when their notifications are delivered
 4. The loop doesn't deliver duplicate digests within the same hour
 5. The loop handles empty digests gracefully (no notifications to deliver)
+6. Digest items are broadcast via WebSocket to connected dashboard clients
+7. A digest summary message is broadcast after individual notifications
+8. No WebSocket broadcast happens when digest is empty
 """
 
 import asyncio
@@ -201,6 +204,106 @@ async def test_digest_delivery_handles_empty_digest(db, event_bus):
             pass
 
         life_os.notification_manager.get_digest.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_digest_broadcasts_notifications_via_websocket(db, event_bus):
+    """Test that digest items are broadcast to dashboard clients via WebSocket."""
+    life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
+    life_os.notification_manager.get_digest = AsyncMock(return_value=[
+        {"id": "notif1", "title": "Morning email summary", "source_event_id": "ev1"},
+        {"id": "notif2", "title": "Calendar reminder", "source_event_id": "ev2"},
+    ])
+
+    with patch("main.datetime") as mock_datetime, \
+         patch("main.ws_manager") as mock_ws:
+        mock_datetime.now.return_value = _make_utc_datetime(9)
+        mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        mock_ws.broadcast = AsyncMock()
+
+        loop_task = asyncio.create_task(life_os._digest_delivery_loop())
+        await asyncio.sleep(0.1)
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+
+        # Should broadcast each notification item + one digest summary = 3 calls
+        assert mock_ws.broadcast.call_count == 3
+
+        # Verify individual notification broadcasts
+        calls = mock_ws.broadcast.call_args_list
+        assert calls[0].args[0] == {
+            "type": "notification",
+            "title": "Morning email summary",
+            "source_event_id": "ev1",
+        }
+        assert calls[1].args[0] == {
+            "type": "notification",
+            "title": "Calendar reminder",
+            "source_event_id": "ev2",
+        }
+
+        # Verify digest summary broadcast
+        assert calls[2].args[0] == {
+            "type": "digest",
+            "count": 2,
+        }
+
+
+@pytest.mark.asyncio
+async def test_digest_no_broadcast_when_empty(db, event_bus):
+    """Test that no WebSocket broadcast happens when the digest is empty."""
+    life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
+    life_os.notification_manager.get_digest = AsyncMock(return_value=[])
+
+    with patch("main.datetime") as mock_datetime, \
+         patch("main.ws_manager") as mock_ws:
+        mock_datetime.now.return_value = _make_utc_datetime(13)
+        mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        mock_ws.broadcast = AsyncMock()
+
+        loop_task = asyncio.create_task(life_os._digest_delivery_loop())
+        await asyncio.sleep(0.1)
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+
+        # get_digest was called but returned empty, so no broadcast should happen
+        life_os.notification_manager.get_digest.assert_called()
+        mock_ws.broadcast.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_digest_broadcast_error_does_not_block_delivery(db, event_bus):
+    """Test that a WebSocket broadcast error doesn't prevent digest delivery from completing."""
+    life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
+    life_os.notification_manager.get_digest = AsyncMock(return_value=[
+        {"id": "notif1", "title": "Test notification", "source_event_id": "ev1"},
+    ])
+
+    with patch("main.datetime") as mock_datetime, \
+         patch("main.ws_manager") as mock_ws:
+        mock_datetime.now.return_value = _make_utc_datetime(18)
+        mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        # Simulate WebSocket broadcast failure
+        mock_ws.broadcast = AsyncMock(side_effect=Exception("WebSocket error"))
+
+        loop_task = asyncio.create_task(life_os._digest_delivery_loop())
+        await asyncio.sleep(0.1)
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+
+        # get_digest should still have been called successfully despite broadcast failure
+        life_os.notification_manager.get_digest.assert_called()
+        # broadcast was attempted (even though it failed)
+        mock_ws.broadcast.assert_called()
 
 
 @pytest.mark.asyncio

@@ -3692,6 +3692,27 @@ class LifeOS:
                     if digest:
                         logger.info("  DigestDelivery: delivered %d batched notifications", len(digest))
 
+                        # Broadcast each digest item to connected dashboard clients
+                        # so users in 'batched' mode actually see their notifications.
+                        for item in digest:
+                            try:
+                                await ws_manager.broadcast({
+                                    "type": "notification",
+                                    "title": item.get("title", ""),
+                                    "source_event_id": item.get("source_event_id"),
+                                })
+                            except Exception:
+                                pass  # Fail-open: don't let broadcast errors block delivery
+
+                        # Send a digest summary so the dashboard can show a banner
+                        try:
+                            await ws_manager.broadcast({
+                                "type": "digest",
+                                "count": len(digest),
+                            })
+                        except Exception:
+                            pass
+
                     # Track that we've delivered for this hour to prevent duplicate deliveries
                     last_delivered_hour = current_hour
 
