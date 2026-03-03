@@ -277,16 +277,18 @@ async def test_system_events_still_stored(lifeos, db):
 
 
 # ---------------------------------------------------------------------------
-# Test 5: usermodel.* events are still processed normally
+# Test 5: usermodel.* events are stored but skip stages 2-6
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_usermodel_events_still_processed(lifeos, db):
-    """Events with the 'usermodel.' prefix must still go through all stages.
+async def test_usermodel_events_skip_pipeline_stages(lifeos, db):
+    """Events with the 'usermodel.' prefix are internal meta-events and must
+    skip stages 2-6 (signal extraction, rules evaluation, etc.).
 
-    usermodel.signal_profile.updated and similar events carry valuable
-    data about user behavior — they must not be caught by the system-event
-    skip guard.
+    usermodel.signal_profile.updated and similar events are emitted by
+    internal services — re-processing them through the full pipeline wastes
+    CPU and risks cascade loops.  They are still stored (stage 1) and tracked
+    for source weights (stage 1.3).
     """
     stages_reached = []
 
@@ -315,12 +317,22 @@ async def test_usermodel_events_still_processed(lifeos, db):
 
     await lifeos.master_event_handler(event)
 
-    assert "signal_extraction" in stages_reached, (
-        "usermodel.* events should still run through signal extraction"
+    # usermodel.* events should NOT pass through stages 2-6
+    assert "signal_extraction" not in stages_reached, (
+        "usermodel.* events should NOT run through signal extraction — "
+        "they are internal meta-events guarded by _SYSTEM_EVENT_PREFIXES"
     )
-    assert "rules_evaluation" in stages_reached, (
-        "usermodel.* events should still run through rules evaluation"
+    assert "rules_evaluation" not in stages_reached, (
+        "usermodel.* events should NOT run through rules evaluation — "
+        "they are internal meta-events guarded by _SYSTEM_EVENT_PREFIXES"
     )
+
+    # But they should still be stored in events.db (stage 1)
+    with db.get_connection("events") as conn:
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event["id"],)
+        ).fetchone()
+    assert row is not None, "usermodel.* events should still be stored in events.db"
 
     # Restore originals
     lifeos.signal_extractor.process_event = original_process
