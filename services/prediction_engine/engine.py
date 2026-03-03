@@ -901,7 +901,14 @@ class PredictionEngine:
         # outbound messages to (outbound_count > 0), meaning there is an established
         # bidirectional communication relationship. Emails from these contacts get
         # a higher confidence boost because the user is more likely to need to reply.
-        rel_profile = self.ums.get_signal_profile("relationships")
+        # Wrapped in try/except so a corrupted user_model.db doesn't prevent
+        # follow-up predictions entirely — we can still generate them without
+        # priority contact boosting.
+        try:
+            rel_profile = self.ums.get_signal_profile("relationships")
+        except Exception as e:
+            logger.warning("follow_up_needs: get_signal_profile('relationships') failed (disabling priority boost): %s", e)
+            rel_profile = None
         rel_contacts = rel_profile["data"].get("contacts", {}) if rel_profile else {}
 
         if not rel_profile or not rel_contacts:
