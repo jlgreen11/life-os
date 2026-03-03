@@ -1167,6 +1167,64 @@ class LifeOS:
             logger.error("_try_restore_user_model_from_backup: unexpected error: %s", e)
             return False
 
+    def _fresh_start_user_model_db(self) -> bool:
+        """Last-resort recovery: archive corrupt DB and create a completely fresh one.
+
+        Called when all rebuild and backup restore attempts have failed
+        (i.e. ``_runtime_db_rebuilds > 3``).  Archives the corrupt file as
+        ``user_model.db.unrecoverable.{timestamp}`` and creates a clean
+        database using ``DatabaseManager._init_user_model_db()``.
+
+        This loses ALL user model data (episodes, facts, routines, signal
+        profiles, predictions) but allows the system to start functioning
+        again.  The archived file is preserved for potential forensic
+        recovery.  Signal profiles will be rebuilt from events.db by the
+        normal backfill loops.
+
+        Returns:
+            True if the fresh DB was created successfully.
+        """
+        import shutil
+
+        db_path = Path(self.db._databases["user_model"])
+        if not db_path.exists():
+            # DB file is missing entirely — just re-create it.
+            self.db._init_user_model_db()
+            return self._verify_user_model_integrity()
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        archive_path = db_path.with_suffix(f".db.unrecoverable.{ts}")
+        try:
+            # Remove WAL/SHM sidecars so they don't interfere with the fresh DB.
+            for suffix in ["-wal", "-shm"]:
+                wal_path = db_path.with_name(db_path.name + suffix)
+                if wal_path.exists():
+                    wal_path.unlink(missing_ok=True)
+            shutil.move(str(db_path), str(archive_path))
+            logger.warning(
+                "Fresh start: archived unrecoverable user_model.db to %s",
+                archive_path,
+            )
+        except Exception as e:
+            logger.error("Fresh start: failed to archive corrupt DB: %s", e)
+            # Even if archiving fails, try to create fresh DB below.
+
+        try:
+            self.db._init_user_model_db()
+            if self._verify_user_model_integrity():
+                logger.warning(
+                    "Fresh start: created clean user_model.db — "
+                    "all user model data has been reset. Signal profiles "
+                    "will be rebuilt from event history."
+                )
+                return True
+            else:
+                logger.error("Fresh start: freshly created DB failed integrity check")
+                return False
+        except Exception as e:
+            logger.error("Fresh start: failed to initialize new DB: %s", e)
+            return False
+
     async def _repair_signal_profiles_if_corrupted(self):
         """Detect and repair SQLite B-tree corruption in the signal_profiles table.
 
@@ -3607,12 +3665,6 @@ class LifeOS:
                     # Fail-open: backup failure must never crash the health loop.
                     logger.warning("Daily backup of user_model.db failed: %s", e)
 
-                if self._runtime_db_rebuilds > 3:
-                    # Already exceeded the rebuild limit — skip probing to
-                    # avoid wasting cycles on a persistently broken disk.
-                    await asyncio.sleep(1800)
-                    continue
-
                 # Run the same 7 probe queries used by _rebuild_user_model_db_if_corrupted
                 corruption_detected = False
                 probe_error = None
@@ -3675,26 +3727,50 @@ class LifeOS:
                     pass
 
                 if self._runtime_db_rebuilds > 3:
-                    logger.error(
+                    logger.warning(
                         "DB health check: exceeded 3 runtime rebuilds — "
-                        "the underlying disk/filesystem likely needs attention. "
-                        "Stopping auto-repair attempts for this session."
+                        "attempting fresh start (all user model data will be reset)"
                     )
-                    # Alert the user that manual intervention is needed.
-                    try:
-                        await self.notification_manager.create_notification(
-                            title="Database repair failed, manual intervention needed",
-                            body=(
-                                "user_model.db has been corrupted and 3 automatic "
-                                "repair attempts have failed. The underlying disk or "
-                                "filesystem likely needs attention. Check /admin for "
-                                "system status and consider manual database recovery."
-                            ),
-                            priority="critical",
-                            domain="system",
+                    fresh_ok = self._fresh_start_user_model_db()
+                    if fresh_ok:
+                        logger.warning(
+                            "DB health check: fresh start succeeded — "
+                            "running backfills to rebuild from event history"
                         )
-                    except Exception:
-                        pass
+                        try:
+                            await self.notification_manager.create_notification(
+                                title="Database reset and recovering",
+                                body=(
+                                    "user_model.db was unrecoverably corrupt after 3 repair "
+                                    "attempts. A fresh database was created and signal profiles "
+                                    "are being rebuilt from event history. Some manually-entered "
+                                    "facts and feedback may be lost."
+                                ),
+                                priority="critical",
+                                domain="system",
+                            )
+                        except Exception:
+                            pass
+                        await self._verify_and_retry_backfills()
+                        self._runtime_db_rebuilds = 0
+                    else:
+                        logger.error(
+                            "DB health check: fresh start FAILED — "
+                            "system requires manual intervention"
+                        )
+                        try:
+                            await self.notification_manager.create_notification(
+                                title="Database repair failed, manual intervention needed",
+                                body=(
+                                    "user_model.db corruption could not be resolved by any "
+                                    "automatic method (3 rebuilds + fresh start all failed). "
+                                    "Check /admin for system status."
+                                ),
+                                priority="critical",
+                                domain="system",
+                            )
+                        except Exception:
+                            pass
                     await asyncio.sleep(1800)
                     continue
 
