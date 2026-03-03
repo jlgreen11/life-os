@@ -36,6 +36,7 @@ from web.schemas import (
     SourceWeightUpdate,
     TaskCreateRequest,
     TaskUpdateRequest,
+    TemplateUpdateRequest,
 )
 from web.websocket import ws_manager
 
@@ -2108,6 +2109,52 @@ def register_routes(app: FastAPI, life_os) -> None:
         except Exception as e:
             logger.error("Failed to fetch communication templates: %s", e)
             return {"templates": [], "total": 0, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+    @app.delete("/api/user-model/templates/{template_id}")
+    async def delete_communication_template(template_id: str):
+        """Delete a communication template by ID.
+
+        Removes a template that the system inferred incorrectly, allowing the
+        relationship extractor to re-learn the style from future messages.
+
+        Returns 404 if no template with the given ID exists.
+        """
+        try:
+            deleted = life_os.user_model_store.delete_communication_template(template_id)
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return {"deleted": True, "template_id": template_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to delete template %s: %s", template_id, e)
+            raise HTTPException(status_code=500, detail="Internal error")
+
+    @app.patch("/api/user-model/templates/{template_id}")
+    async def update_communication_template(template_id: str, request: TemplateUpdateRequest):
+        """Partially update a communication template.
+
+        Accepts any subset of mutable style fields (greeting, closing,
+        formality, typical_length, uses_emoji, common_phrases, avoids_phrases,
+        tone_notes). Structural fields (id, context, contact_id, channel) are
+        immutable and cannot be changed via this endpoint.
+
+        Returns the full updated template on success, 404 if not found, or
+        400 if no updatable fields were provided.
+        """
+        try:
+            updates = request.model_dump(exclude_unset=True)
+            if not updates:
+                raise HTTPException(status_code=400, detail="No fields to update")
+            result = life_os.user_model_store.update_communication_template(template_id, updates)
+            if result is None:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return {"template": result}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to update template %s: %s", template_id, e)
+            raise HTTPException(status_code=500, detail="Internal error")
 
     # -------------------------------------------------------------------
     # Contacts (entities database — people the system has learned about)
