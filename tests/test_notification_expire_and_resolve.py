@@ -114,8 +114,9 @@ class TestExpireTimestampFormat:
                 (notif_id, "Old Notification", "normal", created_at),
             )
 
-        expired = notification_manager.expire_stale_notifications(max_age_hours=48)
-        assert expired == 1
+        expired_count, expired_ids = notification_manager.expire_stale_notifications(max_age_hours=48)
+        assert expired_count == 1
+        assert expired_ids == [notif_id]
 
         with db.get_connection("state") as conn:
             row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
@@ -136,8 +137,9 @@ class TestExpireTimestampFormat:
                 (notif_id, "Recent Notification", "normal", created_at),
             )
 
-        expired = notification_manager.expire_stale_notifications(max_age_hours=48)
-        assert expired == 0
+        expired_count, expired_ids = notification_manager.expire_stale_notifications(max_age_hours=48)
+        assert expired_count == 0
+        assert expired_ids == []
 
         with db.get_connection("state") as conn:
             row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
@@ -167,8 +169,9 @@ class TestExpireTimestampFormat:
                 (notif_id, "Zero Second Notification", "normal", created_at),
             )
 
-        expired = notification_manager.expire_stale_notifications(max_age_hours=48)
-        assert expired == 1, "Notification at second=0 boundary should be expired"
+        expired_count, expired_ids = notification_manager.expire_stale_notifications(max_age_hours=48)
+        assert expired_count == 1, "Notification at second=0 boundary should be expired"
+        assert expired_ids == [notif_id]
 
     def test_expire_only_affects_pending_status(self, notification_manager, db):
         """Only pending notifications should be expired, not delivered/read ones."""
@@ -189,8 +192,9 @@ class TestExpireTimestampFormat:
                 ("notif-pending", "Pending", "normal", created_at),
             )
 
-        expired = notification_manager.expire_stale_notifications(max_age_hours=48)
-        assert expired == 1  # Only the pending one
+        expired_count, expired_ids = notification_manager.expire_stale_notifications(max_age_hours=48)
+        assert expired_count == 1  # Only the pending one
+        assert expired_ids == ["notif-pending"]
 
 
 # ============================================================================

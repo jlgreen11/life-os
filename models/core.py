@@ -85,6 +85,7 @@ class EventType(str, Enum):
     NOTIFICATION_DELIVERED = "notification.delivered"
     NOTIFICATION_DISMISSED = "notification.dismissed"
     NOTIFICATION_ACTED_ON = "notification.acted_on"
+    NOTIFICATION_IGNORED = "notification.ignored"
 
     # Rules
     RULE_CREATED = "system.rule.created"

@@ -44,12 +44,16 @@ class NotificationManager:
         # destined for batch delivery but their in-memory references were lost.
         self._recover_pending_batch()
 
-    def expire_stale_notifications(self, max_age_hours: int = 48) -> int:
+    def expire_stale_notifications(self, max_age_hours: int = 48) -> tuple[int, list[str]]:
         """Expire pending notifications that are older than max_age_hours.
 
         Stale pending notifications (e.g., "You have a meeting at 2pm" from
         days ago) create noise in digests and erode user trust. This method
         marks them as 'expired' so they are excluded from future delivery.
+
+        For each expired notification, automatic 'ignored' feedback is logged
+        so the FeedbackCollector can learn from user non-interaction (e.g.,
+        reducing notifications the user never reads).
 
         Only affects notifications with status='pending' — delivered, read,
         acted-on, and dismissed notifications are left untouched.
@@ -59,7 +63,7 @@ class NotificationManager:
                           is considered stale. Default is 48 hours.
 
         Returns:
-            Number of notifications expired.
+            Tuple of (count of expired notifications, list of expired notification IDs).
         """
         try:
             # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -69,6 +73,15 @@ class NotificationManager:
                 "%Y-%m-%dT%H:%M:%S.000Z"
             )
             with self.db.get_connection("state") as conn:
+                # Collect IDs before the UPDATE so we can log feedback for each.
+                expired_ids = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT id FROM notifications WHERE status = 'pending' AND created_at < ?",
+                        (cutoff,),
+                    ).fetchall()
+                ]
+
                 result = conn.execute(
                     """UPDATE notifications
                        SET status = 'expired'
@@ -80,11 +93,26 @@ class NotificationManager:
 
             if expired_count > 0:
                 logger.info("Expired %d stale pending notifications (older than %dh)", expired_count, max_age_hours)
-            return expired_count
+
+            # Log 'ignored' feedback for each expired notification so the
+            # FeedbackCollector's _learn_from_ignore() can adjust notification
+            # behaviour (channel weights, contact preferences, type suppression).
+            for nid in expired_ids:
+                try:
+                    self._log_automatic_feedback(
+                        action_id=nid,
+                        action_type="notification",
+                        feedback_type="ignored",
+                        context={"explicit_user_action": False, "action": "expired_ignored"},
+                    )
+                except Exception:
+                    logger.debug("Failed to log ignored feedback for expired notification %s", nid)
+
+            return expired_count, expired_ids
         except Exception:
             # Fail-open: expiry failures must never block notification delivery.
             logger.warning("Failed to expire stale notifications", exc_info=True)
-            return 0
+            return 0, []
 
     def _recover_pending_batch(self):
         """Recover batched notifications from the database after a restart.
@@ -100,9 +128,12 @@ class NotificationManager:
         never be in a pending-batch state.
         """
         # Expire stale pending notifications before loading, so old items
-        # don't get pulled into the in-memory batch.
+        # don't get pulled into the in-memory batch. This is a sync context so
+        # we can only use the direct DB feedback (already handled inside
+        # expire_stale_notifications); bus events are published separately in
+        # async callers like get_digest().
         try:
-            self.expire_stale_notifications()
+            _expired_count, _expired_ids = self.expire_stale_notifications()
         except Exception:
             logger.warning("Failed to expire stale notifications during recovery", exc_info=True)
 
@@ -179,6 +210,25 @@ class NotificationManager:
                     "Automatic feedback from prediction auto-resolution",
                 ),
             )
+
+    async def _publish_notification_ignored_events(self, notification_ids: list[str]):
+        """Publish notification.ignored events for expired notifications.
+
+        Called after expire_stale_notifications() in async contexts (e.g.,
+        get_digest) so the FeedbackCollector's _learn_from_ignore() handler
+        can process the event bus signal alongside the direct DB feedback.
+        """
+        if not self.bus or not self.bus.is_connected:
+            return
+        for nid in notification_ids:
+            try:
+                await self.bus.publish(
+                    "notification.ignored",
+                    {"notification_id": nid},
+                    source="notification_manager",
+                )
+            except Exception:
+                logger.debug("Failed to publish notification.ignored for %s", nid)
 
     async def create_notification(
         self,
@@ -674,8 +724,12 @@ class NotificationManager:
         aged out during a long-running session don't appear in the digest.
         """
         # Expire stale notifications that accumulated during a long session.
+        # Publish notification.ignored events so the FeedbackCollector can
+        # learn from user non-interaction via the event bus.
         try:
-            self.expire_stale_notifications()
+            _expired_count, _expired_ids = self.expire_stale_notifications()
+            if _expired_ids:
+                await self._publish_notification_ignored_events(_expired_ids)
         except Exception:
             logger.warning("Failed to expire stale notifications during digest", exc_info=True)
 
