@@ -1160,9 +1160,10 @@ def test_expire_stale_notifications_marks_old_pending_as_expired(db, mock_event_
                 (notif_id, f"Notif {age_hours}h", created),
             )
 
-    expired = nm.expire_stale_notifications(max_age_hours=48)
+    expired_count, expired_ids = nm.expire_stale_notifications(max_age_hours=48)
 
-    assert expired == 1
+    assert expired_count == 1
+    assert expired_ids == ["n-72h"]
 
     with db.get_connection("state") as conn:
         for notif_id, expected_status in [("n-1h", "pending"), ("n-24h", "pending"), ("n-72h", "expired")]:
@@ -1184,9 +1185,10 @@ def test_expire_stale_notifications_skips_non_pending(db, mock_event_bus):
 
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
 
-    expired = nm.expire_stale_notifications(max_age_hours=48)
+    expired_count, expired_ids = nm.expire_stale_notifications(max_age_hours=48)
 
-    assert expired == 0
+    assert expired_count == 0
+    assert expired_ids == []
 
     with db.get_connection("state") as conn:
         row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-delivered-old",)).fetchone()
