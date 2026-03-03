@@ -108,6 +108,85 @@ class InsightEngine:
     # Public API
     # ------------------------------------------------------------------
 
+    async def get_data_sufficiency_report(self) -> dict:
+        """Report which correlators have sufficient data to produce insights.
+
+        Checks each signal profile and data source that the correlators depend
+        on and returns a structured dict mapping correlator name to its data
+        readiness status.
+
+        Returns:
+            A dict keyed by correlator method name. Each value contains:
+            - ``profile`` or ``source``: the data source checked
+            - ``status``: one of ``'ready'``, ``'partial'``, or ``'no_data'``
+            - ``samples`` or ``count``: current data point count
+            - ``min_required``: minimum samples needed for ``'ready'`` status
+              (profile-based correlators only)
+        """
+        report: dict[str, dict] = {}
+
+        # Profile-based correlators: each needs a signal profile with enough
+        # samples to produce meaningful insights.
+        profiles_to_check = [
+            ("relationships", "_contact_gap_insights", 10),
+            ("linguistic", "_communication_style_insights", 10),
+            ("linguistic_inbound", "_inbound_style_insights", 5),
+            ("cadence", "_cadence_response_insights", 10),
+            ("temporal", "_temporal_pattern_insights", 7),
+            ("mood_signals", "_mood_trend_insights", 5),
+            ("topics", "_topic_interest_insights", 10),
+            ("spatial", "_spatial_insights", 10),
+            ("decision", "_decision_pattern_insights", 20),
+        ]
+        for profile_type, correlator_name, min_samples in profiles_to_check:
+            try:
+                profile = self.ums.get_signal_profile(profile_type)
+                samples = profile["samples_count"] if profile else 0
+            except Exception:
+                samples = -1  # DB or deserialization error
+            if samples < 0:
+                status = "error"
+            elif samples >= min_samples:
+                status = "ready"
+            elif samples > 0:
+                status = "partial"
+            else:
+                status = "no_data"
+            report[correlator_name] = {
+                "profile": profile_type,
+                "status": status,
+                "samples": samples,
+                "min_required": min_samples,
+            }
+
+        # Episode-based correlator (_place_frequency_insights)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                ep_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        except Exception:
+            ep_count = -1
+        report["_place_frequency_insights"] = {
+            "source": "episodes",
+            "status": "ready" if ep_count >= 7 else ("error" if ep_count < 0 else "no_data"),
+            "count": ep_count,
+            "min_required": 7,
+        }
+
+        # Routine-based correlator (_routine_insights)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                routine_count = conn.execute("SELECT COUNT(*) FROM routines").fetchone()[0]
+        except Exception:
+            routine_count = -1
+        report["_routine_insights"] = {
+            "source": "routines",
+            "status": "ready" if routine_count > 0 else ("error" if routine_count < 0 else "no_data"),
+            "count": routine_count,
+            "min_required": 1,
+        }
+
+        return report
+
     async def generate_insights(self) -> list[Insight]:
         """Main loop: run all correlators, deduplicate, store, return new insights."""
         raw: list[Insight] = []
@@ -217,6 +296,24 @@ class InsightEngine:
         # Persist the survivors
         for insight in fresh:
             self._store_insight(insight)
+
+        # When no insights are produced, log a data sufficiency report so
+        # operators can see exactly which correlators are blocked and why.
+        if not fresh:
+            try:
+                sufficiency = await self.get_data_sufficiency_report()
+                ready_count = sum(1 for v in sufficiency.values() if v.get("status") == "ready")
+                total = len(sufficiency)
+                blocked = {k: v for k, v in sufficiency.items() if v.get("status") != "ready"}
+                logger.info(
+                    "Insight engine produced 0 insights: %d/%d correlators have sufficient data. "
+                    "Blocked correlators: %s",
+                    ready_count,
+                    total,
+                    blocked,
+                )
+            except Exception as e:
+                logger.warning("Failed to generate data sufficiency report: %s", e)
 
         return fresh
 
