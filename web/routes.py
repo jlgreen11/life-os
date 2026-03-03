@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 logger = logging.getLogger(__name__)
 
 from web.schemas import (
+    BackupRestoreRequest,
     CommandRequest,
     ConnectorConfigRequest,
     ContextBatchRequest,
@@ -3885,6 +3886,73 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "Poll /api/admin/backfills/status to track progress."
             ),
         }
+
+    # -------------------------------------------------------------------
+    # Backup Listing & Restore
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/backups")
+    async def list_backups(db_name: str = "user_model"):
+        """List available database backups for recovery.
+
+        Scans ``data/backups/`` for backup files matching the given database
+        name and returns metadata (path, size, age) sorted newest-first.
+
+        Args:
+            db_name: Logical database name to list backups for.  Must be one
+                of ``events``, ``user_model``, ``state``, ``preferences``,
+                or ``entities``.
+        """
+        valid_dbs = {"events", "user_model", "state", "preferences", "entities"}
+        if db_name not in valid_dbs:
+            raise HTTPException(status_code=400, detail=f"Invalid db_name. Must be one of: {sorted(valid_dbs)}")
+        try:
+            import asyncio
+
+            backups = await asyncio.to_thread(life_os.db.list_backups, db_name)
+            return {"db_name": db_name, "backups": backups, "count": len(backups)}
+        except Exception as exc:
+            logger.error("list_backups endpoint failed for %s: %s", db_name, exc)
+            return {"db_name": db_name, "backups": [], "count": 0, "error": str(exc)}
+
+    @app.post("/api/admin/backups/restore")
+    async def restore_backup(body: BackupRestoreRequest):
+        """Restore a database from a specific backup file.
+
+        Validates the requested backup path is within the ``data/backups/``
+        directory (preventing path-traversal attacks), checks that the file
+        exists, and delegates to ``DatabaseManager.restore_from_backup()``
+        which archives the current database before replacing it.
+
+        Request body (JSON):
+            - ``backup_path`` (str, required): Absolute path to the backup file.
+            - ``db_name`` (str, optional): Database to restore. Defaults to
+              ``"user_model"``.
+        """
+        import asyncio
+
+        backup_path = body.backup_path
+        db_name = body.db_name
+
+        valid_dbs = {"events", "user_model", "state", "preferences", "entities"}
+        if db_name not in valid_dbs:
+            raise HTTPException(status_code=400, detail=f"Invalid db_name. Must be one of: {sorted(valid_dbs)}")
+
+        # Path traversal protection: backup must be inside data/backups/
+        from pathlib import Path
+
+        backup_dir = (life_os.db.data_dir / "backups").resolve()
+        resolved = Path(backup_path).resolve()
+        if not str(resolved).startswith(str(backup_dir) + "/") and resolved.parent != backup_dir:
+            raise HTTPException(status_code=400, detail="backup_path must be within the backups directory")
+        if not resolved.exists():
+            raise HTTPException(status_code=404, detail="Backup file not found")
+
+        success = await asyncio.to_thread(life_os.db.restore_from_backup, str(resolved), db_name)
+        if success:
+            return {"status": "restored", "db_name": db_name, "backup_path": str(resolved)}
+        else:
+            raise HTTPException(status_code=500, detail="Restore failed — check server logs")
 
     # -------------------------------------------------------------------
     # Data Quality Diagnostics
