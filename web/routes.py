@@ -2552,8 +2552,11 @@ def register_routes(app: FastAPI, life_os) -> None:
         # it deduplicates within the staleness TTL, so calling it on every
         # request does not cause insight floods — duplicate keys are silently
         # dropped until the TTL expires.
+        # Capture the return value so we can use it as a fallback if the
+        # DB read below fails (e.g. user_model.db corruption).
+        generated: list = []
         try:
-            await life_os.insight_engine.generate_insights()
+            generated = await life_os.insight_engine.generate_insights()
         except Exception:
             # If InsightEngine fails, still return whatever is stored so the
             # caller gets the most-recent cached insights rather than an error.
@@ -2590,6 +2593,13 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "Failed to read insights from database in /api/insights/summary"
             )
 
+        # Fallback: if DB read returned nothing but generate_insights produced
+        # results, serialize the in-memory Insight objects directly so the API
+        # still returns useful data in degraded mode (e.g. user_model.db corruption).
+        if not insights and generated:
+            for ins in generated:
+                insights.append(ins.model_dump())
+
         return {
             "insights": insights,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2608,7 +2618,17 @@ def register_routes(app: FastAPI, life_os) -> None:
                 ).fetchall()
         except Exception as e:
             logger.warning("Failed to read insights from database: %s", e)
-            return {"insights": [], "error": str(e)}
+            # Fallback: generate insights in-memory and return those instead
+            # of an empty list, so the API is useful even when user_model.db
+            # is corrupted.
+            fallback: list[dict] = []
+            try:
+                generated = await life_os.insight_engine.generate_insights()
+                for ins in (generated or [])[:limit]:
+                    fallback.append(ins.model_dump())
+            except Exception:
+                logger.exception("Fallback generate_insights() also failed in /api/insights")
+            return {"insights": fallback, "error": str(e)}
         results = []
         for r in rows:
             d = dict(r)
