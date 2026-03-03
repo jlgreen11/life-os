@@ -34,7 +34,57 @@ class ConflictDetector:
         self.db = db
         # Track already-published conflicts so we don't re-publish on every run.
         # Key is a frozenset of (event_a_id, event_b_id) to handle pair ordering.
+        # Populated from state.db on init so restarts don't lose dedup state.
         self._published_conflicts: set[frozenset[str]] = set()
+        self._load_published_conflicts()
+
+    def _load_published_conflicts(self):
+        """Load previously-published conflict pairs from state.db.
+
+        Populates the in-memory ``_published_conflicts`` set so that conflicts
+        detected before a process restart are not re-published as new events.
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    "SELECT event_id_a, event_id_b FROM published_conflicts WHERE source = 'conflict_detector'"
+                ).fetchall()
+                for row in rows:
+                    self._published_conflicts.add(frozenset([row[0], row[1]]))
+                logger.debug("Loaded %d published conflict pairs from state.db", len(rows))
+        except Exception as e:
+            logger.warning("Could not load published conflicts: %s", e)
+
+    def _persist_conflict(self, pair_key: frozenset[str]):
+        """Persist a newly-published conflict pair to state.db.
+
+        Uses sorted ordering so (A,B) and (B,A) always map to the same row.
+        INSERT OR IGNORE avoids errors on duplicate inserts.
+        """
+        ids = sorted(pair_key)
+        try:
+            with self.db.get_connection("state") as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO published_conflicts (event_id_a, event_id_b, source) VALUES (?, ?, ?)",
+                    (ids[0], ids[1], "conflict_detector"),
+                )
+        except Exception as e:
+            logger.warning("Could not persist conflict pair: %s", e)
+
+    def cleanup_old_conflicts(self, days: int = 30):
+        """Remove conflict pairs older than *days* from state.db.
+
+        Prevents the published_conflicts table from growing without bound.
+        Only removes entries from the 'conflict_detector' source.
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                conn.execute(
+                    "DELETE FROM published_conflicts WHERE source = 'conflict_detector' AND detected_at < datetime('now', ?)",
+                    (f"-{days} days",),
+                )
+        except Exception as e:
+            logger.warning("Could not clean up old conflicts: %s", e)
 
     def detect_conflicts(self, forward_hours: int = 48) -> list[dict[str, Any]]:
         """Find overlapping calendar events in the upcoming time window.
@@ -203,6 +253,7 @@ class ConflictDetector:
                     },
                 )
                 self._published_conflicts.add(pair_key)
+                self._persist_conflict(pair_key)
                 published_count += 1
             except Exception:
                 logger.exception(
