@@ -144,12 +144,21 @@ class GoogleConnector(BaseConnector):
             logger.error("Auth failed: %s", e)
             return False
 
+    # Retry delays (seconds) for transient network errors during token refresh.
+    # creds.refresh() is synchronous, so time.sleep() is appropriate here.
+    TOKEN_REFRESH_RETRY_DELAYS = [2, 5, 10]
+
     def _load_credentials(self):
         """Load and refresh OAuth credentials from token file.
 
         Returns valid credentials or None. Raises ValueError with a descriptive
         message on known failure modes so authenticate() can surface actionable
         guidance in the admin UI.
+
+        Transient network errors (TransportError) are retried up to 3 times with
+        increasing delays (2s, 5s, 10s). This handles DNS/network blips at startup
+        when the network stack isn't yet ready. RefreshError (invalid_grant) is
+        never retried — it means the token was revoked and requires user action.
         """
         import os
 
@@ -166,25 +175,46 @@ class GoogleConnector(BaseConnector):
             return creds
 
         if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except google_exceptions.RefreshError as e:
-                logger.error(
-                    "Token refresh failed (revoked or expired grant): %s — "
-                    "re-authenticate via /admin connector panel",
-                    e,
-                )
+            retry_delays = self.TOKEN_REFRESH_RETRY_DELAYS
+            last_transport_error = None
+            for attempt, delay in enumerate(retry_delays):
+                try:
+                    creds.refresh(Request())
+                    last_transport_error = None
+                    break
+                except google_exceptions.RefreshError as e:
+                    # Don't retry revoked/expired tokens — requires user re-auth
+                    logger.error(
+                        "Token refresh failed (revoked or expired grant): %s — "
+                        "re-authenticate via /admin connector panel",
+                        e,
+                    )
+                    raise ValueError(
+                        "Token refresh failed (invalid_grant) — re-authenticate via /admin connector panel"
+                    ) from e
+                except google_exceptions.TransportError as e:
+                    last_transport_error = e
+                    if attempt < len(retry_delays) - 1:
+                        logger.warning(
+                            "Token refresh attempt %d/%d failed (network): %s, retrying in %ds...",
+                            attempt + 1,
+                            len(retry_delays),
+                            e,
+                            delay,
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(
+                            "Token refresh failed (network error) after %d attempts: %s",
+                            len(retry_delays),
+                            e,
+                        )
+            if last_transport_error:
                 raise ValueError(
-                    "Token refresh failed (invalid_grant) — re-authenticate via /admin connector panel"
-                ) from e
-            except google_exceptions.TransportError as e:
-                logger.error(
-                    "Token refresh failed (network error): %s — check network connectivity",
-                    e,
-                )
-                raise ValueError(
-                    "Token refresh failed (network error) — check network connectivity"
-                ) from e
+                    f"Token refresh failed (network error) after {len(retry_delays)} attempts "
+                    f"— check network connectivity: {last_transport_error}"
+                ) from last_transport_error
+
             # Save refreshed token
             with open(self._token_file, "w") as f:
                 f.write(creds.to_json())
