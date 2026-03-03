@@ -145,7 +145,7 @@ class TestForwardAction:
 
     @pytest.mark.asyncio
     async def test_forward_calls_connector_execute(self, db, event_store, user_model_store):
-        """Forward action dispatches to connector.execute('forward', ...) with correct params."""
+        """Forward action dispatches to connector.execute('send_email', ...) with correct params."""
         connector = _mock_connector()
         lo = _make_life_os(
             db, event_store, user_model_store,
@@ -158,11 +158,12 @@ class TestForwardAction:
 
         connector.execute.assert_awaited_once()
         call_args = connector.execute.call_args
-        assert call_args[0][0] == "forward"
+        # Uses "send_email" — the standard action name implemented by connectors
+        assert call_args[0][0] == "send_email"
         params = call_args[0][1]
-        assert params["to"] == "bob@example.com"
-        assert params["event_id"] == "evt-1"
-        assert params["subject"] == "Test subject"
+        assert params["to"] == ["bob@example.com"]
+        assert params["forwarded_from"] == "evt-1"
+        assert params["subject"] == "Fwd: Test subject"
         assert params["body"] == "Test body content"
 
     @pytest.mark.asyncio
@@ -179,7 +180,7 @@ class TestForwardAction:
         await lo._execute_rule_action(action, event)
 
         params = connector.execute.call_args[0][1]
-        assert params["to"] == "charlie@example.com"
+        assert params["to"] == ["charlie@example.com"]
 
     @pytest.mark.asyncio
     async def test_forward_missing_to_logs_warning(self, db, event_store, user_model_store, caplog):
@@ -252,7 +253,7 @@ class TestAutoReplyAction:
 
     @pytest.mark.asyncio
     async def test_auto_reply_calls_connector_execute(self, db, event_store, user_model_store):
-        """Auto-reply action dispatches to connector.execute('reply', ...) with correct params."""
+        """Auto-reply action dispatches to connector.execute('reply_email', ...) with correct params."""
         connector = _mock_connector()
         lo = _make_life_os(
             db, event_store, user_model_store,
@@ -269,11 +270,12 @@ class TestAutoReplyAction:
 
         connector.execute.assert_awaited_once()
         call_args = connector.execute.call_args
-        assert call_args[0][0] == "reply"
+        # Uses "reply_email" — the standard action name implemented by connectors
+        assert call_args[0][0] == "reply_email"
         params = call_args[0][1]
-        assert params["to"] == "alice@example.com"
+        assert params["to"] == ["alice@example.com"]
         assert params["body"] == "I'm currently away."
-        assert params["subject"] == "Re: Test subject"
+        assert params["original_subject"] == "Test subject"
         assert params["in_reply_to"] == "msg-123"
 
     @pytest.mark.asyncio
