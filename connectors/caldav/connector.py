@@ -50,6 +50,10 @@ class CalDAVConnector(BaseConnector):
         self._client = None
         # List of caldav.Calendar objects the user chose to sync.
         self._calendars = []
+        # Track already-published conflict pairs so we don't re-publish on every
+        # sync cycle.  Key is a frozenset of (row_id_a, row_id_b) to handle pair
+        # ordering.  Mirrors the pattern in ConflictDetector._published_conflicts.
+        self._published_conflicts: set[frozenset[str]] = set()
 
     async def authenticate(self) -> bool:
         """Connect to the CalDAV server and discover available calendars.
@@ -372,7 +376,8 @@ END:VCALENDAR"""
 
             # Sweep-line algorithm: compare each event with every event that
             # starts before it ends (potential overlap).
-            conflicts_detected = set()  # Track (id1, id2) pairs to avoid duplicates
+            # Track new conflicts found in this run for the diagnostic log.
+            new_conflicts = 0
 
             for i in range(len(parsed_events)):
                 start1, end1, evt1, payload1 = parsed_events[i]
@@ -390,11 +395,13 @@ END:VCALENDAR"""
                     # (Since we already know start2 < end1 from the break condition,
                     # we just need to verify start1 < end2)
                     if start1 < end2:
-                        # Conflict detected!
-                        event_pair = tuple(sorted([evt1["id"], evt2["id"]]))
+                        # Conflict detected!  Use frozenset for unordered pair
+                        # dedup, consistent with ConflictDetector service.
+                        event_pair = frozenset({evt1["id"], evt2["id"]})
 
-                        if event_pair not in conflicts_detected:
-                            conflicts_detected.add(event_pair)
+                        if event_pair not in self._published_conflicts:
+                            self._published_conflicts.add(event_pair)
+                            new_conflicts += 1
 
                             # Build conflict event payload
                             conflict_payload = {
@@ -434,10 +441,11 @@ END:VCALENDAR"""
 
             # Diagnostic summary for observability
             logger.debug(
-                "Conflict detection: scanned %d total events → %d in 48h window (non-all-day) → %d conflicts detected",
+                "Conflict detection: scanned %d total events → %d in 48h window (non-all-day) → %d new conflicts (%d total tracked)",
                 len(calendar_events),
                 len(parsed_events),
-                len(conflicts_detected),
+                new_conflicts,
+                len(self._published_conflicts),
             )
 
         except Exception as e:
