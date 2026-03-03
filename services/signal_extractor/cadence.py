@@ -67,6 +67,37 @@ class CadenceExtractor(BaseExtractor):
                         "response_time_seconds": response_time,
                     })
 
+        # ----- Conversation initiation tracking -----
+        # Detect whether this message starts a new conversation (initiation)
+        # rather than continuing one (reply). Used to compute
+        # initiates_ratio_by_contact — a signal of relationship dynamics.
+        is_reply = payload.get("is_reply", False)
+        has_reply_ref = bool(payload.get("in_reply_to"))
+        if not is_reply and not has_reply_ref:
+            is_outbound = "sent" in event_type.lower()
+            if is_outbound:
+                # User initiated — contact is the first recipient.
+                contact = (
+                    payload.get("to_addresses", [None])[0]
+                    if payload.get("to_addresses")
+                    else None
+                )
+                if contact:
+                    signals.append({
+                        "type": "cadence_initiation",
+                        "contact_id": contact,
+                        "initiator": "user",
+                    })
+            else:
+                # Contact initiated — contact is the sender.
+                contact = payload.get("sender") or payload.get("from_address")
+                if contact:
+                    signals.append({
+                        "type": "cadence_initiation",
+                        "contact_id": contact,
+                        "initiator": "contact",
+                    })
+
         # ----- Activity-window detection -----
         # Record the hour-of-day and day-of-week for every communication event
         # (both inbound and outbound).  Over time this builds a heatmap of the
@@ -139,10 +170,11 @@ class CadenceExtractor(BaseExtractor):
     def _update_profile(self, signals: list[dict]):
         """Incrementally merge new signals into the persisted cadence profile.
 
-        The profile stores four running aggregates:
+        The profile stores five running aggregates:
           - response_times:             global list (capped at 1000 entries)
           - per_contact_response_times: response times bucketed by contact
           - per_channel_response_times: response times bucketed by channel
+          - per_contact_initiations:    conversation initiation counts per contact
           - hourly_activity / daily_activity: histogram counters for the
             activity-window heatmap
         """
@@ -154,7 +186,13 @@ class CadenceExtractor(BaseExtractor):
             "daily_activity": defaultdict(int),
             "per_contact_response_times": defaultdict(list),
             "per_channel_response_times": defaultdict(list),
+            "per_contact_initiations": {},
         }
+
+        # Ensure per_contact_initiations exists for profiles bootstrapped
+        # before this field was added.
+        if "per_contact_initiations" not in data:
+            data["per_contact_initiations"] = {}
 
         for signal in signals:
             if signal["type"] == "cadence_response_time":
@@ -192,6 +230,15 @@ class CadenceExtractor(BaseExtractor):
                     data["daily_activity"][day] = 0
                 data["daily_activity"][day] += 1
 
+            elif signal["type"] == "cadence_initiation":
+                # Track who initiates conversations per contact.
+                contact = signal.get("contact_id")
+                initiator = signal.get("initiator")  # "user" or "contact"
+                if contact and initiator:
+                    if contact not in data["per_contact_initiations"]:
+                        data["per_contact_initiations"][contact] = {"user": 0, "contact": 0}
+                    data["per_contact_initiations"][contact][initiator] += 1
+
         # Cap the global response-time list to prevent unbounded growth.
         # Keeping the most recent 1000 entries provides enough data for
         # statistical baselines while bounding storage.
@@ -213,22 +260,29 @@ class CadenceExtractor(BaseExtractor):
         """Recompute all derived CadenceProfile fields from raw histogram data.
 
         Called at the end of every ``_update_profile`` invocation so that the
-        three aggregate fields defined in ``CadenceProfile`` but not produced
-        by the incremental signal collection stay in sync with the raw data:
+        aggregate fields defined in ``CadenceProfile`` but not produced by the
+        incremental signal collection stay in sync with the raw data:
 
-          - ``peak_hours``               — hours of highest communication activity
-          - ``quiet_hours_observed``     — naturally quiet (typically sleep) windows
-          - ``avg_response_time_by_domain`` — reply latency grouped by email domain
+          - ``peak_hours``                    — hours of highest communication activity
+          - ``quiet_hours_observed``          — naturally quiet (typically sleep) windows
+          - ``avg_response_time_by_domain``   — reply latency grouped by email domain
+          - ``avg_response_time_by_contact``  — reply latency per contact
+          - ``avg_response_time_by_channel``  — reply latency per channel
+          - ``initiates_ratio_by_contact``    — who starts conversations per contact
 
         This is a pure recomputation (no I/O): it mutates *data* in place and
         the caller is responsible for persisting to the store.
 
         Requires a minimum of 50 total activity samples before producing any
-        derived output, so early-lifecycle profiles don't generate noisy results.
+        derived output for peak/quiet hours, so early-lifecycle profiles don't
+        generate noisy results.
         """
         self._compute_peak_hours(data)
         self._compute_quiet_hours(data)
         self._compute_domain_response_times(data)
+        self._compute_contact_response_times(data)
+        self._compute_channel_response_times(data)
+        self._compute_initiates_ratio(data)
 
     def _compute_peak_hours(self, data: dict) -> None:
         """Derive peak activity hours from the hourly_activity histogram.
@@ -393,3 +447,77 @@ class CadenceExtractor(BaseExtractor):
 
         if avg_by_domain:
             data["avg_response_time_by_domain"] = avg_by_domain
+
+    def _compute_contact_response_times(self, data: dict) -> None:
+        """Derive average response times per contact.
+
+        Iterates over ``per_contact_response_times`` (contact → list[float])
+        and computes the mean for each contact with at least 3 samples,
+        matching the noise-filter threshold used by domain grouping.
+
+        Stores results in ``data["avg_response_time_by_contact"]`` as a dict
+        mapping contact identifier → average response time in seconds.
+        """
+        per_contact = data.get("per_contact_response_times", {})
+        if not per_contact:
+            return
+
+        avg_by_contact = {
+            contact: sum(times) / len(times)
+            for contact, times in per_contact.items()
+            if len(times) >= 3
+        }
+
+        if avg_by_contact:
+            data["avg_response_time_by_contact"] = avg_by_contact
+
+    def _compute_channel_response_times(self, data: dict) -> None:
+        """Derive average response times per channel.
+
+        Iterates over ``per_channel_response_times`` (channel → list[float])
+        and computes the mean for each channel with at least 3 samples.
+
+        Stores results in ``data["avg_response_time_by_channel"]`` as a dict
+        mapping channel name → average response time in seconds.
+        """
+        per_channel = data.get("per_channel_response_times", {})
+        if not per_channel:
+            return
+
+        avg_by_channel = {
+            channel: sum(times) / len(times)
+            for channel, times in per_channel.items()
+            if len(times) >= 3
+        }
+
+        if avg_by_channel:
+            data["avg_response_time_by_channel"] = avg_by_channel
+
+    def _compute_initiates_ratio(self, data: dict) -> None:
+        """Derive conversation initiation ratio per contact.
+
+        Uses the ``per_contact_initiations`` dict (contact → {user: N, contact: M})
+        accumulated by ``_update_profile`` to compute the fraction of conversations
+        initiated by the user for each contact.
+
+        Contacts with fewer than 3 total initiations are excluded to avoid
+        noise from limited data.
+
+        Stores results in ``data["initiates_ratio_by_contact"]`` as a dict
+        mapping contact → float ratio (0.0 = contact always initiates,
+        1.0 = user always initiates).
+        """
+        initiations = data.get("per_contact_initiations", {})
+        if not initiations:
+            return
+
+        ratios = {}
+        for contact, counts in initiations.items():
+            user_count = counts.get("user", 0)
+            contact_count = counts.get("contact", 0)
+            total = user_count + contact_count
+            if total >= 3:
+                ratios[contact] = user_count / total
+
+        if ratios:
+            data["initiates_ratio_by_contact"] = ratios
