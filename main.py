@@ -2343,8 +2343,10 @@ class LifeOS:
             )
         elif action_type == "forward":
             # Forward the event content via the originating connector's
-            # execute() interface. Connectors that don't support 'forward'
-            # will raise NotImplementedError, which we catch and log.
+            # execute() interface using the "send_email" action name, which
+            # is the standard action supported by email connectors (Proton
+            # Mail, Google). Prepends "Fwd: " to the subject and includes
+            # a forwarded_from metadata field for traceability.
             forward_to = action.get("value") or action.get("to")
             if not forward_to:
                 logger.warning(
@@ -2362,13 +2364,18 @@ class LifeOS:
                 )
                 return
             try:
-                await connector.execute("forward", {
-                    "to": forward_to,
-                    "event_id": event.get("id"),
-                    "subject": event.get("payload", {}).get("subject", ""),
+                subject = event.get("payload", {}).get("subject", "") or ""
+                if not subject.startswith("Fwd: "):
+                    subject = f"Fwd: {subject}"
+                # Uses "send_email" — the standard action name implemented by
+                # ProtonMailConnector and GoogleConnector.
+                await connector.execute("send_email", {
+                    "to": [forward_to] if isinstance(forward_to, str) else forward_to,
+                    "subject": subject,
                     "body": event.get("payload", {}).get(
                         "body", event.get("payload", {}).get("snippet", "")
                     ),
+                    "forwarded_from": event.get("id"),
                 })
             except Exception as e:
                 logger.error(
@@ -2379,8 +2386,9 @@ class LifeOS:
                 )
         elif action_type == "auto_reply":
             # Send an automatic reply via the originating connector's
-            # execute() interface. Connectors that don't support 'reply'
-            # will raise NotImplementedError, which we catch and log.
+            # execute() interface using the "reply_email" action name,
+            # which is the standard action supported by email connectors
+            # (Proton Mail, Google).
             reply_text = action.get("value") or action.get("message", "")
             if not reply_text:
                 logger.warning(
@@ -2398,16 +2406,16 @@ class LifeOS:
                 )
                 return
             try:
-                await connector.execute("reply", {
-                    "to": event.get("payload", {}).get(
+                # Uses "reply_email" — the standard action name implemented by
+                # ProtonMailConnector and GoogleConnector.
+                await connector.execute("reply_email", {
+                    "to": [event.get("payload", {}).get(
                         "sender", event.get("payload", {}).get("from", "")
-                    ),
+                    )],
                     "in_reply_to": event.get("payload", {}).get(
                         "message_id", event.get("id")
                     ),
-                    "subject": "Re: " + (
-                        event.get("payload", {}).get("subject", "") or ""
-                    ),
+                    "original_subject": event.get("payload", {}).get("subject", "") or "",
                     "body": reply_text,
                 })
             except Exception as e:
