@@ -668,6 +668,7 @@ class LinguisticExtractor(BaseExtractor):
         data["assertion_frequency"] = data["averages"].get("assertion_rate", 0.0)
         data["question_frequency"] = data["averages"].get("question_rate", 0.0)
         data["ellipsis_frequency"] = data["averages"].get("ellipsis_rate", 0.0)
+        data["exclamation_rate"] = data["averages"].get("exclamation_rate", 0.0)
         data["greeting_patterns"] = data.get("common_greetings", [])
         data["closing_patterns"] = data.get("common_closings", [])
         data["formality_spectrum"] = data["averages"].get("formality", 0.5)
