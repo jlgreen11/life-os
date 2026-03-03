@@ -47,11 +47,15 @@ Architecture:
 from __future__ import annotations
 
 import json
+import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.database import DatabaseManager
+
+logger = logging.getLogger(__name__)
 
 
 class BehavioralAccuracyTracker:
@@ -83,8 +87,14 @@ class BehavioralAccuracyTracker:
             db: Database manager for accessing events and predictions.
         """
         self.db = db
-        self._ensure_resolution_reason_column()
-        self._backfill_automated_sender_tags()
+        try:
+            self._ensure_resolution_reason_column()
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            logger.warning("BehavioralAccuracyTracker: user_model.db unavailable, skipping schema migration")
+        try:
+            self._backfill_automated_sender_tags()
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            logger.warning("BehavioralAccuracyTracker: user_model.db unavailable, skipping sender tag backfill")
 
     # ------------------------------------------------------------------
     # Schema self-repair
@@ -122,99 +132,99 @@ class BehavioralAccuracyTracker:
         Usage:
             Called once from ``__init__``.  Safe to call multiple times.
         """
-        import logging
-        logger = logging.getLogger(__name__)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # 1. Check whether the predictions table exists yet.
+                #    If it doesn't (e.g., DatabaseManager initialized but
+                #    initialize_all() not yet called, as happens in some tests),
+                #    there is nothing to migrate — silently return.
+                table_exists = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
+                ).fetchone()
+                if not table_exists:
+                    return  # Schema not initialized yet; migration will run at startup
 
-        with self.db.get_connection("user_model") as conn:
-            # 1. Check whether the predictions table exists yet.
-            #    If it doesn't (e.g., DatabaseManager initialized but
-            #    initialize_all() not yet called, as happens in some tests),
-            #    there is nothing to migrate — silently return.
-            table_exists = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
-            ).fetchone()
-            if not table_exists:
-                return  # Schema not initialized yet; migration will run at startup
+                # 2. Check whether the column already exists (schema v4+)
+                columns = [row[1] for row in conn.execute(
+                    "PRAGMA table_info(predictions)"
+                ).fetchall()]
 
-            # 2. Check whether the column already exists (schema v4+)
-            columns = [row[1] for row in conn.execute(
-                "PRAGMA table_info(predictions)"
-            ).fetchall()]
+                if "resolution_reason" in columns:
+                    return  # Already migrated — nothing to do
 
-            if "resolution_reason" in columns:
-                return  # Already migrated — nothing to do
-
-            # 3. Column is missing: apply the migration now
-            logger.info(
-                "BehavioralAccuracyTracker: resolution_reason column missing "
-                "from predictions table — applying migration 3→4 inline "
-                "(server restart not required)"
-            )
-            conn.execute("ALTER TABLE predictions ADD COLUMN resolution_reason TEXT")
-
-            # 4. Update schema_version table so the DatabaseManager won't
-            #    re-run the same migration on next restart and log a confusing
-            #    "column already exists" warning.
-            try:
-                max_ver = conn.execute(
-                    "SELECT MAX(version) FROM schema_version"
-                ).fetchone()[0] or 0
-                if max_ver < 4:
-                    conn.execute(
-                        "INSERT INTO schema_version (version) VALUES (4)"
-                    )
-                    logger.info(
-                        "BehavioralAccuracyTracker: schema_version updated to 4"
-                    )
-            except Exception:
-                pass  # schema_version table absence is non-fatal
-
-            # 5. Retroactively tag existing inaccurate predictions for automated
-            #    senders as 'automated_sender_fast_path' so _get_accuracy_multiplier
-            #    excludes them immediately rather than waiting for the next cycle.
-            #
-            #    We only tag rows that are:
-            #    - already resolved (resolved_at IS NOT NULL)
-            #    - marked inaccurate (was_accurate = 0)
-            #    - were surfaced (was_accurate accuracy multiplier only counts surfaced)
-            #    - have a contact_email in supporting_signals that is an automated sender
-            #
-            #    We do NOT use Python to loop over rows here because the table can have
-            #    hundreds of thousands of rows.  Instead we use SQLite json_extract to
-            #    pull the contact_email inline, then filter in Python for automated-sender
-            #    patterns (there is no SQL REGEXP without loading an extension).
-            backfill_rows = conn.execute(
-                """SELECT id, supporting_signals
-                   FROM predictions
-                   WHERE was_surfaced = 1
-                     AND was_accurate = 0
-                     AND resolved_at IS NOT NULL
-                     AND resolution_reason IS NULL
-                     AND prediction_type IN ('opportunity', 'reminder')"""
-            ).fetchall()
-
-            tagged = 0
-            for row in backfill_rows:
-                try:
-                    signals = json.loads(row["supporting_signals"] or "{}") or {}
-                    if isinstance(signals, list):
-                        signals = {}
-                    contact_email = signals.get("contact_email", "")
-                    if contact_email and self._is_automated_sender(contact_email):
-                        conn.execute(
-                            "UPDATE predictions SET resolution_reason = ? WHERE id = ?",
-                            ("automated_sender_fast_path", row["id"]),
-                        )
-                        tagged += 1
-                except Exception:
-                    continue  # Skip malformed rows; non-fatal
-
-            if tagged:
+                # 3. Column is missing: apply the migration now
                 logger.info(
-                    f"BehavioralAccuracyTracker: retroactively tagged {tagged} "
-                    f"automated-sender predictions as 'automated_sender_fast_path' "
-                    f"to unblock accuracy multiplier recovery"
+                    "BehavioralAccuracyTracker: resolution_reason column missing "
+                    "from predictions table — applying migration 3→4 inline "
+                    "(server restart not required)"
                 )
+                conn.execute("ALTER TABLE predictions ADD COLUMN resolution_reason TEXT")
+
+                # 4. Update schema_version table so the DatabaseManager won't
+                #    re-run the same migration on next restart and log a confusing
+                #    "column already exists" warning.
+                try:
+                    max_ver = conn.execute(
+                        "SELECT MAX(version) FROM schema_version"
+                    ).fetchone()[0] or 0
+                    if max_ver < 4:
+                        conn.execute(
+                            "INSERT INTO schema_version (version) VALUES (4)"
+                        )
+                        logger.info(
+                            "BehavioralAccuracyTracker: schema_version updated to 4"
+                        )
+                except Exception:
+                    pass  # schema_version table absence is non-fatal
+
+                # 5. Retroactively tag existing inaccurate predictions for automated
+                #    senders as 'automated_sender_fast_path' so _get_accuracy_multiplier
+                #    excludes them immediately rather than waiting for the next cycle.
+                #
+                #    We only tag rows that are:
+                #    - already resolved (resolved_at IS NOT NULL)
+                #    - marked inaccurate (was_accurate = 0)
+                #    - were surfaced (was_accurate accuracy multiplier only counts surfaced)
+                #    - have a contact_email in supporting_signals that is an automated sender
+                #
+                #    We do NOT use Python to loop over rows here because the table can have
+                #    hundreds of thousands of rows.  Instead we use SQLite json_extract to
+                #    pull the contact_email inline, then filter in Python for automated-sender
+                #    patterns (there is no SQL REGEXP without loading an extension).
+                backfill_rows = conn.execute(
+                    """SELECT id, supporting_signals
+                       FROM predictions
+                       WHERE was_surfaced = 1
+                         AND was_accurate = 0
+                         AND resolved_at IS NOT NULL
+                         AND resolution_reason IS NULL
+                         AND prediction_type IN ('opportunity', 'reminder')"""
+                ).fetchall()
+
+                tagged = 0
+                for row in backfill_rows:
+                    try:
+                        signals = json.loads(row["supporting_signals"] or "{}") or {}
+                        if isinstance(signals, list):
+                            signals = {}
+                        contact_email = signals.get("contact_email", "")
+                        if contact_email and self._is_automated_sender(contact_email):
+                            conn.execute(
+                                "UPDATE predictions SET resolution_reason = ? WHERE id = ?",
+                                ("automated_sender_fast_path", row["id"]),
+                            )
+                            tagged += 1
+                    except Exception:
+                        continue  # Skip malformed rows; non-fatal
+
+                if tagged:
+                    logger.info(
+                        f"BehavioralAccuracyTracker: retroactively tagged {tagged} "
+                        f"automated-sender predictions as 'automated_sender_fast_path' "
+                        f"to unblock accuracy multiplier recovery"
+                    )
+        except sqlite3.DatabaseError as e:
+            logger.warning("_ensure_resolution_reason_column: user_model.db unavailable: %s", e)
 
     def _backfill_automated_sender_tags(self) -> None:
         """Tag all untagged inaccurate automated-sender predictions on every startup.
@@ -256,40 +266,41 @@ class BehavioralAccuracyTracker:
             Result: 174 stale automated-sender predictions excluded from accuracy
             calculation → opportunity accuracy rises from 19% to ~55%.
         """
-        import logging
         import re
 
-        logger = logging.getLogger(__name__)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # Guard: predictions table might not exist yet in tests that
+                # initialize DatabaseManager but haven't called initialize_all().
+                table_exists = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
+                ).fetchone()
+                if not table_exists:
+                    return
 
-        with self.db.get_connection("user_model") as conn:
-            # Guard: predictions table might not exist yet in tests that
-            # initialize DatabaseManager but haven't called initialize_all().
-            table_exists = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='predictions'"
-            ).fetchone()
-            if not table_exists:
-                return
+                # Also guard: resolution_reason column must exist before we can
+                # query or write it (the migration guard adds it, but may not have
+                # run yet if the table was just created).
+                columns = [row[1] for row in conn.execute(
+                    "PRAGMA table_info(predictions)"
+                ).fetchall()]
+                if "resolution_reason" not in columns:
+                    return  # Migration guard will handle this on the same startup
 
-            # Also guard: resolution_reason column must exist before we can
-            # query or write it (the migration guard adds it, but may not have
-            # run yet if the table was just created).
-            columns = [row[1] for row in conn.execute(
-                "PRAGMA table_info(predictions)"
-            ).fetchall()]
-            if "resolution_reason" not in columns:
-                return  # Migration guard will handle this on the same startup
-
-            # Find ALL untagged resolved-inaccurate opportunity/reminder predictions.
-            # Include both was_surfaced=1 (counts toward accuracy) and was_surfaced=0
-            # (filters; don't count toward accuracy but clean up for consistency).
-            backfill_rows = conn.execute(
-                """SELECT id, supporting_signals, description
-                   FROM predictions
-                   WHERE was_accurate = 0
-                     AND resolved_at IS NOT NULL
-                     AND resolution_reason IS NULL
-                     AND prediction_type IN ('opportunity', 'reminder')"""
-            ).fetchall()
+                # Find ALL untagged resolved-inaccurate opportunity/reminder predictions.
+                # Include both was_surfaced=1 (counts toward accuracy) and was_surfaced=0
+                # (filters; don't count toward accuracy but clean up for consistency).
+                backfill_rows = conn.execute(
+                    """SELECT id, supporting_signals, description
+                       FROM predictions
+                       WHERE was_accurate = 0
+                         AND resolved_at IS NOT NULL
+                         AND resolution_reason IS NULL
+                         AND prediction_type IN ('opportunity', 'reminder')"""
+                ).fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("_backfill_automated_sender_tags: user_model.db unavailable (query phase): %s", e)
+            return
 
         if not backfill_rows:
             return  # Nothing to tag
@@ -301,37 +312,41 @@ class BehavioralAccuracyTracker:
         )
 
         tagged = 0
-        with self.db.get_connection("user_model") as conn:
-            for row in backfill_rows:
-                try:
-                    # Strategy 1: extract contact_email from supporting_signals
-                    contact_email = ""
+        try:
+            with self.db.get_connection("user_model") as conn:
+                for row in backfill_rows:
                     try:
-                        signals = json.loads(row["supporting_signals"] or "{}") or {}
-                        if isinstance(signals, list):
+                        # Strategy 1: extract contact_email from supporting_signals
+                        contact_email = ""
+                        try:
+                            signals = json.loads(row["supporting_signals"] or "{}") or {}
+                            if isinstance(signals, list):
+                                signals = {}
+                            contact_email = signals.get("contact_email", "")
+                        except (json.JSONDecodeError, TypeError):
                             signals = {}
-                        contact_email = signals.get("contact_email", "")
-                    except (json.JSONDecodeError, TypeError):
-                        signals = {}
 
-                    # Strategy 2: fall back to parsing the description field.
-                    # Handles predictions generated before PR #190 added supporting_signals.
-                    # Example description: "It's been 45 days since you last contacted
-                    # noreply@company.com (you usually connect every ~14 days)"
-                    if not contact_email:
-                        description = row["description"] or ""
-                        email_match = email_re.search(description)
-                        if email_match:
-                            contact_email = email_match.group(1)
+                        # Strategy 2: fall back to parsing the description field.
+                        # Handles predictions generated before PR #190 added supporting_signals.
+                        # Example description: "It's been 45 days since you last contacted
+                        # noreply@company.com (you usually connect every ~14 days)"
+                        if not contact_email:
+                            description = row["description"] or ""
+                            email_match = email_re.search(description)
+                            if email_match:
+                                contact_email = email_match.group(1)
 
-                    if contact_email and self._is_automated_sender(contact_email):
-                        conn.execute(
-                            "UPDATE predictions SET resolution_reason = ? WHERE id = ?",
-                            ("automated_sender_fast_path", row["id"]),
-                        )
-                        tagged += 1
-                except Exception:
-                    continue  # Skip malformed rows; non-fatal
+                        if contact_email and self._is_automated_sender(contact_email):
+                            conn.execute(
+                                "UPDATE predictions SET resolution_reason = ? WHERE id = ?",
+                                ("automated_sender_fast_path", row["id"]),
+                            )
+                            tagged += 1
+                    except Exception:
+                        continue  # Skip malformed rows; non-fatal
+        except sqlite3.DatabaseError as e:
+            logger.warning("_backfill_automated_sender_tags: user_model.db unavailable (update phase): %s", e)
+            return
 
         if tagged:
             logger.info(
@@ -367,18 +382,22 @@ class BehavioralAccuracyTracker:
         }
 
         # Process surfaced predictions that haven't been resolved yet
-        with self.db.get_connection("user_model") as conn:
-            surfaced_predictions = conn.execute(
-                """SELECT id, prediction_type, description, suggested_action,
-                          supporting_signals, created_at, was_surfaced
-                   FROM predictions
-                   WHERE was_surfaced = 1
-                     AND resolved_at IS NULL
-                     AND created_at > ?""",
-                # Only look at predictions from the last 7 days (older ones are
-                # handled by auto-resolve stale predictions logic)
-                ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
-            ).fetchall()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                surfaced_predictions = conn.execute(
+                    """SELECT id, prediction_type, description, suggested_action,
+                              supporting_signals, created_at, was_surfaced
+                       FROM predictions
+                       WHERE was_surfaced = 1
+                         AND resolved_at IS NULL
+                         AND created_at > ?""",
+                    # Only look at predictions from the last 7 days (older ones are
+                    # handled by auto-resolve stale predictions logic)
+                    ((datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),),
+                ).fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("run_inference_cycle: failed to query surfaced predictions: %s", e)
+            return stats
 
         for pred in surfaced_predictions:
             # Try to infer accuracy from behavioral signals
@@ -396,16 +415,20 @@ class BehavioralAccuracyTracker:
                 # don't permanently depress confidence for an entire prediction type.
                 resolution_reason = self._get_resolution_reason(dict(pred), was_accurate)
 
-                with self.db.get_connection("user_model") as conn:
-                    conn.execute(
-                        """UPDATE predictions SET
-                           was_accurate = ?,
-                           resolved_at = ?,
-                           user_response = 'inferred',
-                           resolution_reason = ?
-                           WHERE id = ?""",
-                        (1 if was_accurate else 0, now, resolution_reason, pred["id"]),
-                    )
+                try:
+                    with self.db.get_connection("user_model") as conn:
+                        conn.execute(
+                            """UPDATE predictions SET
+                               was_accurate = ?,
+                               resolved_at = ?,
+                               user_response = 'inferred',
+                               resolution_reason = ?
+                               WHERE id = ?""",
+                            (1 if was_accurate else 0, now, resolution_reason, pred["id"]),
+                        )
+                except sqlite3.DatabaseError as e:
+                    logger.warning("run_inference_cycle: failed to update surfaced prediction %s: %s", pred["id"], e)
+                    continue
 
                 if was_accurate:
                     stats['marked_accurate'] += 1
@@ -417,24 +440,28 @@ class BehavioralAccuracyTracker:
         # These predictions were auto-filtered but might have been valuable!
         # If the user took the action anyway, the filter was WRONG (false negative).
         # If the user didn't take the action, the filter was RIGHT (true negative).
-        with self.db.get_connection("user_model") as conn:
-            filtered_predictions = conn.execute(
-                """SELECT id, prediction_type, description, suggested_action,
-                          supporting_signals, created_at, was_surfaced
-                   FROM predictions
-                   WHERE was_surfaced = 0
-                     AND user_response = 'filtered'
-                     AND was_accurate IS NULL
-                     AND created_at > ?
-                     AND created_at < ?""",
-                # Look at filtered predictions from 48 hours to 7 days ago.
-                # - Must be 48+ hours old so we have time to observe behavior
-                # - Must be <7 days old to stay relevant
-                (
-                    (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
-                    (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),
-                ),
-            ).fetchall()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                filtered_predictions = conn.execute(
+                    """SELECT id, prediction_type, description, suggested_action,
+                              supporting_signals, created_at, was_surfaced
+                       FROM predictions
+                       WHERE was_surfaced = 0
+                         AND user_response = 'filtered'
+                         AND was_accurate IS NULL
+                         AND created_at > ?
+                         AND created_at < ?""",
+                    # Look at filtered predictions from 48 hours to 7 days ago.
+                    # - Must be 48+ hours old so we have time to observe behavior
+                    # - Must be <7 days old to stay relevant
+                    (
+                        (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
+                        (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),
+                    ),
+                ).fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("run_inference_cycle: failed to query filtered predictions: %s", e)
+            return stats
 
         for pred in filtered_predictions:
             # Try to infer accuracy from behavioral signals
@@ -454,16 +481,20 @@ class BehavioralAccuracyTracker:
                 # depressing confidence for the entire prediction type.
                 resolution_reason = self._get_resolution_reason(dict(pred), was_accurate)
 
-                with self.db.get_connection("user_model") as conn:
-                    conn.execute(
-                        """UPDATE predictions SET
-                           was_accurate = ?,
-                           resolved_at = ?,
-                           resolution_reason = ?
-                           WHERE id = ?""",
-                        # Keep user_response='filtered' to preserve provenance
-                        (1 if was_accurate else 0, now, resolution_reason, pred["id"]),
-                    )
+                try:
+                    with self.db.get_connection("user_model") as conn:
+                        conn.execute(
+                            """UPDATE predictions SET
+                               was_accurate = ?,
+                               resolved_at = ?,
+                               resolution_reason = ?
+                               WHERE id = ?""",
+                            # Keep user_response='filtered' to preserve provenance
+                            (1 if was_accurate else 0, now, resolution_reason, pred["id"]),
+                        )
+                except sqlite3.DatabaseError as e:
+                    logger.warning("run_inference_cycle: failed to update filtered prediction %s: %s", pred["id"], e)
+                    continue
 
                 if was_accurate:
                     stats['marked_accurate'] += 1
