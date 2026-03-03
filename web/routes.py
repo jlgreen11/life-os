@@ -290,6 +290,101 @@ def register_routes(app: FastAPI, life_os) -> None:
             else:
                 result["overall_status"] = "healthy"
 
+        # --- recommendations ---
+        try:
+            recommendations = []
+
+            # Check signal profiles
+            profiles = result.get("signal_profiles", {})
+            if isinstance(profiles, dict) and not profiles.get("error"):
+                missing_profiles = [
+                    k for k, v in profiles.items()
+                    if isinstance(v, dict) and (not v.get("exists") or v.get("error"))
+                ]
+                if missing_profiles:
+                    recommendations.append({
+                        "severity": "high",
+                        "area": "signal_profiles",
+                        "message": f"{len(missing_profiles)} signal profile(s) missing: {', '.join(missing_profiles)}",
+                        "action": "POST /api/admin/backfills/trigger to repopulate signal profiles from event history",
+                    })
+
+            # Check user model tables
+            um = result.get("user_model", {})
+            if isinstance(um, dict) and not um.get("error"):
+                um_error_found = False
+                for table_key in ["episodes_count", "semantic_facts_count", "routines_count"]:
+                    value = um.get(table_key)
+                    if isinstance(value, str) and "error" in value:
+                        recommendations.append({
+                            "severity": "critical",
+                            "area": "user_model",
+                            "message": f"user_model.db query error on {table_key}: {value}",
+                            "action": "POST /api/admin/rebuild-user-model to rebuild the corrupted database",
+                        })
+                        um_error_found = True
+                        break  # One recommendation for the whole DB
+                if not um_error_found:
+                    for table_key in ["episodes_count", "semantic_facts_count", "routines_count"]:
+                        value = um.get(table_key)
+                        if value == 0:
+                            friendly = table_key.replace("_count", "")
+                            recommendations.append({
+                                "severity": "medium",
+                                "area": "user_model",
+                                "message": f"{friendly} table is empty",
+                                "action": "POST /api/admin/backfills/trigger to populate from event history",
+                            })
+
+            # Check predictions
+            preds = result.get("predictions", {})
+            if isinstance(preds, dict) and not preds.get("error"):
+                if preds.get("last_24h", 0) == 0:
+                    recommendations.append({
+                        "severity": "high",
+                        "area": "predictions",
+                        "message": "No predictions generated in the last 24 hours",
+                        "action": (
+                            "Check signal profiles and connector status — "
+                            "predictions require populated signal profiles and recent event data"
+                        ),
+                    })
+
+            # Check notifications
+            notifs = result.get("notifications", {})
+            if isinstance(notifs, dict) and not notifs.get("error"):
+                if notifs.get("total", 0) == 0 and notifs.get("last_24h", 0) == 0:
+                    recommendations.append({
+                        "severity": "low",
+                        "area": "notifications",
+                        "message": "No notifications have been generated",
+                        "action": (
+                            "Notifications are generated from predictions and rule actions — "
+                            "ensure the prediction pipeline is healthy"
+                        ),
+                    })
+
+            # Check events pipeline
+            events = result.get("events_pipeline", {})
+            if isinstance(events, dict) and not events.get("error"):
+                if events.get("last_24h", 0) == 0:
+                    recommendations.append({
+                        "severity": "high",
+                        "area": "events_pipeline",
+                        "message": "No events received in the last 24 hours",
+                        "action": (
+                            "Check connector status at /admin — "
+                            "at least one connector must be syncing to feed the pipeline"
+                        ),
+                    })
+
+            result["recommendations"] = recommendations
+            result["recommendations_count"] = len(recommendations)
+        except Exception as exc:
+            logger.warning("Failed to build diagnostics recommendations: %s", exc)
+            result["recommendations"] = {"error": str(exc)}
+            result["recommendations_count"] = 0
+
         return result
 
     @app.get("/api/system/sources")
