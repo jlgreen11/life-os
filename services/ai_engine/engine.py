@@ -23,6 +23,28 @@ from services.ai_engine.context import ContextAssembler
 from services.ai_engine.pii import PIIShield
 
 
+class AIEngineError(Exception):
+    """Structured error for AI engine failures with diagnostic classification.
+
+    Provides callers with machine-readable error_type and human-readable details
+    so operators can distinguish between infrastructure issues (Ollama down),
+    network problems (timeout), and application errors (bad model config).
+    """
+
+    def __init__(self, message: str, error_type: str, details: str = ""):
+        """Initialize AIEngineError.
+
+        Args:
+            message: Human-readable error summary.
+            error_type: Machine-readable classification — one of
+                'connection', 'timeout', 'server_error', 'bad_response'.
+            details: Additional diagnostic information (e.g., URL, status code).
+        """
+        super().__init__(message)
+        self.error_type = error_type
+        self.details = details
+
+
 class AIEngine:
     """
     Main AI orchestrator. Routes queries to the appropriate model,
@@ -101,8 +123,12 @@ CONSTRAINTS:
 - Do not include section headers or labels in your output."""
 
         # Step 3: Briefings always use the local model to keep data fully private.
-        response = await self._query_local(system_prompt, context)
-        return response
+        try:
+            response = await self._query_local(system_prompt, context)
+            return response
+        except AIEngineError as e:
+            logger.error("Briefing generation failed: %s (type=%s, details=%s)", e, e.error_type, e.details)
+            return f"Briefing unavailable — {e} ({e.error_type}: {e.details})"
 
     async def draft_reply(self, contact_id: str, channel: str,
                           incoming_message: str) -> str:
@@ -487,29 +513,54 @@ CONSTRAINTS:
     # -------------------------------------------------------------------
 
     async def _query_local(self, system_prompt: str, user_prompt: str) -> str:
-        """Query the local Ollama model."""
-        # Use httpx async client with a generous 120s timeout -- local models
-        # can be slow on CPU-only hardware or with large context windows.
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Ollama exposes an OpenAI-compatible /api/chat endpoint.
-            # stream=False requests a single complete response (no SSE chunks).
-            response = await client.post(
-                f"{self.ollama_url}/api/chat",
-                json={
-                    "model": self.ollama_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "stream": False,
-                },
+        """Query the local Ollama model.
+
+        Raises:
+            AIEngineError: With classified error_type when the Ollama request
+                fails — 'connection' if unreachable, 'timeout' if the request
+                exceeds 120s, 'server_error' on HTTP 4xx/5xx responses.
+        """
+        url = f"{self.ollama_url}/api/chat"
+        try:
+            # Use httpx async client with a generous 120s timeout -- local models
+            # can be slow on CPU-only hardware or with large context windows.
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                # Ollama exposes an OpenAI-compatible /api/chat endpoint.
+                # stream=False requests a single complete response (no SSE chunks).
+                response = await client.post(
+                    url,
+                    json={
+                        "model": self.ollama_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "stream": False,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                # Extract the assistant's message content; default to empty string
+                # if the response structure is unexpected.
+                return data.get("message", {}).get("content", "")
+        except httpx.ConnectError:
+            raise AIEngineError(
+                "Ollama service unreachable",
+                "connection",
+                f"Could not connect to {self.ollama_url}",
             )
-            # Raises httpx.HTTPStatusError on 4xx/5xx -- callers should handle.
-            response.raise_for_status()
-            data = response.json()
-            # Extract the assistant's message content; default to empty string
-            # if the response structure is unexpected.
-            return data.get("message", {}).get("content", "")
+        except httpx.TimeoutException:
+            raise AIEngineError(
+                "Ollama request timed out",
+                "timeout",
+                "Request exceeded 120s timeout",
+            )
+        except httpx.HTTPStatusError as e:
+            raise AIEngineError(
+                f"Ollama returned error: {e.response.status_code}",
+                "server_error",
+                str(e),
+            )
 
     async def _query_cloud(self, system_prompt: str, user_prompt: str) -> str:
         """Query a cloud LLM API (Anthropic Claude) with PII-stripped content."""
