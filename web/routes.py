@@ -3829,6 +3829,183 @@ def register_routes(app: FastAPI, life_os) -> None:
         }
 
     # -------------------------------------------------------------------
+    # Data Quality Diagnostics
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/data-quality")
+    async def data_quality_diagnostics():
+        """Return real-time data quality and pipeline health diagnostics.
+
+        Queries all five databases for key metrics — event volume, signal
+        profile freshness, prediction pipeline stats, source weight
+        staleness, connector health, and task/notification summaries.
+
+        Each section is independently resilient: if one database is
+        corrupted or unavailable, that section returns ``{"error": "..."}``
+        while the remaining sections still return data.
+        """
+        import asyncio
+
+        generated_at = datetime.now(timezone.utc).isoformat()
+
+        # -- a. Event stats (events.db) ------------------------------------
+        def _query_event_stats():
+            """Gather event volume and source breakdown from events.db."""
+            try:
+                with life_os.db.get_connection("events") as conn:
+                    total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+                    last_24h = conn.execute(
+                        "SELECT COUNT(*) FROM events WHERE timestamp > datetime('now', '-1 day')"
+                    ).fetchone()[0]
+                    top_types = [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT type, COUNT(*) as count FROM events GROUP BY type ORDER BY count DESC LIMIT 10"
+                        ).fetchall()
+                    ]
+                    sources = [
+                        dict(row)
+                        for row in conn.execute(
+                            "SELECT source, COUNT(*) as count, MAX(timestamp) as last_event "
+                            "FROM events GROUP BY source ORDER BY count DESC"
+                        ).fetchall()
+                    ]
+                return {
+                    "total": total,
+                    "last_24h": last_24h,
+                    "top_types": top_types,
+                    "sources": sources,
+                }
+            except Exception as e:
+                return {"error": str(e)}
+
+        # -- b. Signal profiles (user_model.db) ----------------------------
+        def _query_signal_profiles():
+            """Fetch signal profile freshness from user_model.db."""
+            try:
+                with life_os.db.get_connection("user_model") as conn:
+                    rows = conn.execute(
+                        "SELECT profile_type, samples_count, updated_at FROM signal_profiles"
+                    ).fetchall()
+                return [dict(row) for row in rows]
+            except Exception as e:
+                return {"error": str(e)}
+
+        # -- c. Prediction pipeline (user_model.db) ------------------------
+        def _query_prediction_pipeline():
+            """Compute prediction pipeline stats from user_model.db."""
+            try:
+                with life_os.db.get_connection("user_model") as conn:
+                    total = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+                    surfaced = conn.execute(
+                        "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
+                    ).fetchone()[0]
+                    accuracy_row = conn.execute(
+                        "SELECT AVG(CASE WHEN was_accurate = 1 THEN 1.0 ELSE 0.0 END) "
+                        "FROM predictions WHERE was_accurate IS NOT NULL"
+                    ).fetchone()
+                    accuracy = accuracy_row[0] if accuracy_row else None
+                return {"total": total, "surfaced": surfaced, "accuracy": accuracy}
+            except Exception as e:
+                return {"error": str(e)}
+
+        # -- d. Source weight staleness (preferences.db) -------------------
+        def _query_source_weights():
+            """Fetch source weights and flag stale entries from preferences.db."""
+            try:
+                with life_os.db.get_connection("preferences") as conn:
+                    rows = conn.execute(
+                        "SELECT source_key, user_weight, ai_drift, ai_updated_at, "
+                        "interactions, engagements, dismissals FROM source_weights"
+                    ).fetchall()
+                result = []
+                for row in rows:
+                    entry = dict(row)
+                    entry["never_updated"] = entry.get("ai_updated_at") is None
+                    result.append(entry)
+                return result
+            except Exception as e:
+                return {"error": str(e)}
+
+        # -- e. Connector health -------------------------------------------
+        async def _query_connector_health():
+            """Check health of all registered connectors."""
+            try:
+                results = {}
+                for c in life_os.connectors:
+                    try:
+                        health = await asyncio.wait_for(c.health_check(), timeout=5.0)
+                        results[getattr(c, "CONNECTOR_ID", str(c))] = health
+                    except asyncio.TimeoutError:
+                        results[getattr(c, "CONNECTOR_ID", str(c))] = {
+                            "status": "error",
+                            "details": "timeout",
+                        }
+                    except Exception as e:
+                        results[getattr(c, "CONNECTOR_ID", str(c))] = {
+                            "status": "error",
+                            "details": str(e),
+                        }
+                return results
+            except Exception as e:
+                return {"error": str(e)}
+
+        # -- f. Task summary (state.db) ------------------------------------
+        def _query_task_summary():
+            """Aggregate task counts by status from state.db."""
+            try:
+                with life_os.db.get_connection("state") as conn:
+                    rows = conn.execute(
+                        "SELECT status, COUNT(*) as count FROM tasks GROUP BY status"
+                    ).fetchall()
+                return {row["status"]: row["count"] for row in rows}
+            except Exception as e:
+                return {"error": str(e)}
+
+        # -- g. Notification summary (state.db) ----------------------------
+        def _query_notification_summary():
+            """Aggregate notification counts by status from state.db."""
+            try:
+                with life_os.db.get_connection("state") as conn:
+                    rows = conn.execute(
+                        "SELECT status, COUNT(*) as count FROM notifications GROUP BY status"
+                    ).fetchall()
+                return {row["status"]: row["count"] for row in rows}
+            except Exception as e:
+                return {"error": str(e)}
+
+        # Run all synchronous DB queries concurrently via to_thread,
+        # plus the async connector health check.
+        (
+            event_stats,
+            signal_profiles,
+            prediction_pipeline,
+            source_weights,
+            connector_health,
+            task_summary,
+            notification_summary,
+        ) = await asyncio.gather(
+            asyncio.to_thread(_query_event_stats),
+            asyncio.to_thread(_query_signal_profiles),
+            asyncio.to_thread(_query_prediction_pipeline),
+            asyncio.to_thread(_query_source_weights),
+            _query_connector_health(),
+            asyncio.to_thread(_query_task_summary),
+            asyncio.to_thread(_query_notification_summary),
+        )
+
+        return {
+            "generated_at": generated_at,
+            "event_stats": event_stats,
+            "signal_profiles": signal_profiles,
+            "prediction_pipeline": prediction_pipeline,
+            "source_weight_staleness": source_weights,
+            "connector_health": connector_health,
+            "task_summary": task_summary,
+            "notification_summary": notification_summary,
+        }
+
+    # -------------------------------------------------------------------
     # Setup / Onboarding
     # -------------------------------------------------------------------
 
