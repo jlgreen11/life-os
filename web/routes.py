@@ -1278,7 +1278,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     # Notifications
     # -------------------------------------------------------------------
 
-    def _classify_notification_source(notif_id: str) -> Optional[str]:
+    async def _classify_notification_source(notif_id: str) -> Optional[str]:
         """Look up a notification's originating source and classify it for weight learning.
 
         Traces from notification -> source_event_id -> event -> source_key.
@@ -1289,54 +1289,60 @@ def register_routes(app: FastAPI, life_os) -> None:
         Returns the source_key string (e.g. "email.work") or None if
         classification is not possible.
         """
-        # Step 1: Look up the notification to get source_event_id and domain
-        with life_os.db.get_connection("state") as conn:
-            notif = conn.execute(
-                "SELECT source_event_id, domain FROM notifications WHERE id = ?",
-                (notif_id,),
-            ).fetchone()
+        import asyncio
 
-        if not notif:
-            return None
-
-        source_event_id = notif["source_event_id"]
-        domain = notif["domain"]
-
-        # Step 2: If there's a source event, look it up and classify it
-        if source_event_id:
-            with life_os.db.get_connection("events") as conn:
-                event_row = conn.execute(
-                    "SELECT type, payload, metadata FROM events WHERE id = ?",
-                    (source_event_id,),
+        def _sync_classify(nid: str) -> Optional[str]:
+            """Synchronous DB lookups, run via asyncio.to_thread to avoid blocking."""
+            # Step 1: Look up the notification to get source_event_id and domain
+            with life_os.db.get_connection("state") as conn:
+                notif = conn.execute(
+                    "SELECT source_event_id, domain FROM notifications WHERE id = ?",
+                    (nid,),
                 ).fetchone()
 
-            if event_row:
-                event = {
-                    "type": event_row["type"],
-                    "payload": json.loads(event_row["payload"] or "{}"),
-                    "metadata": json.loads(event_row["metadata"] or "{}"),
+            if not notif:
+                return None
+
+            source_event_id = notif["source_event_id"]
+            domain = notif["domain"]
+
+            # Step 2: If there's a source event, look it up and classify it
+            if source_event_id:
+                with life_os.db.get_connection("events") as conn:
+                    event_row = conn.execute(
+                        "SELECT type, payload, metadata FROM events WHERE id = ?",
+                        (source_event_id,),
+                    ).fetchone()
+
+                if event_row:
+                    event = {
+                        "type": event_row["type"],
+                        "payload": json.loads(event_row["payload"] or "{}"),
+                        "metadata": json.loads(event_row["metadata"] or "{}"),
+                    }
+                    source_key = life_os.source_weight_manager.classify_event(event)
+                    if source_key:
+                        return source_key
+
+            # Step 3: Fallback for domain-based classification.
+            # Domains that map naturally to a single source weight key get classified;
+            # cross-domain origins like "prediction" return None to avoid misattributing
+            # weight updates to an unrelated source (e.g. email.work).
+            if domain:
+                domain_to_source = {
+                    "email": "email.work",
+                    "messaging": "messaging.direct",
+                    "calendar": "calendar.meetings",
+                    "finance": "finance.transactions",
+                    "health": "health.activity",
+                    "location": "location.visits",
+                    "home": "home.devices",
                 }
-                source_key = life_os.source_weight_manager.classify_event(event)
-                if source_key:
-                    return source_key
+                return domain_to_source.get(domain)
 
-        # Step 3: Fallback for domain-based classification.
-        # Domains that map naturally to a single source weight key get classified;
-        # cross-domain origins like "prediction" return None to avoid misattributing
-        # weight updates to an unrelated source (e.g. email.work).
-        if domain:
-            domain_to_source = {
-                "email": "email.work",
-                "messaging": "messaging.direct",
-                "calendar": "calendar.meetings",
-                "finance": "finance.transactions",
-                "health": "health.activity",
-                "location": "location.visits",
-                "home": "home.devices",
-            }
-            return domain_to_source.get(domain)
+            return None
 
-        return None
+        return await asyncio.to_thread(_sync_classify, notif_id)
 
     @app.get("/api/notifications")
     async def list_notifications(limit: int = 50):
@@ -1354,7 +1360,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         # Update source weights — dismissal is a negative signal
         try:
             if hasattr(life_os, "source_weight_manager"):
-                source_key = _classify_notification_source(notif_id)
+                source_key = await _classify_notification_source(notif_id)
                 if source_key:
                     life_os.source_weight_manager.record_dismissal(source_key)
         except Exception as e:
@@ -1367,7 +1373,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         # Update source weights — acting on a notification is a positive signal
         try:
             if hasattr(life_os, "source_weight_manager"):
-                source_key = _classify_notification_source(notif_id)
+                source_key = await _classify_notification_source(notif_id)
                 if source_key:
                     life_os.source_weight_manager.record_engagement(source_key)
         except Exception as e:
@@ -2295,13 +2301,17 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.get("/api/insights")
     async def list_insights(limit: int = 20):
         """Return recent insights from the InsightEngine."""
-        with life_os.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                """SELECT * FROM insights
-                   ORDER BY created_at DESC
-                   LIMIT ?""",
-                (limit,),
-            ).fetchall()
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT * FROM insights
+                       ORDER BY created_at DESC
+                       LIMIT ?""",
+                    (limit,),
+                ).fetchall()
+        except Exception as e:
+            logger.warning("Failed to read insights from database: %s", e)
+            return {"insights": [], "error": str(e)}
         results = []
         for r in rows:
             d = dict(r)
@@ -3028,7 +3038,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                                 # Update source weights — dismissal is a negative signal
                                 try:
                                     if hasattr(life_os, "source_weight_manager"):
-                                        source_key = _classify_notification_source(notif_id)
+                                        source_key = await _classify_notification_source(notif_id)
                                         if source_key:
                                             life_os.source_weight_manager.record_dismissal(source_key)
                                 except Exception as e:
@@ -3041,7 +3051,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                                 # Update source weights — engagement is a positive signal
                                 try:
                                     if hasattr(life_os, "source_weight_manager"):
-                                        source_key = _classify_notification_source(notif_id)
+                                        source_key = await _classify_notification_source(notif_id)
                                         if source_key:
                                             life_os.source_weight_manager.record_engagement(source_key)
                                 except Exception as e:
