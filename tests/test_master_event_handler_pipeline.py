@@ -549,3 +549,432 @@ async def test_episode_creation_runs_after_signal_extraction(lifeos, db):
     # Restore originals
     lifeos.signal_extractor.process_event = original_process
     lifeos._create_episode = original_create_episode
+
+
+# ---------------------------------------------------------------------------
+# Test 12: WebSocket mood broadcast after email event
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_email_event_triggers_mood_websocket_broadcast(lifeos, db):
+    """Processing an email.received event should trigger a mood_update WebSocket broadcast.
+
+    After signal extraction runs on content-bearing events (email.*, message.*,
+    chat.*), the pipeline broadcasts a mood_update message so the dashboard mood
+    widget refreshes instantly.  See main.py lines 2101-2108.
+    """
+    from unittest.mock import AsyncMock, patch
+    from web.websocket import ws_manager
+
+    event = _make_event(
+        "email.received",
+        from_address="alice@example.com",
+        subject="Mood broadcast test",
+        body_plain="This email should trigger a mood WebSocket broadcast.",
+    )
+
+    with patch.object(ws_manager, "broadcast", new_callable=AsyncMock) as mock_broadcast:
+        await lifeos.master_event_handler(event)
+
+    # Verify at least one broadcast call was a mood_update
+    mood_calls = [
+        call for call in mock_broadcast.call_args_list
+        if call[0][0].get("type") == "mood_update"
+    ]
+    assert len(mood_calls) >= 1, (
+        f"Expected at least one mood_update broadcast for email.received event. "
+        f"All broadcast calls: {mock_broadcast.call_args_list}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 13: Notification triggers WebSocket broadcast
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_notification_triggers_websocket_broadcast(lifeos, db):
+    """When a rule action creates a notification, the pipeline should broadcast
+    a WebSocket message with type 'notification'.  See main.py lines 2292-2300.
+    """
+    from unittest.mock import AsyncMock, patch
+    from web.websocket import ws_manager
+
+    # Add a notify rule matching all email.received events
+    await lifeos.rules_engine.add_rule(
+        name="Notify on all emails for WS test",
+        trigger_event="email.received",
+        conditions=[],
+        actions=[{"type": "notify", "message": "New email arrived"}],
+    )
+
+    event = _make_event(
+        "email.received",
+        subject="Notification broadcast test",
+        body_plain="This should trigger both a notification and a WebSocket broadcast.",
+    )
+
+    with patch.object(ws_manager, "broadcast", new_callable=AsyncMock) as mock_broadcast:
+        await lifeos.master_event_handler(event)
+
+    # Verify a notification-type WebSocket broadcast was sent
+    notif_calls = [
+        call for call in mock_broadcast.call_args_list
+        if call[0][0].get("type") == "notification"
+    ]
+    assert len(notif_calls) >= 1, (
+        f"Expected at least one notification WebSocket broadcast. "
+        f"All broadcast calls: {mock_broadcast.call_args_list}"
+    )
+
+    # Verify the notification broadcast includes the source_event_id
+    notif_payload = notif_calls[0][0][0]
+    assert notif_payload.get("source_event_id") == event["id"]
+
+
+# ---------------------------------------------------------------------------
+# Test 14: WebSocket broadcast failure does not crash the pipeline
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_websocket_broadcast_failure_does_not_crash_pipeline(lifeos, db):
+    """If ws_manager.broadcast raises, the pipeline should continue without error.
+
+    The pipeline wraps all WebSocket broadcasts in bare try/except with pass
+    (main.py lines 2031-2038 and 2104-2108) to ensure a WebSocket failure never
+    blocks event processing.
+    """
+    from unittest.mock import AsyncMock, patch
+    from web.websocket import ws_manager
+
+    event = _make_event(
+        "email.received",
+        from_address="resilience@example.com",
+        subject="WebSocket resilience test",
+        body_plain="Pipeline should survive a WebSocket broadcast failure.",
+    )
+
+    with patch.object(
+        ws_manager, "broadcast",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("WebSocket broadcast failed"),
+    ):
+        # Should NOT raise — the pipeline catches broadcast errors
+        await lifeos.master_event_handler(event)
+
+    # Stage 1: event should still be stored
+    with db.get_connection("events") as conn:
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event["id"],)
+        ).fetchone()
+    assert row is not None, "Event should be stored despite WebSocket broadcast failure"
+
+    # Stage 6: episode should still be created
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute(
+            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
+        ).fetchall()
+    assert len(episodes) >= 1, "Episode should be created despite WebSocket broadcast failure"
+
+
+# ---------------------------------------------------------------------------
+# Test 15: System event skips signal extraction
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_system_event_skips_signal_extraction(lifeos, db):
+    """System events (type starting with 'system.') skip stages 2-6 including
+    signal extraction.  The existing test_system_event_stored_but_no_episode
+    checks episode creation; this test verifies signal_extractor.process_event
+    is NOT called.  See main.py lines 2078-2091.
+    """
+    # Track whether signal_extractor.process_event is called
+    process_event_called = []
+    original_process = lifeos.signal_extractor.process_event
+
+    async def tracking_process(event):
+        process_event_called.append(event["id"])
+        return await original_process(event)
+
+    lifeos.signal_extractor.process_event = tracking_process
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": "system.rule.triggered",
+        "source": "rules_engine",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "low",
+        "payload": {"rule_id": "test-rule", "action": "tag"},
+        "metadata": {},
+    }
+
+    await lifeos.master_event_handler(event)
+
+    # Signal extractor should NOT have been called for a system event
+    assert event["id"] not in process_event_called, (
+        "signal_extractor.process_event should NOT be called for system events "
+        "(the pipeline guard at main.py:2085-2091 should skip stages 2-6)"
+    )
+
+    # But the event should still be stored (stage 1 runs before the guard)
+    with db.get_connection("events") as conn:
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event["id"],)
+        ).fetchone()
+    assert row is not None, "System event should still be stored in events.db"
+
+    # Restore
+    lifeos.signal_extractor.process_event = original_process
+
+
+# ---------------------------------------------------------------------------
+# Test 16: System event still records source weight
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_system_event_still_records_source_weight(lifeos, db):
+    """System events skip stages 2-6 but source weight tracking (stage 1.3)
+    runs before the guard, so record_interaction should still be called.
+    See main.py lines 2068-2076 (before the guard at 2085-2091).
+    """
+    # Track calls to record_interaction
+    record_calls = []
+    original_record = lifeos.source_weight_manager.record_interaction
+
+    def tracking_record(source_key):
+        record_calls.append(source_key)
+        return original_record(source_key)
+
+    lifeos.source_weight_manager.record_interaction = tracking_record
+
+    event = {
+        "id": str(uuid.uuid4()),
+        "type": "system.rule.triggered",
+        "source": "rules_engine",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "priority": "low",
+        "payload": {"rule_id": "test-rule", "action": "notify"},
+        "metadata": {},
+    }
+
+    await lifeos.master_event_handler(event)
+
+    # record_interaction should have been called despite this being a system event
+    assert len(record_calls) >= 1, (
+        "source_weight_manager.record_interaction should be called for system events "
+        "(stage 1.3 runs before the system event guard at main.py:2085)"
+    )
+
+    # The source key for system.rule.triggered should be "system.general"
+    assert "system.general" in record_calls, (
+        f"Expected 'system.general' source key for system.rule.triggered, "
+        f"got: {record_calls}"
+    )
+
+    # Restore
+    lifeos.source_weight_manager.record_interaction = original_record
+
+
+# ---------------------------------------------------------------------------
+# Test 17: Suppress action sets _suppressed flag on event dict
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_suppress_action_sets_suppressed_flag_on_event(lifeos, db):
+    """When the rules engine returns a suppress action, the pipeline should set
+    event['_suppressed'] = True on the event dict.  The existing
+    test_suppress_action_prevents_notification checks notification suppression
+    but not the in-memory flag itself.  See main.py lines 2309-2315.
+    """
+    # Add a suppress rule matching email.received with a specific subject
+    await lifeos.rules_engine.add_rule(
+        name="Suppress flagged emails",
+        trigger_event="email.received",
+        conditions=[
+            {"field": "payload.subject", "op": "contains", "value": "flag-test"},
+        ],
+        actions=[{"type": "suppress"}],
+    )
+
+    event = _make_event(
+        "email.received",
+        subject="Please flag-test this email",
+        body_plain="The suppress action should set _suppressed = True.",
+    )
+
+    # Confirm _suppressed is not set before processing
+    assert "_suppressed" not in event
+
+    await lifeos.master_event_handler(event)
+
+    # The suppress action should have set the in-memory flag
+    assert event.get("_suppressed") is True, (
+        "event['_suppressed'] should be True after suppress action executes"
+    )
+
+    # Also verify the persistent tag was written
+    with db.get_connection("events") as conn:
+        tags = conn.execute(
+            "SELECT * FROM event_tags WHERE event_id = ? AND tag = 'system:suppressed'",
+            (event["id"],),
+        ).fetchall()
+    assert len(tags) >= 1, "Persistent 'system:suppressed' tag should be written"
+
+
+# ---------------------------------------------------------------------------
+# Test 18: Suppress runs before notify in same rule set (ordering)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_suppress_runs_before_notify_in_same_rule_set(lifeos, db):
+    """When the rules engine returns both suppress and notify actions (from
+    different rules), the pipeline sorts suppress actions first so the
+    _suppressed flag is set before the notify action checks it.
+
+    This tests the explicit sort at main.py lines 2120-2122:
+        suppress_actions = [a for a in actions if a['type'] == 'suppress']
+        other_actions = [a for a in actions if a['type'] != 'suppress']
+        for action in suppress_actions + other_actions:
+
+    The notify rule is added FIRST to ensure the ordering logic (not insertion
+    order) is what prevents the notification from being created.
+    """
+    # Add the NOTIFY rule FIRST — if the sort didn't exist, notify would run
+    # before suppress and the notification would be created.
+    await lifeos.rules_engine.add_rule(
+        name="Notify on order-test emails",
+        trigger_event="email.received",
+        conditions=[
+            {"field": "payload.subject", "op": "contains", "value": "order-test"},
+        ],
+        actions=[{"type": "notify", "message": "Should be suppressed"}],
+    )
+
+    # Add the SUPPRESS rule SECOND
+    await lifeos.rules_engine.add_rule(
+        name="Suppress order-test emails",
+        trigger_event="email.received",
+        conditions=[
+            {"field": "payload.subject", "op": "contains", "value": "order-test"},
+        ],
+        actions=[{"type": "suppress"}],
+    )
+
+    event = _make_event(
+        "email.received",
+        subject="This is an order-test email",
+        body_plain="Both suppress and notify rules match, suppress should win.",
+    )
+
+    await lifeos.master_event_handler(event)
+
+    # The suppress action should have set the flag
+    assert event.get("_suppressed") is True, (
+        "Suppress action should have set _suppressed = True"
+    )
+
+    # No notification should have been created because suppress ran first
+    with db.get_connection("state") as conn:
+        notifs = conn.execute(
+            "SELECT * FROM notifications WHERE source_event_id = ?", (event["id"],)
+        ).fetchall()
+    assert len(notifs) == 0, (
+        "Notification should NOT be created when suppress runs in the same action set — "
+        "the suppress-before-notify sort at main.py:2120-2122 should prevent it"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 19: Task manager error does not block embedding
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_task_manager_error_does_not_block_embedding(lifeos, db):
+    """If task_manager.process_event (stage 4) raises, the pipeline should
+    still reach _embed_event (stage 5).  Existing tests cover signal_extractor
+    and rules_engine isolation but not task_manager.
+    """
+    # Sabotage the task manager
+    original_process = lifeos.task_manager.process_event
+
+    async def broken_process(event):
+        raise RuntimeError("Simulated task manager failure")
+
+    lifeos.task_manager.process_event = broken_process
+
+    # Track whether _embed_event is called
+    embed_called_with = []
+    original_embed = lifeos._embed_event
+
+    async def tracking_embed(event):
+        embed_called_with.append(event["id"])
+        return await original_embed(event)
+
+    lifeos._embed_event = tracking_embed
+
+    event = _make_event(
+        "email.received",
+        subject="Task manager isolation test",
+        body_plain="Embedding should still run even if task extraction fails.",
+    )
+
+    # Should NOT raise — the pipeline catches per-stage errors
+    await lifeos.master_event_handler(event)
+
+    # _embed_event should have been called despite task_manager failure
+    assert event["id"] in embed_called_with, (
+        "_embed_event (stage 5) should still run when task_manager.process_event "
+        "(stage 4) fails — each stage is independently wrapped in try/except"
+    )
+
+    # Restore
+    lifeos.task_manager.process_event = original_process
+    lifeos._embed_event = original_embed
+
+
+# ---------------------------------------------------------------------------
+# Test 20: Embedding error does not block episode creation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_embedding_error_does_not_block_episode_creation(lifeos, db):
+    """If _embed_event (stage 5) raises, the pipeline should still reach
+    _create_episode (stage 6).  This validates fail-open isolation between
+    the final two pipeline stages.
+    """
+    # Sabotage _embed_event
+    original_embed = lifeos._embed_event
+
+    async def broken_embed(event):
+        raise RuntimeError("Simulated embedding failure")
+
+    lifeos._embed_event = broken_embed
+
+    event = _make_event(
+        "email.received",
+        from_address="embedding-fail@example.com",
+        subject="Embedding isolation test",
+        body_plain="Episode creation should still run even if embedding fails.",
+    )
+
+    # Should NOT raise
+    await lifeos.master_event_handler(event)
+
+    # Event should be stored (stage 1)
+    with db.get_connection("events") as conn:
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event["id"],)
+        ).fetchone()
+    assert row is not None, "Event should be stored despite embedding failure"
+
+    # Episode should be created (stage 6) despite embedding failure (stage 5)
+    with db.get_connection("user_model") as conn:
+        episodes = conn.execute(
+            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
+        ).fetchall()
+    assert len(episodes) >= 1, (
+        "Episode (stage 6) should be created despite _embed_event (stage 5) failure — "
+        "each pipeline stage is independently wrapped in try/except"
+    )
+
+    # Restore
+    lifeos._embed_event = original_embed
