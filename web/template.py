@@ -951,6 +951,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .mood-fill.stress { background: var(--accent-orange); }
         .mood-fill.social { background: var(--accent-purple); }
 
+        /* --- Connector Status Widget (sidebar) --- */
+        .connector-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 12px;
+        }
+        .connector-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .connector-dot.ok { background: var(--accent-green); }
+        .connector-dot.error { background: var(--accent-red); }
+        .connector-dot.unknown { background: var(--text-muted); }
+        .connector-name { color: var(--text-primary); flex: 1; }
+        .connector-detail { color: var(--text-muted); font-size: 10px; }
+
         /* --- Status Bar --- */
         .status-bar {
             position: fixed;
@@ -1461,6 +1481,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                             <div class="mood-track"><div class="mood-fill social" id="moodSocial" style="width:40%"></div></div>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">System Status</div>
+                <div class="sidebar-content" id="systemStatusContent">
+                    <div style="color:var(--text-muted);font-size:12px">Loading...</div>
                 </div>
             </div>
         </aside>
@@ -3506,6 +3533,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             loadMood();
             loadPredictions();
             loadPeopleRadar();
+            loadStatus();
         }
     }
 
@@ -3617,6 +3645,62 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
     }
 
+    // --- Sidebar System Status Widget ---
+    /**
+     * Populate the sidebar "System Status" section from /health data.
+     *
+     * Shows a DB status row when degraded, plus one row per connector with
+     * a colored dot (green/red/gray) and the connector name.  Called from
+     * loadStatus() which already fetches /health.
+     */
+    function updateSidebarConnectorStatus(health) {
+        var el = document.getElementById('systemStatusContent');
+        if (!el) return;
+
+        var html = '';
+
+        // DB status row — only shown when degraded
+        var dbDegraded = health.db_status === 'degraded';
+        if (dbDegraded) {
+            html += '<div class="connector-row">';
+            html += '<span class="connector-dot error"></span>';
+            html += '<span class="connector-name">Database</span>';
+            html += '<span class="connector-detail">degraded</span>';
+            html += '</div>';
+        }
+
+        var connectors = health.connectors || [];
+        if (connectors.length === 0 && !dbDegraded) {
+            safeSetContent(el, '<div style="color:var(--text-muted);font-size:12px">No connectors configured. <a href="/admin" style="color:var(--accent-blue)">Add one</a></div>');
+            return;
+        }
+
+        for (var i = 0; i < connectors.length; i++) {
+            var c = connectors[i];
+            var status = c.status || 'unknown';
+            var dotClass = status === 'ok' ? 'ok' : status === 'error' ? 'error' : 'unknown';
+            var name = c.connector || 'unknown';
+            var detail = '';
+            if (status === 'error' && c.details) {
+                // Truncate long error messages for the sidebar
+                var d = String(c.details);
+                detail = d.length > 40 ? d.substring(0, 37) + '...' : d;
+            } else if (c.last_sync) {
+                detail = c.last_sync;
+            }
+
+            html += '<div class="connector-row" title="' + escAttr(c.details || status) + '">';
+            html += '<span class="connector-dot ' + dotClass + '"></span>';
+            html += '<span class="connector-name">' + escHtml(name) + '</span>';
+            if (detail) {
+                html += '<span class="connector-detail">' + escHtml(detail) + '</span>';
+            }
+            html += '</div>';
+        }
+
+        safeSetContent(el, html);
+    }
+
     // --- Status Bar ---
     function loadStatus() {
         /* Refresh the bottom status bar with live health and data-freshness info.
@@ -3666,6 +3750,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     dbBanner.classList.remove('visible');
                 }
             }
+
+            // Populate the sidebar connector-health widget.
+            updateSidebarConnectorStatus(health);
 
             // Detect connector-level errors from the health payload.
             var errorConnectors = (health.connectors || []).filter(function(c) {
@@ -3852,8 +3939,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     // Refresh badge counts every 2 minutes so the nav stays accurate.
     setInterval(loadBadges, 120000);
 
-    // Re-check data freshness every 5 minutes.
+    // Re-check data freshness and system health every 5 minutes.
     setInterval(checkDataFreshness, 300000);
+    setInterval(loadStatus, 300000);
 
     // --- WebSocket ---
     try { connectWS(); } catch(e) {}
