@@ -72,17 +72,30 @@ class RoutineDetector:
         """
         routines = []
 
-        # Strategy 1: Time-of-day routines
-        temporal_routines = self._detect_temporal_routines(lookback_days)
-        routines.extend(temporal_routines)
+        # Each strategy is wrapped in try/except so that a failure in one
+        # (e.g. corrupted user_model.db) does not prevent the others from
+        # running.  This follows the same fail-open pattern used by the
+        # InsightEngine correlators.
+        temporal_routines = []
+        try:
+            temporal_routines = self._detect_temporal_routines(lookback_days)
+            routines.extend(temporal_routines)
+        except Exception:
+            logger.exception("Temporal routine detection failed (possible DB corruption)")
 
-        # Strategy 2: Location-based routines
-        location_routines = self._detect_location_routines(lookback_days)
-        routines.extend(location_routines)
+        location_routines = []
+        try:
+            location_routines = self._detect_location_routines(lookback_days)
+            routines.extend(location_routines)
+        except Exception:
+            logger.exception("Location routine detection failed (possible DB corruption)")
 
-        # Strategy 3: Event-triggered routines (e.g., post-meeting patterns)
-        event_routines = self._detect_event_triggered_routines(lookback_days)
-        routines.extend(event_routines)
+        event_routines = []
+        try:
+            event_routines = self._detect_event_triggered_routines(lookback_days)
+            routines.extend(event_routines)
+        except Exception:
+            logger.exception("Event-triggered routine detection failed (possible DB corruption)")
 
         logger.info(
             f"Routine detection complete: {len(routines)} routines found "
@@ -204,7 +217,12 @@ class RoutineDetector:
         # Number of distinct days with any episode data in the window.
         # This is the denominator for consistency: an action that fires on 8 of
         # 10 active days has 80% consistency, regardless of the lookback window.
-        active_days = self._count_active_days(cutoff)
+        # Wrapped in try/except so a corrupted DB returns a safe default (1).
+        try:
+            active_days = self._count_active_days(cutoff)
+        except Exception:
+            logger.exception("_count_active_days failed in temporal detection; using default 1")
+            active_days = 1
 
         # Fetch episodes grouped by time-of-day bucket using a SQL CASE expression.
         #
@@ -255,8 +273,13 @@ class RoutineDetector:
         # Compute actual measured inter-step durations once, reuse for all buckets.
         # The final step of each routine falls back to LAST_STEP_DEFAULT_MINUTES
         # because there is no subsequent step to measure a gap against.
+        # Wrapped in try/except so a corrupted DB returns an empty map.
         LAST_STEP_DEFAULT_MINUTES = 15.0
-        step_duration_map = self._compute_step_duration_map(cutoff)
+        try:
+            step_duration_map = self._compute_step_duration_map(cutoff)
+        except Exception:
+            logger.exception("_compute_step_duration_map failed in temporal detection; using empty map")
+            step_duration_map = {}
 
         # SQL already resolved each row to its time_bucket; no further mapping needed.
         # Each tuple is (time_bucket, interaction_type, day_count).
@@ -342,12 +365,22 @@ class RoutineDetector:
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
         # Reuse active-day count computed once for the whole detection pass.
-        active_days = self._count_active_days(cutoff)
+        # Wrapped in try/except so a corrupted DB returns a safe default (1).
+        try:
+            active_days = self._count_active_days(cutoff)
+        except Exception:
+            logger.exception("_count_active_days failed in location detection; using default 1")
+            active_days = 1
 
         # Use actual measured inter-step durations instead of a hardcoded
         # placeholder.  Falls back to 5.0 minutes for interaction types where
         # no same-day successor was observed.
-        step_duration_map = self._compute_step_duration_map(cutoff)
+        # Wrapped in try/except so a corrupted DB returns an empty map.
+        try:
+            step_duration_map = self._compute_step_duration_map(cutoff)
+        except Exception:
+            logger.exception("_compute_step_duration_map failed in location detection; using empty map")
+            step_duration_map = {}
         STEP_DURATION_FALLBACK = 5.0
 
         # Fetch recurring (location, interaction_type) pairs.
@@ -465,7 +498,12 @@ class RoutineDetector:
         # Compute measured inter-step durations once, shared across all trigger types.
         # Falls back to 5.0 minutes for interaction types where no same-day successor
         # was observed in the lookback window.
-        step_duration_map = self._compute_step_duration_map(cutoff)
+        # Wrapped in try/except so a corrupted DB returns an empty map.
+        try:
+            step_duration_map = self._compute_step_duration_map(cutoff)
+        except Exception:
+            logger.exception("_compute_step_duration_map failed in event-triggered detection; using empty map")
+            step_duration_map = {}
         STEP_DURATION_FALLBACK = 5.0
 
         for interaction_type, days_occurred in trigger_events:
