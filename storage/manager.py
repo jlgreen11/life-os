@@ -250,6 +250,144 @@ class DatabaseManager:
             logger.error("backup_database: failed for %s: %s", db_name, exc)
             return None
 
+    def list_backups(self, db_name: str = "user_model") -> list[dict]:
+        """List available backups for a database, sorted newest-first.
+
+        Scans the ``data/backups/`` directory for files matching
+        ``{db_name}_*.db`` and returns metadata for each one.
+
+        Args:
+            db_name: Logical database name (e.g. ``"user_model"``).
+
+        Returns:
+            A list of dicts sorted by timestamp (newest first), each with:
+              - ``path``: absolute path to the backup file
+              - ``filename``: just the filename
+              - ``db_name``: the database name
+              - ``created_at``: ISO timestamp extracted from the filename
+              - ``size_bytes``: file size
+              - ``age_hours``: hours since backup was created
+            Returns an empty list if the backup directory doesn't exist or
+            no backups are found.
+        """
+        backup_dir = self.data_dir / "backups"
+        try:
+            if not backup_dir.exists():
+                return []
+
+            backups = []
+            now = datetime.now(timezone.utc)
+            for path in backup_dir.glob(f"{db_name}_*.db"):
+                # Extract timestamp from filename: {db_name}_{YYYYMMDDTHHMMSS}.db
+                stem = path.stem  # e.g. "user_model_20260303T120000"
+                ts_str = stem[len(db_name) + 1 :]  # strip "{db_name}_" prefix
+                try:
+                    created = datetime.strptime(ts_str, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    logger.warning("list_backups: skipping file with unparseable timestamp: %s", path.name)
+                    continue
+
+                age_hours = (now - created).total_seconds() / 3600.0
+                backups.append(
+                    {
+                        "path": str(path.resolve()),
+                        "filename": path.name,
+                        "db_name": db_name,
+                        "created_at": created.isoformat(),
+                        "size_bytes": path.stat().st_size,
+                        "age_hours": round(age_hours, 2),
+                    }
+                )
+
+            # Sort newest first by created_at descending
+            backups.sort(key=lambda b: b["created_at"], reverse=True)
+            return backups
+        except Exception as exc:
+            logger.warning("list_backups: failed for %s: %s", db_name, exc)
+            return []
+
+    def restore_from_backup(self, backup_path: str, db_name: str = "user_model") -> bool:
+        """Restore a database from a backup file.
+
+        Validates the backup, checks its integrity, archives the current
+        (possibly corrupt) database, and copies the backup into place.
+
+        Args:
+            backup_path: Absolute path to the backup file. Must be inside
+                the ``data/backups/`` directory (path traversal is rejected).
+            db_name: Logical database name (e.g. ``"user_model"``).
+
+        Returns:
+            True if the restore succeeded, False otherwise.
+        """
+        try:
+            backup = Path(backup_path).resolve()
+            backup_dir = (self.data_dir / "backups").resolve()
+
+            # --- Validation ---
+            if not backup.is_file():
+                logger.error("restore_from_backup: backup path does not exist or is not a file: %s", backup)
+                return False
+
+            # Security: ensure the backup is inside data/backups/
+            if not str(backup).startswith(str(backup_dir) + "/") and backup.parent != backup_dir:
+                logger.error("restore_from_backup: path traversal rejected — %s is outside %s", backup, backup_dir)
+                return False
+
+            db_path_str = self._databases.get(db_name)
+            if db_path_str is None:
+                logger.error("restore_from_backup: unknown database '%s'", db_name)
+                return False
+
+            db_path = Path(db_path_str)
+
+            # --- Integrity check on the backup ---
+            try:
+                conn = sqlite3.connect(str(backup))
+                rows = conn.execute("PRAGMA quick_check").fetchall()
+                conn.close()
+                for row in rows:
+                    if row[0] != "ok":
+                        logger.error("restore_from_backup: backup failed integrity check: %s", row[0])
+                        return False
+            except Exception as exc:
+                logger.error("restore_from_backup: backup integrity check error: %s", exc)
+                return False
+
+            # --- Flush WAL on the current database (may fail if corrupt) ---
+            try:
+                with self.get_connection(db_name) as conn:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception as exc:
+                logger.warning(
+                    "restore_from_backup: WAL checkpoint on current %s failed (expected if corrupt): %s",
+                    db_name,
+                    exc,
+                )
+
+            # --- Archive the current database ---
+            if db_path.exists():
+                archive_path = db_path.parent / f"{db_name}.pre_restore.db"
+                shutil.copy2(str(db_path), str(archive_path))
+                logger.info("restore_from_backup: archived current %s to %s", db_name, archive_path.name)
+
+            # --- Copy backup into place ---
+            shutil.copy2(str(backup), str(db_path))
+
+            # --- Clean up stale WAL/SHM files from the old database ---
+            for ext in ("-wal", "-shm"):
+                sidecar = db_path.parent / (db_path.name + ext)
+                if sidecar.exists():
+                    sidecar.unlink()
+                    logger.info("restore_from_backup: removed stale %s", sidecar.name)
+
+            logger.info("restore_from_backup: successfully restored %s from %s", db_name, backup.name)
+            return True
+
+        except Exception as exc:
+            logger.error("restore_from_backup: failed for %s: %s", db_name, exc)
+            return False
+
     def _check_and_recover_db(self, db_name: str) -> bool:
         """Check a database for corruption and recover by resetting if needed.
 
