@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import uuid
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
@@ -489,10 +490,18 @@ class NotificationManager:
         - was_surfaced = 1: Notification was delivered (user saw it)
         - was_surfaced = 0: Filtered by confidence gates or suppressed before delivery
         """
-        with self.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE predictions SET was_surfaced = 1 WHERE id = ?",
-                (prediction_id,),
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    "UPDATE predictions SET was_surfaced = 1 WHERE id = ?",
+                    (prediction_id,),
+                )
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            # Fail-open: surfacing tracking is secondary to notification delivery.
+            # A corrupt user_model.db should not prevent notifications from reaching the user.
+            logger.warning(
+                "Failed to mark prediction %s as surfaced (user_model.db may be corrupted)",
+                prediction_id, exc_info=True,
             )
 
     def _update_linked_prediction(self, notif_id: str, was_accurate: bool):
@@ -514,18 +523,26 @@ class NotificationManager:
 
         prediction_id = notif["source_event_id"]
         now = datetime.now(timezone.utc).isoformat()
-        with self.db.get_connection("user_model") as conn:
-            conn.execute(
-                """UPDATE predictions SET
-                   was_accurate = ?, resolved_at = ?,
-                   user_response = ?
-                   WHERE id = ?""",
-                (
-                    1 if was_accurate else 0,
-                    now,
-                    "acted_on" if was_accurate else "dismissed",
-                    prediction_id,
-                ),
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    """UPDATE predictions SET
+                       was_accurate = ?, resolved_at = ?,
+                       user_response = ?
+                       WHERE id = ?""",
+                    (
+                        1 if was_accurate else 0,
+                        now,
+                        "acted_on" if was_accurate else "dismissed",
+                        prediction_id,
+                    ),
+                )
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            # Fail-open: prediction accuracy tracking is secondary to notification lifecycle.
+            # mark_acted_on/dismiss should still succeed even if user_model.db is corrupt.
+            logger.warning(
+                "Failed to update linked prediction for notification %s (user_model.db may be corrupted)",
+                notif_id, exc_info=True,
             )
 
     async def mark_acted_on(self, notif_id: str):
@@ -718,17 +735,26 @@ class NotificationManager:
             # Use was_accurate=0, user_response='ignored' to distinguish from
             # explicit dismissals (user_response='dismissed').
             prediction_id = notif["source_event_id"]
-            with self.db.get_connection("user_model") as conn:
-                conn.execute(
-                    """UPDATE predictions SET
-                       was_accurate = 0,
-                       resolved_at = ?,
-                       user_response = 'ignored'
-                       WHERE id = ? AND resolved_at IS NULL""",
-                    (now.isoformat(), prediction_id),
+            try:
+                with self.db.get_connection("user_model") as conn:
+                    conn.execute(
+                        """UPDATE predictions SET
+                           was_accurate = 0,
+                           resolved_at = ?,
+                           user_response = 'ignored'
+                           WHERE id = ? AND resolved_at IS NULL""",
+                        (now.isoformat(), prediction_id),
+                    )
+                    if conn.total_changes > 0:
+                        resolved_count += 1
+            except (sqlite3.DatabaseError, sqlite3.OperationalError):
+                # Fail-open: skip this prediction but continue processing remaining items.
+                # The _mark_status and _log_automatic_feedback calls below use the state/preferences
+                # DBs and should still work.
+                logger.warning(
+                    "Failed to auto-resolve stale prediction %s (user_model.db may be corrupted)",
+                    prediction_id, exc_info=True,
                 )
-                if conn.total_changes > 0:
-                    resolved_count += 1
 
             # Log automatic feedback for the ignored prediction. This closes the
             # feedback loop by recording implicit dismissals in feedback_log, which
@@ -782,17 +808,26 @@ class NotificationManager:
 
         # Find unsurfaced predictions created more than timeout_hours ago
         # that are still unresolved.
-        with self.db.get_connection("user_model") as conn:
-            result = conn.execute(
-                """UPDATE predictions SET
-                   was_accurate = NULL,
-                   resolved_at = ?,
-                   user_response = 'filtered'
-                   WHERE was_surfaced = 0
-                     AND resolved_at IS NULL
-                     AND created_at < ?""",
-                (now.isoformat(), cutoff),
+        try:
+            with self.db.get_connection("user_model") as conn:
+                result = conn.execute(
+                    """UPDATE predictions SET
+                       was_accurate = NULL,
+                       resolved_at = ?,
+                       user_response = 'filtered'
+                       WHERE was_surfaced = 0
+                         AND resolved_at IS NULL
+                         AND created_at < ?""",
+                    (now.isoformat(), cutoff),
+                )
+                resolved_count = result.rowcount
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            # Fail-open: filtered prediction cleanup is a maintenance task.
+            # A corrupt user_model.db should not crash the background loop.
+            logger.warning(
+                "Failed to auto-resolve filtered predictions (user_model.db may be corrupted)",
+                exc_info=True,
             )
-            resolved_count = result.rowcount
+            return 0
 
         return resolved_count
