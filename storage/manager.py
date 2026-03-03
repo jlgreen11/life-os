@@ -95,12 +95,17 @@ class DatabaseManager:
             conn.close()
 
     def get_database_health(self) -> dict[str, dict]:
-        """Run a quick integrity check on every database and return per-DB results.
+        """Run an integrity check on every database and return per-DB results.
 
-        Uses ``PRAGMA quick_check`` (much faster than ``integrity_check``) to
-        detect B-tree corruption, missing pages, and malformed cell structures.
-        Each database is checked independently so a problem in one file does not
-        prevent the other four from being reported.
+        For ``user_model``, uses ``PRAGMA integrity_check`` which performs a
+        full scan including overflow pages and freelist validation.  This
+        catches corruption that ``quick_check`` misses in large JSON TEXT
+        columns.  For all other databases, uses the faster
+        ``PRAGMA quick_check(10)`` which only scans B-tree pages (capped at
+        10 errors).
+
+        Each database is checked independently so a problem in one file does
+        not prevent the other four from being reported.
 
         Returns a dict keyed by database name, each value containing:
           - ``status``: ``"ok"`` or ``"corrupted"``
@@ -116,9 +121,11 @@ class DatabaseManager:
             }
 
         Safe to call frequently — ``quick_check`` opens a read-only connection
-        and returns within milliseconds on typical database sizes.  Any exception
-        (e.g. file not found, permission denied) is caught and reported as an
-        error so callers never see a Python traceback from this method.
+        and returns within milliseconds on typical database sizes.  The
+        ``integrity_check`` for ``user_model`` is slower but only targets one
+        database.  Any exception (e.g. file not found, permission denied) is
+        caught and reported as an error so callers never see a Python traceback
+        from this method.
         """
         results: dict[str, dict] = {}
         for db_name, db_path in self._databases.items():
@@ -131,10 +138,15 @@ class DatabaseManager:
                 # active WAL transaction in progress on the normal write path.
                 conn = sqlite3.connect(db_path)
                 conn.execute("PRAGMA journal_mode=WAL")
-                rows = conn.execute("PRAGMA quick_check(10)").fetchall()
+                # For user_model, use the thorough integrity_check to catch
+                # overflow page corruption that quick_check misses.
+                if db_name == "user_model":
+                    rows = conn.execute("PRAGMA integrity_check").fetchall()
+                else:
+                    rows = conn.execute("PRAGMA quick_check(10)").fetchall()
                 conn.close()
-                # quick_check returns a single "ok" row when healthy; any other
-                # content is an error message.
+                # Both pragmas return a single "ok" row when healthy; any
+                # other content is an error message.
                 for row in rows:
                     msg = row[0]
                     if msg != "ok":
@@ -189,10 +201,16 @@ class DatabaseManager:
     def _check_and_recover_db(self, db_name: str) -> bool:
         """Check a database for corruption and recover by resetting if needed.
 
-        Runs ``PRAGMA quick_check`` against the named database.  For
-        ``user_model`` databases, also runs blob overflow page probes to
-        detect corruption that ``quick_check`` misses in large JSON TEXT
-        columns (episodes, signal_profiles, semantic_facts, etc.).
+        For ``user_model`` databases, uses ``PRAGMA integrity_check`` which
+        performs a full scan including overflow pages and freelist validation.
+        This catches corruption that ``quick_check`` misses — e.g. damaged
+        overflow pages holding large JSON TEXT columns (episodes,
+        signal_profiles, semantic_facts, etc.).  The slower check is
+        acceptable because user_model.db is typically small (< 50 MB) and
+        this only runs once at startup.
+
+        For all other databases, uses the faster ``PRAGMA quick_check(10)``
+        which only scans B-tree pages (capped at 10 errors).
 
         If corruption is detected the corrupt file (and its WAL/SHM sidecars)
         are renamed with a ``.corrupt.<timestamp>`` suffix so a fresh database
@@ -216,13 +234,18 @@ class DatabaseManager:
         if not db_path.exists():
             return False
 
-        # Run a quick integrity check (same approach as get_database_health).
+        # Run integrity check.  For user_model, use the thorough
+        # integrity_check to catch overflow page corruption that
+        # quick_check misses.  For other DBs, use the faster quick_check.
         is_corrupt = False
         errors: list[str] = []
         try:
             conn = sqlite3.connect(str(db_path))
             conn.execute("PRAGMA journal_mode=WAL")
-            rows = conn.execute("PRAGMA quick_check(10)").fetchall()
+            if db_name == "user_model":
+                rows = conn.execute("PRAGMA integrity_check").fetchall()
+            else:
+                rows = conn.execute("PRAGMA quick_check(10)").fetchall()
             conn.close()
             for row in rows:
                 msg = row[0]
