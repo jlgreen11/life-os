@@ -19,6 +19,7 @@ Configuration:
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -53,6 +54,10 @@ class HomeAssistantConnector(BaseConnector):
     # hammering the HA instance.
     SYNC_INTERVAL_SECONDS = 30
 
+    # Key used in state.db's kv_store table to persist entity states
+    # across restarts, preventing false state-change events on first sync.
+    _KV_STORE_KEY = "home_assistant:entity_states"
+
     def __init__(self, event_bus: EventBus, db: DatabaseManager, config: dict[str, Any]):
         super().__init__(event_bus, db, config)
         # Base URL of the Home Assistant instance (including port).
@@ -63,7 +68,58 @@ class HomeAssistantConnector(BaseConnector):
         self._watched = config.get("watched_entities", [])
         # In-memory cache mapping entity_id -> last known state string.
         # Used for change detection so we only emit events on transitions.
+        # Seeded from persisted state in state.db to survive restarts.
         self._last_states: dict[str, Any] = {}
+        self._load_persisted_states()
+
+    def _load_persisted_states(self):
+        """Load previously persisted entity states from state.db.
+
+        On first run (no persisted data), ``_last_states`` stays empty so that
+        every entity is treated as a new state change — the expected first-run
+        behaviour.  On subsequent starts, the persisted cache prevents false
+        state-change events for entities whose state hasn't actually changed.
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                row = conn.execute(
+                    "SELECT value FROM kv_store WHERE key = ?",
+                    (self._KV_STORE_KEY,),
+                ).fetchone()
+                if row:
+                    self._last_states = json.loads(row["value"])
+                    logger.info(
+                        "[%s] Loaded persisted states for %d entities",
+                        self.CONNECTOR_ID,
+                        len(self._last_states),
+                    )
+        except Exception as e:
+            # Fail open — if we can't read persisted state, fall back to
+            # empty cache (first-run behaviour).
+            logger.warning("[%s] Failed to load persisted states: %s", self.CONNECTOR_ID, e)
+
+    def _persist_states(self):
+        """Write the current entity state cache to state.db.
+
+        Uses the ``kv_store`` table with a well-known key so the cache
+        survives application restarts.  Called after each sync cycle that
+        detects at least one state change to avoid unnecessary writes.
+        """
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with self.db.get_connection("state") as conn:
+                conn.execute(
+                    """INSERT INTO kv_store (key, value, updated_at)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(key) DO UPDATE SET
+                           value = excluded.value,
+                           updated_at = excluded.updated_at""",
+                    (self._KV_STORE_KEY, json.dumps(self._last_states), now),
+                )
+        except Exception as e:
+            # Fail open — losing persistence is non-fatal; worst case is a
+            # burst of false events on the next restart.
+            logger.warning("[%s] Failed to persist states: %s", self.CONNECTOR_ID, e)
 
     async def authenticate(self) -> bool:
         """Verify connectivity to the Home Assistant instance.
@@ -150,6 +206,12 @@ class HomeAssistantConnector(BaseConnector):
                     # Log individual entity failures without aborting the loop
                     # so that other entities still get polled.
                     logger.warning("Error reading entity %s: %s", entity_id, e)
+
+        # Persist the updated state cache to state.db so that a restart
+        # doesn't trigger false change events for entities whose state
+        # hasn't actually changed.
+        if count > 0:
+            self._persist_states()
 
         return count
 
