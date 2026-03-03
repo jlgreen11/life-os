@@ -1344,9 +1344,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </div>
         <div class="mood-bar" id="moodBar">
             <span>E</span>
-            <div class="mini-bar"><div class="mini-bar-fill energy" id="miniEnergy" style="width:50%;background:var(--accent-green)"></div></div>
+            <div class="mini-bar"><div class="mini-bar-fill energy" id="miniEnergy" style="width:0%;background:var(--accent-green)"></div></div>
             <span>S</span>
-            <div class="mini-bar"><div class="mini-bar-fill stress" id="miniStress" style="width:30%;background:var(--accent-orange)"></div></div>
+            <div class="mini-bar"><div class="mini-bar-fill stress" id="miniStress" style="width:0%;background:var(--accent-orange)"></div></div>
         </div>
         <div class="greeting" id="greeting"></div>
         <div class="nav-links">
@@ -1470,15 +1470,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <div class="mood-snapshot">
                         <div class="mood-row">
                             <span class="mood-label">Energy</span>
-                            <div class="mood-track"><div class="mood-fill energy" id="moodEnergy" style="width:50%"></div></div>
+                            <div class="mood-track"><div class="mood-fill energy" id="moodEnergy" style="width:0%"></div></div>
                         </div>
                         <div class="mood-row">
                             <span class="mood-label">Stress</span>
-                            <div class="mood-track"><div class="mood-fill stress" id="moodStress" style="width:30%"></div></div>
+                            <div class="mood-track"><div class="mood-fill stress" id="moodStress" style="width:0%"></div></div>
                         </div>
                         <div class="mood-row">
                             <span class="mood-label">Social</span>
-                            <div class="mood-track"><div class="mood-fill social" id="moodSocial" style="width:40%"></div></div>
+                            <div class="mood-track"><div class="mood-fill social" id="moodSocial" style="width:0%"></div></div>
                         </div>
                     </div>
                 </div>
@@ -3487,9 +3487,30 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             // The endpoint returns {"mood": {"energy_level":…, "stress_level":…, "social_battery":…}}.
             // Fall back to the top-level object for any future schema changes.
             var m = data.mood || data || {};
-            var energy = Math.max(0, Math.min(100, (m.energy_level || 0.5) * 100));
-            var stress = Math.max(0, Math.min(100, (m.stress_level || 0.3) * 100));
-            var social = Math.max(0, Math.min(100, (m.social_battery || 0.4) * 100));
+            // Detect if we have real mood data by checking confidence.
+            // MoodState defaults to confidence=0 when no signals have been processed.
+            var hasData = m.confidence != null && m.confidence > 0;
+            if (!hasData) {
+                // Show 'no data' state — zero out bars
+                document.getElementById('moodEnergy').style.width = '0%';
+                document.getElementById('moodStress').style.width = '0%';
+                document.getElementById('moodSocial').style.width = '0%';
+                document.getElementById('miniEnergy').style.width = '0%';
+                document.getElementById('miniStress').style.width = '0%';
+                // Add a hint message if not already present
+                var snapshot = document.getElementById('moodSnapshot');
+                if (snapshot && !snapshot.querySelector('.mood-no-data')) {
+                    var hint = document.createElement('div');
+                    hint.className = 'mood-no-data';
+                    hint.style.cssText = 'font-size:11px;color:var(--text-muted);margin-top:4px;text-align:center';
+                    hint.textContent = 'Mood data will appear as Life OS learns your patterns';
+                    snapshot.appendChild(hint);
+                }
+                return;
+            }
+            var energy = Math.max(0, Math.min(100, (m.energy_level || 0) * 100));
+            var stress = Math.max(0, Math.min(100, (m.stress_level || 0) * 100));
+            var social = Math.max(0, Math.min(100, (m.social_battery || 0) * 100));
 
             document.getElementById('moodEnergy').style.width = energy + '%';
             document.getElementById('moodStress').style.width = stress + '%';
@@ -3498,9 +3519,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             // Also update top bar mini bars
             document.getElementById('miniEnergy').style.width = energy + '%';
             document.getElementById('miniStress').style.width = stress + '%';
+
+            // Remove no-data hint if it was previously shown
+            var snapshot = document.getElementById('moodSnapshot');
+            if (snapshot) {
+                var hint = snapshot.querySelector('.mood-no-data');
+                if (hint) { hint.remove(); }
+            }
         })
         .catch(function() {
-            // Silently fail -- keep defaults
+            // On error, zero out bars instead of showing fake defaults
+            document.getElementById('moodEnergy').style.width = '0%';
+            document.getElementById('moodStress').style.width = '0%';
+            document.getElementById('moodSocial').style.width = '0%';
+            document.getElementById('miniEnergy').style.width = '0%';
+            document.getElementById('miniStress').style.width = '0%';
         });
     }
 
