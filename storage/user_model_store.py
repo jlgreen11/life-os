@@ -256,14 +256,17 @@ class UserModelStore:
                     (key, category, json.dumps(value), confidence, json.dumps(episodes)),
                 )
 
-        self._emit_telemetry("usermodel.fact.learned", {
-            "key": key,
-            "category": category,
-            "confidence": confidence if is_new else min(1.0, (existing["confidence"] if existing else confidence) + 0.05),
-            "is_new": is_new,
-            "episode_id": episode_id,
-            "learned_at": datetime.now(timezone.utc).isoformat(),
-        })
+            # Telemetry fires inside the `with` block so it only executes after
+            # a successful DB write.  Previously this was outside the block,
+            # causing phantom telemetry when the DB write raised an exception.
+            self._emit_telemetry("usermodel.fact.learned", {
+                "key": key,
+                "category": category,
+                "confidence": confidence if is_new else min(1.0, (existing["confidence"] if existing else confidence) + 0.05),
+                "is_new": is_new,
+                "episode_id": episode_id,
+                "learned_at": datetime.now(timezone.utc).isoformat(),
+            })
 
     def get_semantic_fact(self, key: str) -> Optional[dict]:
         """
@@ -318,6 +321,42 @@ class UserModelStore:
                 facts.append(fact)
             return facts
 
+    def get_high_confidence_facts(self, min_confirmations: int = 3,
+                                  category: Optional[str] = None) -> list[dict]:
+        """Retrieve semantic facts that have been confirmed multiple times.
+
+        Filters by ``times_confirmed`` to distinguish well-established facts
+        from one-off inferences.  Downstream consumers (prediction engine,
+        briefing) can use this to prioritise facts backed by repeated evidence.
+
+        Args:
+            min_confirmations: Minimum number of times a fact must have been
+                confirmed to be included.  Defaults to 3.
+            category: Optional category filter (e.g. 'preference', 'explicit').
+
+        Returns:
+            List of fact dicts with deserialized ``value`` and ``source_episodes``,
+            ordered by confidence descending.
+        """
+        query = "SELECT * FROM semantic_facts WHERE times_confirmed >= ?"
+        params: list[Any] = [min_confirmations]
+
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+
+        query += " ORDER BY confidence DESC"
+
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(query, params).fetchall()
+            facts = []
+            for row in rows:
+                fact = dict(row)
+                fact["value"] = json.loads(fact["value"])
+                fact["source_episodes"] = json.loads(fact["source_episodes"])
+                facts.append(fact)
+            return facts
+
     def update_signal_profile(self, profile_type: str, data: dict):
         """Store or update a signal profile (linguistic, cadence, etc.).
 
@@ -341,17 +380,17 @@ class UserModelStore:
                                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
                     (profile_type, json.dumps(data), profile_type),
                 )
+            # Telemetry fires only after a successful DB write.  Previously this
+            # was outside the try/except, inflating event counts when the DB was
+            # corrupt (phantom telemetry bug).
+            self._emit_telemetry("usermodel.signal_profile.updated", {
+                "profile_type": profile_type,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
         except Exception as e:
             logger.warning(
                 "UserModelStore.update_signal_profile failed (user_model.db may be corrupt): %s", e
             )
-
-        # Telemetry runs outside the try/except so it fires even when the
-        # DB write fails — tracks that an update was attempted.
-        self._emit_telemetry("usermodel.signal_profile.updated", {
-            "profile_type": profile_type,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
 
     def get_signal_profile(self, profile_type: str) -> Optional[dict]:
         """Retrieve a signal profile.
