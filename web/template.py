@@ -1964,7 +1964,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             var hasAny = false;
 
             // ── 1. AI-Generated Behavioral Insights ─────────────────────────
-            var insights = insightData.insights || insightData.predictions || [];
+            var insights = insightData.insights || [];
+            if (!insightData.insights && insightData.error) {
+                console.warn('Insights API error:', insightData.error);
+            }
             if (!Array.isArray(insights)) insights = [];
             if (insights.length > 0) {
                 html += '<div class="section-header">AI Behavioral Insights</div>';
@@ -3023,8 +3026,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         fetch(API + '/api/briefing')
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var text = data.briefing || 'No briefing available';
-            safeSetContent(el, '<div style="white-space:pre-wrap">' + escHtml(text) + '</div>');
+            if (data.briefing) {
+                safeSetContent(el, '<div style="white-space:pre-wrap">' + escHtml(data.briefing) + '</div>');
+            } else if (data.error) {
+                safeSetContent(el, '<div style="color:var(--text-muted)"><span style="color:var(--accent-orange)">AI engine unavailable</span> — ' + escHtml(data.error) + '. Check that Ollama is running.</div>');
+            } else {
+                safeSetContent(el, '<div style="color:var(--text-muted)">No briefing data yet. Connect your email or calendar in <a href="/admin" style="color:var(--accent-blue)">Settings</a>.</div>');
+            }
         })
         .catch(function() {
             safeSetContent(el, '<div style="color:var(--text-muted)">No briefing today. Connect your email or calendar in <a href="/admin" style="color:var(--accent-blue)">Settings</a> to enable daily briefings.</div>');
