@@ -24,7 +24,12 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# Module-level list that accumulates query errors during analyze().
+# Consumers can inspect report["query_errors"] to distinguish "no data" from "query failed".
+_errors: list[dict] = []
 
 
 def _query(conn, sql, default=None):
@@ -33,6 +38,7 @@ def _query(conn, sql, default=None):
         return conn.execute(sql).fetchall()
     except Exception as e:
         logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
+        _errors.append({"sql": sql[:200], "error": str(e)})
         return default
 
 
@@ -42,6 +48,7 @@ def _query_one(conn, sql, default=None):
         return conn.execute(sql).fetchone()
     except Exception as e:
         logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
+        _errors.append({"sql": sql[:200], "error": str(e)})
         return default
 
 
@@ -51,11 +58,20 @@ def _connect(db_path):
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         return conn
-    except Exception:
+    except Exception as e:
+        logger.warning("Could not connect to %s: %s", db_path, e)
         return None
 
 
 def analyze(data_dir: str = "./data") -> dict:
+    """Analyze data quality across all Life OS databases.
+
+    Returns a report dict with sections for each database area. When a database
+    connection or query fails, the affected sections contain an 'error' key
+    (instead of being silently absent), and all individual query failures are
+    collected in report["query_errors"].
+    """
+    _errors.clear()
     data_path = Path(data_dir)
     report = {"generated_at": datetime.now(UTC).isoformat(), "sections": {}}
 
@@ -309,7 +325,13 @@ def analyze(data_dir: str = "./data") -> dict:
 
         um_conn.close()
     else:
-        report["sections"]["prediction_accuracy"] = {"error": "could not connect to user_model.db"}
+        um_error = {"error": "could not connect to user_model.db"}
+        report["sections"]["prediction_accuracy"] = um_error
+        report["sections"]["prediction_resolution"] = um_error
+        report["sections"]["prediction_pipeline"] = um_error
+        report["sections"]["signal_profiles"] = um_error
+        report["sections"]["insight_feedback"] = um_error
+        report["sections"]["user_model"] = um_error
 
     # -----------------------------------------------------------------------
     # Notification dismissal rate
@@ -357,7 +379,10 @@ def analyze(data_dir: str = "./data") -> dict:
         finally:
             state_conn.close()
     else:
-        report["sections"]["notifications"] = {"error": "could not connect to state.db"}
+        state_error = {"error": "could not connect to state.db"}
+        report["sections"]["notifications"] = state_error
+        report["sections"]["tasks"] = state_error
+        report["sections"]["connectors"] = state_error
 
     # -----------------------------------------------------------------------
     # Feedback log and source weights
@@ -403,8 +428,11 @@ def analyze(data_dir: str = "./data") -> dict:
         finally:
             pref_conn.close()
     else:
-        report["sections"]["feedback"] = {"error": "could not connect to preferences.db"}
+        pref_error = {"error": "could not connect to preferences.db"}
+        report["sections"]["feedback"] = pref_error
+        report["sections"]["source_weights"] = pref_error
 
+    report["query_errors"] = list(_errors)
     return report
 
 
