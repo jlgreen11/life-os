@@ -662,3 +662,213 @@ class TestEdgeCases:
             assert row["location"] is None
             assert row["active_domain"] is None
             assert row["energy_level"] is None
+
+
+class TestTelemetryEmission:
+    """Test that telemetry events are only emitted on successful DB writes."""
+
+    def test_signal_profile_telemetry_on_success(self, db: DatabaseManager):
+        """Telemetry should fire after a successful signal profile write."""
+        telemetry_calls = []
+
+        store = UserModelStore(db)
+        original_emit = store._emit_telemetry
+
+        def tracking_emit(event_type, payload):
+            telemetry_calls.append({"event_type": event_type, "payload": payload})
+            original_emit(event_type, payload)
+
+        store._emit_telemetry = tracking_emit
+
+        store.update_signal_profile("linguistic", {"metric": 1.0})
+
+        assert len(telemetry_calls) == 1
+        assert telemetry_calls[0]["event_type"] == "usermodel.signal_profile.updated"
+        assert telemetry_calls[0]["payload"]["profile_type"] == "linguistic"
+
+    def test_signal_profile_no_telemetry_on_failure(self, db: DatabaseManager):
+        """Telemetry must NOT fire when the DB write fails (phantom telemetry bug)."""
+        telemetry_calls = []
+
+        store = UserModelStore(db)
+
+        def tracking_emit(event_type, payload):
+            telemetry_calls.append({"event_type": event_type, "payload": payload})
+
+        store._emit_telemetry = tracking_emit
+
+        # Force the DB write to fail by closing the underlying connection pool.
+        # We patch get_connection to raise, simulating a corrupt/unavailable DB.
+        original_get_conn = store.db.get_connection
+
+        def failing_get_conn(db_name):
+            raise Exception("Simulated DB corruption")
+
+        store.db.get_connection = failing_get_conn
+
+        # This should NOT crash and should NOT emit telemetry
+        store.update_signal_profile("linguistic", {"metric": 1.0})
+
+        assert len(telemetry_calls) == 0, (
+            "Telemetry was emitted despite DB write failure — phantom telemetry bug"
+        )
+
+        # Restore original for cleanup
+        store.db.get_connection = original_get_conn
+
+    def test_semantic_fact_telemetry_on_success(self, db: DatabaseManager):
+        """Telemetry should fire after a successful semantic fact write."""
+        telemetry_calls = []
+
+        store = UserModelStore(db)
+        original_emit = store._emit_telemetry
+
+        def tracking_emit(event_type, payload):
+            telemetry_calls.append({"event_type": event_type, "payload": payload})
+            original_emit(event_type, payload)
+
+        store._emit_telemetry = tracking_emit
+
+        store.update_semantic_fact(
+            key="test_fact", category="test", value="data", confidence=0.5
+        )
+
+        assert len(telemetry_calls) == 1
+        assert telemetry_calls[0]["event_type"] == "usermodel.fact.learned"
+        assert telemetry_calls[0]["payload"]["key"] == "test_fact"
+        assert telemetry_calls[0]["payload"]["is_new"] is True
+
+    def test_semantic_fact_no_telemetry_on_failure(self, db: DatabaseManager):
+        """Telemetry must NOT fire when the semantic fact DB write fails."""
+        telemetry_calls = []
+
+        store = UserModelStore(db)
+
+        def tracking_emit(event_type, payload):
+            telemetry_calls.append({"event_type": event_type, "payload": payload})
+
+        store._emit_telemetry = tracking_emit
+
+        original_get_conn = store.db.get_connection
+
+        def failing_get_conn(db_name):
+            raise Exception("Simulated DB corruption")
+
+        store.db.get_connection = failing_get_conn
+
+        # update_semantic_fact doesn't have its own try/except (relies on
+        # caller or fail-open pattern), so this will raise.  The key point:
+        # telemetry must NOT have fired before the exception.
+        try:
+            store.update_semantic_fact(
+                key="test_fact", category="test", value="data", confidence=0.5
+            )
+        except Exception:
+            pass  # Expected — DB is unavailable
+
+        assert len(telemetry_calls) == 0, (
+            "Telemetry was emitted despite DB write failure — phantom telemetry bug"
+        )
+
+        store.db.get_connection = original_get_conn
+
+
+class TestHighConfidenceFacts:
+    """Test the get_high_confidence_facts method."""
+
+    def test_returns_only_well_confirmed_facts(self, user_model_store: UserModelStore):
+        """Only facts with times_confirmed >= threshold should be returned."""
+        # Create fact A — confirmed 4 times (1 initial + 3 re-confirmations)
+        for i in range(4):
+            user_model_store.update_semantic_fact(
+                key="well_established",
+                category="preference",
+                value="mornings",
+                confidence=0.5,
+                episode_id=f"ep_{i}",
+            )
+
+        # Create fact B — confirmed only once
+        user_model_store.update_semantic_fact(
+            key="one_off",
+            category="preference",
+            value="coffee",
+            confidence=0.5,
+            episode_id="ep_single",
+        )
+
+        # Default min_confirmations=3 should only return fact A
+        high_conf = user_model_store.get_high_confidence_facts()
+        assert len(high_conf) == 1
+        assert high_conf[0]["key"] == "well_established"
+        assert high_conf[0]["times_confirmed"] >= 3
+
+    def test_custom_min_confirmations(self, user_model_store: UserModelStore):
+        """Caller can set a custom confirmation threshold."""
+        # Confirm a fact twice
+        user_model_store.update_semantic_fact(
+            key="confirmed_twice", category="test", value="x", confidence=0.5
+        )
+        user_model_store.update_semantic_fact(
+            key="confirmed_twice", category="test", value="x", confidence=0.5
+        )
+
+        # min_confirmations=2 should include it
+        facts = user_model_store.get_high_confidence_facts(min_confirmations=2)
+        assert len(facts) == 1
+        assert facts[0]["key"] == "confirmed_twice"
+
+        # min_confirmations=3 should exclude it
+        facts = user_model_store.get_high_confidence_facts(min_confirmations=3)
+        assert len(facts) == 0
+
+    def test_filter_by_category(self, user_model_store: UserModelStore):
+        """Category filter should work with confirmation filtering."""
+        # Create 3x confirmed preference
+        for i in range(3):
+            user_model_store.update_semantic_fact(
+                key="pref_fact", category="preference", value="A", confidence=0.5,
+                episode_id=f"ep_p{i}",
+            )
+
+        # Create 3x confirmed explicit fact
+        for i in range(3):
+            user_model_store.update_semantic_fact(
+                key="explicit_fact", category="explicit", value="B", confidence=0.5,
+                episode_id=f"ep_e{i}",
+            )
+
+        # Filter by category
+        prefs = user_model_store.get_high_confidence_facts(category="preference")
+        assert len(prefs) == 1
+        assert prefs[0]["key"] == "pref_fact"
+
+        explicits = user_model_store.get_high_confidence_facts(category="explicit")
+        assert len(explicits) == 1
+        assert explicits[0]["key"] == "explicit_fact"
+
+    def test_empty_result_when_no_facts_meet_threshold(self, user_model_store: UserModelStore):
+        """Returns empty list when no facts have enough confirmations."""
+        user_model_store.update_semantic_fact(
+            key="single", category="test", value="x", confidence=0.5
+        )
+
+        facts = user_model_store.get_high_confidence_facts(min_confirmations=5)
+        assert facts == []
+
+    def test_returned_facts_have_deserialized_fields(self, user_model_store: UserModelStore):
+        """Returned facts should have value and source_episodes deserialized."""
+        for i in range(3):
+            user_model_store.update_semantic_fact(
+                key="deser_test", category="test", value={"nested": "data"},
+                confidence=0.5, episode_id=f"ep_{i}",
+            )
+
+        facts = user_model_store.get_high_confidence_facts()
+        assert len(facts) == 1
+        # value should be a dict, not a JSON string
+        assert isinstance(facts[0]["value"], dict)
+        assert facts[0]["value"] == {"nested": "data"}
+        # source_episodes should be a list, not a JSON string
+        assert isinstance(facts[0]["source_episodes"], list)
+        assert len(facts[0]["source_episodes"]) == 3

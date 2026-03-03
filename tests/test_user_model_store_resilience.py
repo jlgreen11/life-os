@@ -2,8 +2,8 @@
 Tests for UserModelStore resilience when user_model.db is corrupt.
 
 Verifies that the four critical methods (store_episode, update_signal_profile,
-get_signal_profile, store_mood) fail-open when the database raises errors,
-and that telemetry is still emitted even when DB operations fail.
+get_signal_profile, store_mood) fail-open when the database raises errors.
+Telemetry is only emitted on successful writes to prevent phantom events.
 """
 
 import sqlite3
@@ -102,15 +102,22 @@ class TestUpdateSignalProfileResilience:
         assert any("update_signal_profile" in record.message for record in caplog.records)
         assert any("malformed" in record.message for record in caplog.records)
 
-    def test_telemetry_still_emitted_on_db_error(self, corrupt_store, event_store):
-        """Telemetry event is emitted even when DB write fails."""
+    def test_no_telemetry_on_db_error(self, corrupt_store, event_store):
+        """Telemetry must NOT fire when the DB write fails (phantom telemetry fix).
+
+        Previously, telemetry was emitted outside the try/except block so it
+        fired even on failed writes — inflating event counts with phantom
+        events.  After the fix, telemetry only fires on successful writes.
+        """
         corrupt_store.update_signal_profile("mood", {"energy": 0.6})
 
         with event_store.db.get_connection("events") as conn:
             rows = conn.execute(
                 "SELECT * FROM events WHERE type = 'usermodel.signal_profile.updated'"
             ).fetchall()
-        assert len(rows) >= 1
+        assert len(rows) == 0, (
+            "Telemetry was emitted despite DB write failure — phantom telemetry bug"
+        )
 
 
 class TestGetSignalProfileResilience:
