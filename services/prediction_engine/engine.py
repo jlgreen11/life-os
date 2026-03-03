@@ -56,6 +56,15 @@ class PredictionEngine:
         self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
         self._first_follow_up_run: bool = True  # First cycle uses wider lookback (72h vs 24h)
 
+        # Diagnostic counters for monitoring prediction pipeline health.
+        # Updated at the end of each generate_predictions() cycle and
+        # queryable via get_diagnostics().
+        self._last_run_diagnostics: dict[str, Any] = {}
+        self._total_runs: int = 0
+        self._total_predictions_generated: int = 0
+        self._total_predictions_surfaced: int = 0
+        self._consecutive_zero_runs: int = 0
+
         # Ensure prediction_engine_state table exists and load any persisted state.
         # Both are wrapped in try/except so a corrupted user_model.db doesn't
         # prevent the engine from instantiating at all.
@@ -97,6 +106,16 @@ class PredictionEngine:
             self._last_event_cursor = int(state["last_event_cursor"])
         if "last_time_based_run" in state:
             self._last_time_based_run = datetime.fromisoformat(state["last_time_based_run"])
+        if "last_run_diagnostics" in state:
+            try:
+                self._last_run_diagnostics = json.loads(state["last_run_diagnostics"])
+                # Restore aggregate counters from the persisted diagnostics snapshot
+                self._total_runs = self._last_run_diagnostics.get("total_runs", 0)
+                self._total_predictions_generated = self._last_run_diagnostics.get("total_generated", 0)
+                self._total_predictions_surfaced = self._last_run_diagnostics.get("total_surfaced", 0)
+                self._consecutive_zero_runs = self._last_run_diagnostics.get("consecutive_zero_runs", 0)
+            except (json.JSONDecodeError, TypeError):
+                pass  # Corrupt diagnostics are non-fatal; keep __init__ defaults
 
         if state:
             logger.info(
@@ -122,6 +141,31 @@ class PredictionEngine:
                 )
         except Exception as e:
             logger.warning("_persist_state(%s) failed (non-fatal, will retry next cycle): %s", key, e)
+
+    def get_runtime_diagnostics(self) -> dict[str, Any]:
+        """Return prediction engine runtime diagnostic information for monitoring.
+
+        Lightweight, synchronous method that reads only in-memory state.
+        Designed for the admin dashboard and data-quality endpoint to query
+        prediction pipeline health without hitting the database.
+
+        For comprehensive per-prediction-type analysis, use the async
+        get_diagnostics() method instead.
+
+        Returns:
+            dict with 'engine_state', 'run_statistics', and 'health' keys.
+            'health' is 'degraded' after 4+ consecutive zero-prediction runs.
+        """
+        return {
+            "engine_state": {
+                "last_event_cursor": self._last_event_cursor,
+                "last_time_based_run": (
+                    self._last_time_based_run.isoformat() if self._last_time_based_run else None
+                ),
+            },
+            "run_statistics": self._last_run_diagnostics,
+            "health": "degraded" if self._consecutive_zero_runs >= 4 else "ok",
+        }
 
     def _has_new_events(self) -> bool:
         """Check if any new events have arrived since last prediction run."""
@@ -446,6 +490,32 @@ class PredictionEngine:
             len(profile_types),
             ", ".join(available_profiles) if available_profiles else "none",
         )
+
+        # --- Persist diagnostics for programmatic monitoring ---
+        self._total_runs += 1
+        self._total_predictions_generated += len(predictions)
+        self._total_predictions_surfaced += len(filtered)
+        if len(filtered) == 0:
+            self._consecutive_zero_runs += 1
+        else:
+            self._consecutive_zero_runs = 0
+
+        self._last_run_diagnostics = {
+            "last_run_at": datetime.now(timezone.utc).isoformat(),
+            "total_runs": self._total_runs,
+            "total_generated": self._total_predictions_generated,
+            "total_surfaced": self._total_predictions_surfaced,
+            "consecutive_zero_runs": self._consecutive_zero_runs,
+            "last_run_stats": generation_stats,
+            "last_run_raw_count": len(predictions),
+            "last_run_surfaced_count": len(filtered),
+            "last_run_filtered_by_reaction": filtered_by_reaction,
+            "last_run_filtered_by_confidence": filtered_by_confidence,
+            "signal_profiles_available": available_profiles,
+            "signal_profiles_total": len(profile_types),
+            "triggers": {"has_new_events": has_new_events, "time_based_due": time_based_due},
+        }
+        self._persist_state("last_run_diagnostics", json.dumps(self._last_run_diagnostics))
 
         return filtered
 
