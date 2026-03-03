@@ -1355,8 +1355,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                 source_key = _classify_notification_source(notif_id)
                 if source_key:
                     life_os.source_weight_manager.record_dismissal(source_key)
-        except Exception:
-            pass  # Source weight feedback is non-critical
+        except Exception as e:
+            logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
         return {"status": "dismissed"}
 
     @app.post("/api/notifications/{notif_id}/act")
@@ -1368,8 +1368,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                 source_key = _classify_notification_source(notif_id)
                 if source_key:
                     life_os.source_weight_manager.record_engagement(source_key)
-        except Exception:
-            pass  # Source weight feedback is non-critical
+        except Exception as e:
+            logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
         return {"status": "acted_on"}
 
     @app.get("/api/notifications/digest")
@@ -2401,8 +2401,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                     life_os.source_weight_manager.record_engagement(source_key)
                 else:
                     life_os.source_weight_manager.record_dismissal(source_key)
-            except Exception:
-                pass  # Source weight feedback is non-critical
+            except Exception as e:
+                logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
 
         # When user marks an insight as "not about me", create a suppression fact
         # so the system learns not to regenerate similar insights.
@@ -3029,8 +3029,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                                         source_key = _classify_notification_source(notif_id)
                                         if source_key:
                                             life_os.source_weight_manager.record_dismissal(source_key)
-                                except Exception:
-                                    pass  # Source weight feedback is non-critical
+                                except Exception as e:
+                                    logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
 
                         elif cmd == "act_on_notification":
                             notif_id = msg.get("notification_id")
@@ -3042,8 +3042,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                                         source_key = _classify_notification_source(notif_id)
                                         if source_key:
                                             life_os.source_weight_manager.record_engagement(source_key)
-                                except Exception:
-                                    pass  # Source weight feedback is non-critical
+                                except Exception as e:
+                                    logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
 
                         # Prediction feedback commands: for direct prediction
                         # resolution with custom user response
@@ -3065,6 +3065,110 @@ def register_routes(app: FastAPI, life_os) -> None:
         except WebSocketDisconnect:
             # Client closed the connection — clean up the active connections list.
             ws_manager.disconnect(websocket)
+
+    # -------------------------------------------------------------------
+    # Admin — Pipeline Health Diagnostics
+    # -------------------------------------------------------------------
+
+    @app.get("/admin/pipeline-health")
+    async def pipeline_health():
+        """Return a comprehensive diagnostic snapshot of all pipeline components.
+
+        Each database probe and pipeline metric is wrapped in its own
+        try/except so that a corrupted or unavailable database never
+        blocks the healthy ones from reporting.
+        """
+        health: dict = {"databases": {}, "pipeline": {}, "source_weights": {}}
+
+        # --- Database probes ---
+        # Each probe runs an isolated COUNT query against a known table.
+        for db_name, probe_sql in [
+            ("events", "SELECT COUNT(*) FROM events"),
+            ("user_model", "SELECT COUNT(*) FROM signal_profiles"),
+            ("state", "SELECT COUNT(*) FROM tasks"),
+            ("preferences", "SELECT COUNT(*) FROM rules"),
+            ("entities", "SELECT COUNT(*) FROM contacts"),
+        ]:
+            try:
+                with life_os.db.get_connection(db_name) as conn:
+                    count = conn.execute(probe_sql).fetchone()[0]
+                health["databases"][db_name] = {"status": "ok", "probe_count": count}
+            except Exception as e:
+                health["databases"][db_name] = {"status": "error", "error": str(e)}
+
+        # --- Pipeline component metrics ---
+        # Signal profiles
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                count = conn.execute("SELECT COUNT(*) FROM signal_profiles").fetchone()[0]
+            health["pipeline"]["signal_profiles"] = count
+        except Exception as e:
+            health["pipeline"]["signal_profiles"] = {"error": str(e)}
+
+        # Episodes
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+            health["pipeline"]["episodes"] = count
+        except Exception as e:
+            health["pipeline"]["episodes"] = {"error": str(e)}
+
+        # Predictions
+        try:
+            with life_os.db.get_connection("user_model") as conn:
+                count = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+            health["pipeline"]["predictions"] = count
+        except Exception as e:
+            health["pipeline"]["predictions"] = {"error": str(e)}
+
+        # Pending notifications
+        try:
+            with life_os.db.get_connection("state") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM notifications WHERE read = 0 AND dismissed = 0"
+                ).fetchone()[0]
+            health["pipeline"]["pending_notifications"] = count
+        except Exception as e:
+            health["pipeline"]["pending_notifications"] = {"error": str(e)}
+
+        # Pending tasks
+        try:
+            with life_os.db.get_connection("state") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM tasks WHERE completed_at IS NULL"
+                ).fetchone()[0]
+            health["pipeline"]["pending_tasks"] = count
+        except Exception as e:
+            health["pipeline"]["pending_tasks"] = {"error": str(e)}
+
+        # Events in the last 24 hours
+        try:
+            with life_os.db.get_connection("events") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE timestamp > datetime('now', '-1 day')"
+                ).fetchone()[0]
+            health["pipeline"]["events_last_24h"] = count
+        except Exception as e:
+            health["pipeline"]["events_last_24h"] = {"error": str(e)}
+
+        # --- Source weight activity ---
+        try:
+            with life_os.db.get_connection("preferences") as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) as total, "
+                    "SUM(CASE WHEN user_set_at IS NOT NULL THEN 1 ELSE 0 END) as user_set, "
+                    "SUM(CASE WHEN ai_drift != 0 THEN 1 ELSE 0 END) as drifted "
+                    "FROM source_weights"
+                ).fetchone()
+                health["source_weights"] = {
+                    "total": row[0],
+                    "with_user_set": row[1],
+                    "with_drift": row[2],
+                }
+        except Exception as e:
+            health["source_weights"] = {"error": str(e)}
+
+        return health
 
     # -------------------------------------------------------------------
     # Admin — Connector Management
