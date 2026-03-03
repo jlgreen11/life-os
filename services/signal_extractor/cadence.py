@@ -67,6 +67,19 @@ class CadenceExtractor(BaseExtractor):
                         "response_time_seconds": response_time,
                     })
 
+        # ----- Inbound message tracking -----
+        # Record every inbound message per contact, regardless of whether it's
+        # a reply or new conversation.  This total is compared against
+        # per_contact_response_times to compute read_not_replied — a key
+        # avoidance detection signal defined in CadenceProfile.
+        if event_type in [EventType.EMAIL_RECEIVED.value, EventType.MESSAGE_RECEIVED.value]:
+            contact = payload.get("sender") or payload.get("from_address")
+            if contact:
+                signals.append({
+                    "type": "cadence_inbound_received",
+                    "contact_id": contact,
+                })
+
         # ----- Conversation initiation tracking -----
         # Detect whether this message starts a new conversation (initiation)
         # rather than continuing one (reply). Used to compute
@@ -187,12 +200,14 @@ class CadenceExtractor(BaseExtractor):
             "per_contact_response_times": defaultdict(list),
             "per_channel_response_times": defaultdict(list),
             "per_contact_initiations": {},
+            "per_contact_inbound_count": {},
         }
 
-        # Ensure per_contact_initiations exists for profiles bootstrapped
-        # before this field was added.
+        # Ensure fields exist for profiles bootstrapped before they were added.
         if "per_contact_initiations" not in data:
             data["per_contact_initiations"] = {}
+        if "per_contact_inbound_count" not in data:
+            data["per_contact_inbound_count"] = {}
 
         for signal in signals:
             if signal["type"] == "cadence_response_time":
@@ -239,6 +254,16 @@ class CadenceExtractor(BaseExtractor):
                         data["per_contact_initiations"][contact] = {"user": 0, "contact": 0}
                     data["per_contact_initiations"][contact][initiator] += 1
 
+            elif signal["type"] == "cadence_inbound_received":
+                # Increment total inbound message count per contact.  Used by
+                # _compute_read_not_replied to detect contacts whose messages
+                # the user consistently ignores.
+                contact = signal.get("contact_id")
+                if contact:
+                    data["per_contact_inbound_count"][contact] = (
+                        data["per_contact_inbound_count"].get(contact, 0) + 1
+                    )
+
         # Cap the global response-time list to prevent unbounded growth.
         # Keeping the most recent 1000 entries provides enough data for
         # statistical baselines while bounding storage.
@@ -269,6 +294,7 @@ class CadenceExtractor(BaseExtractor):
           - ``avg_response_time_by_contact``  — reply latency per contact
           - ``avg_response_time_by_channel``  — reply latency per channel
           - ``initiates_ratio_by_contact``    — who starts conversations per contact
+          - ``read_not_replied``              — contacts whose messages are consistently unreplied
 
         This is a pure recomputation (no I/O): it mutates *data* in place and
         the caller is responsible for persisting to the store.
@@ -283,6 +309,7 @@ class CadenceExtractor(BaseExtractor):
         self._compute_contact_response_times(data)
         self._compute_channel_response_times(data)
         self._compute_initiates_ratio(data)
+        self._compute_read_not_replied(data)
 
     def _compute_peak_hours(self, data: dict) -> None:
         """Derive peak activity hours from the hourly_activity histogram.
@@ -521,3 +548,55 @@ class CadenceExtractor(BaseExtractor):
 
         if ratios:
             data["initiates_ratio_by_contact"] = ratios
+
+    def _compute_read_not_replied(self, data: dict) -> None:
+        """Derive per-contact unreplied message counts for avoidance detection.
+
+        Compares ``per_contact_inbound_count`` (total messages received per
+        contact) against ``per_contact_response_times`` (messages the user
+        actually replied to) to identify contacts whose messages are
+        consistently left without a reply.
+
+        Only contacts with at least 3 inbound messages are included to avoid
+        noise from low-volume contacts.  The result is a conservative
+        overcount because ``per_contact_response_times`` only records
+        successful response-time lookups — this is acceptable for avoidance
+        detection where false positives are preferable to false negatives.
+
+        Stores results in ``data["read_not_replied"]`` as a list of dicts
+        sorted by ``unreplied_ratio`` descending (most-ignored contacts
+        first), capped at 50 entries::
+
+            [{"contact_id": str,
+              "unreplied_count": int,
+              "unreplied_ratio": float,
+              "total_inbound": int}, ...]
+        """
+        inbound_counts = data.get("per_contact_inbound_count", {})
+        response_times = data.get("per_contact_response_times", {})
+
+        if not inbound_counts:
+            return
+
+        entries = []
+        for contact, inbound_count in inbound_counts.items():
+            # Skip low-volume contacts to avoid noise.
+            if inbound_count < 3:
+                continue
+
+            replied_count = len(response_times.get(contact, []))
+            unreplied = inbound_count - replied_count
+
+            if unreplied > 0:
+                entries.append({
+                    "contact_id": contact,
+                    "unreplied_count": unreplied,
+                    "unreplied_ratio": unreplied / inbound_count,
+                    "total_inbound": inbound_count,
+                })
+
+        # Sort by unreplied_ratio descending (most-ignored contacts first).
+        entries.sort(key=lambda e: e["unreplied_ratio"], reverse=True)
+
+        # Cap at 50 contacts to bound storage.
+        data["read_not_replied"] = entries[:50]
