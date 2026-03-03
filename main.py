@@ -90,7 +90,7 @@ class LifeOS:
 
         # Used to signal all background tasks (prediction loop, etc.) to stop
         self.shutdown_event = asyncio.Event()
-        self.background_tasks: dict[str, asyncio.Task] = {}  # Track background loops for exception monitoring
+        self.background_tasks: dict[str, dict] = {}  # Track background loops: {task, restarts, last_restart}
 
         # --- Core infrastructure ---
         # Initialization order matters: DB must be created first because almost
@@ -217,46 +217,79 @@ class LifeOS:
             "connectors": {},
         }
 
-    def _start_background_task(self, name: str, coro):
+    def _start_background_task(self, name: str, coro_factory, max_restarts: int = 10):
         """
-        Start and monitor a background task with exception tracking.
+        Start and monitor a background task with auto-restart on crash.
 
         Background tasks (prediction loop, insight loop, etc.) run indefinitely
         in the background via asyncio.create_task(). If these tasks crash due to
-        an unhandled exception, asyncio silently swallows the error and the task
-        dies — leaving the system in a degraded state with no indication of failure.
+        an unhandled exception, this method automatically restarts them with
+        exponential backoff (30s base, doubling each restart, capped at 600s).
 
-        This helper:
-        1. Creates the task and stores it by name for tracking
-        2. Adds a done callback that logs exceptions if the task crashes
-        3. Enables monitoring via /health endpoint or runtime inspection
+        After max_restarts consecutive failures, the task is permanently stopped
+        and a CRITICAL log is emitted.
 
-        Without this, background loop failures are invisible. The system continues
-        running but critical functionality (predictions, insights, routine detection)
-        silently stops working.
+        CancelledError (normal shutdown) does NOT trigger a restart.
 
         Args:
             name: Human-readable task name for logging and monitoring
-            coro: The async coroutine to run as a background task
+            coro_factory: A callable (no args) that returns a new coroutine each
+                time it is called. Typically a bound method like self._prediction_loop.
+            max_restarts: Maximum number of restart attempts before giving up.
 
         Example:
-            self._start_background_task("prediction_loop", self._prediction_loop())
+            self._start_background_task("prediction_loop", self._prediction_loop)
         """
-        task = asyncio.create_task(coro)
-        self.background_tasks[name] = task
+
+        async def _restart_wrapper():
+            """Run the coroutine factory in a loop, restarting on crash with backoff."""
+            restarts = 0
+            while True:
+                try:
+                    await coro_factory()
+                    # Coroutine returned normally — exit the wrapper
+                    return
+                except asyncio.CancelledError:
+                    # Normal shutdown — propagate so the task is properly cancelled
+                    raise
+                except Exception as e:
+                    restarts += 1
+                    self.background_tasks[name]["restarts"] = restarts
+                    self.background_tasks[name]["last_restart"] = datetime.now(timezone.utc).isoformat()
+
+                    if restarts > max_restarts:
+                        logger.critical(
+                            "Background task '%s' exceeded max restarts (%d) — "
+                            "permanently stopped. Last error: %s",
+                            name, max_restarts, e, exc_info=True,
+                        )
+                        return
+
+                    # Exponential backoff: 30s, 60s, 120s, 240s, 480s, 600s (capped)
+                    backoff = min(30 * (2 ** (restarts - 1)), 600)
+                    logger.warning(
+                        "Background task '%s' crashed (restart %d/%d): %s — "
+                        "restarting in %ds",
+                        name, restarts, max_restarts, e, backoff, exc_info=True,
+                    )
+                    await asyncio.sleep(backoff)
+
+        task = asyncio.create_task(_restart_wrapper())
+        self.background_tasks[name] = {
+            "task": task,
+            "restarts": 0,
+            "last_restart": None,
+        }
 
         def handle_task_exception(task: asyncio.Task):
-            """Log exception if background task crashes."""
+            """Log exception if the restart wrapper itself crashes unexpectedly."""
             try:
-                # Accessing result() will re-raise any exception that occurred
                 task.result()
             except asyncio.CancelledError:
-                # Normal shutdown, not an error
                 pass
             except Exception as e:
-                # Background task crashed — log the full traceback so we can diagnose
                 logger.critical(
-                    "Background task '%s' crashed: %s — system is running in degraded mode",
+                    "Background task '%s' restart wrapper crashed: %s",
                     name, e, exc_info=True,
                 )
 
@@ -440,18 +473,18 @@ class LifeOS:
 
         # 6. Start background loops (prediction, insight, semantic inference)
         logger.info("[6/7] Starting background services...")
-        self._start_background_task("prediction_loop", self._prediction_loop())
-        self._start_background_task("insight_loop", self._insight_loop())
-        self._start_background_task("semantic_inference_loop", self._semantic_inference_loop())
-        self._start_background_task("routine_detection_loop", self._routine_detection_loop())
-        self._start_background_task("behavioral_accuracy_loop", self._behavioral_accuracy_loop())
-        self._start_background_task("task_completion_loop", self._task_completion_loop())
-        self._start_background_task("task_overdue_loop", self._task_overdue_loop())
-        self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
-        self._start_background_task("db_health_loop", self._db_health_loop())
-        self._start_background_task("conflict_detection_loop", self._conflict_detection_loop())
-        self._start_background_task("connector_health_monitor_loop", self._connector_health_monitor_loop())
-        self._start_background_task("nats_reconnect_loop", self._nats_reconnect_loop())
+        self._start_background_task("prediction_loop", self._prediction_loop)
+        self._start_background_task("insight_loop", self._insight_loop)
+        self._start_background_task("semantic_inference_loop", self._semantic_inference_loop)
+        self._start_background_task("routine_detection_loop", self._routine_detection_loop)
+        self._start_background_task("behavioral_accuracy_loop", self._behavioral_accuracy_loop)
+        self._start_background_task("task_completion_loop", self._task_completion_loop)
+        self._start_background_task("task_overdue_loop", self._task_overdue_loop)
+        self._start_background_task("digest_delivery_loop", self._digest_delivery_loop)
+        self._start_background_task("db_health_loop", self._db_health_loop)
+        self._start_background_task("conflict_detection_loop", self._conflict_detection_loop)
+        self._start_background_task("connector_health_monitor_loop", self._connector_health_monitor_loop)
+        self._start_background_task("nats_reconnect_loop", self._nats_reconnect_loop)
 
         # 7. Launch web server
         logger.info("[7/7] Starting web server...")
