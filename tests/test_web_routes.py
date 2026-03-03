@@ -1359,3 +1359,152 @@ def test_briefing_returns_200_on_ai_failure(client, mock_life_os):
     assert data["briefing"] is None
     assert "generated_at" in data
     assert data["error"] == "Briefing generation temporarily unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Backfill trigger — concurrent invocation guard
+# ---------------------------------------------------------------------------
+
+
+async def test_backfill_trigger_rejects_concurrent(mock_life_os):
+    """POST /api/admin/backfills/trigger returns 409 if a backfill is already running.
+
+    Uses httpx.AsyncClient so the background task persists across requests within
+    the same event loop. The first backfill blocks on asyncio.sleep so it stays
+    alive when the second trigger fires.
+    """
+    import asyncio
+
+    import httpx
+
+    # Create a fresh app so the _backfill_task closure state is clean
+    app = create_web_app(mock_life_os)
+
+    # Make the first backfill method sleep for a long time (simulates slow work)
+    async def _sleep_long():
+        await asyncio.sleep(3600)
+
+    mock_life_os._backfill_relationship_profile_if_needed = AsyncMock(side_effect=_sleep_long)
+    mock_life_os._clean_relationship_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_temporal_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_topic_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_linguistic_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_cadence_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_mood_signals_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_spatial_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_decision_profile_if_needed = AsyncMock()
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # First call — should start successfully
+        resp1 = await client.post("/api/admin/backfills/trigger")
+        assert resp1.status_code == 200
+        assert resp1.json()["status"] == "started"
+
+        # Yield to let the event loop schedule the background task (but it will block
+        # on asyncio.sleep so it stays alive).
+        await asyncio.sleep(0)
+
+        # Second call while first is still running — should be rejected
+        resp2 = await client.post("/api/admin/backfills/trigger")
+        assert resp2.status_code == 409
+        data2 = resp2.json()
+        assert data2["status"] == "already_running"
+        assert "already in progress" in data2["message"]
+
+
+async def test_backfill_trigger_allows_after_completion(mock_life_os):
+    """POST /api/admin/backfills/trigger succeeds again after a previous backfill completes."""
+    import asyncio
+
+    import httpx
+
+    # Create a fresh app so the _backfill_task closure state is clean
+    app = create_web_app(mock_life_os)
+
+    # Make all backfill methods instant no-ops
+    mock_life_os._backfill_relationship_profile_if_needed = AsyncMock()
+    mock_life_os._clean_relationship_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_temporal_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_topic_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_linguistic_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_cadence_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_mood_signals_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_spatial_profile_if_needed = AsyncMock()
+    mock_life_os._backfill_decision_profile_if_needed = AsyncMock()
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # First call
+        resp1 = await client.post("/api/admin/backfills/trigger")
+        assert resp1.status_code == 200
+        assert resp1.json()["status"] == "started"
+
+        # Let the event loop run the instant backfill task to completion
+        await asyncio.sleep(0.05)
+
+        # Second call — task should have finished, so this should succeed
+        resp2 = await client.post("/api/admin/backfills/trigger")
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "started"
+
+
+# ---------------------------------------------------------------------------
+# Notification source classification — prediction domain fix
+# ---------------------------------------------------------------------------
+
+
+def test_classify_notification_source_prediction_returns_none(client, mock_life_os):
+    """_classify_notification_source returns None for prediction-domain notifications.
+
+    Previously the prediction domain was hardcoded to map to 'email.work', which
+    silently biased source weight tuning. Now it returns None so weight updates
+    are skipped for cross-domain predictions.
+    """
+    # Set up the mock DB to return a prediction-domain notification with no source event
+    mock_conn = Mock()
+    mock_conn.execute = Mock(return_value=Mock(
+        fetchone=Mock(return_value={"source_event_id": None, "domain": "prediction"})
+    ))
+    mock_life_os.db.get_connection = Mock(
+        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    )
+
+    # Dismiss the notification — this triggers _classify_notification_source internally
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.record_dismissal = Mock()
+
+    response = client.post("/api/notifications/test-pred-notif/dismiss")
+    assert response.status_code == 200
+
+    # The key assertion: record_dismissal should NOT have been called because
+    # the prediction domain now returns None, and the `if source_key:` guard skips it
+    mock_life_os.source_weight_manager.record_dismissal.assert_not_called()
+
+
+def test_feedback_skips_weight_update_for_unclassified_source(client, mock_life_os):
+    """Dismissing a prediction-domain notification must not update email.work source weight.
+
+    Acts on a notification whose domain is 'prediction' and verifies that neither
+    record_engagement nor record_dismissal is called on source_weight_manager.
+    """
+    # Set up the mock DB to return a prediction-domain notification with no source event
+    mock_conn = Mock()
+    mock_conn.execute = Mock(return_value=Mock(
+        fetchone=Mock(return_value={"source_event_id": None, "domain": "prediction"})
+    ))
+    mock_life_os.db.get_connection = Mock(
+        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    )
+
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.record_engagement = Mock()
+    mock_life_os.source_weight_manager.record_dismissal = Mock()
+
+    # Act on the notification (positive signal path)
+    response = client.post("/api/notifications/test-pred-notif/act")
+    assert response.status_code == 200
+
+    # Neither engagement nor dismissal should be recorded for prediction-domain notifications
+    mock_life_os.source_weight_manager.record_engagement.assert_not_called()
+    mock_life_os.source_weight_manager.record_dismissal.assert_not_called()

@@ -189,9 +189,14 @@ def test_notification_without_source_or_domain_graceful(client, life_os_with_wei
 # Test: Prediction-domain notification uses domain-based classification
 # -------------------------------------------------------------------
 
-def test_prediction_notification_uses_domain_classification(client, life_os_with_weights):
-    """Prediction notifications (which may not have a real source event in the events table)
-    should fall back to domain-based classification."""
+def test_prediction_notification_skips_source_weight_update(client, life_os_with_weights):
+    """Prediction notifications are cross-domain and should NOT update any source weight.
+
+    Previously the prediction domain was incorrectly hardcoded to map to 'email.work',
+    which silently biased the email.work weight based on prediction interactions rather
+    than actual email quality. Now prediction-domain notifications return None from
+    _classify_notification_source, so weight updates are skipped entirely.
+    """
     db = life_os_with_weights.db
 
     # Prediction notifications have domain='prediction' and a source_event_id that
@@ -204,9 +209,9 @@ def test_prediction_notification_uses_domain_classification(client, life_os_with
     response = client.post("/api/notifications/notif-005/dismiss")
     assert response.status_code == 200
 
-    # Prediction domain maps to "email.work" as a cross-domain default
+    # Prediction domain should NOT update email.work — the weight must remain unchanged
     after = _get_weight_row(db, "email.work")
-    assert after["dismissals"] == 1
+    assert after["dismissals"] == 0
 
 
 # -------------------------------------------------------------------
