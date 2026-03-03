@@ -140,7 +140,7 @@ class GoogleConnector(BaseConnector):
             logger.error("Auth failed: %s", e)
             return False
         except Exception as e:
-            self._auth_error = f"Authentication failed: {e}"
+            self._auth_error = f"Authentication failed: {e}. Try re-authenticating via /admin connector panel."
             logger.error("Auth failed: %s", e)
             return False
 
@@ -882,7 +882,20 @@ class GoogleConnector(BaseConnector):
                     "email": profile.get("emailAddress"),
                 }
         except Exception as e:
-            return {"status": "error", "connector": self.CONNECTOR_ID, "details": str(e)}
+            # Authenticated but API call failed — gather full diagnostics
+            error_type = self._classify_api_error(e)
+            diagnostics = self._build_health_diagnostics()
+            diagnostics["status"] = "error"
+            diagnostics["details"] = str(e)
+            diagnostics["error_type"] = error_type
+            diagnostics["recovery_hint"] = self._recovery_hint_for_error_type(error_type)
+
+            # Clear stale service objects so next attempt triggers re-auth
+            self._gmail_service = None
+            self._calendar_service = None
+            self._people_service = None
+
+            return diagnostics
 
         # Not authenticated — gather diagnostics and attempt recovery
         diagnostics = self._build_health_diagnostics()
@@ -965,3 +978,49 @@ class GoogleConnector(BaseConnector):
             "recovery_hint": recovery_hint,
             "last_sync": last_sync,
         }
+
+    @staticmethod
+    def _classify_api_error(exc: Exception) -> str:
+        """Classify a Google API exception into an actionable error type.
+
+        Returns a short string identifying the failure category so health_check
+        callers can programmatically react (e.g. trigger re-auth for token errors).
+        """
+        exc_str = str(exc).lower()
+        exc_type = type(exc).__name__
+
+        # googleapiclient.errors.HttpError carries a resp.status attribute
+        status = getattr(getattr(exc, "resp", None), "status", None)
+
+        if status == 403 or "403" in exc_str or "forbidden" in exc_str:
+            return "scope_revoked"
+        if status == 401 or "401" in exc_str or "unauthorized" in exc_str:
+            return "token_expired"
+        if "connection" in exc_type.lower() or "connection" in exc_str or "timeout" in exc_str:
+            return "network_error"
+        return "unknown"
+
+    @staticmethod
+    def _recovery_hint_for_error_type(error_type: str) -> str:
+        """Return user-facing recovery guidance for a given error type.
+
+        Each hint tells the user exactly what to do to restore the connector.
+        """
+        hints = {
+            "scope_revoked": (
+                "Re-authenticate via /admin connector panel — "
+                "the current token may have been revoked or scopes changed"
+            ),
+            "token_expired": (
+                "Re-authenticate via /admin connector panel — "
+                "the access token has expired and could not be refreshed"
+            ),
+            "network_error": (
+                "Check network connectivity — "
+                "the Google API is unreachable. The connector will retry on next health check."
+            ),
+        }
+        return hints.get(
+            error_type,
+            "Re-authenticate via /admin connector panel or check logs for details",
+        )
