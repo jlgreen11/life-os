@@ -69,6 +69,9 @@ struct SettingsView: View {
                         Text("Context Snapshot Interval: \(Int(contextInterval))s")
                             .font(.subheadline)
                         Slider(value: $contextInterval, in: 60...900, step: 60)
+                            .onChange(of: contextInterval) { _, newValue in
+                                contextEngine.updateSnapshotInterval(newValue)
+                            }
                         Text("How often contextual data is captured and sent to the backend.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -111,6 +114,8 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .onAppear {
                 serverURL = appState.serverURL
+                // Load persisted snapshot interval from ContextEngine
+                contextInterval = contextEngine.snapshotInterval
             }
             .alert("Reset All Data?", isPresented: $showingResetAlert) {
                 Button("Reset", role: .destructive) {
