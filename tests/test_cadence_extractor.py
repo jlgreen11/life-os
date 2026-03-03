@@ -774,3 +774,387 @@ def test_profile_accumulates_daily_activity_histogram(
 
     assert daily["monday"] == 4
     assert daily["friday"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Inbound Message Tracking & read_not_replied Tests
+# ---------------------------------------------------------------------------
+
+
+def test_inbound_messages_increment_per_contact_inbound_count(
+    cadence_extractor, user_model_store
+):
+    """Verify that inbound messages increment per_contact_inbound_count correctly."""
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    # 3 inbound emails from Alice
+    for i in range(3):
+        event = {
+            "id": f"evt-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "from_address": "alice@example.com",
+                "body": f"Message {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(event)
+
+    # 2 inbound messages from Bob
+    for i in range(2):
+        event = {
+            "id": f"evt-bob-{i}",
+            "type": EventType.MESSAGE_RECEIVED.value,
+            "source": "imessage",
+            "timestamp": timestamp,
+            "payload": {
+                "sender": "bob@example.com",
+                "body": f"Hey {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("cadence")
+    inbound = profile["data"]["per_contact_inbound_count"]
+
+    assert inbound["alice@example.com"] == 3
+    assert inbound["bob@example.com"] == 2
+
+
+def test_read_not_replied_computed_correctly(
+    cadence_extractor, event_store, user_model_store
+):
+    """Verify read_not_replied is computed when some contacts have replies and others don't."""
+    original_time = datetime.now(timezone.utc)
+    timestamp = original_time.isoformat()
+
+    # Alice sends 5 messages, user replies to 2
+    for i in range(5):
+        inbound = {
+            "id": f"evt-alice-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "message_id": f"msg-alice-{i}",
+                "from_address": "alice@example.com",
+                "body": f"Alice msg {i}",
+            },
+            "metadata": {},
+        }
+        event_store.store_event(inbound)
+        cadence_extractor.extract(inbound)
+
+    # Reply to 2 of Alice's messages
+    for i in range(2):
+        reply = {
+            "id": f"evt-alice-reply-{i}",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "email",
+            "timestamp": (original_time + timedelta(minutes=5)).isoformat(),
+            "payload": {
+                "is_reply": True,
+                "in_reply_to": f"msg-alice-{i}",
+                "to_addresses": ["alice@example.com"],
+                "body": f"Reply {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(reply)
+
+    # Bob sends 4 messages, user never replies
+    for i in range(4):
+        inbound = {
+            "id": f"evt-bob-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "from_address": "bob@example.com",
+                "body": f"Bob msg {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(inbound)
+
+    profile = user_model_store.get_signal_profile("cadence")
+    rnr = profile["data"]["read_not_replied"]
+
+    # Both Alice (3 unreplied out of 5) and Bob (4 out of 4) should appear
+    contacts = {entry["contact_id"]: entry for entry in rnr}
+
+    assert "bob@example.com" in contacts
+    assert contacts["bob@example.com"]["unreplied_count"] == 4
+    assert contacts["bob@example.com"]["total_inbound"] == 4
+    assert contacts["bob@example.com"]["unreplied_ratio"] == 1.0
+
+    assert "alice@example.com" in contacts
+    assert contacts["alice@example.com"]["unreplied_count"] == 3
+    assert contacts["alice@example.com"]["total_inbound"] == 5
+    assert abs(contacts["alice@example.com"]["unreplied_ratio"] - 0.6) < 0.01
+
+
+def test_read_not_replied_excludes_low_volume_contacts(
+    cadence_extractor, user_model_store
+):
+    """Verify contacts with fewer than 3 inbound messages are excluded."""
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    # Only 2 inbound messages from a contact (below threshold)
+    for i in range(2):
+        event = {
+            "id": f"evt-low-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "from_address": "lowvol@example.com",
+                "body": f"Message {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("cadence")
+    rnr = profile["data"].get("read_not_replied", [])
+
+    # Should not include the low-volume contact
+    contacts = [entry["contact_id"] for entry in rnr]
+    assert "lowvol@example.com" not in contacts
+
+
+def test_read_not_replied_ratio_is_correct(
+    cadence_extractor, event_store, user_model_store
+):
+    """Verify unreplied_ratio = unreplied_count / total_inbound."""
+    original_time = datetime.now(timezone.utc)
+    timestamp = original_time.isoformat()
+
+    # 10 inbound messages, user replies to 3
+    for i in range(10):
+        inbound = {
+            "id": f"evt-ratio-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "message_id": f"msg-ratio-{i}",
+                "from_address": "ratio@example.com",
+                "body": f"Msg {i}",
+            },
+            "metadata": {},
+        }
+        event_store.store_event(inbound)
+        cadence_extractor.extract(inbound)
+
+    for i in range(3):
+        reply = {
+            "id": f"evt-ratio-reply-{i}",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "email",
+            "timestamp": (original_time + timedelta(minutes=1)).isoformat(),
+            "payload": {
+                "is_reply": True,
+                "in_reply_to": f"msg-ratio-{i}",
+                "to_addresses": ["ratio@example.com"],
+                "body": f"Reply {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(reply)
+
+    profile = user_model_store.get_signal_profile("cadence")
+    rnr = profile["data"]["read_not_replied"]
+
+    entry = next(e for e in rnr if e["contact_id"] == "ratio@example.com")
+    assert entry["unreplied_count"] == 7
+    assert entry["total_inbound"] == 10
+    # 7 / 10 = 0.7
+    assert abs(entry["unreplied_ratio"] - 0.7) < 0.01
+
+
+def test_read_not_replied_sorted_by_ratio_descending(
+    cadence_extractor, event_store, user_model_store
+):
+    """Verify the list is sorted by unreplied_ratio descending."""
+    original_time = datetime.now(timezone.utc)
+    timestamp = original_time.isoformat()
+
+    # Contact A: 5 inbound, 4 replies → ratio 0.2
+    for i in range(5):
+        inbound = {
+            "id": f"evt-a-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "message_id": f"msg-a-{i}",
+                "from_address": "a@example.com",
+                "body": f"A msg {i}",
+            },
+            "metadata": {},
+        }
+        event_store.store_event(inbound)
+        cadence_extractor.extract(inbound)
+
+    for i in range(4):
+        reply = {
+            "id": f"evt-a-reply-{i}",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "email",
+            "timestamp": (original_time + timedelta(minutes=1)).isoformat(),
+            "payload": {
+                "is_reply": True,
+                "in_reply_to": f"msg-a-{i}",
+                "to_addresses": ["a@example.com"],
+                "body": f"Reply {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(reply)
+
+    # Contact B: 5 inbound, 0 replies → ratio 1.0
+    for i in range(5):
+        inbound = {
+            "id": f"evt-b-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "from_address": "b@example.com",
+                "body": f"B msg {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(inbound)
+
+    # Contact C: 4 inbound, 2 replies → ratio 0.5
+    for i in range(4):
+        inbound = {
+            "id": f"evt-c-in-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": timestamp,
+            "payload": {
+                "message_id": f"msg-c-{i}",
+                "from_address": "c@example.com",
+                "body": f"C msg {i}",
+            },
+            "metadata": {},
+        }
+        event_store.store_event(inbound)
+        cadence_extractor.extract(inbound)
+
+    for i in range(2):
+        reply = {
+            "id": f"evt-c-reply-{i}",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "email",
+            "timestamp": (original_time + timedelta(minutes=1)).isoformat(),
+            "payload": {
+                "is_reply": True,
+                "in_reply_to": f"msg-c-{i}",
+                "to_addresses": ["c@example.com"],
+                "body": f"Reply {i}",
+            },
+            "metadata": {},
+        }
+        cadence_extractor.extract(reply)
+
+    profile = user_model_store.get_signal_profile("cadence")
+    rnr = profile["data"]["read_not_replied"]
+
+    # Should be sorted: B (1.0) > C (0.5) > A (0.2)
+    assert len(rnr) == 3
+    assert rnr[0]["contact_id"] == "b@example.com"
+    assert rnr[1]["contact_id"] == "c@example.com"
+    assert rnr[2]["contact_id"] == "a@example.com"
+
+
+def test_read_not_replied_backward_compat_missing_inbound_count(
+    cadence_extractor, user_model_store
+):
+    """Verify that profiles without per_contact_inbound_count are handled gracefully."""
+    # Simulate an old profile without per_contact_inbound_count by writing one directly
+    user_model_store.update_signal_profile("cadence", {
+        "response_times": [],
+        "hourly_activity": {},
+        "daily_activity": {},
+        "per_contact_response_times": {},
+        "per_channel_response_times": {},
+        "per_contact_initiations": {},
+        # Intentionally omitting per_contact_inbound_count
+    })
+
+    # Processing a new inbound event should work without errors
+    timestamp = datetime.now(timezone.utc).isoformat()
+    event = {
+        "id": "evt-compat-1",
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "email",
+        "timestamp": timestamp,
+        "payload": {
+            "from_address": "compat@example.com",
+            "body": "Backward compat test",
+        },
+        "metadata": {},
+    }
+    cadence_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("cadence")
+    # Should have created the field and counted the message
+    assert profile["data"]["per_contact_inbound_count"]["compat@example.com"] == 1
+
+
+def test_inbound_signal_emitted_for_all_received_messages(
+    cadence_extractor, user_model_store
+):
+    """Verify cadence_inbound_received is emitted for both replies and new conversations."""
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    # Non-reply inbound
+    event_new = {
+        "id": "evt-new-conv",
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "email",
+        "timestamp": timestamp,
+        "payload": {
+            "from_address": "sender@example.com",
+            "body": "Starting a new conversation",
+        },
+        "metadata": {},
+    }
+    signals_new = cadence_extractor.extract(event_new)
+
+    # Reply inbound
+    event_reply = {
+        "id": "evt-reply-conv",
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "email",
+        "timestamp": timestamp,
+        "payload": {
+            "is_reply": True,
+            "in_reply_to": "some-msg-id",
+            "from_address": "sender@example.com",
+            "body": "Replying to your message",
+        },
+        "metadata": {},
+    }
+    signals_reply = cadence_extractor.extract(event_reply)
+
+    # Both should have cadence_inbound_received signals
+    inbound_new = [s for s in signals_new if s["type"] == "cadence_inbound_received"]
+    inbound_reply = [s for s in signals_reply if s["type"] == "cadence_inbound_received"]
+    assert len(inbound_new) == 1
+    assert len(inbound_reply) == 1
+
+    # Both should point to the same contact
+    assert inbound_new[0]["contact_id"] == "sender@example.com"
+    assert inbound_reply[0]["contact_id"] == "sender@example.com"
+
+    # Count should be 2 total
+    profile = user_model_store.get_signal_profile("cadence")
+    assert profile["data"]["per_contact_inbound_count"]["sender@example.com"] == 2
