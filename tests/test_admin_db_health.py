@@ -1,7 +1,7 @@
 """
 Tests for admin database health endpoints:
 
-- GET  /api/admin/db-integrity      — PRAGMA quick_check on all 5 databases
+- GET  /api/admin/db-integrity      — integrity_check + blob probes on all 5 databases
 - POST /api/admin/rebuild-user-model — Runtime recovery of corrupted user_model.db
 """
 
@@ -134,6 +134,40 @@ class TestDbIntegrity:
         # Should parse without error
         dt.fromisoformat(data["checked_at"])
 
+    def test_detects_blob_probe_corruption(self, db):
+        """Endpoint detects blob overflow page corruption via get_database_health().
+
+        Simulates a scenario where PRAGMA quick_check passes but blob probes
+        fail — the kind of corruption only caught by the thorough health check.
+        """
+        # Mock get_database_health to return blob probe failure for user_model
+        fake_health = {
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {
+                "status": "corrupted",
+                "errors": ["blob probe failed: database disk image is malformed"],
+                "path": "/tmp/user_model.db",
+                "size_bytes": 4096,
+            },
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+        life_os = _make_life_os_with_real_db(db)
+        life_os.db.get_database_health = Mock(return_value=fake_health)
+
+        app = create_web_app(life_os)
+        client = TestClient(app)
+
+        resp = client.get("/api/admin/db-integrity")
+        assert resp.status_code == 200
+
+        data = resp.json()
+        assert data["databases"]["user_model"]["status"] == "corrupted"
+        assert "blob probe failed" in data["databases"]["user_model"]["detail"]
+        # Other databases should be ok
+        assert data["databases"]["events"]["status"] == "ok"
+
 
 # ---------------------------------------------------------------------------
 # POST /api/admin/rebuild-user-model
@@ -143,7 +177,7 @@ class TestRebuildUserModel:
     """Tests for the runtime user_model.db rebuild endpoint."""
 
     def test_skips_healthy_db(self, db):
-        """When user_model.db passes quick_check, status is 'skipped'."""
+        """When user_model.db passes full health check, status is 'skipped'."""
         life_os = _make_life_os_with_real_db(db)
         app = create_web_app(life_os)
         client = TestClient(app)
@@ -224,3 +258,38 @@ class TestRebuildUserModel:
             if "user_model.db" in f and ("corrupt" in f.lower())
         ]
         assert len(backup_files) >= 1, f"Expected backup file, found: {os.listdir(tmp_data_dir)}"
+
+    def test_rebuild_proceeds_on_blob_probe_corruption(self, db):
+        """Rebuild proceeds when blob probes detect corruption (not just B-tree).
+
+        Simulates a scenario where PRAGMA quick_check would pass but blob
+        overflow probes detect corruption — the rebuild should proceed.
+        """
+        # Mock get_database_health to report user_model as corrupted via blob probes
+        fake_health = {
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {
+                "status": "corrupted",
+                "errors": ["blob probe failed: database disk image is malformed"],
+                "path": "/tmp/user_model.db",
+                "size_bytes": 4096,
+            },
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+        life_os = _make_life_os_with_real_db(db)
+        life_os.db.get_database_health = Mock(return_value=fake_health)
+
+        app = create_web_app(life_os)
+        client = TestClient(app)
+
+        resp = client.post("/api/admin/rebuild-user-model")
+        assert resp.status_code == 200
+
+        data = resp.json()
+        # Should NOT be "skipped" — it should attempt the rebuild
+        assert data["status"] != "skipped", (
+            "Rebuild was skipped despite blob probe corruption — "
+            "the endpoint is still using quick_check instead of get_database_health()"
+        )
