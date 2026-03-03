@@ -3695,7 +3695,13 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/admin/db-integrity")
     async def check_db_integrity():
-        """Run PRAGMA quick_check on all databases and report integrity status.
+        """Run thorough integrity checks on all databases and report status.
+
+        Uses ``DatabaseManager.get_database_health()`` which runs
+        ``PRAGMA integrity_check`` plus blob overflow page probes for
+        ``user_model.db`` (catching corruption that ``PRAGMA quick_check``
+        misses in large JSON TEXT columns), and ``PRAGMA quick_check`` for
+        the other four databases.
 
         Returns a map of database name → {status, detail} for each of the five
         SQLite databases.  ``status`` is one of ``"ok"``, ``"corrupted"``, or
@@ -3711,30 +3717,29 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "checked_at": "2026-03-02T14:00:00+00:00"
             }
         """
+        import asyncio
+
+        health = await asyncio.to_thread(life_os.db.get_database_health)
+
+        # Adapt get_database_health() output to the endpoint's response format
         results = {}
-        for db_name in ["events", "entities", "state", "user_model", "preferences"]:
-            try:
-                with life_os.db.get_connection(db_name) as conn:
-                    check = conn.execute("PRAGMA quick_check").fetchone()
-                    # sqlite3.Row or tuple — handle both
-                    value = check[0] if check else "unknown"
-                    results[db_name] = {
-                        "status": "ok" if value == "ok" else "corrupted",
-                        "detail": value,
-                    }
-            except Exception as e:
-                results[db_name] = {
-                    "status": "error",
-                    "detail": str(e),
-                }
+        for db_name, info in health.items():
+            detail = "; ".join(info["errors"]) if info["errors"] else "ok"
+            results[db_name] = {
+                "status": info["status"],
+                "detail": detail,
+            }
         return {"databases": results, "checked_at": datetime.now(timezone.utc).isoformat()}
 
     @app.post("/api/admin/rebuild-user-model")
     async def rebuild_user_model():
         """Rebuild user_model.db from scratch if corrupted.
 
-        Checks integrity first and skips the rebuild when the database is
-        healthy.  When corruption is detected the flow is:
+        Uses ``DatabaseManager.get_database_health()`` (integrity_check +
+        blob overflow probes) to detect corruption — this catches overflow
+        page damage that ``PRAGMA quick_check`` misses.
+
+        When corruption is detected the flow is:
 
         1. Back up the corrupted file (``user_model.db.corrupted-<ts>``).
         2. Reinitialise the schema via ``DatabaseManager._init_user_model_db()``.
@@ -3746,15 +3751,15 @@ def register_routes(app: FastAPI, life_os) -> None:
         import asyncio as _asyncio
         import os
 
-        # Step 1: Check if actually corrupted
+        # Step 1: Check if actually corrupted using thorough health check
+        # (integrity_check + blob probes — catches overflow page corruption)
         try:
-            with life_os.db.get_connection("user_model") as conn:
-                check = conn.execute("PRAGMA quick_check").fetchone()
-                value = check[0] if check else "unknown"
-                if value == "ok":
-                    return {"status": "skipped", "reason": "Database is healthy, no rebuild needed"}
+            health = await _asyncio.to_thread(life_os.db.get_database_health)
+            um_status = health.get("user_model", {}).get("status", "corrupted")
+            if um_status == "ok":
+                return {"status": "skipped", "reason": "Database is healthy, no rebuild needed"}
         except Exception:
-            pass  # Corrupted or unreadable — proceed with rebuild
+            pass  # Health check itself failed — proceed with rebuild
 
         # Step 2: Use DatabaseManager's built-in recovery (backs up corrupt file)
         try:
