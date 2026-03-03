@@ -796,7 +796,7 @@ class LifeOS:
             # Backfill errors should not crash startup
             logger.warning("       ⚠ Task completion backfill failed: %s", e)
 
-    async def _rebuild_user_model_db_if_corrupted(self):
+    async def _rebuild_user_model_db_if_corrupted(self) -> bool:
         """Detect and rebuild user_model.db when deep B-tree corruption affects episodes.
 
         The ``episodes.content_full`` column stores large email/message bodies as
@@ -826,6 +826,9 @@ class LifeOS:
              corrupted file as user_model.db.corrupted.
           6. Log a clear WARNING so the user knows a rebuild occurred.
 
+        If the dump or rebuild fails, attempts to restore from the most recent
+        backup via ``DatabaseManager.restore_from_backup()``.
+
         Columns preserved from episodes (all behavioral intelligence is retained):
           id, timestamp, event_id, location, inferred_mood, active_domain,
           energy_level, interaction_type, content_summary, outcome,
@@ -840,14 +843,20 @@ class LifeOS:
           - episodes are fully accessible → routine/workflow detection works
           - semantic inference runs without the "database disk image is malformed" error
 
-        This method is idempotent: if the DB is healthy it returns after a single
-        cheap probe query and touches nothing.
+        This method is idempotent: if the DB is healthy it returns True after a
+        single cheap probe query and touches nothing.
+
+        Returns:
+            True if user_model.db is healthy (either it was already healthy, or
+            it was successfully rebuilt/restored). False if recovery failed and
+            the DB remains corrupt.
 
         Example::
 
-            await life_os._rebuild_user_model_db_if_corrupted()
-            # → "user_model.db is healthy" if OK
-            # → "Rebuilt corrupted user_model.db — recovered N episodes" if fixed
+            ok = await life_os._rebuild_user_model_db_if_corrupted()
+            # ok=True  → "user_model.db is healthy" if OK
+            # ok=True  → "Rebuilt corrupted user_model.db — recovered N episodes" if fixed
+            # ok=False → all recovery attempts failed
         """
         import shutil
         import tempfile
@@ -871,15 +880,18 @@ class LifeOS:
                     conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
                     conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
                     logger.debug("       ✓ user_model.db is healthy — no rebuild needed")
-                    return
+                    return True
                 except Exception as probe_err:
                     logger.warning(
                         "       ⚠ user_model.db corruption detected (%s) — rebuilding from readable columns...",
                         probe_err,
                     )
         except Exception:
-            # Can't even connect — let initialize_all() deal with it
-            return
+            # Can't even connect — try restore from backup as fallback
+            if self._try_restore_user_model_from_backup("connection failed"):
+                return True
+            logger.error("       ✗ Cannot connect to user_model.db and no viable backups — DB remains corrupt")
+            return False
 
         # ---------------------------------------------------------------
         # Step 2: Dump all recoverable data from the corrupted DB.
@@ -929,7 +941,11 @@ class LifeOS:
 
         except Exception as dump_err:
             logger.error("       ✗ Failed to dump recoverable data: %s", dump_err)
-            return
+            # Corruption too severe to read any rows — try restore from backup
+            if self._try_restore_user_model_from_backup("data dump failed"):
+                return True
+            logger.error("       ✗ No viable backups available — user_model.db remains corrupt")
+            return False
 
         # ---------------------------------------------------------------
         # Step 3: Build a fresh user_model.db in a temp directory.
@@ -1036,11 +1052,33 @@ class LifeOS:
                 corrupted_archive,
             )
 
+            # ---------------------------------------------------------------
+            # Step 6: Post-rebuild integrity verification.
+            # Re-run the same 7 probe queries to confirm the new DB is healthy.
+            # If the freshly-built DB is somehow broken (filesystem issue,
+            # incomplete WAL checkpoint), fall back to backup restore.
+            # ---------------------------------------------------------------
+            if not self._verify_user_model_integrity():
+                logger.error("       ✗ Post-rebuild integrity check failed — attempting backup restore")
+                if self._try_restore_user_model_from_backup("post-rebuild verification failed"):
+                    return True
+                logger.error("       ✗ Backup restore also failed — user_model.db may still be corrupt")
+                return False
+
+            return True
+
         except Exception as rebuild_err:
             logger.error(
                 "       ✗ Failed to rebuild user_model.db: %s — "
-                "system will continue with the existing (possibly corrupted) database",
+                "attempting restore from backup",
                 rebuild_err,
+            )
+            # Rebuild process itself failed — try backup restore as last resort
+            if self._try_restore_user_model_from_backup("rebuild failed"):
+                return True
+            logger.error(
+                "       ✗ Backup restore also failed — "
+                "system will continue with the existing (possibly corrupted) database"
             )
         finally:
             # Clean up temp directory regardless of success/failure
@@ -1049,6 +1087,85 @@ class LifeOS:
                     shutil.rmtree(temp_dir, ignore_errors=True)
                 except Exception:
                     pass
+
+        return False
+
+    def _verify_user_model_integrity(self) -> bool:
+        """Run the 7 probe queries against user_model.db to verify integrity.
+
+        Returns True if all probes succeed, False if any fail. Used for
+        post-rebuild verification and can be called independently.
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
+                conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
+                conn.execute(
+                    "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts"
+                ).fetchone()
+                conn.execute(
+                    "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines"
+                ).fetchone()
+                conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
+                conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
+                conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
+            return True
+        except Exception as e:
+            logger.warning("_verify_user_model_integrity: probe failed: %s", e)
+            return False
+
+    def _try_restore_user_model_from_backup(self, reason: str) -> bool:
+        """Attempt to restore user_model.db from the most recent backup.
+
+        Called as a fallback when the rebuild process fails — either because
+        the corrupted DB can't be read at all, or the rebuilt DB fails
+        post-rebuild integrity verification.
+
+        Args:
+            reason: Human-readable reason for the restore attempt (for logging).
+
+        Returns:
+            True if a backup was successfully restored and integrity verified,
+            False if no backups exist or restoration failed.
+        """
+        try:
+            backups = self.db.list_backups("user_model")
+            if not backups:
+                logger.warning("_try_restore_user_model_from_backup: no backups available (reason: %s)", reason)
+                return False
+
+            # Try backups from newest to oldest
+            for backup in backups:
+                logger.warning(
+                    "       ⚠ Rebuild %s — attempting restore from backup: %s",
+                    reason,
+                    backup["filename"],
+                )
+                restored = self.db.restore_from_backup(backup["path"], "user_model")
+                if restored:
+                    # Verify the restored DB is actually healthy
+                    if self._verify_user_model_integrity():
+                        logger.warning(
+                            "       ✓ Successfully restored user_model.db from backup %s",
+                            backup["filename"],
+                        )
+                        return True
+                    else:
+                        logger.warning(
+                            "       ⚠ Backup %s restored but failed integrity check — trying next",
+                            backup["filename"],
+                        )
+                else:
+                    logger.warning(
+                        "       ⚠ Failed to restore from backup %s — trying next",
+                        backup["filename"],
+                    )
+
+            logger.error("_try_restore_user_model_from_backup: all backups exhausted (reason: %s)", reason)
+            return False
+        except Exception as e:
+            logger.error("_try_restore_user_model_from_backup: unexpected error: %s", e)
+            return False
 
     async def _repair_signal_profiles_if_corrupted(self):
         """Detect and repair SQLite B-tree corruption in the signal_profiles table.
@@ -3581,7 +3698,31 @@ class LifeOS:
                     await asyncio.sleep(1800)
                     continue
 
-                await self._rebuild_user_model_db_if_corrupted()
+                rebuild_ok = await self._rebuild_user_model_db_if_corrupted()
+
+                if not rebuild_ok:
+                    logger.error(
+                        "DB health check: rebuild FAILED (attempt %d/3) — "
+                        "user_model.db remains corrupt, skipping backfills",
+                        self._runtime_db_rebuilds,
+                    )
+                    try:
+                        await self.notification_manager.create_notification(
+                            title="Database repair failed",
+                            body=(
+                                "user_model.db corruption was detected but automatic "
+                                "repair failed (attempt %d/3). The system is running "
+                                "degraded — signal profiles, predictions, and insights "
+                                "may be unavailable." % self._runtime_db_rebuilds
+                            ),
+                            priority="critical",
+                            domain="system",
+                        )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1800)
+                    continue
+
                 logger.info(
                     "DB health check: rebuild completed (attempt %d/3) — "
                     "running backfill verification",
