@@ -3444,14 +3444,19 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "generated_at": "2026-03-01T00:00:00.000000+00:00"
               }
         """
-        # The six signal profiles that drive the intelligence layer.
+        # The eight signal profiles that drive the intelligence layer.
         # "relationships" powers People Radar and maintenance predictions.
         # "temporal" drives preparation-needs and routine-deviation predictions.
         # "topics" feeds expertise/interest semantic fact inference.
         # "linguistic" drives communication-style fact inference and tone matching.
         # "cadence" tracks reply latency and peak communication hours.
         # "mood_signals" drives stress detection in the reaction prediction gatekeeper.
-        profile_names = ["relationships", "temporal", "topics", "linguistic", "cadence", "mood_signals"]
+        # "spatial" tracks place-based behavior (visit frequency, duration, dominant domain).
+        # "decision" tracks decision-making patterns (speed, delegation, risk tolerance).
+        profile_names = [
+            "relationships", "temporal", "topics", "linguistic",
+            "cadence", "mood_signals", "spatial", "decision",
+        ]
 
         profiles: dict[str, dict] = {}
         for name in profile_names:
@@ -3504,6 +3509,8 @@ def register_routes(app: FastAPI, life_os) -> None:
           4. linguistic    — writing-style metrics (communication-style semantic facts)
           5. cadence       — response times, activity heatmaps (priority contact detection)
           6. mood_signals  — mood signal ring buffer (dashboard mood widget, episode energy)
+          7. spatial       — place-based behavior patterns (visit frequency, duration, domain)
+          8. decision      — decision-making patterns (speed, delegation, risk tolerance)
 
         Returns:
             {"status": "started", "backfills": [...], "message": "..."}
@@ -3514,7 +3521,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             → {
                 "status": "started",
                 "message": "Signal profile backfills triggered in background. ...",
-                "backfills": ["relationship", "temporal", "topic", "linguistic", "cadence", "mood_signals"]
+                "backfills": ["relationship", "temporal", "topic", "linguistic", "cadence", "mood_signals", "spatial", "decision"]
               }
         """
         import asyncio as _asyncio
@@ -3533,6 +3540,8 @@ def register_routes(app: FastAPI, life_os) -> None:
             await life_os._backfill_linguistic_profile_if_needed()
             await life_os._backfill_cadence_profile_if_needed()
             await life_os._backfill_mood_signals_profile_if_needed()
+            await life_os._backfill_spatial_profile_if_needed()
+            await life_os._backfill_decision_profile_if_needed()
 
         # Fire-and-forget: background task so the HTTP response returns immediately.
         # The caller should poll /api/admin/backfills/status to track completion.
@@ -3544,7 +3553,10 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "Signal profile backfills triggered in background. "
                 "Poll /api/admin/backfills/status to track progress."
             ),
-            "backfills": ["relationship", "temporal", "topic", "linguistic", "cadence", "mood_signals"],
+            "backfills": [
+                "relationship", "temporal", "topic", "linguistic",
+                "cadence", "mood_signals", "spatial", "decision",
+            ],
         }
 
     # -------------------------------------------------------------------
@@ -3649,6 +3661,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                     "_backfill_linguistic_profile_if_needed",
                     "_backfill_cadence_profile_if_needed",
                     "_backfill_mood_signals_profile_if_needed",
+                    "_backfill_spatial_profile_if_needed",
+                    "_backfill_decision_profile_if_needed",
                 ]:
                     if hasattr(life_os, method_name):
                         try:
