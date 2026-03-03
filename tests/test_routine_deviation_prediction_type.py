@@ -80,7 +80,10 @@ async def test_routine_deviation_uses_correct_prediction_type(db, user_model_sto
     # Verify other fields are correct
     assert "Morning routine" in pred.description
     assert pred.confidence > 0.3  # Should meet SUGGEST threshold
-    assert pred.time_horizon == "today"
+    # time_horizon should be a valid ISO datetime (end of today), not the literal "today"
+    parsed_horizon = datetime.fromisoformat(pred.time_horizon)
+    assert parsed_horizon.hour == 23
+    assert parsed_horizon.minute == 59
     assert pred.suggested_action == "Start Morning routine"
     assert pred.supporting_signals["routine_name"] == "Morning routine"
 
