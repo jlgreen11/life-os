@@ -6,12 +6,12 @@ operators can rebuild empty profiles (e.g., after a DB migration wipes
 signal_profiles) without requiring a full system restart.
 
 Coverage:
-    GET /api/admin/backfills/status → 200 with all six profile names present
+    GET /api/admin/backfills/status → 200 with all eight profile names present
     GET /api/admin/backfills/status → "needs_backfill" when profiles are empty
     GET /api/admin/backfills/status → "ok" when all profiles are populated
     GET /api/admin/backfills/status → populated=true only when samples_count >= 1
     POST /api/admin/backfills/trigger → 200 with status="started" immediately
-    POST /api/admin/backfills/trigger → lists all four backfill names in response
+    POST /api/admin/backfills/trigger → lists all eight backfill names in response
     POST /api/admin/backfills/trigger → calls life_os backfill methods
 """
 
@@ -31,7 +31,10 @@ from web.routes import register_routes
 # Helpers
 # ---------------------------------------------------------------------------
 
-_PROFILE_NAMES = ["relationships", "temporal", "topics", "linguistic", "cadence", "mood_signals"]
+_PROFILE_NAMES = [
+    "relationships", "temporal", "topics", "linguistic",
+    "cadence", "mood_signals", "spatial", "decision",
+]
 
 
 def _make_app(
@@ -72,6 +75,10 @@ def _make_app(
     life_os._backfill_temporal_profile_if_needed = AsyncMock()
     life_os._backfill_topic_profile_if_needed = AsyncMock()
     life_os._backfill_linguistic_profile_if_needed = AsyncMock()
+    life_os._backfill_cadence_profile_if_needed = AsyncMock()
+    life_os._backfill_mood_signals_profile_if_needed = AsyncMock()
+    life_os._backfill_spatial_profile_if_needed = AsyncMock()
+    life_os._backfill_decision_profile_if_needed = AsyncMock()
 
     # Configure get_signal_profile() to return either None or a mock profile dict.
     resolved = profile_data or {}
@@ -120,7 +127,7 @@ def test_backfill_status_returns_200(db):
 
 
 def test_backfill_status_includes_all_profiles(db):
-    """Response includes all six expected profile names."""
+    """Response includes all eight expected profile names."""
     client = _make_app(db)
     data = client.get("/api/admin/backfills/status").json()
 
@@ -224,12 +231,15 @@ def test_trigger_backfills_returns_started(db):
 
 
 def test_trigger_backfills_lists_all_four(db):
-    """Response lists all four backfill types in the backfills array."""
+    """Response lists all eight backfill types in the backfills array."""
     client = _make_app(db)
     data = client.post("/api/admin/backfills/trigger").json()
 
     assert "backfills" in data
-    for expected in ["relationship", "temporal", "topic", "linguistic"]:
+    for expected in [
+        "relationship", "temporal", "topic", "linguistic",
+        "cadence", "mood_signals", "spatial", "decision",
+    ]:
         assert expected in data["backfills"], f"Missing backfill type: {expected}"
 
 
