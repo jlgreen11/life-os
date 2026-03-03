@@ -189,10 +189,14 @@ class DatabaseManager:
     def _check_and_recover_db(self, db_name: str) -> bool:
         """Check a database for corruption and recover by resetting if needed.
 
-        Runs ``PRAGMA quick_check`` against the named database.  If corruption
-        is detected the corrupt file (and its WAL/SHM sidecars) are renamed
-        with a ``.corrupt.<timestamp>`` suffix so a fresh database can be
-        created by the subsequent schema initialisation step.
+        Runs ``PRAGMA quick_check`` against the named database.  For
+        ``user_model`` databases, also runs blob overflow page probes to
+        detect corruption that ``quick_check`` misses in large JSON TEXT
+        columns (episodes, signal_profiles, semantic_facts, etc.).
+
+        If corruption is detected the corrupt file (and its WAL/SHM sidecars)
+        are renamed with a ``.corrupt.<timestamp>`` suffix so a fresh database
+        can be created by the subsequent schema initialisation step.
 
         Only call this for databases whose contents can be rebuilt from the
         event log (i.e. ``user_model``).  Never use it on ``events`` or
@@ -228,6 +232,45 @@ class DatabaseManager:
         except Exception as exc:
             errors.append(str(exc))
             is_corrupt = True
+
+        # PRAGMA quick_check only scans B-tree pages and misses blob
+        # overflow page corruption.  For user_model.db — which stores large
+        # JSON blobs in TEXT columns that spill into overflow pages — run
+        # targeted probes that force SQLite to read every overflow page.
+        if not is_corrupt and db_name == "user_model":
+            blob_probes = [
+                "SELECT content_full FROM episodes LIMIT 1",
+                "SELECT SUM(LENGTH(data)) FROM signal_profiles",
+                "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts",
+                "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines",
+                "SELECT SUM(LENGTH(contributing_signals)) FROM mood_history",
+                "SELECT SUM(LENGTH(supporting_signals)) FROM predictions",
+                "SELECT SUM(LENGTH(evidence)) FROM insights",
+            ]
+            try:
+                conn = sqlite3.connect(str(db_path))
+                conn.execute("PRAGMA journal_mode=WAL")
+                for probe in blob_probes:
+                    try:
+                        conn.execute(probe).fetchone()
+                    except Exception as exc:
+                        # Tables that don't exist yet (empty/new DB) should
+                        # NOT trigger corruption — only flag if the error is
+                        # NOT a missing-table error.
+                        if "no such table" not in str(exc).lower():
+                            errors.append(f"blob probe failed: {exc}")
+                            is_corrupt = True
+                conn.close()
+            except Exception as exc:
+                errors.append(f"blob probe connection failed: {exc}")
+                is_corrupt = True
+
+            if is_corrupt:
+                logger.warning(
+                    "Blob overflow corruption detected in %s.db: %s",
+                    db_name,
+                    "; ".join(errors),
+                )
 
         if not is_corrupt:
             return False
