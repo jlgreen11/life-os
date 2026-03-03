@@ -2294,6 +2294,15 @@ class LifeOS:
                             response_type="dismissed",
                             response_time_seconds=response_time,
                         )
+                elif event_type == "notification.ignored":
+                    # User never interacted with the notification - strongest negative signal
+                    notif_id = event.get("payload", {}).get("notification_id")
+                    if notif_id:
+                        await self.feedback_collector.process_notification_response(
+                            notification_id=notif_id,
+                            response_type="ignored",
+                            response_time_seconds=None,
+                        )
             except Exception as e:
                 logger.error("Feedback collector error (event_id=%s): %s", event.get("id"), e)
 
@@ -2698,6 +2707,7 @@ class LifeOS:
             "finance.transaction.new",
             "task.created", "task.completed",
             "location.changed", "location.arrived", "location.departed",
+            "home.arrived", "home.departed",
             "context.location", "context.activity",
             "system.user.command",
         }
@@ -2930,6 +2940,12 @@ class LifeOS:
         elif event_type == "location.changed":
             return "location_changed"
 
+        # Home Assistant presence — arriving/leaving home via HA sensors
+        elif event_type == "home.arrived":
+            return "home_arrived"
+        elif event_type == "home.departed":
+            return "home_departed"
+
         # Context interactions — device/activity state changes
         elif event_type == "context.location":
             return "context_location"
@@ -3009,6 +3025,12 @@ class LifeOS:
             location = payload.get("location", "Unknown location")
             action = "arrived at" if "arrived" in event_type else "departed from" if "departed" in event_type else "changed to"
             return f"Location {action} {location}"[:200]
+
+        # Home Assistant presence: arriving/leaving home
+        elif event_type == "home.arrived":
+            return "Arrived home"
+        elif event_type == "home.departed":
+            return "Left home"
 
         # User commands: show the command text
         elif event_type == "system.user.command":
