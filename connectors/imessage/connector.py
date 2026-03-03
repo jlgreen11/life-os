@@ -55,7 +55,9 @@ CONTACT_SYNC_INTERVAL = 3600  # 1 hour
 
 # SQL query to pull messages newer than a given ROWID.  The LEFT JOINs
 # tolerate messages that lack a handle (system messages) or that haven't
-# been linked to a chat yet.
+# been linked to a chat yet.  The attachment_count subquery detects
+# messages with attached files (images, videos, documents) and
+# thread_originator_guid identifies inline replies.
 _SYNC_QUERY = """\
 SELECT
     message.ROWID,
@@ -65,10 +67,43 @@ SELECT
     message.is_from_me,
     message.cache_roomnames,
     message.service,
+    message.thread_originator_guid,
     handle.id          AS sender_id,
     handle.service     AS handle_service,
     chat.chat_identifier,
-    chat.display_name
+    chat.display_name,
+    COALESCE(att.attachment_count, 0) AS attachment_count
+FROM message
+LEFT JOIN handle            ON message.handle_id = handle.ROWID
+LEFT JOIN chat_message_join ON message.ROWID     = chat_message_join.message_id
+LEFT JOIN chat              ON chat_message_join.chat_id = chat.ROWID
+LEFT JOIN (
+    SELECT message_id, COUNT(*) AS attachment_count
+    FROM message_attachment_join
+    GROUP BY message_id
+) att ON message.ROWID = att.message_id
+WHERE message.ROWID > ?
+ORDER BY message.ROWID ASC
+LIMIT 500
+"""
+
+# Fallback query without attachment join — used when message_attachment_join
+# table does not exist (e.g. very old macOS or incomplete test databases).
+_SYNC_QUERY_NO_ATTACHMENTS = """\
+SELECT
+    message.ROWID,
+    message.guid,
+    message.text,
+    message.date,
+    message.is_from_me,
+    message.cache_roomnames,
+    message.service,
+    message.thread_originator_guid,
+    handle.id          AS sender_id,
+    handle.service     AS handle_service,
+    chat.chat_identifier,
+    chat.display_name,
+    0 AS attachment_count
 FROM message
 LEFT JOIN handle            ON message.handle_id = handle.ROWID
 LEFT JOIN chat_message_join ON message.ROWID     = chat_message_join.message_id
@@ -105,6 +140,9 @@ class iMessageConnector(BaseConnector):
         self._db_path: str = os.path.expanduser(raw_path)
         self._include_sms: bool = config.get("include_sms", True)
         self._contact_sync_task: Optional[asyncio.Task] = None
+        # Detected lazily on first sync — True when the chat.db has the
+        # message_attachment_join table (present on macOS 10.12+).
+        self._has_attachment_table: bool | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle overrides
@@ -166,6 +204,10 @@ class iMessageConnector(BaseConnector):
         converted into either a ``message.received`` or ``message.sent``
         event depending on the ``is_from_me`` flag.
 
+        The payload includes ``thread_id`` (chat identifier for conversation
+        grouping), ``has_attachments``, and ``is_reply`` fields to match the
+        ``MessagePayload`` model expected by the signal extraction pipeline.
+
         Returns the number of events published.
         """
         if not os.path.exists(self._db_path):
@@ -179,7 +221,18 @@ class iMessageConnector(BaseConnector):
             cursor_val = self.get_sync_cursor() or "0"
             last_rowid = int(cursor_val)
 
-            rows = conn.execute(_SYNC_QUERY, (last_rowid,)).fetchall()
+            # Detect the attachment table on first sync and cache the result.
+            if self._has_attachment_table is None:
+                self._has_attachment_table = self._table_exists(
+                    conn, "message_attachment_join"
+                )
+
+            query = (
+                _SYNC_QUERY
+                if self._has_attachment_table
+                else _SYNC_QUERY_NO_ATTACHMENTS
+            )
+            rows = conn.execute(query, (last_rowid,)).fetchall()
 
             count = 0
             new_last_rowid = last_rowid
@@ -208,8 +261,12 @@ class iMessageConnector(BaseConnector):
                 direction = "outbound" if is_from_me else "inbound"
                 event_type = "message.sent" if is_from_me else "message.received"
 
+                has_attachments = row["attachment_count"] > 0
+                is_reply = bool(row["thread_originator_guid"])
+
                 payload = {
                     "message_id": row["guid"],
+                    "thread_id": row["chat_identifier"],
                     "channel": "imessage",
                     "direction": direction,
                     "from_address": sender_id,
@@ -220,6 +277,8 @@ class iMessageConnector(BaseConnector):
                     "is_group": is_group,
                     "group_name": group_name,
                     "service_type": service,
+                    "has_attachments": has_attachments,
+                    "is_reply": is_reply,
                     "timestamp": ts_iso,
                 }
 
@@ -398,6 +457,15 @@ class iMessageConnector(BaseConnector):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        """Check whether *table_name* exists in the SQLite database."""
+        row = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        return row[0] > 0
 
     def _classify_domain(self, group_name: str | None) -> str:
         """Classify a message as 'work' or 'personal' based on group name.

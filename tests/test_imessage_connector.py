@@ -27,6 +27,10 @@ from connectors.imessage.connector import iMessageConnector, APPLE_EPOCH_OFFSET
 def _create_fake_chat_db(path: str) -> str:
     """Create a minimal Messages-compatible SQLite database at *path*.
 
+    Includes the ``message_attachment_join`` and ``attachment`` tables and the
+    ``thread_originator_guid`` column on ``message`` so attachment detection
+    and reply detection can be tested.
+
     Returns the full file path to the created database.
     """
     db_file = os.path.join(path, "chat.db")
@@ -45,19 +49,32 @@ def _create_fake_chat_db(path: str) -> str:
         );
 
         CREATE TABLE IF NOT EXISTS message (
-            ROWID            INTEGER PRIMARY KEY AUTOINCREMENT,
-            guid             TEXT UNIQUE NOT NULL,
-            text             TEXT,
-            handle_id        INTEGER,
-            date             INTEGER DEFAULT 0,
-            is_from_me       INTEGER DEFAULT 0,
-            cache_roomnames  TEXT,
-            service          TEXT DEFAULT 'iMessage'
+            ROWID                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            guid                     TEXT UNIQUE NOT NULL,
+            text                     TEXT,
+            handle_id                INTEGER,
+            date                     INTEGER DEFAULT 0,
+            is_from_me               INTEGER DEFAULT 0,
+            cache_roomnames          TEXT,
+            service                  TEXT DEFAULT 'iMessage',
+            thread_originator_guid   TEXT
         );
 
         CREATE TABLE IF NOT EXISTS chat_message_join (
             chat_id    INTEGER,
             message_id INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS attachment (
+            ROWID     INTEGER PRIMARY KEY AUTOINCREMENT,
+            guid      TEXT UNIQUE,
+            filename  TEXT,
+            mime_type TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS message_attachment_join (
+            message_id    INTEGER,
+            attachment_id INTEGER
         );
     """)
     conn.close()
@@ -78,8 +95,16 @@ def _insert_message(
     dt: datetime | None = None,
     group_name: str | None = None,
     chat_identifier: str | None = None,
+    thread_originator_guid: str | None = None,
+    attachment_count: int = 0,
 ) -> int:
-    """Insert a message into the fake chat.db and return its ROWID."""
+    """Insert a message into the fake chat.db and return its ROWID.
+
+    Args:
+        thread_originator_guid: Set to a message GUID to mark this as an
+            inline reply to that message.
+        attachment_count: Number of dummy attachments to link to the message.
+    """
     if dt is None:
         dt = datetime.now(timezone.utc)
     apple_ns = _apple_ns_from_unix(dt.timestamp())
@@ -103,9 +128,10 @@ def _insert_message(
     guid = f"msg-{time.time_ns()}"
     cur.execute(
         """INSERT INTO message (guid, text, handle_id, date, is_from_me,
-                                cache_roomnames, service)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (guid, text, handle_rowid, apple_ns, is_from_me, group_name, service),
+                                cache_roomnames, service, thread_originator_guid)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (guid, text, handle_rowid, apple_ns, is_from_me, group_name, service,
+         thread_originator_guid),
     )
     msg_rowid = cur.lastrowid
 
@@ -126,6 +152,19 @@ def _insert_message(
         "INSERT INTO chat_message_join (chat_id, message_id) VALUES (?, ?)",
         (chat_rowid, msg_rowid),
     )
+
+    # Link dummy attachments if requested
+    for i in range(attachment_count):
+        att_guid = f"att-{time.time_ns()}-{i}"
+        cur.execute(
+            "INSERT INTO attachment (guid, filename, mime_type) VALUES (?, ?, ?)",
+            (att_guid, f"photo_{i}.jpg", "image/jpeg"),
+        )
+        att_rowid = cur.lastrowid
+        cur.execute(
+            "INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (?, ?)",
+            (msg_rowid, att_rowid),
+        )
 
     conn.commit()
     conn.close()
@@ -911,3 +950,193 @@ class TestConcurrency:
         await connector.stop()
 
         assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# TestPayloadEnrichment
+# ---------------------------------------------------------------------------
+
+class TestPayloadEnrichment:
+    """Tests for thread_id, has_attachments, and is_reply payload fields.
+
+    These fields match the MessagePayload model in models/core.py and
+    allow the signal extraction pipeline to properly thread conversations,
+    detect rich-media messages, and understand reply chains.
+    """
+
+    @pytest.mark.asyncio
+    async def test_thread_id_from_chat_identifier(self, connector, fake_chat_db, mock_event_bus):
+        """thread_id should be the chat.chat_identifier (conversation ID)."""
+        _insert_message(
+            fake_chat_db, "Hello",
+            sender_id="+15559876543",
+            chat_identifier="iMessage;-;+15559876543",
+        )
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["thread_id"] == "iMessage;-;+15559876543"
+
+    @pytest.mark.asyncio
+    async def test_thread_id_none_when_no_chat(self, connector, fake_chat_db, mock_event_bus):
+        """thread_id should be None for messages not linked to a chat."""
+        conn = sqlite3.connect(fake_chat_db)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO handle (id, service) VALUES (?, ?)",
+            ("+15559876543", "iMessage"),
+        )
+        handle_rowid = cur.lastrowid
+        cur.execute(
+            """INSERT INTO message (guid, text, handle_id, date, is_from_me, service)
+               VALUES (?, ?, ?, 0, 0, 'iMessage')""",
+            ("orphan-msg-1", "Orphaned message", handle_rowid),
+        )
+        conn.commit()
+        conn.close()
+
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["thread_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_has_attachments_true(self, connector, fake_chat_db, mock_event_bus):
+        """has_attachments should be True when message has linked attachments."""
+        _insert_message(
+            fake_chat_db, "See attached photo",
+            sender_id="+15559876543",
+            attachment_count=2,
+        )
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["has_attachments"] is True
+
+    @pytest.mark.asyncio
+    async def test_has_attachments_false(self, connector, fake_chat_db, mock_event_bus):
+        """has_attachments should be False for text-only messages."""
+        _insert_message(fake_chat_db, "Just text", sender_id="+15559876543")
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["has_attachments"] is False
+
+    @pytest.mark.asyncio
+    async def test_is_reply_true(self, connector, fake_chat_db, mock_event_bus):
+        """is_reply should be True when thread_originator_guid is set."""
+        _insert_message(
+            fake_chat_db, "This is a reply",
+            sender_id="+15559876543",
+            thread_originator_guid="original-msg-guid-123",
+        )
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["is_reply"] is True
+
+    @pytest.mark.asyncio
+    async def test_is_reply_false(self, connector, fake_chat_db, mock_event_bus):
+        """is_reply should be False for non-reply messages."""
+        _insert_message(fake_chat_db, "Not a reply", sender_id="+15559876543")
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["is_reply"] is False
+
+    @pytest.mark.asyncio
+    async def test_message_with_all_enrichments(self, connector, fake_chat_db, mock_event_bus):
+        """A reply with attachments in a conversation has all fields set."""
+        _insert_message(
+            fake_chat_db, "Check this out",
+            sender_id="+15559876543",
+            chat_identifier="iMessage;-;+15559876543",
+            thread_originator_guid="parent-guid-456",
+            attachment_count=1,
+        )
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["thread_id"] == "iMessage;-;+15559876543"
+        assert payload["has_attachments"] is True
+        assert payload["is_reply"] is True
+
+    @pytest.mark.asyncio
+    async def test_attachment_count_boundary(self, connector, fake_chat_db, mock_event_bus):
+        """has_attachments should work correctly at boundary values."""
+        # Message with exactly 1 attachment
+        _insert_message(
+            fake_chat_db, "Single attachment",
+            sender_id="+15559876543",
+            attachment_count=1,
+        )
+        await connector.sync()
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        assert payload["has_attachments"] is True
+
+    @pytest.mark.asyncio
+    async def test_fallback_without_attachment_table(self, mock_event_bus, db, tmp_path):
+        """Sync works even when message_attachment_join table is missing.
+
+        Older macOS databases or minimal test setups may lack the attachment
+        tables.  The connector should fall back gracefully.
+        """
+        # Create a minimal chat.db WITHOUT the attachment tables
+        db_file = os.path.join(str(tmp_path), "minimal_chat.db")
+        conn = sqlite3.connect(db_file)
+        conn.executescript("""
+            CREATE TABLE handle (
+                ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+                id TEXT NOT NULL,
+                service TEXT DEFAULT 'iMessage'
+            );
+            CREATE TABLE chat (
+                ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_identifier TEXT,
+                display_name TEXT
+            );
+            CREATE TABLE message (
+                ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+                guid TEXT UNIQUE NOT NULL,
+                text TEXT,
+                handle_id INTEGER,
+                date INTEGER DEFAULT 0,
+                is_from_me INTEGER DEFAULT 0,
+                cache_roomnames TEXT,
+                service TEXT DEFAULT 'iMessage',
+                thread_originator_guid TEXT
+            );
+            CREATE TABLE chat_message_join (
+                chat_id INTEGER,
+                message_id INTEGER
+            );
+        """)
+        # Insert a message directly
+        conn.execute("INSERT INTO handle (id, service) VALUES (?, ?)", ("+15551234567", "iMessage"))
+        conn.execute(
+            """INSERT INTO message (guid, text, handle_id, date, service)
+               VALUES (?, ?, 1, 0, 'iMessage')""",
+            ("fallback-msg-1", "Fallback test"),
+        )
+        conn.execute("INSERT INTO chat (chat_identifier) VALUES (?)", ("+15551234567",))
+        conn.execute("INSERT INTO chat_message_join (chat_id, message_id) VALUES (1, 1)")
+        conn.commit()
+        conn.close()
+
+        c = iMessageConnector(
+            event_bus=mock_event_bus, db=db,
+            config={"db_path": db_file},
+        )
+        with db.get_connection("state") as sconn:
+            sconn.execute(
+                "INSERT OR IGNORE INTO connector_state (connector_id, status) VALUES (?, ?)",
+                (c.CONNECTOR_ID, "active"),
+            )
+
+        count = await c.sync()
+        assert count == 1
+
+        payload = mock_event_bus.publish.call_args[0][1]
+        # Should default to False without the attachment table
+        assert payload["has_attachments"] is False
