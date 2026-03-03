@@ -182,6 +182,12 @@ class SetupSubmitRequest(BaseModel):
 # Source Weights (tunable insight engine)
 # ---------------------------------------------------------------------------
 
+class BackupRestoreRequest(BaseModel):
+    """Request body for restoring a database from a backup file."""
+    backup_path: str
+    db_name: str = "user_model"
+
+
 class SourceWeightUpdate(BaseModel):
     """Update the user-controlled weight for a data source."""
     weight: float  # 0.0 = ignore, 1.0 = max influence
