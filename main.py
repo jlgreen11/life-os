@@ -141,7 +141,7 @@ class LifeOS:
         # SemanticFactInferrer derives high-level facts from signal profiles
         self.semantic_fact_inferrer = SemanticFactInferrer(self.user_model_store)
         # RoutineDetector analyzes episodic memory to find recurring behavioral patterns
-        self.routine_detector = RoutineDetector(self.db, self.user_model_store)
+        self.routine_detector = RoutineDetector(self.db, self.user_model_store, timezone=self.user_tz)
         # WorkflowDetector analyzes event sequences to find goal-driven multi-step processes
         self.workflow_detector = WorkflowDetector(self.db, self.user_model_store)
         # BehavioralAccuracyTracker infers prediction accuracy from user behavior
