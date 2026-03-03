@@ -1237,16 +1237,24 @@ class PredictionEngine:
         interaction history. For each contact with enough data (5+
         interactions), we compute the average gap between interactions
         and flag when the current gap exceeds 1.5x the average.
+
+        When the signal profile is unavailable (e.g. user_model.db is
+        corrupt), falls back to computing basic contact data directly
+        from events.db, which stores the raw email event log.
         """
         predictions = []
 
-        # Load the relationships signal profile from the user model
+        # Load the relationships signal profile from the user model.
+        # If unavailable, fall back to building contact data from events.db.
         rel_profile = self.ums.get_signal_profile("relationships")
         if not rel_profile:
-            logger.info("relationship_maintenance: relationships signal profile unavailable — skipping")
-            return predictions
-
-        contacts = rel_profile["data"].get("contacts", {})
+            logger.info("relationship_maintenance: relationships signal profile unavailable — falling back to events.db")
+            contacts = self._build_contacts_from_events()
+            if not contacts:
+                logger.info("relationship_maintenance: no contact data available from events.db either — skipping")
+                return predictions
+        else:
+            contacts = rel_profile["data"].get("contacts", {})
         now = datetime.now(timezone.utc)
 
         for addr, data in contacts.items():
@@ -1365,6 +1373,114 @@ class PredictionEngine:
         )
 
         return predictions
+
+    def _build_contacts_from_events(self) -> dict:
+        """Build basic contact interaction data from events.db when signal profiles are unavailable.
+
+        Queries the raw email event log (last 90 days) to reconstruct per-contact
+        interaction data with the same shape as the relationships signal profile:
+        interaction_count, last_interaction, outbound_count, interaction_timestamps.
+
+        For email.received events, the contact is in ``from_address``.
+        For email.sent events, each address in ``to_addresses`` is a contact.
+
+        Returns:
+            dict mapping contact email addresses to interaction dicts, or empty
+            dict on failure.
+        """
+        try:
+            with self.db.get_connection("events") as conn:
+                # Step 1: Aggregate inbound interactions per contact (from_address on received emails)
+                inbound_rows = conn.execute("""
+                    SELECT
+                        json_extract(payload, '$.from_address') AS addr,
+                        COUNT(*) AS inbound_count,
+                        MAX(timestamp) AS last_inbound
+                    FROM events
+                    WHERE type = 'email.received'
+                      AND timestamp > datetime('now', '-90 days')
+                      AND json_extract(payload, '$.from_address') IS NOT NULL
+                    GROUP BY addr
+                """).fetchall()
+
+                # Build initial contacts dict from inbound emails
+                contacts: dict[str, dict] = {}
+                for row in inbound_rows:
+                    addr = row["addr"]
+                    contacts[addr] = {
+                        "interaction_count": row["inbound_count"],
+                        "last_interaction": row["last_inbound"],
+                        "outbound_count": 0,
+                        "interaction_timestamps": [],
+                    }
+
+                # Step 2: Count outbound interactions per contact.
+                # For sent emails, the contact addresses are in to_addresses (a JSON array).
+                # We extract each element and aggregate.
+                outbound_rows = conn.execute("""
+                    SELECT
+                        je.value AS addr,
+                        COUNT(*) AS outbound_count,
+                        MAX(e.timestamp) AS last_outbound
+                    FROM events e,
+                         json_each(json_extract(e.payload, '$.to_addresses')) je
+                    WHERE e.type = 'email.sent'
+                      AND e.timestamp > datetime('now', '-90 days')
+                    GROUP BY addr
+                """).fetchall()
+
+                for row in outbound_rows:
+                    addr = row["addr"]
+                    if addr in contacts:
+                        contacts[addr]["outbound_count"] = row["outbound_count"]
+                        # Update last_interaction if the outbound is more recent
+                        if row["last_outbound"] and row["last_outbound"] > contacts[addr]["last_interaction"]:
+                            contacts[addr]["last_interaction"] = row["last_outbound"]
+                        contacts[addr]["interaction_count"] += row["outbound_count"]
+                    else:
+                        # Contact only appears in outbound (user sent but never received)
+                        contacts[addr] = {
+                            "interaction_count": row["outbound_count"],
+                            "last_interaction": row["last_outbound"],
+                            "outbound_count": row["outbound_count"],
+                            "interaction_timestamps": [],
+                        }
+
+                # Step 3: Filter to contacts with 5+ interactions, then fetch timestamps
+                # for gap calculation. Done as a second pass to avoid N+1 queries for
+                # low-interaction contacts.
+                filtered = {addr: data for addr, data in contacts.items() if data["interaction_count"] >= 5}
+
+                for addr, data in filtered.items():
+                    # Fetch the 10 most recent interaction timestamps for this contact.
+                    # Combines both inbound (from_address match) and outbound (to_addresses match).
+                    ts_rows = conn.execute("""
+                        SELECT timestamp FROM (
+                            SELECT timestamp FROM events
+                            WHERE type = 'email.received'
+                              AND json_extract(payload, '$.from_address') = ?
+                              AND timestamp > datetime('now', '-90 days')
+                            UNION ALL
+                            SELECT e.timestamp FROM events e,
+                                   json_each(json_extract(e.payload, '$.to_addresses')) je
+                            WHERE e.type = 'email.sent'
+                              AND je.value = ?
+                              AND e.timestamp > datetime('now', '-90 days')
+                        )
+                        ORDER BY timestamp DESC
+                        LIMIT 10
+                    """, (addr, addr)).fetchall()
+                    data["interaction_timestamps"] = [row["timestamp"] for row in ts_rows]
+
+                logger.info(
+                    "_build_contacts_from_events: found %d contacts (%d with 5+ interactions) from events.db",
+                    len(contacts), len(filtered),
+                )
+                return filtered
+
+        except Exception as e:
+            logger.warning("_build_contacts_from_events failed: %s", e)
+            return {}
 
     async def _check_preparation_needs(self, ctx: dict) -> list[Prediction]:
         """
