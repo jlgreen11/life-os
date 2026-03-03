@@ -1258,6 +1258,18 @@ class PredictionEngine:
         """
         predictions = []
 
+        # Routine data lives exclusively in user_model.db.  When that DB is
+        # known to be corrupted (is_user_model_healthy() == False), skip the
+        # query entirely to avoid noisy error logs from a DB we already know
+        # is broken.  There is no events.db fallback for routines because
+        # routine definitions are only stored in user_model.db.
+        if not self.db.is_user_model_healthy():
+            logger.debug(
+                "routine_deviations: user_model.db is degraded — skipping "
+                "(routines require user_model.db)"
+            )
+            return predictions
+
         # Load established routines from procedural memory
         with self.db.get_connection("user_model") as conn:
             routines = conn.execute(
@@ -1425,8 +1437,17 @@ class PredictionEngine:
         predictions = []
 
         # Load the relationships signal profile from the user model.
-        # If unavailable, fall back to building contact data from events.db.
-        rel_profile = self.ums.get_signal_profile("relationships")
+        # If unavailable (returns None) or inaccessible (user_model.db is
+        # corrupted and the query throws), fall back to building contact
+        # data directly from events.db.
+        try:
+            rel_profile = self.ums.get_signal_profile("relationships")
+        except Exception as e:
+            logger.warning(
+                "relationship_maintenance: get_signal_profile('relationships') "
+                "failed (falling back to events.db): %s", e,
+            )
+            rel_profile = None
         if not rel_profile:
             logger.info("relationship_maintenance: relationships signal profile unavailable — falling back to events.db")
             contacts = self._build_contacts_from_events()
