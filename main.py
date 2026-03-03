@@ -3420,12 +3420,54 @@ class LifeOS:
                     self._runtime_db_rebuilds,
                 )
 
+                # Publish system event so other services can react to corruption.
+                try:
+                    if self.event_bus and self.event_bus.is_connected:
+                        await self.event_bus.publish(
+                            "system.database.corruption_detected",
+                            {
+                                "database": "user_model",
+                                "error": str(probe_error),
+                                "rebuild_attempt": self._runtime_db_rebuilds,
+                            },
+                            source="db_health_loop",
+                            priority="critical",
+                        )
+                except Exception:
+                    pass
+
+                # Notify connected dashboards immediately so the UI
+                # reflects the corruption without waiting for the next poll.
+                try:
+                    await ws_manager.broadcast({
+                        "type": "db_corruption",
+                        "database": "user_model",
+                        "rebuild_attempt": self._runtime_db_rebuilds,
+                    })
+                except Exception:
+                    pass
+
                 if self._runtime_db_rebuilds > 3:
                     logger.error(
                         "DB health check: exceeded 3 runtime rebuilds — "
                         "the underlying disk/filesystem likely needs attention. "
                         "Stopping auto-repair attempts for this session."
                     )
+                    # Alert the user that manual intervention is needed.
+                    try:
+                        await self.notification_manager.create_notification(
+                            title="Database repair failed, manual intervention needed",
+                            body=(
+                                "user_model.db has been corrupted and 3 automatic "
+                                "repair attempts have failed. The underlying disk or "
+                                "filesystem likely needs attention. Check /admin for "
+                                "system status and consider manual database recovery."
+                            ),
+                            priority="critical",
+                            domain="system",
+                        )
+                    except Exception:
+                        pass
                     await asyncio.sleep(1800)
                     continue
 
@@ -3438,6 +3480,22 @@ class LifeOS:
 
                 await self._verify_and_retry_backfills()
                 logger.info("DB health check: backfill verification completed after rebuild")
+
+                # Notify the user that the database was repaired successfully.
+                try:
+                    await self.notification_manager.create_notification(
+                        title="Database auto-repaired",
+                        body=(
+                            "user_model.db corruption was detected and automatically "
+                            "repaired (attempt %d/3). Signal profile backfills are "
+                            "running to restore data. Some historical data may have "
+                            "been lost." % self._runtime_db_rebuilds
+                        ),
+                        priority="normal",
+                        domain="system",
+                    )
+                except Exception:
+                    pass
 
             except Exception as e:
                 logger.error("DB health check error: %s", e)
