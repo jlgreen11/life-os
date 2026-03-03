@@ -660,6 +660,110 @@ class UserModelStore:
             rows = conn.execute(query, params).fetchall()
             return [self._deserialize_template_row(row) for row in rows]
 
+    def delete_communication_template(self, template_id: str) -> bool:
+        """Delete a communication template by its primary key ID.
+
+        Args:
+            template_id: The template's TEXT primary key (typically contact_id:channel:context)
+
+        Returns:
+            True if a template was deleted, False if no template matched the ID
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.execute(
+                    "DELETE FROM communication_templates WHERE id = ?",
+                    (template_id,),
+                )
+                deleted = cursor.rowcount > 0
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.delete_communication_template failed: %s", e
+            )
+            return False
+
+        if deleted:
+            self._emit_telemetry("usermodel.template.deleted", {
+                "template_id": template_id,
+                "deleted_at": datetime.now(timezone.utc).isoformat(),
+            })
+        return deleted
+
+    def update_communication_template(self, template_id: str, updates: dict) -> dict | None:
+        """Partially update a communication template.
+
+        Only fields in ALLOWED_FIELDS can be modified — structural fields like
+        id, context, contact_id, and channel are immutable after creation.
+
+        JSON list fields (common_phrases, avoids_phrases, tone_notes) are
+        serialized with json.dumps before writing. The uses_emoji field is
+        converted to int(0/1) for SQLite storage.
+
+        Args:
+            template_id: The template's TEXT primary key
+            updates: Dict of field_name → new_value (only allowed fields are applied)
+
+        Returns:
+            The updated template dict with deserialized JSON fields, or None
+            if no template matched the ID
+        """
+        ALLOWED_FIELDS = {
+            "greeting", "closing", "formality", "typical_length",
+            "uses_emoji", "common_phrases", "avoids_phrases", "tone_notes",
+        }
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                existing = conn.execute(
+                    "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
+                ).fetchone()
+                if not existing:
+                    return None
+
+                set_clauses = []
+                params = []
+                for field, value in updates.items():
+                    if field not in ALLOWED_FIELDS:
+                        continue
+                    # Serialize list fields to JSON for SQLite storage
+                    if field in ("common_phrases", "avoids_phrases", "tone_notes"):
+                        value = json.dumps(value) if isinstance(value, list) else value
+                    # Convert boolean to int for SQLite INTEGER column
+                    if field == "uses_emoji":
+                        value = int(value)
+                    set_clauses.append(f"{field} = ?")
+                    params.append(value)
+
+                if not set_clauses:
+                    # No allowed fields to update — return the existing template as-is
+                    return self._deserialize_template_row(existing)
+
+                # Always bump updated_at on any mutation
+                set_clauses.append("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")
+                params.append(template_id)
+                conn.execute(
+                    f"UPDATE communication_templates SET {', '.join(set_clauses)} WHERE id = ?",
+                    params,
+                )
+
+                row = conn.execute(
+                    "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
+                ).fetchone()
+                result = self._deserialize_template_row(row) if row else None
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.update_communication_template failed: %s", e
+            )
+            return None
+
+        if result:
+            self._emit_telemetry("usermodel.template.patched", {
+                "template_id": template_id,
+                "fields_updated": [f for f in updates if f in ALLOWED_FIELDS],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+        return result
+
     def resolve_prediction(self, prediction_id: str, was_accurate: bool,
                           user_response: str = None, resolution_reason: str = None):
         """Mark a prediction as resolved with user feedback.

@@ -200,3 +200,18 @@ class SourceWeightCreate(BaseModel):
     label: str
     description: str = ""
     weight: float = 0.5
+
+
+# --- PATCH /api/user-model/templates/{template_id} ---
+# Partial update for a communication template.  All fields are optional;
+# only supplied fields are changed.  Structural fields (id, context,
+# contact_id, channel) are not exposed here — they are immutable.
+class TemplateUpdateRequest(BaseModel):
+    greeting: Optional[str] = None
+    closing: Optional[str] = None
+    formality: Optional[float] = None
+    typical_length: Optional[float] = None
+    uses_emoji: Optional[bool] = None
+    common_phrases: Optional[list[str]] = None
+    avoids_phrases: Optional[list[str]] = None
+    tone_notes: Optional[list[str]] = None
