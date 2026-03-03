@@ -142,7 +142,8 @@ async def test_fractional_day_gap_calculation(db: DatabaseManager, setup_relatio
         "All relationship maintenance predictions should be type 'opportunity'"
 
     # Check that daily contact generates prediction (this was broken before)
-    daily_preds = [p for p in predictions if "daily@example.com" in p.description]
+    # Description now uses resolved contact name (email prefix as fallback)
+    daily_preds = [p for p in predictions if "daily" in p.description]
     assert len(daily_preds) > 0, \
         "Daily contact with 12h gaps should generate prediction after 8 days (was broken with integer .days)"
 
@@ -202,14 +203,14 @@ async def test_integer_vs_fractional_gap_difference(db: DatabaseManager):
     predictions = await engine._check_relationship_maintenance({})
 
     # Should generate prediction now
-    frequent_preds = [p for p in predictions if "frequent@example.com" in p.description]
+    # Description now uses resolved contact name (email prefix as fallback)
+    frequent_preds = [p for p in predictions if "frequent" in p.description]
     assert len(frequent_preds) > 0, \
         "Contact with 8-hour gaps should generate prediction after 8 days (broken with integer .days)"
 
-    # Verify the prediction mentions reasonable frequency
+    # Verify the prediction mentions the contact (using resolved name)
     pred = frequent_preds[0]
-    # avg_gap should be ~0.33 days, displayed as 0 days in description (int conversion)
-    assert "frequent@example.com" in pred.description
+    assert "frequent" in pred.description
 
 
 @pytest.mark.asyncio
@@ -227,7 +228,7 @@ async def test_marketing_filter_still_works(db: DatabaseManager, setup_relations
     predictions = await engine._check_relationship_maintenance({})
 
     # noreply@marketing.com should be filtered out
-    marketing_preds = [p for p in predictions if "noreply@marketing.com" in p.description]
+    marketing_preds = [p for p in predictions if p.supporting_signals.get("contact_email") == "noreply@marketing.com"]
     assert len(marketing_preds) == 0, \
         "Marketing/noreply addresses should still be filtered from relationship predictions"
 
@@ -274,12 +275,13 @@ async def test_weekly_contact_threshold_logic(db: DatabaseManager):
     predictions = await engine._check_relationship_maintenance({})
 
     # Should NOT predict for on-time contact (7 days < 10.5 day threshold)
-    on_time_preds = [p for p in predictions if "weekly-on-time@example.com" in p.description]
+    # Description now uses resolved contact name (email prefix as fallback)
+    on_time_preds = [p for p in predictions if "weekly-on-time" in p.description]
     assert len(on_time_preds) == 0, \
         "Should not predict for weekly contact that's on schedule (7d < 10.5d threshold)"
 
     # SHOULD predict for overdue contact (15 days > 10.5 day threshold AND > 7 days minimum)
-    overdue_preds = [p for p in predictions if "weekly-overdue@example.com" in p.description]
+    overdue_preds = [p for p in predictions if "weekly-overdue" in p.description]
     assert len(overdue_preds) > 0, \
         "Should predict for weekly contact that's overdue (15d > 10.5d threshold)"
 
@@ -321,7 +323,8 @@ async def test_minimum_7_day_threshold(db: DatabaseManager):
     predictions = await engine._check_relationship_maintenance({})
 
     # Should NOT predict (days_since=1 < 7 day minimum, even though overdue by threshold)
-    hourly_preds = [p for p in predictions if "hourly@example.com" in p.description]
+    # Description now uses resolved contact name (email prefix as fallback)
+    hourly_preds = [p for p in predictions if "hourly" in p.description]
     assert len(hourly_preds) == 0, \
         "Should not predict for very frequent contact until 7+ days pass (prevents nagging)"
 
@@ -333,7 +336,7 @@ async def test_minimum_7_day_threshold(db: DatabaseManager):
     engine._last_time_based_run = None
     predictions = await engine._check_relationship_maintenance({})
 
-    hourly_preds = [p for p in predictions if "hourly@example.com" in p.description]
+    hourly_preds = [p for p in predictions if "hourly" in p.description]
     assert len(hourly_preds) > 0, \
         "Should predict after 8 days (exceeds both threshold and 7-day minimum)"
 
@@ -389,10 +392,10 @@ async def test_confidence_scaling(db: DatabaseManager):
     engine._last_time_based_run = None
     predictions = await engine._check_relationship_maintenance({})
 
-    # Find each prediction
-    barely = [p for p in predictions if "barely-overdue@example.com" in p.description][0]
-    moderately = [p for p in predictions if "moderately-overdue@example.com" in p.description][0]
-    very = [p for p in predictions if "very-overdue@example.com" in p.description][0]
+    # Find each prediction (descriptions now use resolved contact name, email prefix as fallback)
+    barely = [p for p in predictions if "barely-overdue" in p.description][0]
+    moderately = [p for p in predictions if "moderately-overdue" in p.description][0]
+    very = [p for p in predictions if "very-overdue" in p.description][0]
 
     # Verify confidence increases with how overdue they are
     assert barely.confidence < moderately.confidence < very.confidence, \

@@ -151,7 +151,8 @@ async def test_valid_from_address_still_creates_prediction(db, user_model_store)
     assert len(reminder_predictions) == 1, "Should create prediction for valid from_address"
 
     pred = reminder_predictions[0]
-    assert "friend@example.com" in pred.description
+    # Description now uses resolved contact name (email prefix as fallback)
+    assert "friend" in pred.description
     assert pred.supporting_signals.get("contact_email") == "friend@example.com"
 
 

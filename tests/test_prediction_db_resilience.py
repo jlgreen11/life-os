@@ -275,8 +275,8 @@ async def test_follow_up_needs_works_despite_user_model_corruption(db, event_sto
         f"Expected at least 1 follow-up reminder despite user_model corruption, "
         f"got {len(followup_preds)}. All predictions: {[p.prediction_type for p in predictions]}"
     )
-    # Verify the prediction references the right contact
-    assert any("boss@company.com" in (p.description or "") for p in followup_preds)
+    # Verify the prediction references the right contact (description uses resolved name, email prefix as fallback)
+    assert any("boss" in (p.description or "") for p in followup_preds)
 
 
 # -------------------------------------------------------------------------
