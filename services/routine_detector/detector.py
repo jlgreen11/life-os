@@ -17,6 +17,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
+from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
     from storage.manager import DatabaseManager
@@ -41,20 +42,51 @@ class RoutineDetector:
     - Arrive home: turn on lights → check mail → change clothes
     """
 
-    def __init__(self, db: DatabaseManager, user_model_store: UserModelStore):
+    def __init__(self, db: DatabaseManager, user_model_store: UserModelStore, timezone: str = "UTC"):
         """Initialize the routine detector.
 
         Args:
             db: Database manager for querying episodic memory
             user_model_store: Store for persisting detected routines
+            timezone: IANA timezone string (e.g. 'America/New_York') for
+                converting UTC episode timestamps to local time before
+                time-of-day bucketing. Defaults to 'UTC' (fail-open).
         """
         self.db = db
         self.user_model_store = user_model_store
+        self._tz = ZoneInfo(timezone)
 
         # Detection thresholds
         self.min_occurrences = 3  # Need at least 3 instances to call it a routine
         self.time_window_hours = 2  # Actions within 2h can be part of same routine
         self.consistency_threshold = 0.6  # 60% of instances must match for it to be a routine
+
+    @staticmethod
+    def _hour_to_bucket(hour: int) -> str:
+        """Map an hour (0–23) to a time-of-day bucket name.
+
+        Bucket boundaries:
+            morning   :  5 – 10
+            midday    : 11 – 13
+            afternoon : 14 – 16
+            evening   : 17 – 22
+            night     :  0 –  4 and 23
+
+        Args:
+            hour: Hour of the day in the user's local timezone (0–23).
+
+        Returns:
+            One of 'morning', 'midday', 'afternoon', 'evening', 'night'.
+        """
+        if 5 <= hour <= 10:
+            return "morning"
+        if 11 <= hour <= 13:
+            return "midday"
+        if 14 <= hour <= 16:
+            return "afternoon"
+        if 17 <= hour <= 22:
+            return "evening"
+        return "night"
 
     def detect_routines(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all routines from recent episodic memory.
@@ -194,10 +226,11 @@ class RoutineDetector:
         afternoon: 2–4pm, evening: 5–10pm, night: 11pm–4am) and looks for recurring
         action sequences.
 
-        Grouping is performed in SQL by a CASE expression on the UTC hour so that
-        an activity spread across 3am, 4am, and 5am on different days is correctly
-        aggregated into the "night" bucket rather than split into three low-count
-        (exact-hour, type) pairs that never meet min_occurrences.
+        Timestamps are converted from UTC to the user's configured local timezone
+        (``self._tz``) before extracting the hour, so that a 7 AM local activity
+        stored as 12:00 UTC is correctly bucketed as 'morning' rather than 'midday'.
+        The bucketing is performed in pure Python via ``zoneinfo.ZoneInfo`` for
+        reliable cross-timezone behaviour (SQLite's timezone support is limited).
 
         Consistency is measured as (avg occurrences per active day) rather than
         (avg occurrences / full lookback window).  The full-window denominator
@@ -229,48 +262,47 @@ class RoutineDetector:
             logger.exception("_count_active_days failed in temporal detection; using default 1")
             active_days = 1
 
-        # Fetch episodes grouped by time-of-day bucket using a SQL CASE expression.
-        #
-        # BUG FIX: The previous version grouped by the exact UTC hour, which meant
-        # an activity that occurred at 3am on one day and 4am on another would be
-        # counted as two separate (hour, type) groups — each with a day_count of 1 —
-        # and never meet the min_occurrences threshold, even though the activity
-        # consistently happens "at night."  Grouping by time-of-day bucket (morning,
-        # midday, afternoon, evening, night) instead of exact hour correctly
-        # aggregates all instances of an activity within the same broad time window,
-        # giving an accurate count of distinct days the pattern occurred.
-        #
-        # Bucket boundaries (UTC hours, inclusive BETWEEN):
-        #   morning   :  5 – 10
-        #   midday    : 11 – 13
-        #   afternoon : 14 – 16
-        #   evening   : 17 – 22
-        #   night     :  0 –  4 and 23  (all other hours)
+        # Fetch raw episode timestamps and interaction types so that we can
+        # convert UTC → local timezone in Python before bucketing.
         with self.db.get_connection("user_model") as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT
-                    CASE
-                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 5 AND 10
-                            THEN 'morning'
-                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 11 AND 13
-                            THEN 'midday'
-                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 14 AND 16
-                            THEN 'afternoon'
-                        WHEN CAST(strftime('%H', timestamp) AS INTEGER) BETWEEN 17 AND 22
-                            THEN 'evening'
-                        ELSE 'night'
-                    END as time_bucket,
-                    interaction_type,
-                    COUNT(DISTINCT DATE(timestamp)) as day_count
+                SELECT timestamp, interaction_type
                 FROM episodes
                 WHERE timestamp > ? AND interaction_type IS NOT NULL
-                GROUP BY time_bucket, interaction_type
-                HAVING day_count >= ?
-                ORDER BY time_bucket, day_count DESC
-            """, (cutoff.isoformat(), self.min_occurrences))
+                ORDER BY timestamp
+            """, (cutoff.isoformat(),))
+            raw_episodes = cursor.fetchall()
 
-            hour_actions = cursor.fetchall()
+        if not raw_episodes:
+            return routines
+
+        # Bucket episodes by local time-of-day. Track distinct local dates per
+        # (bucket, interaction_type) pair so we can compute day_count.
+        # Key: (time_bucket, interaction_type) → set of local date strings.
+        bucket_day_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for ts_str, interaction_type in raw_episodes:
+            try:
+                # Parse the stored ISO 8601 timestamp and convert to local tz.
+                dt_utc = datetime.fromisoformat(ts_str)
+                if dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                dt_local = dt_utc.astimezone(self._tz)
+                bucket = self._hour_to_bucket(dt_local.hour)
+                local_date = dt_local.strftime("%Y-%m-%d")
+                bucket_day_sets[(bucket, interaction_type)].add(local_date)
+            except (ValueError, TypeError):
+                # Skip episodes with unparseable timestamps.
+                continue
+
+        # Filter to (bucket, type) pairs meeting min_occurrences.
+        hour_actions = [
+            (bucket, itype, len(days))
+            for (bucket, itype), days in bucket_day_sets.items()
+            if len(days) >= self.min_occurrences
+        ]
+        # Sort by bucket then day_count descending to match previous output order.
+        hour_actions.sort(key=lambda x: (x[0], -x[2]))
 
         if not hour_actions:
             return routines
@@ -286,7 +318,7 @@ class RoutineDetector:
             logger.exception("_compute_step_duration_map failed in temporal detection; using empty map")
             step_duration_map = {}
 
-        # SQL already resolved each row to its time_bucket; no further mapping needed.
+        # Group by time_bucket for routine construction.
         # Each tuple is (time_bucket, interaction_type, day_count).
         bucket_actions: dict[str, list] = defaultdict(list)
         for time_bucket, interaction_type, day_count in hour_actions:
