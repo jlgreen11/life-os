@@ -103,6 +103,55 @@ class TestRecentCompletionsContextResilience:
         assert result == ""
 
 
+class TestCalendarContextResilience:
+    """_get_calendar_context returns fallback when events.db is corrupted."""
+
+    def test_calendar_context_survives_db_error(self, context_assembler):
+        """Corrupted events.db should return an 'unavailable' fallback."""
+        original = context_assembler.db.get_connection
+        broken = _make_broken_connection("events")(original, "events")
+        with patch.object(context_assembler.db, "get_connection", broken):
+            result = context_assembler._get_calendar_context()
+        assert "unavailable" in result
+
+    def test_calendar_context_survives_malformed_payload(self, context_assembler):
+        """A calendar event with missing/unexpected JSON fields should not crash.
+
+        Inserts a calendar event whose payload is valid JSON but lacks the
+        fields the query expects (title, start_time, etc.).  This tests that
+        the try/except catches errors from json_extract returning NULL in
+        unexpected places.
+        """
+        with context_assembler.db.get_connection("events") as conn:
+            conn.execute(
+                """INSERT INTO events (id, type, source, timestamp, priority, payload)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    "test-malformed-cal",
+                    "calendar.event.created",
+                    "test",
+                    "2026-01-01T00:00:00+00:00",
+                    "normal",
+                    '{"unexpected_field": true}',
+                ),
+            )
+        # Should not raise — the method handles missing fields gracefully.
+        result = context_assembler._get_calendar_context()
+        assert isinstance(result, str)
+
+
+class TestUnreadContextResilience:
+    """_get_unread_context returns fallback when events.db is corrupted."""
+
+    def test_unread_context_survives_db_error(self, context_assembler):
+        """Corrupted events.db should return an 'unavailable' fallback."""
+        original = context_assembler.db.get_connection
+        broken = _make_broken_connection("events")(original, "events")
+        with patch.object(context_assembler.db, "get_connection", broken):
+            result = context_assembler._get_unread_context()
+        assert "unavailable" in result
+
+
 class TestBriefingContextIntegration:
     """assemble_briefing_context still produces a usable result when user_model.db is corrupted."""
 
@@ -124,4 +173,21 @@ class TestBriefingContextIntegration:
         assert len(result) > 0
         # The timestamp section should always be present since it doesn't
         # depend on any database
+        assert "Current time:" in result
+
+    def test_briefing_assembles_with_calendar_failure(self, context_assembler):
+        """The briefing should still produce output when _get_calendar_context raises.
+
+        Simulates events.db corruption: the calendar section should degrade to
+        an 'unavailable' fallback while all other sections remain intact.
+        """
+        original = context_assembler.db.get_connection
+        broken = _make_broken_connection("events")(original, "events")
+        with patch.object(context_assembler.db, "get_connection", broken):
+            result = context_assembler.assemble_briefing_context()
+
+        # The briefing must still be a non-empty string
+        assert isinstance(result, str)
+        assert len(result) > 0
+        # The timestamp section should always be present
         assert "Current time:" in result
