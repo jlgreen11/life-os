@@ -188,12 +188,60 @@ class NotificationManager:
         Create a notification. Doesn't necessarily deliver it immediately.
 
         Flow:
+            0. Deduplication check → return existing ID if duplicate found
             1. Check quiet hours → suppress or queue
             2. Check priority → critical bypasses everything
             3. Check notification mode → immediate, batched, or minimal
             4. Check recent dismissal patterns → should we even bother?
             5. Deliver or queue for batch digest
         """
+        # --- Deduplication: source_event_id check (highest priority) ---
+        # If the same source event already has a pending notification, suppress
+        # the duplicate. This prevents repeated notifications when connectors
+        # sync duplicate events or the prediction loop re-generates predictions.
+        if source_event_id:
+            try:
+                with self.db.get_connection("state") as conn:
+                    existing = conn.execute(
+                        """SELECT id FROM notifications
+                           WHERE source_event_id = ?
+                             AND status = 'pending'
+                           LIMIT 1""",
+                        (source_event_id,),
+                    ).fetchone()
+                    if existing:
+                        logger.debug(
+                            "Suppressed duplicate notification for event %s (existing=%s)",
+                            source_event_id,
+                            existing["id"],
+                        )
+                        return existing["id"]
+            except Exception:
+                pass  # Fail-open: if the dedup check fails, create the notification anyway
+
+        # --- Deduplication: title + domain within a 10-minute window ---
+        # Catches duplicates that lack a source_event_id or have different
+        # source_event_ids but represent the same logical notification.
+        try:
+            with self.db.get_connection("state") as conn:
+                recent = conn.execute(
+                    """SELECT id FROM notifications
+                       WHERE title = ? AND domain = ?
+                         AND created_at > datetime('now', '-10 minutes')
+                       LIMIT 1""",
+                    (title, domain),
+                ).fetchone()
+                if recent:
+                    logger.debug(
+                        "Suppressed duplicate notification: %s (domain=%s, existing=%s)",
+                        title,
+                        domain,
+                        recent["id"],
+                    )
+                    return recent["id"]
+        except Exception:
+            pass  # Fail-open: if the dedup check fails, create the notification anyway
+
         notif_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
 
