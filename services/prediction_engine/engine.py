@@ -1171,6 +1171,11 @@ class PredictionEngine:
                 # Map routine action types to event types
                 # Routine actions use underscore format (email_received) while
                 # event types use dot format (email.received)
+                # Complete mapping of all interaction types produced by
+                # _classify_interaction_type() in main.py to their source event types.
+                # Missing entries cause false deviation predictions because the
+                # fallback (action.replace("_", ".")) generates invalid event types
+                # that never match anything in events.db.
                 event_type_mapping = {
                     "email_received": "email.received",
                     "email_sent": "email.sent",
@@ -1179,6 +1184,19 @@ class PredictionEngine:
                     "task_created": "task.created",
                     "task_completed": "task.completed",
                     "calendar_event_created": "calendar.event.created",
+                    "call_answered": "call.received",
+                    "call_missed": "call.missed",
+                    "meeting_scheduled": "calendar.event.created",
+                    "calendar_blocked": "calendar.event.created",
+                    "calendar_reviewed": "calendar.event.updated",
+                    "spending": "finance.transaction.new",
+                    "income": "finance.transaction.new",
+                    "location_arrived": "location.arrived",
+                    "location_departed": "location.departed",
+                    "location_changed": "location.changed",
+                    "context_location": "context.location",
+                    "context_activity": "context.activity",
+                    "user_command": "system.user.command",
                 }
 
                 expected_event_types = []
@@ -1213,7 +1231,7 @@ class PredictionEngine:
                     description=f"You usually do your '{routine_name}' routine by now",
                     confidence=confidence,
                     confidence_gate=self._gate_from_confidence(confidence),
-                    time_horizon="today",
+                    time_horizon=now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat(),
                     suggested_action=f"Start {routine_name}",
                     supporting_signals={
                         "routine_name": routine_name,

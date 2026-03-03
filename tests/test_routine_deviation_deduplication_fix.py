@@ -209,7 +209,10 @@ def test_routine_deviation_prediction_generated_when_routine_skipped(
     assert pred.prediction_type == "routine_deviation"
     assert pred.supporting_signals["routine_name"] == "Morning email check"
     assert pred.confidence > 0.3  # Should meet SUGGEST threshold
-    assert pred.time_horizon == "today"
+    # time_horizon should be a valid ISO datetime (end of today), not the literal "today"
+    parsed_horizon = datetime.fromisoformat(pred.time_horizon)
+    assert parsed_horizon.hour == 23
+    assert parsed_horizon.minute == 59
     assert "Morning email check" in pred.description
 
 
