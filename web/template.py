@@ -665,6 +665,80 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             color: var(--text-muted);
         }
 
+        /* Collapsible profile cards — header toggles detail visibility */
+        .profile-card-header {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            gap: 8px;
+            user-select: none;
+        }
+        .profile-card-header:hover .card-title { color: var(--accent-blue); }
+        .profile-toggle {
+            font-size: 10px;
+            color: var(--text-muted);
+            transition: transform 0.15s ease;
+            display: inline-block;
+        }
+        .profile-toggle.open { transform: rotate(90deg); }
+        .profile-card-body {
+            display: none;
+            margin-top: 8px;
+        }
+        .profile-card-body.open { display: block; }
+
+        /* Visual progress bar for consistency/success rates */
+        .insight-bar-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+        }
+        .insight-bar-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            min-width: 80px;
+        }
+        .insight-bar-track {
+            flex: 1;
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            overflow: hidden;
+            max-width: 200px;
+        }
+        .insight-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        .insight-bar-pct {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            min-width: 36px;
+        }
+
+        /* Step summary pills for routines and workflows */
+        .insight-steps {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 6px;
+        }
+        .insight-step-pill {
+            font-size: 11px;
+            padding: 2px 8px;
+            background: var(--bg-primary);
+            border-radius: 10px;
+            color: var(--text-secondary);
+        }
+        .insight-step-arrow {
+            font-size: 10px;
+            color: var(--text-muted);
+            align-self: center;
+        }
+
         /* --- Inline Modal System --- */
         /* Replaces native browser confirm()/prompt() dialogs with themed UI.
            Works on mobile Safari where native dialogs are blocked. */
@@ -2065,15 +2139,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     if (!profile) continue;
                     var pdata = profile.data || profile;
                     var samples = profile.samples_count || 0;
+                    var updatedAt = profile.updated_at || '';
                     var label = profileLabels[ptype] || ptype.replace(/_/g, ' ');
+                    var cardId = 'profile-' + ptype;
                     html += '<div class="card">';
                     html += '<div class="card-row"><div class="card-channel" style="font-size:20px">' + profileEmoji(ptype) + '</div>';
                     html += '<div class="card-content">';
+                    // Collapsible header — click to expand/collapse profile details
+                    html += '<div class="profile-card-header" onclick="toggleProfileCard(\'' + escAttr(cardId) + '\')">';
+                    html += '<span class="profile-toggle" id="toggle-' + escAttr(cardId) + '">\u25B6</span>';
                     html += '<div class="card-title">' + escHtml(label) + '</div>';
-                    if (samples > 0) {
-                        html += '<div class="card-meta" style="margin-bottom:6px">' + samples.toLocaleString() + ' samples</div>';
+                    html += '</div>';
+                    // Meta line with samples and last updated
+                    var metaParts = [];
+                    if (samples > 0) metaParts.push(samples.toLocaleString() + ' samples');
+                    if (updatedAt) metaParts.push('Updated ' + escHtml(timeAgo(updatedAt)));
+                    if (metaParts.length > 0) {
+                        html += '<div class="card-meta" style="margin-top:2px">' + metaParts.join(' \u00b7 ') + '</div>';
                     }
+                    // Collapsible body with detailed metrics
+                    html += '<div class="profile-card-body" id="' + escAttr(cardId) + '">';
                     html += renderProfileData(pdata);
+                    html += '</div>';
                     html += '</div></div></div>';
                 }
             }
@@ -2081,6 +2168,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             // ── 3. Detected Routines ─────────────────────────────────────────
             var routines = routineData.routines || routineData || [];
             if (!Array.isArray(routines)) routines = [];
+            // Sort by consistency_score descending so most reliable routines appear first
+            routines.sort(function(a, b) {
+                return (b.consistency_score || 0) - (a.consistency_score || 0);
+            });
             if (routines.length > 0) {
                 html += '<div class="section-header">Detected Routines</div>';
                 hasAny = true;
@@ -2092,10 +2183,31 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     html += '<div class="card-title">' + escHtml(r.name || r.trigger || 'Routine') + '</div>';
                     html += '<div class="insight-meta-row">';
                     if (r.trigger) html += '<span>Trigger: ' + escHtml(r.trigger) + '</span>';
-                    if (r.consistency_score !== undefined) html += '<span>Consistency: ' + Math.round(r.consistency_score * 100) + '%</span>';
                     if (r.times_observed) html += '<span>' + r.times_observed + ' observations</span>';
                     if (r.typical_duration_minutes) html += '<span>~' + Math.round(r.typical_duration_minutes) + ' min</span>';
                     html += '</div>';
+                    // Visual bar for consistency score
+                    if (r.consistency_score !== undefined) {
+                        var cPct = Math.round(r.consistency_score * 100);
+                        var cColor = cPct >= 70 ? 'var(--accent-green)' : cPct >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)';
+                        html += '<div class="insight-bar-wrap">';
+                        html += '<span class="insight-bar-label">Consistency</span>';
+                        html += '<div class="insight-bar-track"><div class="insight-bar-fill" style="width:' + cPct + '%;background:' + cColor + '"></div></div>';
+                        html += '<span class="insight-bar-pct">' + cPct + '%</span>';
+                        html += '</div>';
+                    }
+                    // Step summary — show routine steps as a visual flow
+                    var steps = r.steps || r.step_summary || [];
+                    if (typeof steps === 'string') { try { steps = JSON.parse(steps); } catch(e) { steps = []; } }
+                    if (Array.isArray(steps) && steps.length > 0) {
+                        html += '<div class="insight-steps">';
+                        for (var si = 0; si < steps.length; si++) {
+                            if (si > 0) html += '<span class="insight-step-arrow">\u2192</span>';
+                            var stepLabel = typeof steps[si] === 'string' ? steps[si] : (steps[si].name || steps[si].action || 'Step ' + (si + 1));
+                            html += '<span class="insight-step-pill">' + escHtml(stepLabel) + '</span>';
+                        }
+                        html += '</div>';
+                    }
                     html += '</div></div></div>';
                 }
             }
@@ -2113,11 +2225,33 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     html += '<div class="card-content">';
                     html += '<div class="card-title">' + escHtml(w.name || w.goal || 'Workflow') + '</div>';
                     html += '<div class="insight-meta-row">';
-                    var stepCount = (w.steps ? w.steps.length : 0) || w.step_count || 0;
+                    var wfSteps = w.steps || [];
+                    if (typeof wfSteps === 'string') { try { wfSteps = JSON.parse(wfSteps); } catch(e) { wfSteps = []; } }
+                    var stepCount = (Array.isArray(wfSteps) ? wfSteps.length : 0) || w.step_count || 0;
                     if (stepCount) html += '<span>' + stepCount + ' steps</span>';
-                    if (w.success_rate !== undefined) html += '<span>Success: ' + Math.round(w.success_rate * 100) + '%</span>';
                     if (w.times_observed) html += '<span>' + w.times_observed + ' observations</span>';
+                    if (w.typical_duration) html += '<span>~' + escHtml(String(w.typical_duration)) + '</span>';
                     html += '</div>';
+                    // Visual bar for success rate
+                    if (w.success_rate !== undefined) {
+                        var sPct = Math.round(w.success_rate * 100);
+                        var sColor = sPct >= 70 ? 'var(--accent-green)' : sPct >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)';
+                        html += '<div class="insight-bar-wrap">';
+                        html += '<span class="insight-bar-label">Success rate</span>';
+                        html += '<div class="insight-bar-track"><div class="insight-bar-fill" style="width:' + sPct + '%;background:' + sColor + '"></div></div>';
+                        html += '<span class="insight-bar-pct">' + sPct + '%</span>';
+                        html += '</div>';
+                    }
+                    // Workflow steps — show as a visual flow
+                    if (Array.isArray(wfSteps) && wfSteps.length > 0) {
+                        html += '<div class="insight-steps">';
+                        for (var wsi = 0; wsi < wfSteps.length; wsi++) {
+                            if (wsi > 0) html += '<span class="insight-step-arrow">\u2192</span>';
+                            var wsLabel = typeof wfSteps[wsi] === 'string' ? wfSteps[wsi] : (wfSteps[wsi].name || wfSteps[wsi].action || 'Step ' + (wsi + 1));
+                            html += '<span class="insight-step-pill">' + escHtml(wsLabel) + '</span>';
+                        }
+                        html += '</div>';
+                    }
                     html += '</div></div></div>';
                 }
             }
@@ -2217,6 +2351,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             decision:           '\u2696'    // scales
         };
         return emojis[type] || '\uD83D\uDCCA'; // bar chart fallback
+    }
+
+    /**
+     * Toggles a collapsible signal profile card open or closed.
+     * The card body and toggle indicator are identified by the cardId.
+     *
+     * @param {string} cardId — DOM id of the profile-card-body element.
+     */
+    function toggleProfileCard(cardId) {
+        var body = document.getElementById(cardId);
+        var toggle = document.getElementById('toggle-' + cardId);
+        if (!body) return;
+        var isOpen = body.classList.contains('open');
+        body.classList.toggle('open');
+        if (toggle) toggle.classList.toggle('open');
     }
 
     /**
