@@ -185,6 +185,28 @@ class InsightEngine:
             "min_required": 1,
         }
 
+        # Events-DB correlators: need minimum event counts
+        events_correlators = [
+            ("_email_volume_insights", "email.received", 7),
+            ("_email_peak_hour_insights", "email.received", 50),
+            ("_meeting_density_insights", "calendar.event.created", 10),
+        ]
+        for correlator_name, event_type, min_count in events_correlators:
+            try:
+                with self.db.get_connection("events") as conn:
+                    count = conn.execute(
+                        "SELECT COUNT(*) FROM events WHERE type = ?",
+                        (event_type,),
+                    ).fetchone()[0]
+            except Exception:
+                count = -1
+            report[correlator_name] = {
+                "source": f"events({event_type})",
+                "status": "ready" if count >= min_count else ("error" if count < 0 else ("partial" if count > 0 else "no_data")),
+                "count": count,
+                "min_required": min_count,
+            }
+
         return report
 
     async def generate_insights(self) -> list[Insight]:
@@ -1078,8 +1100,11 @@ class InsightEngine:
     def _meeting_density_insights(self) -> list[Insight]:
         """Identify the user's meeting-heaviest day of the week.
 
-        Queries calendar.event.created events from the last 30 days,
-        buckets by day-of-week, and surfaces the busiest day.
+        Queries calendar events from the last 30 days using the actual
+        calendar event start time (from the JSON payload ``start_time``
+        field) rather than the sync timestamp.  Includes both
+        ``calendar.event.created`` and ``calendar.event.updated`` events.
+        Buckets by day-of-week and surfaces the busiest day.
         """
         insights: list[Insight] = []
 
@@ -1087,9 +1112,11 @@ class InsightEngine:
             with self.db.get_connection("events") as conn:
                 cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
                 rows = conn.execute(
-                    """SELECT timestamp FROM events
-                       WHERE type = 'calendar.event.created'
-                       AND timestamp > ?""",
+                    """SELECT json_extract(payload, '$.start_time') as start_time
+                       FROM events
+                       WHERE type IN ('calendar.event.created', 'calendar.event.updated')
+                       AND timestamp > ?
+                       AND json_extract(payload, '$.start_time') IS NOT NULL""",
                     (cutoff,),
                 ).fetchall()
         except Exception:
@@ -1101,7 +1128,15 @@ class InsightEngine:
         day_counts: Counter[str] = Counter()
         for row in rows:
             try:
-                dt = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+                start_time = row["start_time"]
+                # Date-only strings (e.g. '2026-03-05') represent all-day
+                # events — treat as midnight UTC on that day.
+                if len(start_time) <= 10:
+                    dt = datetime.fromisoformat(start_time).replace(tzinfo=timezone.utc)
+                else:
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
                 local_dt = dt.astimezone(self._tz)
                 day_counts[local_dt.strftime("%A")] += 1
             except (ValueError, TypeError):

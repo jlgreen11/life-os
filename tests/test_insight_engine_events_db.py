@@ -19,15 +19,25 @@ from services.insight_engine.engine import InsightEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_event(event_store, event_type: str, timestamp: datetime):
-    """Insert a minimal event into events.db via the EventStore."""
+def _insert_event(event_store, event_type: str, timestamp: datetime, *, start_time: str | None = None):
+    """Insert a minimal event into events.db via the EventStore.
+
+    For calendar events, ``start_time`` should be set to the actual meeting
+    start time (ISO-8601 string) because _meeting_density_insights reads it
+    from the payload rather than the event log timestamp.  When omitted the
+    payload contains no ``start_time`` key — appropriate for non-calendar
+    event types like ``email.received``.
+    """
+    payload: dict = {}
+    if start_time is not None:
+        payload["start_time"] = start_time
     event_store.store_event({
         "id": str(uuid.uuid4()),
         "type": event_type,
         "source": "test",
         "timestamp": timestamp.isoformat(),
         "priority": 2,
-        "payload": {},
+        "payload": payload,
         "metadata": {},
     })
 
@@ -172,7 +182,8 @@ async def test_meeting_density_few_events_returns_empty(db, user_model_store, ev
     base = datetime.now(timezone.utc)
 
     for i in range(5):
-        _insert_event(event_store, "calendar.event.created", base - timedelta(days=i))
+        ts = base - timedelta(days=i)
+        _insert_event(event_store, "calendar.event.created", ts, start_time=ts.isoformat())
 
     insights = engine._meeting_density_insights()
     assert insights == []
@@ -195,17 +206,19 @@ async def test_meeting_density_peak_day_detected(db, user_model_store, event_sto
     # 12 meetings on Monday (spread across recent Mondays)
     for week in range(4):
         for i in range(3):
+            ts = monday - timedelta(weeks=week, hours=i)
             _insert_event(
-                event_store, "calendar.event.created",
-                monday - timedelta(weeks=week, hours=i),
+                event_store, "calendar.event.created", ts,
+                start_time=ts.isoformat(),
             )
 
     # 2 meetings on each of 3 other days
     for day_offset in [1, 2, 3]:
         for week in range(2):
+            ts = monday - timedelta(weeks=week) + timedelta(days=day_offset)
             _insert_event(
-                event_store, "calendar.event.created",
-                monday - timedelta(weeks=week) + timedelta(days=day_offset),
+                event_store, "calendar.event.created", ts,
+                start_time=ts.isoformat(),
             )
 
     insights = engine._meeting_density_insights()
@@ -225,9 +238,10 @@ async def test_meeting_density_no_dominant_day_returns_empty(db, user_model_stor
     # 14 meetings, 2 per day across 7 days — no day is 1.5x
     for day_offset in range(7):
         for j in range(2):
+            ts = base - timedelta(days=day_offset, hours=j)
             _insert_event(
-                event_store, "calendar.event.created",
-                base - timedelta(days=day_offset, hours=j),
+                event_store, "calendar.event.created", ts,
+                start_time=ts.isoformat(),
             )
 
     insights = engine._meeting_density_insights()
@@ -248,16 +262,18 @@ async def test_meeting_density_insight_dedup_key_set(db, user_model_store, event
     # 10 meetings on Wednesday
     for week in range(3):
         for i in range(4 if week < 2 else 2):
+            ts = wednesday - timedelta(weeks=week, hours=i)
             _insert_event(
-                event_store, "calendar.event.created",
-                wednesday - timedelta(weeks=week, hours=i),
+                event_store, "calendar.event.created", ts,
+                start_time=ts.isoformat(),
             )
 
     # 2 meetings on other days to meet threshold
     for day_offset in [1, 2]:
+        ts = wednesday + timedelta(days=day_offset)
         _insert_event(
-            event_store, "calendar.event.created",
-            wednesday + timedelta(days=day_offset),
+            event_store, "calendar.event.created", ts,
+            start_time=ts.isoformat(),
         )
 
     insights = engine._meeting_density_insights()
