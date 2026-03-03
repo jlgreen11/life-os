@@ -1,5 +1,5 @@
 """
-Tests for the print→logging migration in PredictionEngine (iteration 198).
+Tests for PredictionEngine logging behaviour.
 
 Verifies that:
 1. PredictionEngine uses the standard logging module (not print()) for all
@@ -8,9 +8,15 @@ Verifies that:
    surface even when DEBUG logging is disabled.
 3. Diagnostic per-run stats are emitted at DEBUG level so they can be
    silenced in production without hiding warnings.
+4. Exception handlers that previously used bare ``pass`` now emit debug-level
+   log messages so developers can diagnose missing predictions.
 """
 
+import json
 import logging
+import uuid
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -163,3 +169,156 @@ def test_no_print_calls_in_engine_source():
     assert print_lines == [], (
         f"Found bare print() calls in engine.py — migrate to logger.*(): {print_lines}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Debug logging in exception handlers (bare-pass → debug log)
+# ---------------------------------------------------------------------------
+
+
+def test_quiet_hours_logs_on_malformed_json(db, user_model_store):
+    """_is_quiet_hours logs a debug message when the quiet_hours preference contains invalid JSON."""
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+
+    # Insert malformed JSON into user_preferences
+    with db.get_connection("preferences") as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO user_preferences (key, value) VALUES (?, ?)",
+            ("quiet_hours", "{not valid json"),
+        )
+
+    now = datetime.now(timezone.utc)
+
+    with patch("services.prediction_engine.engine.logger") as mock_logger:
+        result = engine._is_quiet_hours(now)
+
+    # Fail-open: should return False when config is malformed
+    assert result is False
+    # Should have logged a debug message about the parse failure
+    mock_logger.debug.assert_called()
+    log_msg = mock_logger.debug.call_args[0][0]
+    assert "quiet_hours" in log_msg
+
+
+def test_quiet_hours_returns_false_with_no_config(db, user_model_store):
+    """_is_quiet_hours returns False when no quiet_hours preference exists."""
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+    now = datetime.now(timezone.utc)
+
+    result = engine._is_quiet_hours(now)
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_calendar_reminders_logs_on_corrupt_dedup_entry(db, event_store, user_model_store):
+    """_check_calendar_event_reminders logs when dedup entries have corrupt supporting_signals."""
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+    now = datetime.now(timezone.utc)
+
+    # Insert a calendar.event.created event in the 2-24h reminder window so
+    # the method reaches the dedup section instead of returning early.
+    start_time = now + timedelta(hours=6)
+    end_time = start_time + timedelta(hours=1)
+    event_store.store_event({
+        "id": str(uuid.uuid4()),
+        "type": "calendar.event.created",
+        "source": "google",
+        "timestamp": now.isoformat(),
+        "payload": {
+            "event_id": "cal-evt-123",
+            "title": "Team Meeting",
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "is_all_day": False,
+            "location": "",
+        },
+        "metadata": {},
+    })
+
+    # Insert a prediction with corrupt supporting_signals directly into the DB.
+    # The predictions table has no JSON trigger, so raw text is accepted.
+    # The dedup query filters on created_at > (now - 48h).
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            """INSERT INTO predictions (id, prediction_type, description, confidence,
+               confidence_gate, supporting_signals, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(uuid.uuid4()),
+                "reminder",
+                "Some old reminder",
+                0.7,
+                "suggest",
+                "{bad json here",  # Corrupt JSON — triggers the handler
+                now.isoformat(),
+            ),
+        )
+
+    with patch("services.prediction_engine.engine.logger") as mock_logger:
+        # Should complete without error despite corrupt dedup entry
+        await engine._check_calendar_event_reminders({})
+
+    # Should have logged a debug message about the malformed entry
+    debug_calls = mock_logger.debug.call_args_list
+    dedup_log_found = any(
+        "calendar_reminders" in str(call) and "malformed dedup" in str(call)
+        for call in debug_calls
+    )
+    assert dedup_log_found, (
+        f"Expected a 'calendar_reminders: skipping malformed dedup entry' debug log. "
+        f"Got debug calls: {debug_calls}"
+    )
+
+
+def test_count_calendar_event_types_logs_on_malformed_payload(db, user_model_store):
+    """_count_calendar_event_types logs when event payloads contain invalid JSON.
+
+    The events table has a functional index (json_extract on payload) that
+    prevents inserting truly malformed JSON, so we mock the DB query to
+    simulate corrupt data that could result from manual edits or migration
+    issues.
+    """
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+
+    # Create mock rows: one corrupt, one valid
+    corrupt_row = {"payload": "{not valid json"}
+    valid_row = {"payload": json.dumps({"is_all_day": False, "title": "Valid Event"})}
+
+    with patch.object(engine.db, "get_connection") as mock_conn:
+        # Set up the context manager mock to return our rows
+        mock_ctx = mock_conn.return_value.__enter__.return_value
+        mock_ctx.execute.return_value.fetchall.return_value = [corrupt_row, valid_row]
+
+        with patch("services.prediction_engine.engine.logger") as mock_logger:
+            all_day, timed = engine._count_calendar_event_types()
+
+    # Valid event should still be counted despite the corrupt one
+    assert timed == 1
+    assert all_day == 0
+
+    # Should have logged a debug message about the malformed payload
+    debug_calls = mock_logger.debug.call_args_list
+    payload_log_found = any(
+        "calendar_stats" in str(call) and "malformed event payload" in str(call)
+        for call in debug_calls
+    )
+    assert payload_log_found, (
+        f"Expected a 'calendar_stats: skipping malformed event payload' debug log. "
+        f"Got debug calls: {debug_calls}"
+    )
+
+
+def test_count_calendar_event_types_returns_zeros_when_all_corrupt(db, user_model_store):
+    """_count_calendar_event_types returns (0, 0) when all payloads are malformed."""
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+
+    corrupt_rows = [{"payload": f"{{corrupt-{i}"} for i in range(3)]
+
+    with patch.object(engine.db, "get_connection") as mock_conn:
+        mock_ctx = mock_conn.return_value.__enter__.return_value
+        mock_ctx.execute.return_value.fetchall.return_value = corrupt_rows
+
+        all_day, timed = engine._count_calendar_event_types()
+
+    assert all_day == 0
+    assert timed == 0
