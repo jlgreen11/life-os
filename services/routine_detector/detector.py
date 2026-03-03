@@ -14,6 +14,7 @@ Routine types detected:
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
@@ -156,12 +157,16 @@ class RoutineDetector:
         Returns:
             Number of distinct days with episode data, or 1 to avoid division by zero
         """
-        with self.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT COUNT(DISTINCT DATE(timestamp)) FROM episodes WHERE timestamp > ?",
-                (cutoff.isoformat(),),
-            ).fetchone()
-        return max(1, row[0] if row and row[0] else 1)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT COUNT(DISTINCT DATE(timestamp)) FROM episodes WHERE timestamp > ?",
+                    (cutoff.isoformat(),),
+                ).fetchone()
+            return max(1, row[0] if row and row[0] else 1)
+        except sqlite3.DatabaseError as e:
+            logger.warning("_count_active_days: user_model.db query failed: %s", e)
+            return 1
 
     def _compute_step_duration_map(self, cutoff: datetime) -> dict[str, float]:
         """Compute average gap (in minutes) from each interaction type to the next.
@@ -194,30 +199,34 @@ class RoutineDetector:
             map = detector._compute_step_duration_map(cutoff)
             duration = map.get("check_email", 5.0)  # → ~15.0 if observed
         """
-        with self.db.get_connection("user_model") as conn:
-            rows = conn.execute("""
-                WITH ranked AS (
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute("""
+                    WITH ranked AS (
+                        SELECT
+                            interaction_type,
+                            DATE(timestamp) as day,
+                            datetime(timestamp) as ts,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY DATE(timestamp)
+                                ORDER BY datetime(timestamp)
+                            ) as rn
+                        FROM episodes
+                        WHERE timestamp > ? AND interaction_type IS NOT NULL
+                    )
                     SELECT
-                        interaction_type,
-                        DATE(timestamp) as day,
-                        datetime(timestamp) as ts,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY DATE(timestamp)
-                            ORDER BY datetime(timestamp)
-                        ) as rn
-                    FROM episodes
-                    WHERE timestamp > ? AND interaction_type IS NOT NULL
-                )
-                SELECT
-                    a.interaction_type,
-                    AVG(
-                        (JULIANDAY(b.ts) - JULIANDAY(a.ts)) * 24 * 60
-                    ) as avg_gap_minutes
-                FROM ranked a
-                JOIN ranked b ON a.day = b.day AND b.rn = a.rn + 1
-                GROUP BY a.interaction_type
-            """, (cutoff.isoformat(),)).fetchall()
-        return {row[0]: row[1] for row in rows if row[1] is not None}
+                        a.interaction_type,
+                        AVG(
+                            (JULIANDAY(b.ts) - JULIANDAY(a.ts)) * 24 * 60
+                        ) as avg_gap_minutes
+                    FROM ranked a
+                    JOIN ranked b ON a.day = b.day AND b.rn = a.rn + 1
+                    GROUP BY a.interaction_type
+                """, (cutoff.isoformat(),)).fetchall()
+            return {row[0]: row[1] for row in rows if row[1] is not None}
+        except sqlite3.DatabaseError as e:
+            logger.warning("_compute_step_duration_map: user_model.db query failed: %s", e)
+            return {}
 
     def _detect_temporal_routines(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect routines that occur at similar times each day.
@@ -264,15 +273,19 @@ class RoutineDetector:
 
         # Fetch raw episode timestamps and interaction types so that we can
         # convert UTC → local timezone in Python before bucketing.
-        with self.db.get_connection("user_model") as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT timestamp, interaction_type
-                FROM episodes
-                WHERE timestamp > ? AND interaction_type IS NOT NULL
-                ORDER BY timestamp
-            """, (cutoff.isoformat(),))
-            raw_episodes = cursor.fetchall()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT timestamp, interaction_type
+                    FROM episodes
+                    WHERE timestamp > ? AND interaction_type IS NOT NULL
+                    ORDER BY timestamp
+                """, (cutoff.isoformat(),))
+                raw_episodes = cursor.fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("_detect_temporal_routines: user_model.db query failed: %s", e)
+            return []
 
         if not raw_episodes:
             return routines
@@ -423,23 +436,27 @@ class RoutineDetector:
         # Fetch recurring (location, interaction_type) pairs.
         # day_count = distinct days where this action occurred at this location,
         # which is the correct denominator for the consistency fraction.
-        with self.db.get_connection("user_model") as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    location,
-                    interaction_type,
-                    COUNT(DISTINCT DATE(timestamp)) as day_count
-                FROM episodes
-                WHERE timestamp > ?
-                  AND location IS NOT NULL
-                  AND interaction_type IS NOT NULL
-                GROUP BY location, interaction_type
-                HAVING day_count >= ?
-                ORDER BY location, day_count DESC
-            """, (cutoff.isoformat(), self.min_occurrences))
+        try:
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        location,
+                        interaction_type,
+                        COUNT(DISTINCT DATE(timestamp)) as day_count
+                    FROM episodes
+                    WHERE timestamp > ?
+                      AND location IS NOT NULL
+                      AND interaction_type IS NOT NULL
+                    GROUP BY location, interaction_type
+                    HAVING day_count >= ?
+                    ORDER BY location, day_count DESC
+                """, (cutoff.isoformat(), self.min_occurrences))
 
-            location_actions = cursor.fetchall()
+                location_actions = cursor.fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("_detect_location_routines: user_model.db query failed: %s", e)
+            return []
 
         if not location_actions:
             return routines
@@ -517,20 +534,24 @@ class RoutineDetector:
 
         # Look for interaction types that occur on enough distinct days to be
         # candidates for routine triggers.
-        with self.db.get_connection("user_model") as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    interaction_type,
-                    COUNT(DISTINCT DATE(timestamp)) as days_occurred
-                FROM episodes
-                WHERE timestamp > ? AND interaction_type IS NOT NULL
-                GROUP BY interaction_type
-                HAVING days_occurred >= ?
-                ORDER BY days_occurred DESC
-            """, (cutoff.isoformat(), self.min_occurrences))
+        try:
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        interaction_type,
+                        COUNT(DISTINCT DATE(timestamp)) as days_occurred
+                    FROM episodes
+                    WHERE timestamp > ? AND interaction_type IS NOT NULL
+                    GROUP BY interaction_type
+                    HAVING days_occurred >= ?
+                    ORDER BY days_occurred DESC
+                """, (cutoff.isoformat(), self.min_occurrences))
 
-            trigger_events = cursor.fetchall()
+                trigger_events = cursor.fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("_detect_event_triggered_routines: user_model.db trigger query failed: %s", e)
+            return []
 
         # Compute measured inter-step durations once, shared across all trigger types.
         # Falls back to 5.0 minutes for interaction types where no same-day successor
@@ -552,25 +573,32 @@ class RoutineDetector:
             # sides.  Without this, stored timestamps (ISO 8601 with +00:00)
             # compare as always-greater than datetime() output (no TZ suffix),
             # causing the window filter to silently drop every match.
-            with self.db.get_connection("user_model") as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT
-                        e2.interaction_type,
-                        COUNT(DISTINCT DATE(e1.timestamp)) as day_count
-                    FROM episodes e1
-                    JOIN episodes e2 ON DATE(e1.timestamp) = DATE(e2.timestamp)
-                        AND datetime(e2.timestamp) > datetime(e1.timestamp)
-                        AND datetime(e2.timestamp) < datetime(e1.timestamp, '+2 hours')
-                        AND e1.interaction_type != e2.interaction_type
-                    WHERE e1.interaction_type = ?
-                      AND e1.timestamp > ?
-                    GROUP BY e2.interaction_type
-                    HAVING day_count >= ?
-                    ORDER BY day_count DESC
-                """, (interaction_type, cutoff.isoformat(), self.min_occurrences))
+            try:
+                with self.db.get_connection("user_model") as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT
+                            e2.interaction_type,
+                            COUNT(DISTINCT DATE(e1.timestamp)) as day_count
+                        FROM episodes e1
+                        JOIN episodes e2 ON DATE(e1.timestamp) = DATE(e2.timestamp)
+                            AND datetime(e2.timestamp) > datetime(e1.timestamp)
+                            AND datetime(e2.timestamp) < datetime(e1.timestamp, '+2 hours')
+                            AND e1.interaction_type != e2.interaction_type
+                        WHERE e1.interaction_type = ?
+                          AND e1.timestamp > ?
+                        GROUP BY e2.interaction_type
+                        HAVING day_count >= ?
+                        ORDER BY day_count DESC
+                    """, (interaction_type, cutoff.isoformat(), self.min_occurrences))
 
-                following_actions = cursor.fetchall()
+                    following_actions = cursor.fetchall()
+            except sqlite3.DatabaseError as e:
+                logger.warning(
+                    "_detect_event_triggered_routines: user_model.db follow-up query failed for %s: %s",
+                    interaction_type, e,
+                )
+                continue
 
             if len(following_actions) >= 1:  # At least 1 following step for a sequence
                 avg_day_count = sum(dc for _, dc in following_actions) / len(following_actions)
