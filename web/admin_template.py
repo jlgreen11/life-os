@@ -126,6 +126,18 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
         <h1>Manage Connectors</h1>
         <p class="subtitle"><a href="/">&larr; Back to Dashboard</a> &middot; <a href="/admin/db">Database Viewer</a></p>
 
+        <div class="section-label">Database Health</div>
+        <div id="dbHealthCard" style="background:#1a1a1a;border:1px solid #222;border-radius:10px;padding:16px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <span style="font-weight:500;font-size:15px;">Storage Status</span>
+                <button class="btn btn-danger" id="repairBtn" style="display:none;" onclick="repairUserModel()">Repair Database</button>
+            </div>
+            <div id="dbHealthGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;">
+                <span style="color:#666;font-size:13px;">Loading&hellip;</span>
+            </div>
+            <div id="repairStatus" style="margin-top:12px;font-size:13px;color:#666;display:none;"></div>
+        </div>
+
         <div class="section-label">API Connectors</div>
         <div class="grid" id="apiGrid"></div>
 
@@ -483,6 +495,116 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     // ---------------------------------------------------------------
+    // Database Health
+    // ---------------------------------------------------------------
+
+    /** Fetch database health from /health and render the DB health grid. */
+    async function loadDbHealth() {
+        try {
+            const res = await fetch(`${API}/health`);
+            const data = await res.json();
+            const dbHealth = data.db_health || {};
+            renderDbHealth(dbHealth);
+        } catch (e) {
+            const grid = document.getElementById('dbHealthGrid');
+            while (grid.firstChild) grid.removeChild(grid.firstChild);
+            const msg = document.createElement('span');
+            msg.style.cssText = 'color:#666;font-size:13px;';
+            msg.textContent = 'Could not load database health';
+            grid.appendChild(msg);
+        }
+    }
+
+    /** Render a status card for each database. */
+    function renderDbHealth(dbHealth) {
+        const grid = document.getElementById('dbHealthGrid');
+        const repairBtn = document.getElementById('repairBtn');
+        while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+        const entries = Object.entries(dbHealth);
+        if (!entries.length) {
+            const empty = document.createElement('span');
+            empty.style.cssText = 'color:#666;font-size:13px;';
+            empty.textContent = 'No database info available';
+            grid.appendChild(empty);
+            repairBtn.style.display = 'none';
+            return;
+        }
+
+        let hasCorruption = false;
+        for (const [name, info] of entries) {
+            const card = document.createElement('div');
+            card.style.cssText = 'background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:10px;';
+
+            const hdr = document.createElement('div');
+            hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+
+            const nameEl = document.createElement('span');
+            nameEl.style.cssText = 'font-size:13px;font-weight:500;';
+            nameEl.textContent = name.replace(/_/g, ' ');
+
+            const isOk = info.status === 'ok';
+            const dot = document.createElement('span');
+            dot.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:50%;background:'
+                + (isOk ? '#4aff6b' : '#ff5555') + ';';
+
+            const meta = document.createElement('div');
+            meta.style.cssText = 'font-size:11px;color:#666;margin-top:4px;';
+            const sizeMb = (info.size_bytes / (1024 * 1024)).toFixed(1);
+            meta.textContent = isOk ? sizeMb + ' MB' : 'Corrupted';
+
+            if (!isOk) hasCorruption = true;
+
+            hdr.appendChild(nameEl);
+            hdr.appendChild(dot);
+            card.appendChild(hdr);
+            card.appendChild(meta);
+            grid.appendChild(card);
+        }
+
+        // Show repair button only when user_model is corrupted
+        const um = dbHealth['user_model'];
+        repairBtn.style.display = (um && um.status !== 'ok') ? 'inline-block' : 'none';
+    }
+
+    /** Trigger a rebuild of user_model.db via POST /api/admin/rebuild-user-model. */
+    async function repairUserModel() {
+        const btn = document.getElementById('repairBtn');
+        const statusEl = document.getElementById('repairStatus');
+        btn.disabled = true;
+        btn.textContent = 'Repairing\u2026';
+        statusEl.style.display = 'block';
+        statusEl.textContent = 'Rebuilding user_model.db\u2026';
+
+        try {
+            const res = await fetch(`${API}/api/admin/rebuild-user-model`, { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'error') {
+                statusEl.textContent = 'Repair failed: ' + (data.detail || 'Unknown error');
+                statusEl.style.color = '#ff5555';
+                showToast('Database repair failed', 'error');
+            } else if (data.status === 'skipped') {
+                statusEl.textContent = 'Database is healthy \u2014 no repair needed.';
+                statusEl.style.color = '#4aff6b';
+                showToast('Database is already healthy', 'info');
+            } else {
+                statusEl.textContent = 'Database rebuilt. Signal profiles rebuilding in background.';
+                statusEl.style.color = '#4aff6b';
+                showToast('Database repaired successfully', 'success');
+                // Auto-refresh health display after 3 seconds
+                setTimeout(() => { loadDbHealth(); }, 3000);
+            }
+        } catch (e) {
+            statusEl.textContent = 'Repair request failed: ' + e.message;
+            statusEl.style.color = '#ff5555';
+            showToast('Repair failed: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Repair Database';
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Intelligence / Signal Profile Backfills
     // ---------------------------------------------------------------
 
@@ -601,6 +723,7 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
     // Init
     // ---------------------------------------------------------------
     loadAll();
+    loadDbHealth();
     loadBackfillStatus();
     </script>
 </body>
