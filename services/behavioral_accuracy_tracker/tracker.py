@@ -447,14 +447,22 @@ class BehavioralAccuracyTracker:
                 was_accurate = result
                 now = datetime.now(timezone.utc).isoformat()
 
+                # Tag resolution_reason the same way as surfaced predictions.
+                # Without this, filtered automated-sender predictions resolved as
+                # inaccurate lack the 'automated_sender_fast_path' tag and count
+                # against accuracy scores in _get_accuracy_multiplier(), artificially
+                # depressing confidence for the entire prediction type.
+                resolution_reason = self._get_resolution_reason(dict(pred), was_accurate)
+
                 with self.db.get_connection("user_model") as conn:
                     conn.execute(
                         """UPDATE predictions SET
                            was_accurate = ?,
-                           resolved_at = ?
+                           resolved_at = ?,
+                           resolution_reason = ?
                            WHERE id = ?""",
                         # Keep user_response='filtered' to preserve provenance
-                        (1 if was_accurate else 0, now, pred["id"]),
+                        (1 if was_accurate else 0, now, resolution_reason, pred["id"]),
                     )
 
                 if was_accurate:
