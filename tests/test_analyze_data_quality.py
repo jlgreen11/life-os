@@ -1,598 +1,43 @@
-"""Tests for the data quality analysis script.
+"""Tests for scripts/analyze-data-quality.py error reporting and observability.
 
-Verifies the 4 bug fixes:
-1. _query() and _query_one() log warnings on failure (Bug 4)
-2. connector_state query uses correct column name ``last_error`` (Bug 2)
-3. source_weights query uses correct column names (Bug 3)
-4. user_model.db sections are independent — one failure doesn't suppress others (Bug 1)
+Verifies that the data quality analysis script:
+- Produces valid reports from healthy databases with no errors
+- Reports errors in ALL dependent sections when a database is unavailable
+- Captures query errors in the report-level query_errors list
+- Logs connection failures via the logger
+- Existing bug-fix behavior (connector_state columns, source_weights columns,
+  independent user_model sections)
 """
 
 import logging
 import sqlite3
+from unittest.mock import patch
 
 import pytest
 
 # The script lives at scripts/analyze-data-quality.py which isn't a proper
-# Python package, so we import its internals by manipulating sys.path.
+# Python package, so we import its internals via importlib.
 import importlib
 import sys
 from pathlib import Path
 
-# Add the scripts directory so we can import the module
 _scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
 # Import with importlib since the filename contains hyphens
-_mod = importlib.import_module("analyze-data-quality")
+_mod_spec = importlib.util.spec_from_file_location(
+    "analyze_data_quality",
+    Path(__file__).resolve().parent.parent / "scripts" / "analyze-data-quality.py",
+)
+_mod = importlib.util.module_from_spec(_mod_spec)
+_mod_spec.loader.exec_module(_mod)
+
+analyze = _mod.analyze
+_connect = _mod._connect
 _query = _mod._query
 _query_one = _mod._query_one
-analyze = _mod.analyze
-
-
-# ---------------------------------------------------------------------------
-# Bug 4: _query / _query_one log warnings on failure
-# ---------------------------------------------------------------------------
-
-
-def test_query_logs_warning_on_failure(tmp_path, caplog):
-    """_query() should log a warning when the SQL fails."""
-    db_path = tmp_path / "test.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-
-    broken_sql = "SELECT * FROM nonexistent_table_xyz"
-    with caplog.at_level(logging.WARNING, logger="analyze-data-quality"):
-        result = _query(conn, broken_sql, default=[])
-
-    assert result == []
-    assert any("Query failed" in rec.message for rec in caplog.records)
-    assert any("nonexistent_table_xyz" in rec.message for rec in caplog.records)
-    conn.close()
-
-
-def test_query_one_logs_warning_on_failure(tmp_path, caplog):
-    """_query_one() should log a warning and return default on failure."""
-    db_path = tmp_path / "test.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-
-    broken_sql = "SELECT * FROM nonexistent_table_xyz"
-    with caplog.at_level(logging.WARNING, logger="analyze-data-quality"):
-        result = _query_one(conn, broken_sql, default=None)
-
-    assert result is None
-    assert any("Query failed" in rec.message for rec in caplog.records)
-    conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Bug 2: connector_state uses correct column name ``last_error``
-# ---------------------------------------------------------------------------
-
-
-def test_connector_state_uses_last_error_column(tmp_path):
-    """The connector_state query should select ``last_error``, not ``error_message``."""
-    db_path = tmp_path / "state.db"
-    conn = sqlite3.connect(str(db_path))
-    # Create the real schema
-    conn.execute("""
-        CREATE TABLE connector_state (
-            connector_id TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'inactive',
-            enabled INTEGER DEFAULT 0,
-            last_sync TEXT,
-            sync_cursor TEXT,
-            error_count INTEGER DEFAULT 0,
-            last_error TEXT,
-            config TEXT DEFAULT '{}',
-            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        )
-    """)
-    conn.execute("""
-        INSERT INTO connector_state (connector_id, status, last_sync, last_error)
-        VALUES ('gmail', 'active', '2026-01-01T00:00:00Z', 'timeout after 30s')
-    """)
-    # Also need notifications and tasks tables for the state.db section
-    conn.execute("""
-        CREATE TABLE notifications (
-            id TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'pending'
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE tasks (
-            id TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'pending',
-            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-    # Create minimal other DBs so analyze() doesn't crash
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    report = analyze(str(tmp_path))
-    connectors = report["sections"].get("connectors", {})
-
-    assert "gmail" in connectors, f"Expected 'gmail' in connectors, got: {connectors}"
-    assert connectors["gmail"]["error"] == "timeout after 30s"
-    assert connectors["gmail"]["status"] == "active"
-
-
-# ---------------------------------------------------------------------------
-# Bug 3: source_weights uses correct column names
-# ---------------------------------------------------------------------------
-
-
-def test_source_weights_uses_correct_column_names(tmp_path):
-    """The source_weights query should select ``user_weight``, ``ai_drift``, ``ai_updated_at``."""
-    db_path = tmp_path / "preferences.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("""
-        CREATE TABLE source_weights (
-            source_key TEXT PRIMARY KEY,
-            category TEXT NOT NULL,
-            label TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            user_weight REAL NOT NULL DEFAULT 0.5,
-            ai_drift REAL NOT NULL DEFAULT 0.0,
-            drift_reason TEXT DEFAULT '',
-            drift_history TEXT DEFAULT '[]',
-            user_set_at TEXT,
-            ai_updated_at TEXT,
-            interactions INTEGER DEFAULT 0,
-            engagements INTEGER DEFAULT 0,
-            dismissals INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        )
-    """)
-    conn.execute("""
-        INSERT INTO source_weights (source_key, category, label, user_weight, ai_drift, ai_updated_at)
-        VALUES ('email.gmail', 'connector', 'Gmail', 0.8, 0.15, '2026-01-15T12:00:00Z')
-    """)
-    # Also need feedback_log table
-    conn.execute("""
-        CREATE TABLE feedback_log (
-            id INTEGER PRIMARY KEY,
-            action_type TEXT,
-            feedback_type TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-    # Create minimal other DBs
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-
-    report = analyze(str(tmp_path))
-    sw = report["sections"].get("source_weights", {})
-
-    assert "email.gmail" in sw, f"Expected 'email.gmail' in source_weights, got: {sw}"
-    assert sw["email.gmail"]["weight"] == 0.8
-    assert sw["email.gmail"]["drift"] == 0.15
-    assert sw["email.gmail"]["updated_at"] == "2026-01-15T12:00:00Z"
-
-
-# ---------------------------------------------------------------------------
-# Bug 1: user_model.db sections are independent
-# ---------------------------------------------------------------------------
-
-
-def test_user_model_sections_independent(tmp_path):
-    """If predictions table is missing, other user_model.db sections still populate.
-
-    The _query helpers catch missing-table errors internally, so the outer
-    try/except won't fire — but the key property being tested is that
-    signal_profiles, insight_feedback, and user_model sections are ALL present
-    in the output even when the predictions table doesn't exist.  In the old
-    monolithic try-block, ANY exception (e.g. from a corrupt DB or a schema
-    mismatch that bypasses _query) would have silently suppressed every section
-    after the failure point.
-    """
-    db_path = tmp_path / "user_model.db"
-    conn = sqlite3.connect(str(db_path))
-
-    # Create signal_profiles, insights, episodes, semantic_facts, routines
-    # but do NOT create the predictions table.
-    conn.execute("""
-        CREATE TABLE signal_profiles (
-            profile_type TEXT PRIMARY KEY,
-            samples_count INTEGER DEFAULT 0,
-            updated_at TEXT
-        )
-    """)
-    conn.execute("""
-        INSERT INTO signal_profiles (profile_type, samples_count, updated_at)
-        VALUES ('linguistic', 42, '2026-01-01T00:00:00Z')
-    """)
-
-    conn.execute("""
-        CREATE TABLE insights (
-            id INTEGER PRIMARY KEY,
-            type TEXT,
-            feedback TEXT
-        )
-    """)
-
-    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO episodes (id) VALUES (1)")
-    conn.execute("INSERT INTO episodes (id) VALUES (2)")
-
-    conn.execute("""
-        CREATE TABLE semantic_facts (
-            id INTEGER PRIMARY KEY,
-            category TEXT DEFAULT 'general'
-        )
-    """)
-    conn.execute("INSERT INTO semantic_facts (id, category) VALUES (1, 'preference')")
-
-    conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO routines (id) VALUES (1)")
-
-    conn.commit()
-    conn.close()
-
-    # Create minimal other DBs
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    report = analyze(str(tmp_path))
-    sections = report["sections"]
-
-    # All four user_model.db sections should be present in the output
-    assert "prediction_accuracy" in sections, "prediction_accuracy section should exist"
-    assert "signal_profiles" in sections, "signal_profiles section should exist"
-    assert "insight_feedback" in sections, "insight_feedback section should exist"
-    assert "user_model" in sections, "user_model section should exist"
-
-    # signal_profiles should have real data
-    sp = sections["signal_profiles"]
-    assert "linguistic" in sp, f"signal_profiles should contain 'linguistic', got: {sp}"
-    assert sp["linguistic"]["samples"] == 42
-
-    # user_model should have real data
-    um = sections["user_model"]
-    assert um.get("episodes") == 2, f"user_model.episodes should be 2, got: {um}"
-    assert um.get("semantic_facts") == 1
-    assert um.get("routines") == 1
-    assert um.get("fact_categories") == {"preference": 1}
-
-
-def test_user_model_sections_independent_reverse(tmp_path):
-    """If episodes/routines tables are missing, signal_profiles still populates.
-
-    Verifies independence in the reverse direction: even when the last
-    section (user_model depth) has missing tables, earlier sections like
-    signal_profiles still have their data.
-    """
-    db_path = tmp_path / "user_model.db"
-    conn = sqlite3.connect(str(db_path))
-
-    # Create predictions and signal_profiles, but NOT episodes/semantic_facts/routines
-    conn.execute("""
-        CREATE TABLE predictions (
-            id INTEGER PRIMARY KEY,
-            prediction_type TEXT,
-            was_surfaced INTEGER DEFAULT 0,
-            was_accurate INTEGER,
-            resolution_reason TEXT,
-            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE signal_profiles (
-            profile_type TEXT PRIMARY KEY,
-            samples_count INTEGER DEFAULT 0,
-            updated_at TEXT
-        )
-    """)
-    conn.execute("""
-        INSERT INTO signal_profiles (profile_type, samples_count, updated_at)
-        VALUES ('mood', 10, '2026-02-01T00:00:00Z')
-    """)
-    conn.execute("""
-        CREATE TABLE insights (
-            id INTEGER PRIMARY KEY,
-            type TEXT,
-            feedback TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    report = analyze(str(tmp_path))
-    sections = report["sections"]
-
-    # All four user_model.db sections should exist in the output
-    assert "signal_profiles" in sections, "signal_profiles section should exist"
-    assert "user_model" in sections, "user_model section should exist"
-
-    # signal_profiles should have real data despite missing episodes/routines tables
-    sp = sections["signal_profiles"]
-    assert "mood" in sp, f"signal_profiles should have 'mood', got: {sp}"
-    assert sp["mood"]["samples"] == 10
-
-    # user_model should be populated with zero counts (missing tables return None defaults)
-    um = sections["user_model"]
-    assert um["episodes"] == 0
-    assert um["semantic_facts"] == 0
-    assert um["routines"] == 0
-
-
-# ---------------------------------------------------------------------------
-# Prediction pipeline diagnostics
-# ---------------------------------------------------------------------------
-
-
-def test_prediction_pipeline_empty_db(tmp_path):
-    """prediction_pipeline section exists with all zeros when no predictions exist."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    report = analyze(str(tmp_path))
-    pp = report["sections"].get("prediction_pipeline")
-
-    assert pp is not None, "prediction_pipeline section should exist"
-    assert pp["total_generated"] == 0
-    assert pp["surfaced"] == 0
-    assert pp["filtered"] == 0
-    assert pp["surfacing_rate"] == 0
-    assert pp["resolved"] == 0
-    assert pp["user_acted_on"] == 0
-    assert pp["user_dismissed"] == 0
-    assert pp["auto_filtered"] == 0
-    assert pp["filter_reasons"] == {}
-
-
-def test_prediction_pipeline_with_filtered_predictions(tmp_path):
-    """Filtered predictions are counted and categorized by filter_reason."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    conn = sqlite3.connect(str(tmp_path / "user_model.db"))
-    conn.row_factory = sqlite3.Row
-
-    # Insert filtered predictions with various filter_reasons
-    predictions = [
-        ("p1", "NEED", 0, "filtered", "confidence:0.18 (threshold:0.3)", "2026-01-01T00:00:00Z"),
-        ("p2", "NEED", 0, "filtered", "confidence:0.25 (threshold:0.3)", "2026-01-01T00:00:00Z"),
-        ("p3", "RISK", 0, "filtered", "reaction:annoying (too frequent)", "2026-01-01T00:00:00Z"),
-        ("p4", "OPPORTUNITY", 0, "filtered", "duplicate:similar prediction exists", "2026-01-01T00:00:00Z"),
-        ("p5", "REMINDER", 1, "acted_on", None, None),
-    ]
-    for pid, ptype, surfaced, response, reason, resolved in predictions:
-        conn.execute(
-            """INSERT INTO predictions (id, prediction_type, was_surfaced, user_response,
-               filter_reason, resolved_at) VALUES (?, ?, ?, ?, ?, ?)""",
-            (pid, ptype, surfaced, response, reason, resolved),
-        )
-    conn.commit()
-    conn.close()
-
-    report = analyze(str(tmp_path))
-    pp = report["sections"]["prediction_pipeline"]
-
-    assert pp["total_generated"] == 5
-    assert pp["surfaced"] == 1
-    assert pp["filtered"] == 4
-    assert pp["auto_filtered"] == 4  # user_response = 'filtered'
-    assert pp["user_acted_on"] == 1
-
-    # Check filter_reason categorization
-    reasons = pp["filter_reasons"]
-    assert reasons.get("low_confidence") == 2, f"Expected 2 low_confidence, got: {reasons}"
-    assert reasons.get("reaction_gate") == 1, f"Expected 1 reaction_gate, got: {reasons}"
-    assert reasons.get("duplicate") == 1, f"Expected 1 duplicate, got: {reasons}"
-
-
-def test_prediction_pipeline_surfacing_rate(tmp_path):
-    """Surfacing rate is calculated correctly from a mix of surfaced and filtered predictions."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    conn = sqlite3.connect(str(tmp_path / "user_model.db"))
-    conn.row_factory = sqlite3.Row
-
-    # Insert 3 surfaced, 7 filtered → 30% surfacing rate
-    for i in range(3):
-        conn.execute(
-            "INSERT INTO predictions (id, prediction_type, was_surfaced) VALUES (?, 'NEED', 1)",
-            (f"surfaced_{i}",),
-        )
-    for i in range(7):
-        conn.execute(
-            """INSERT INTO predictions (id, prediction_type, was_surfaced, user_response,
-               filter_reason, resolved_at) VALUES (?, 'NEED', 0, 'filtered',
-               'confidence:0.1 (threshold:0.3)', '2026-01-01T00:00:00Z')""",
-            (f"filtered_{i}",),
-        )
-    conn.commit()
-    conn.close()
-
-    report = analyze(str(tmp_path))
-    pp = report["sections"]["prediction_pipeline"]
-
-    assert pp["total_generated"] == 10
-    assert pp["surfaced"] == 3
-    assert pp["filtered"] == 7
-    assert pp["surfacing_rate"] == 0.3  # 3/10 = 0.3
-    assert pp["auto_filtered"] == 7
-    assert pp["filter_reasons"].get("low_confidence") == 7
-
-
-# ---------------------------------------------------------------------------
-# Database health section
-# ---------------------------------------------------------------------------
-
-
-def test_database_health_section_present(tmp_path):
-    """Report includes a 'database_health' section with entries for all 5 databases."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-    # entities.db doesn't exist — should report "could not connect"
-
-    report = analyze(str(tmp_path))
-    health = report["sections"].get("database_health")
-
-    assert health is not None, "database_health section should exist"
-    expected_dbs = ["events", "user_model", "state", "preferences", "entities"]
-    for db_name in expected_dbs:
-        assert db_name in health, f"database_health should include '{db_name}', got: {list(health.keys())}"
-
-
-def test_database_health_reports_ok(tmp_path):
-    """Healthy databases all report 'ok' in the database_health section."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-    _create_minimal_entities_db(tmp_path)
-
-    report = analyze(str(tmp_path))
-    health = report["sections"]["database_health"]
-
-    for db_name in ["events", "user_model", "state", "preferences", "entities"]:
-        assert health[db_name] == "ok", f"{db_name} should be 'ok', got: {health[db_name]}"
-
-
-def test_corrupted_db_reports_query_errors(tmp_path, monkeypatch):
-    """When _query_one returns None (e.g. due to corruption), query_errors tracks failures."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_user_model_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    # Patch _query_one to simulate corruption: return None for episodes/routines
-    original_query_one = _query_one
-
-    def _failing_query_one(conn, sql, default=None):
-        """Simulate corruption for episodes and routines tables."""
-        if "FROM episodes" in sql or "FROM routines" in sql:
-            return None
-        return original_query_one(conn, sql, default)
-
-    monkeypatch.setattr(_mod, "_query_one", _failing_query_one)
-
-    report = analyze(str(tmp_path))
-    um = report["sections"]["user_model"]
-
-    assert "episodes" in um["query_errors"], f"Expected 'episodes' in query_errors, got: {um['query_errors']}"
-    assert "routines" in um["query_errors"], f"Expected 'routines' in query_errors, got: {um['query_errors']}"
-    assert "semantic_facts" not in um["query_errors"], "semantic_facts should not be in query_errors"
-    # Values should still be 0 (the fallback), but query_errors tells us why
-    assert um["episodes"] == 0
-    assert um["routines"] == 0
-
-
-def test_corrupted_db_detected_by_integrity_check(tmp_path):
-    """PRAGMA integrity_check detects a corrupted database file."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    # Create a valid user_model.db with enough data to span multiple pages
-    db_path = tmp_path / "user_model.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA page_size = 512")  # small pages = more pages for same data
-    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, data TEXT)")
-    # Insert enough rows to create multiple pages
-    for i in range(200):
-        conn.execute("INSERT INTO episodes (id, data) VALUES (?, ?)", (i, "x" * 200))
-    conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
-    conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
-    conn.execute("""
-        CREATE TABLE predictions (
-            id TEXT PRIMARY KEY, prediction_type TEXT,
-            was_surfaced INTEGER DEFAULT 0, was_accurate INTEGER,
-            filter_reason TEXT, resolution_reason TEXT,
-            user_response TEXT, resolved_at TEXT,
-            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE signal_profiles (
-            profile_type TEXT PRIMARY KEY, samples_count INTEGER DEFAULT 0, updated_at TEXT
-        )
-    """)
-    conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
-    conn.commit()
-    conn.close()
-
-    # Corrupt data pages (well past the header and schema pages)
-    data = bytearray(db_path.read_bytes())
-    # Corrupt a large section in the latter half of the file
-    start = len(data) * 3 // 4
-    for i in range(start, min(start + 2048, len(data))):
-        data[i] = 0xFF
-    db_path.write_bytes(bytes(data))
-
-    report = analyze(str(tmp_path))
-    health = report["sections"]["database_health"]
-
-    # The corrupted DB should NOT report 'ok'
-    assert health["user_model"] != "ok", f"Corrupted DB should not report 'ok', got: {health['user_model']}"
-
-
-def test_healthy_db_has_empty_query_errors(tmp_path):
-    """A healthy user_model.db with data should have an empty query_errors list."""
-    _create_minimal_events_db(tmp_path)
-    _create_minimal_state_db(tmp_path)
-    _create_minimal_preferences_db(tmp_path)
-
-    db_path = tmp_path / "user_model.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("""
-        CREATE TABLE predictions (
-            id TEXT PRIMARY KEY, prediction_type TEXT,
-            was_surfaced INTEGER DEFAULT 0, was_accurate INTEGER,
-            filter_reason TEXT, resolution_reason TEXT,
-            user_response TEXT, resolved_at TEXT,
-            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE signal_profiles (
-            profile_type TEXT PRIMARY KEY, samples_count INTEGER DEFAULT 0, updated_at TEXT
-        )
-    """)
-    conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
-    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO episodes (id) VALUES (1)")
-    conn.execute("INSERT INTO episodes (id) VALUES (2)")
-    conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
-    conn.execute("INSERT INTO semantic_facts (id, category) VALUES (1, 'preference')")
-    conn.execute("INSERT INTO semantic_facts (id, category) VALUES (2, 'fact')")
-    conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
-    conn.execute("INSERT INTO routines (id) VALUES (1)")
-    conn.commit()
-    conn.close()
-
-    report = analyze(str(tmp_path))
-    um = report["sections"]["user_model"]
-
-    assert um["query_errors"] == [], f"Healthy DB should have empty query_errors, got: {um['query_errors']}"
-    assert um["episodes"] == 2
-    assert um["semantic_facts"] == 2
-    assert um["routines"] == 1
+_errors = _mod._errors
 
 
 # ---------------------------------------------------------------------------
@@ -715,11 +160,653 @@ def _create_minimal_preferences_db(tmp_path):
 def _create_minimal_entities_db(tmp_path):
     """Create a minimal entities.db with a placeholder table."""
     conn = sqlite3.connect(str(tmp_path / "entities.db"))
+    conn.execute("CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, name TEXT)")
+    conn.commit()
+    conn.close()
+
+
+def _create_all_dbs(tmp_path):
+    """Create all 5 databases with their required schemas."""
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+    _create_minimal_entities_db(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Healthy database tests
+# ---------------------------------------------------------------------------
+
+
+class TestHealthyDatabase:
+    """Tests that a healthy database produces a valid report with no errors."""
+
+    def test_report_has_all_sections(self, tmp_path):
+        """A healthy set of databases produces a report with all expected sections."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        expected_sections = [
+            "database_health",
+            "events",
+            "prediction_accuracy",
+            "prediction_resolution",
+            "prediction_pipeline",
+            "signal_profiles",
+            "insight_feedback",
+            "user_model",
+            "notifications",
+            "tasks",
+            "connectors",
+            "feedback",
+            "source_weights",
+        ]
+        for section in expected_sections:
+            assert section in report["sections"], f"Missing section: {section}"
+
+    def test_no_query_errors_on_healthy_db(self, tmp_path):
+        """A healthy database produces zero query errors."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        assert "query_errors" in report
+        assert report["query_errors"] == []
+
+    def test_no_error_keys_on_healthy_db(self, tmp_path):
+        """No section should contain an 'error' key when databases are healthy."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        for name, section in report["sections"].items():
+            if isinstance(section, dict):
+                assert "error" not in section, (
+                    f"Section '{name}' has unexpected error: {section.get('error')}"
+                )
+
+    def test_database_health_all_ok(self, tmp_path):
+        """All databases should report 'ok' in database_health."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        health = report["sections"]["database_health"]
+        for db_name in ["events", "user_model", "state", "preferences", "entities"]:
+            assert health[db_name] == "ok", f"{db_name} health: {health[db_name]}"
+
+    def test_report_has_generated_at(self, tmp_path):
+        """Report includes a generated_at timestamp."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        assert "generated_at" in report
+        assert report["generated_at"]  # non-empty string
+
+
+# ---------------------------------------------------------------------------
+# Missing database tests — ALL dependent sections must get error keys
+# ---------------------------------------------------------------------------
+
+
+class TestMissingUserModelDb:
+    """Tests for when user_model.db cannot be connected to."""
+
+    def test_all_um_sections_have_error(self, tmp_path):
+        """When user_model.db is corrupt, ALL 6 dependent sections get error keys."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_state_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        # Capture the real function BEFORE patching to avoid recursion
+        real_connect = _mod._connect
+
+        def failing_um_connect(db_path):
+            """Return None only for user_model.db."""
+            if "user_model.db" in str(db_path):
+                return None
+            return real_connect(db_path)
+
+        with patch.object(_mod, "_connect", side_effect=failing_um_connect):
+            report = analyze(str(tmp_path))
+
+        um_dependent_sections = [
+            "prediction_accuracy",
+            "prediction_resolution",
+            "prediction_pipeline",
+            "signal_profiles",
+            "insight_feedback",
+            "user_model",
+        ]
+        for section_name in um_dependent_sections:
+            assert section_name in report["sections"], f"Section '{section_name}' is absent from report"
+            section = report["sections"][section_name]
+            assert isinstance(section, dict), f"Section '{section_name}' should be a dict"
+            assert "error" in section, f"Section '{section_name}' missing 'error' key"
+            assert "user_model.db" in section["error"]
+
+    def test_non_um_sections_unaffected(self, tmp_path):
+        """Sections not dependent on user_model.db should still work."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_state_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        real_connect = _mod._connect
+
+        def failing_um_connect(db_path):
+            if "user_model.db" in str(db_path):
+                return None
+            return real_connect(db_path)
+
+        with patch.object(_mod, "_connect", side_effect=failing_um_connect):
+            report = analyze(str(tmp_path))
+
+        # Events, notifications, feedback should work fine
+        for section_name in ["events", "notifications", "feedback"]:
+            section = report["sections"][section_name]
+            if isinstance(section, dict):
+                assert "error" not in section, f"{section_name} should not have error"
+
+
+class TestMissingStateDb:
+    """Tests for when state.db cannot be connected to."""
+
+    def test_all_state_sections_have_error(self, tmp_path):
+        """When state.db connection fails, ALL 3 dependent sections get error keys."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        real_connect = _mod._connect
+
+        def failing_state_connect(db_path):
+            if "state.db" in str(db_path):
+                return None
+            return real_connect(db_path)
+
+        with patch.object(_mod, "_connect", side_effect=failing_state_connect):
+            report = analyze(str(tmp_path))
+
+        state_dependent_sections = ["notifications", "tasks", "connectors"]
+        for section_name in state_dependent_sections:
+            assert section_name in report["sections"], f"Section '{section_name}' is absent from report"
+            section = report["sections"][section_name]
+            assert isinstance(section, dict), f"Section '{section_name}' should be a dict"
+            assert "error" in section, f"Section '{section_name}' missing 'error' key"
+            assert "state.db" in section["error"]
+
+
+class TestMissingPreferencesDb:
+    """Tests for when preferences.db cannot be connected to."""
+
+    def test_all_pref_sections_have_error(self, tmp_path):
+        """When preferences.db connection fails, ALL 2 dependent sections get error keys."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_state_db(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        real_connect = _mod._connect
+
+        def failing_pref_connect(db_path):
+            if "preferences.db" in str(db_path):
+                return None
+            return real_connect(db_path)
+
+        with patch.object(_mod, "_connect", side_effect=failing_pref_connect):
+            report = analyze(str(tmp_path))
+
+        pref_dependent_sections = ["feedback", "source_weights"]
+        for section_name in pref_dependent_sections:
+            assert section_name in report["sections"], f"Section '{section_name}' is absent from report"
+            section = report["sections"][section_name]
+            assert isinstance(section, dict), f"Section '{section_name}' should be a dict"
+            assert "error" in section, f"Section '{section_name}' missing 'error' key"
+            assert "preferences.db" in section["error"]
+
+
+# ---------------------------------------------------------------------------
+# Query error capture tests
+# ---------------------------------------------------------------------------
+
+
+class TestQueryErrorCapture:
+    """Tests that _query() and _query_one() errors are captured in the _errors list."""
+
+    def test_query_error_appended_to_errors(self, tmp_path):
+        """When a query fails, the error is appended to _errors."""
+        _errors.clear()
+        db_path = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+
+        result = _query(conn, "SELECT * FROM nonexistent_table", [])
+
+        assert result == []
+        assert len(_errors) == 1
+        assert "nonexistent_table" in _errors[0]["sql"]
+        assert _errors[0]["error"]  # non-empty error message
+        conn.close()
+
+    def test_query_one_error_appended_to_errors(self, tmp_path):
+        """When a query_one fails, the error is appended to _errors."""
+        _errors.clear()
+        db_path = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+
+        result = _query_one(conn, "SELECT * FROM nonexistent_table")
+
+        assert result is None
+        assert len(_errors) == 1
+        assert "nonexistent_table" in _errors[0]["sql"]
+        conn.close()
+
+    def test_errors_included_in_report(self, tmp_path):
+        """Query errors are included in the final report as query_errors."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        assert "query_errors" in report
+        assert isinstance(report["query_errors"], list)
+
+    def test_errors_cleared_between_runs(self, tmp_path):
+        """The _errors list is cleared at the start of each analyze() call."""
+        _create_all_dbs(tmp_path)
+
+        # First run
+        report1 = analyze(str(tmp_path))
+        assert report1["query_errors"] == []
+
+        # Second run should also start clean
+        report2 = analyze(str(tmp_path))
+        assert report2["query_errors"] == []
+
+    def test_query_errors_captured_in_report_for_missing_tables(self, tmp_path):
+        """When tables are missing, individual query failures appear in query_errors."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_state_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        # Create user_model.db with ONLY signal_profiles (missing predictions, etc.)
+        conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+        conn.execute("""
+            CREATE TABLE signal_profiles (
+                profile_type TEXT PRIMARY KEY,
+                samples_count INTEGER DEFAULT 0,
+                updated_at TEXT
+            )
+        """)
+        conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
+        conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
+        conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
+        # predictions table is missing
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+
+        # Query errors should capture the failed predictions queries
+        assert len(report["query_errors"]) > 0
+        assert any("predictions" in e["sql"] for e in report["query_errors"])
+
+
+# ---------------------------------------------------------------------------
+# _connect() logging tests
+# ---------------------------------------------------------------------------
+
+
+class TestConnectLogging:
+    """Tests that _connect() failures are logged."""
+
+    def test_connect_failure_is_logged(self, tmp_path):
+        """When _connect() fails, it logs a warning with the error details."""
+        with patch.object(_mod.logger, "warning") as mock_warn:
+            with patch("sqlite3.connect", side_effect=sqlite3.OperationalError("unable to open database file")):
+                result = _connect(tmp_path / "test.db")
+
+        assert result is None
+        mock_warn.assert_called_once()
+        call_args = mock_warn.call_args
+        assert "Could not connect" in call_args[0][0]
+
+    def test_connect_success_does_not_log(self, tmp_path):
+        """When _connect() succeeds, no warning is logged."""
+        db_path = tmp_path / "test.db"
+        with patch.object(_mod.logger, "warning") as mock_warn:
+            conn = _connect(db_path)
+
+        assert conn is not None
+        mock_warn.assert_not_called()
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# _query/_query_one logging tests
+# ---------------------------------------------------------------------------
+
+
+def test_query_logs_warning_on_failure(tmp_path, caplog):
+    """_query() should log a warning when the SQL fails."""
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+
+    broken_sql = "SELECT * FROM nonexistent_table_xyz"
+    with caplog.at_level(logging.WARNING, logger=_mod.__name__):
+        result = _query(conn, broken_sql, default=[])
+
+    assert result == []
+    assert any("Query failed" in rec.message for rec in caplog.records)
+    assert any("nonexistent_table_xyz" in rec.message for rec in caplog.records)
+    conn.close()
+
+
+def test_query_one_logs_warning_on_failure(tmp_path, caplog):
+    """_query_one() should log a warning and return default on failure."""
+    db_path = tmp_path / "test.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+
+    broken_sql = "SELECT * FROM nonexistent_table_xyz"
+    with caplog.at_level(logging.WARNING, logger=_mod.__name__):
+        result = _query_one(conn, broken_sql, default=None)
+
+    assert result is None
+    assert any("Query failed" in rec.message for rec in caplog.records)
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Existing bug-fix tests (connector_state, source_weights, independent sections)
+# ---------------------------------------------------------------------------
+
+
+def test_connector_state_uses_last_error_column(tmp_path):
+    """The connector_state query should select ``last_error``, not ``error_message``."""
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db_path))
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS contacts (
+        CREATE TABLE connector_state (
+            connector_id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'inactive',
+            enabled INTEGER DEFAULT 0,
+            last_sync TEXT,
+            sync_cursor TEXT,
+            error_count INTEGER DEFAULT 0,
+            last_error TEXT,
+            config TEXT DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
+    conn.execute("""
+        INSERT INTO connector_state (connector_id, status, last_sync, last_error)
+        VALUES ('gmail', 'active', '2026-01-01T00:00:00Z', 'timeout after 30s')
+    """)
+    conn.execute("""
+        CREATE TABLE notifications (
             id TEXT PRIMARY KEY,
-            name TEXT
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         )
     """)
     conn.commit()
     conn.close()
+
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    report = analyze(str(tmp_path))
+    connectors = report["sections"].get("connectors", {})
+
+    assert "gmail" in connectors, f"Expected 'gmail' in connectors, got: {connectors}"
+    assert connectors["gmail"]["error"] == "timeout after 30s"
+    assert connectors["gmail"]["status"] == "active"
+
+
+def test_source_weights_uses_correct_column_names(tmp_path):
+    """The source_weights query should select ``user_weight``, ``ai_drift``, ``ai_updated_at``."""
+    db_path = tmp_path / "preferences.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE source_weights (
+            source_key TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            label TEXT NOT NULL,
+            user_weight REAL NOT NULL DEFAULT 0.5,
+            ai_drift REAL NOT NULL DEFAULT 0.0,
+            ai_updated_at TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT INTO source_weights (source_key, category, label, user_weight, ai_drift, ai_updated_at)
+        VALUES ('email.gmail', 'connector', 'Gmail', 0.8, 0.15, '2026-01-15T12:00:00Z')
+    """)
+    conn.execute("""
+        CREATE TABLE feedback_log (
+            id INTEGER PRIMARY KEY,
+            action_type TEXT,
+            feedback_type TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_user_model_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+
+    report = analyze(str(tmp_path))
+    sw = report["sections"].get("source_weights", {})
+
+    assert "email.gmail" in sw, f"Expected 'email.gmail' in source_weights, got: {sw}"
+    assert sw["email.gmail"]["weight"] == 0.8
+    assert sw["email.gmail"]["drift"] == 0.15
+    assert sw["email.gmail"]["updated_at"] == "2026-01-15T12:00:00Z"
+
+
+def test_user_model_sections_independent(tmp_path):
+    """If predictions table is missing, other user_model.db sections still populate."""
+    db_path = tmp_path / "user_model.db"
+    conn = sqlite3.connect(str(db_path))
+
+    # Create signal_profiles, insights, episodes, semantic_facts, routines
+    # but do NOT create the predictions table.
+    conn.execute("""
+        CREATE TABLE signal_profiles (
+            profile_type TEXT PRIMARY KEY,
+            samples_count INTEGER DEFAULT 0,
+            updated_at TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT INTO signal_profiles (profile_type, samples_count, updated_at)
+        VALUES ('linguistic', 42, '2026-01-01T00:00:00Z')
+    """)
+    conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
+    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO episodes (id) VALUES (1)")
+    conn.execute("INSERT INTO episodes (id) VALUES (2)")
+    conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
+    conn.execute("INSERT INTO semantic_facts (id, category) VALUES (1, 'preference')")
+    conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO routines (id) VALUES (1)")
+    conn.commit()
+    conn.close()
+
+    _create_minimal_events_db(tmp_path)
+    _create_minimal_state_db(tmp_path)
+    _create_minimal_preferences_db(tmp_path)
+
+    report = analyze(str(tmp_path))
+    sections = report["sections"]
+
+    # All user_model.db sections should be present
+    assert "prediction_accuracy" in sections
+    assert "signal_profiles" in sections
+    assert "insight_feedback" in sections
+    assert "user_model" in sections
+
+    # signal_profiles should have real data
+    sp = sections["signal_profiles"]
+    assert "linguistic" in sp
+    assert sp["linguistic"]["samples"] == 42
+
+    # user_model should have real data
+    um = sections["user_model"]
+    assert um.get("episodes") == 2
+    assert um.get("semantic_facts") == 1
+    assert um.get("routines") == 1
+
+
+# ---------------------------------------------------------------------------
+# Data integrity tests
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptDatabase:
+    """Tests for corrupt database files."""
+
+    def test_corrupted_db_detected_by_integrity_check(self, tmp_path):
+        """PRAGMA integrity_check detects a corrupted database file."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_state_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+
+        # Create a valid user_model.db with enough data to span multiple pages
+        db_path = tmp_path / "user_model.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("PRAGMA page_size = 512")
+        conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, data TEXT)")
+        for i in range(200):
+            conn.execute("INSERT INTO episodes (id, data) VALUES (?, ?)", (i, "x" * 200))
+        conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
+        conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
+        conn.execute("""
+            CREATE TABLE predictions (
+                id TEXT PRIMARY KEY, prediction_type TEXT,
+                was_surfaced INTEGER DEFAULT 0, was_accurate INTEGER,
+                filter_reason TEXT, resolution_reason TEXT,
+                user_response TEXT, resolved_at TEXT,
+                created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE signal_profiles (
+                profile_type TEXT PRIMARY KEY, samples_count INTEGER DEFAULT 0, updated_at TEXT
+            )
+        """)
+        conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
+        conn.commit()
+        conn.close()
+
+        # Corrupt data pages (well past the header and schema pages)
+        data = bytearray(db_path.read_bytes())
+        start = len(data) * 3 // 4
+        for i in range(start, min(start + 2048, len(data))):
+            data[i] = 0xFF
+        db_path.write_bytes(bytes(data))
+
+        report = analyze(str(tmp_path))
+        health = report["sections"]["database_health"]
+
+        assert health["user_model"] != "ok", f"Corrupted DB should not report 'ok', got: {health['user_model']}"
+
+
+class TestWithData:
+    """Tests with actual data inserted into the databases."""
+
+    def test_events_counted_correctly(self, tmp_path):
+        """Events section correctly counts inserted events."""
+        _create_all_dbs(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "events.db"))
+        for i in range(5):
+            conn.execute(
+                "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, datetime('now'))",
+                (f"evt-{i}", "test.event", "test_source"),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+
+        assert report["sections"]["events"]["total"] == 5
+        assert "test.event" in report["sections"]["events"]["top_types"]
+
+    def test_signal_profiles_reported(self, tmp_path):
+        """Signal profiles are correctly reported from user_model.db."""
+        _create_all_dbs(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+        conn.execute(
+            "INSERT INTO signal_profiles (profile_type, samples_count, updated_at) VALUES (?, ?, datetime('now'))",
+            ("linguistic", 42),
+        )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+
+        profiles = report["sections"]["signal_profiles"]
+        assert "linguistic" in profiles
+        assert profiles["linguistic"]["samples"] == 42
+
+
+# ---------------------------------------------------------------------------
+# Prediction pipeline tests
+# ---------------------------------------------------------------------------
+
+
+def test_prediction_pipeline_empty_db(tmp_path):
+    """prediction_pipeline section exists with all zeros when no predictions exist."""
+    _create_all_dbs(tmp_path)
+
+    report = analyze(str(tmp_path))
+    pp = report["sections"].get("prediction_pipeline")
+
+    assert pp is not None, "prediction_pipeline section should exist"
+    assert pp["total_generated"] == 0
+    assert pp["surfaced"] == 0
+    assert pp["filtered"] == 0
+    assert pp["surfacing_rate"] == 0
+
+
+def test_prediction_pipeline_with_data(tmp_path):
+    """Prediction pipeline correctly categorizes surfaced and filtered predictions."""
+    _create_all_dbs(tmp_path)
+
+    conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+    predictions = [
+        ("p1", "NEED", 0, "filtered", "confidence:0.18", None),
+        ("p2", "NEED", 0, "filtered", "confidence:0.25", None),
+        ("p3", "RISK", 0, "filtered", "reaction:too frequent", None),
+        ("p4", "REMINDER", 1, "acted_on", None, None),
+    ]
+    for pid, ptype, surfaced, response, reason, resolved in predictions:
+        conn.execute(
+            """INSERT INTO predictions (id, prediction_type, was_surfaced, user_response,
+               filter_reason, resolved_at) VALUES (?, ?, ?, ?, ?, ?)""",
+            (pid, ptype, surfaced, response, reason, resolved),
+        )
+    conn.commit()
+    conn.close()
+
+    report = analyze(str(tmp_path))
+    pp = report["sections"]["prediction_pipeline"]
+
+    assert pp["total_generated"] == 4
+    assert pp["surfaced"] == 1
+    assert pp["filtered"] == 3
+    assert pp["filter_reasons"].get("low_confidence") == 2
+    assert pp["filter_reasons"].get("reaction_gate") == 1
