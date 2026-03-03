@@ -19,8 +19,13 @@ from services.prediction_engine.engine import PredictionEngine
 # -------------------------------------------------------------------------
 
 
-def test_cursor_persisted_after_has_new_events(db, event_store, user_model_store):
-    """After _has_new_events() advances the cursor, a new engine instance restores it."""
+def test_has_new_events_updates_in_memory_only(db, event_store, user_model_store):
+    """_has_new_events() updates in-memory cursor but does NOT persist to DB.
+
+    The cursor is only persisted after generate_predictions() completes
+    successfully. This prevents events from being permanently skipped if the
+    prediction pipeline fails mid-way.
+    """
     engine = PredictionEngine(db=db, ums=user_model_store)
 
     # Insert an event so there's a non-zero MAX(rowid)
@@ -33,21 +38,21 @@ def test_cursor_persisted_after_has_new_events(db, event_store, user_model_store
         "metadata": {},
     })
 
-    # _has_new_events should detect the new event and persist cursor
+    # _has_new_events should detect the new event and update in-memory cursor
     assert engine._has_new_events() is True
     saved_cursor = engine._last_event_cursor
     assert saved_cursor > 0
 
-    # Create a brand-new engine instance against the same DB — should restore the cursor
+    # A brand-new engine should NOT see the cursor yet (not persisted)
     engine2 = PredictionEngine(db=db, ums=user_model_store)
-    assert engine2._last_event_cursor == saved_cursor
+    assert engine2._last_event_cursor == 0
 
-    # And it should NOT see the same events as new
-    assert engine2._has_new_events() is False
+    # And it SHOULD see those same events as new
+    assert engine2._has_new_events() is True
 
 
-def test_cursor_advances_on_subsequent_events(db, event_store, user_model_store):
-    """Cursor should advance each time new events arrive and persist correctly."""
+def test_cursor_advances_in_memory_on_subsequent_events(db, event_store, user_model_store):
+    """In-memory cursor should advance each time new events arrive."""
     engine = PredictionEngine(db=db, ums=user_model_store)
 
     # First event
@@ -76,9 +81,9 @@ def test_cursor_advances_on_subsequent_events(db, event_store, user_model_store)
 
     assert cursor_after_second > cursor_after_first
 
-    # New engine should see the latest cursor
+    # New engine should NOT see the latest cursor (not yet persisted to DB)
     engine2 = PredictionEngine(db=db, ums=user_model_store)
-    assert engine2._last_event_cursor == cursor_after_second
+    assert engine2._last_event_cursor == 0
 
 
 # -------------------------------------------------------------------------

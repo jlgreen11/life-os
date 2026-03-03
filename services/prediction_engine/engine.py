@@ -231,7 +231,13 @@ class PredictionEngine:
         }
 
     def _has_new_events(self) -> bool:
-        """Check if any new events have arrived since last prediction run."""
+        """Check if any new events have arrived since last prediction run.
+
+        Updates the in-memory cursor but does NOT persist it to the database.
+        The cursor is only persisted after generate_predictions() completes
+        successfully, so that events are not permanently skipped if the
+        prediction pipeline fails mid-way.
+        """
         with self.db.get_connection("events") as conn:
             row = conn.execute(
                 "SELECT MAX(rowid) as max_id FROM events"
@@ -242,7 +248,6 @@ class PredictionEngine:
             return False
 
         self._last_event_cursor = current_max
-        self._persist_state("last_event_cursor", str(current_max))
         return True
 
     def _should_run_time_based_predictions(self) -> bool:
@@ -563,6 +568,17 @@ class PredictionEngine:
         else:
             self._consecutive_zero_runs = 0
 
+        # Fire a one-time warning when the engine enters degraded state
+        # (4 consecutive cycles with zero surfaced predictions). Uses == 4
+        # rather than >= 4 so the alert fires exactly once.
+        if self._consecutive_zero_runs == 4:
+            logger.warning(
+                "Prediction engine DEGRADED: 4 consecutive cycles produced zero "
+                "surfaced predictions. Last run stats: %s. Signal profiles: %s",
+                generation_stats,
+                available_profiles,
+            )
+
         self._last_run_diagnostics = {
             "last_run_at": datetime.now(timezone.utc).isoformat(),
             "total_runs": self._total_runs,
@@ -579,6 +595,12 @@ class PredictionEngine:
             "triggers": {"has_new_events": has_new_events, "time_based_due": time_based_due},
         }
         self._persist_state("last_run_diagnostics", json.dumps(self._last_run_diagnostics))
+
+        # Persist the event cursor AFTER the full pipeline completes
+        # successfully. This ensures that if generate_predictions() crashes
+        # mid-way, the cursor stays at the old persisted value and those
+        # events will be reprocessed on the next cycle.
+        self._persist_state("last_event_cursor", str(self._last_event_cursor))
 
         return filtered
 
