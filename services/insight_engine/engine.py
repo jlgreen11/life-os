@@ -108,6 +108,13 @@ class InsightEngine:
         self._insight_cache_ttl: float = cache_ttl_seconds
         self._last_insight_run: float = 0.0
 
+        # Diagnostic counters for monitoring insight pipeline health.
+        # Updated at the end of each generate_insights() cycle and
+        # queryable via get_diagnostics().
+        self._total_runs: int = 0
+        self._last_run_at: str | None = None
+        self._last_correlator_stats: dict[str, int | str] = {}
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -227,98 +234,42 @@ class InsightEngine:
             return []
 
         raw: list[Insight] = []
+        correlator_stats: dict[str, int | str] = {}
 
         # Each correlator handles its own errors gracefully and returns
-        # an empty list when there is insufficient data.
-        try:
-            raw.extend(self._place_frequency_insights())
-        except Exception:
-            logger.exception("place_frequency correlator failed")
+        # an empty list when there is insufficient data.  Per-correlator
+        # result counts are tracked for diagnostics.
+        correlators = [
+            ("place_frequency", self._place_frequency_insights),
+            ("contact_gap", self._contact_gap_insights),
+            ("relationship_intelligence", self._relationship_intelligence_insights),
+            ("email_volume", self._email_volume_insights),
+            ("email_peak_hour", self._email_peak_hour_insights),
+            ("meeting_density", self._meeting_density_insights),
+            ("communication_style", self._communication_style_insights),
+            ("inbound_style", self._inbound_style_insights),
+            ("actionable_alert", self._actionable_alert_insights),
+            ("temporal_pattern", self._temporal_pattern_insights),
+            ("mood_trend", self._mood_trend_insights),
+            ("spending_pattern", self._spending_pattern_insights),
+            ("decision_pattern", self._decision_pattern_insights),
+            ("topic_interest", self._topic_interest_insights),
+            ("cadence_response", self._cadence_response_insights),
+            ("routine", self._routine_insights),
+            ("spatial", self._spatial_insights),
+            ("workflow_pattern", self._workflow_pattern_insights),
+        ]
 
-        try:
-            raw.extend(self._contact_gap_insights())
-        except Exception:
-            logger.exception("contact_gap correlator failed")
+        for name, method in correlators:
+            try:
+                results = method()
+                correlator_stats[name] = len(results)
+                raw.extend(results)
+            except Exception:
+                correlator_stats[name] = "error"
+                logger.exception("%s correlator failed", name)
 
-        try:
-            raw.extend(self._relationship_intelligence_insights())
-        except Exception:
-            logger.exception("relationship_intelligence correlator failed")
-
-        try:
-            raw.extend(self._email_volume_insights())
-        except Exception:
-            logger.exception("email_volume correlator failed")
-
-        try:
-            raw.extend(self._email_peak_hour_insights())
-        except Exception:
-            logger.exception("email_peak_hour correlator failed")
-
-        try:
-            raw.extend(self._meeting_density_insights())
-        except Exception:
-            logger.exception("meeting_density correlator failed")
-
-        try:
-            raw.extend(self._communication_style_insights())
-        except Exception:
-            logger.exception("communication_style correlator failed")
-
-        try:
-            raw.extend(self._inbound_style_insights())
-        except Exception:
-            logger.exception("inbound_style correlator failed")
-
-        try:
-            raw.extend(self._actionable_alert_insights())
-        except Exception:
-            logger.exception("actionable_alert correlator failed")
-
-        try:
-            raw.extend(self._temporal_pattern_insights())
-        except Exception:
-            logger.exception("temporal_pattern correlator failed")
-
-        try:
-            raw.extend(self._mood_trend_insights())
-        except Exception:
-            logger.exception("mood_trend correlator failed")
-
-        try:
-            raw.extend(self._spending_pattern_insights())
-        except Exception:
-            logger.exception("spending_pattern correlator failed")
-
-        try:
-            raw.extend(self._decision_pattern_insights())
-        except Exception:
-            logger.exception("decision_pattern correlator failed")
-
-        try:
-            raw.extend(self._topic_interest_insights())
-        except Exception:
-            logger.exception("topic_interest correlator failed")
-
-        try:
-            raw.extend(self._cadence_response_insights())
-        except Exception:
-            logger.exception("cadence_response correlator failed")
-
-        try:
-            raw.extend(self._routine_insights())
-        except Exception:
-            logger.exception("routine correlator failed")
-
-        try:
-            raw.extend(self._spatial_insights())
-        except Exception:
-            logger.exception("spatial_insights correlator failed")
-
-        try:
-            raw.extend(self._workflow_pattern_insights())
-        except Exception:
-            logger.exception("workflow_pattern correlator failed")
+        logger.info("InsightEngine: correlator results — %s", correlator_stats)
 
         # Ensure every insight has a dedup key
         for insight in raw:
@@ -371,10 +322,60 @@ class InsightEngine:
             except Exception as e:
                 logger.warning("Failed to generate data sufficiency report: %s", e)
 
+        # Update diagnostic counters for observability.
+        self._total_runs += 1
+        self._last_run_at = datetime.now(timezone.utc).isoformat()
+        self._last_correlator_stats = correlator_stats
+
         # Mark successful run so subsequent calls within the TTL are skipped.
         self._last_insight_run = time.monotonic()
 
         return fresh
+
+    def get_diagnostics(self) -> dict:
+        """Return insight engine diagnostic information for monitoring.
+
+        Provides per-correlator execution stats from the last run, overall
+        run counts, stored insight totals, and a health indicator.  Designed
+        for the admin dashboard and data-quality endpoint to quickly assess
+        whether the insight pipeline is producing results or stalled.
+
+        Returns:
+            dict with keys: ``total_runs``, ``last_run_at``,
+            ``last_correlator_stats``, ``total_insights_stored``,
+            ``insights_by_type``, and ``health``.
+        """
+        total_stored = 0
+        by_type: dict[str, int] = {}
+        try:
+            with self.db.get_connection("user_model") as conn:
+                total_stored = conn.execute(
+                    "SELECT COUNT(*) FROM insights"
+                ).fetchone()[0]
+                rows = conn.execute(
+                    "SELECT type, COUNT(*) as cnt FROM insights GROUP BY type"
+                ).fetchall()
+                by_type = {row["type"]: row["cnt"] for row in rows}
+        except Exception as e:
+            logger.warning("get_diagnostics: failed to query insights table: %s", e)
+
+        # Health: no_data if never run, degraded if last run produced all
+        # zeros or errors, ok otherwise.
+        if self._total_runs == 0:
+            health = "no_data"
+        elif all(v == 0 or v == "error" for v in self._last_correlator_stats.values()):
+            health = "degraded"
+        else:
+            health = "ok"
+
+        return {
+            "total_runs": self._total_runs,
+            "last_run_at": self._last_run_at,
+            "last_correlator_stats": self._last_correlator_stats,
+            "total_insights_stored": total_stored,
+            "insights_by_type": by_type,
+            "health": health,
+        }
 
     # ------------------------------------------------------------------
     # Source Weight Application

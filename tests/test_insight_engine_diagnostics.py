@@ -1,9 +1,12 @@
 """
-Tests for InsightEngine data sufficiency diagnostics.
+Tests for InsightEngine data sufficiency diagnostics and runtime observability.
 
 Validates the get_data_sufficiency_report() method that checks each correlator's
 data readiness, reporting 'ready', 'partial', 'no_data', or 'error' status
 based on signal profile sample counts and database record availability.
+
+Also validates the get_diagnostics() method and per-correlator stats tracking
+in generate_insights().
 """
 
 import json
@@ -250,3 +253,142 @@ async def test_generate_insights_logs_sufficiency_when_empty(insight_engine, cap
     sufficiency_messages = [r for r in caplog.records if "correlators have sufficient data" in r.message]
     assert len(sufficiency_messages) == 1
     assert "0/" in sufficiency_messages[0].message  # 0 out of N correlators ready
+
+
+# =============================================================================
+# get_diagnostics — structure and shape
+# =============================================================================
+
+
+def test_get_diagnostics_returns_expected_shape(insight_engine):
+    """get_diagnostics() should return all expected top-level keys."""
+    diag = insight_engine.get_diagnostics()
+    assert "total_runs" in diag
+    assert "last_run_at" in diag
+    assert "last_correlator_stats" in diag
+    assert "total_insights_stored" in diag
+    assert "insights_by_type" in diag
+    assert "health" in diag
+
+
+def test_get_diagnostics_initial_state(insight_engine):
+    """Before any run, diagnostics should reflect zero state."""
+    diag = insight_engine.get_diagnostics()
+    assert diag["total_runs"] == 0
+    assert diag["last_run_at"] is None
+    assert diag["last_correlator_stats"] == {}
+    assert diag["total_insights_stored"] == 0
+    assert diag["insights_by_type"] == {}
+    assert diag["health"] == "no_data"
+
+
+# =============================================================================
+# get_diagnostics — after generate_insights()
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_updated_after_generate_insights(insight_engine):
+    """After generate_insights(), diagnostics should reflect the run."""
+    await insight_engine.generate_insights()
+
+    diag = insight_engine.get_diagnostics()
+    assert diag["total_runs"] == 1
+    assert diag["last_run_at"] is not None
+    assert isinstance(diag["last_correlator_stats"], dict)
+    # All 18 correlators should be tracked
+    assert len(diag["last_correlator_stats"]) == 18
+
+
+@pytest.mark.asyncio
+async def test_correlator_stats_contain_all_correlator_names(insight_engine):
+    """Per-correlator stats should include every correlator name."""
+    await insight_engine.generate_insights()
+
+    stats = insight_engine.get_diagnostics()["last_correlator_stats"]
+    expected_names = {
+        "place_frequency", "contact_gap", "relationship_intelligence",
+        "email_volume", "email_peak_hour", "meeting_density",
+        "communication_style", "inbound_style", "actionable_alert",
+        "temporal_pattern", "mood_trend", "spending_pattern",
+        "decision_pattern", "topic_interest", "cadence_response",
+        "routine", "spatial", "workflow_pattern",
+    }
+    assert expected_names == set(stats.keys())
+
+
+@pytest.mark.asyncio
+async def test_correlator_stats_values_are_ints_on_success(insight_engine):
+    """Successful correlators should report integer result counts."""
+    await insight_engine.generate_insights()
+
+    stats = insight_engine.get_diagnostics()["last_correlator_stats"]
+    for name, value in stats.items():
+        # On a fresh DB most correlators return 0 (no data), which is still int
+        assert isinstance(value, int), f"{name} should be int, got {type(value).__name__}: {value}"
+
+
+@pytest.mark.asyncio
+async def test_total_runs_increments(insight_engine):
+    """total_runs should increment with each generate_insights() call."""
+    await insight_engine.generate_insights()
+    assert insight_engine.get_diagnostics()["total_runs"] == 1
+
+    # Reset cache TTL so generate_insights() actually runs again
+    insight_engine._last_insight_run = 0.0
+    await insight_engine.generate_insights()
+    assert insight_engine.get_diagnostics()["total_runs"] == 2
+
+
+# =============================================================================
+# get_diagnostics — correlator error tracking
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_failed_correlator_shows_error_in_stats(insight_engine):
+    """A correlator that raises should appear as 'error' in stats."""
+    original = insight_engine._place_frequency_insights
+
+    def broken():
+        raise RuntimeError("simulated DB corruption")
+
+    insight_engine._place_frequency_insights = broken
+    try:
+        await insight_engine.generate_insights()
+    finally:
+        insight_engine._place_frequency_insights = original
+
+    stats = insight_engine.get_diagnostics()["last_correlator_stats"]
+    assert stats["place_frequency"] == "error"
+    # Other correlators should still have integer counts
+    assert isinstance(stats["contact_gap"], int)
+
+
+@pytest.mark.asyncio
+async def test_health_degraded_when_all_correlators_fail(insight_engine):
+    """Health should be 'degraded' when every correlator returns 0 or error."""
+    # On a fresh DB, all correlators return 0 insights → degraded
+    await insight_engine.generate_insights()
+    diag = insight_engine.get_diagnostics()
+    assert diag["health"] == "degraded"
+
+
+# =============================================================================
+# generate_insights — correlator stats logging
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_generate_insights_logs_correlator_stats(insight_engine, caplog):
+    """generate_insights() should log per-correlator result counts."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="services.insight_engine.engine"):
+        await insight_engine.generate_insights()
+
+    correlator_messages = [
+        r for r in caplog.records if "correlator results" in r.message
+    ]
+    assert len(correlator_messages) == 1
+    assert "place_frequency" in correlator_messages[0].message
