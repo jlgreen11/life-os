@@ -839,6 +839,58 @@ def test_canonical_pattern_fields_aliased(linguistic_extractor, user_model_store
     assert len(data["gratitude_patterns"]) > 0
 
 
+def test_avg_sentence_length_promoted_to_top_level(linguistic_extractor, user_model_store):
+    """avg_sentence_length must be promoted from data['averages'] to data's top level.
+
+    The LinguisticProfile model defines avg_sentence_length with a default of 12.0.
+    The extractor computes the real average in data['averages']['avg_sentence_length']
+    but must also copy it to data['avg_sentence_length'] so downstream consumers
+    (user model summaries, AI context assembly, /api/user-model endpoint) see the
+    actual computed value instead of the hardcoded default.
+    """
+    # Process 3 email events with known text content of varying sentence lengths.
+    bodies = [
+        # Short sentences: ~3 words per sentence (3 sentences, 9 words)
+        "Go now please. Do it fast. Run away quickly.",
+        # Medium sentences: ~7 words per sentence (2 sentences, 14 words)
+        "The weather today is really quite pleasant. I think we should go outside soon.",
+        # Longer sentences: ~12 words per sentence (2 sentences, 24 words)
+        "I have been working on this complicated project for several weeks now. "
+        "The results are finally starting to look promising after all the effort.",
+    ]
+    for body in bodies:
+        event = {
+            "type": EventType.EMAIL_SENT.value,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "body": body,
+                "to_addresses": ["test@example.com"],
+            },
+        }
+        linguistic_extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("linguistic")
+    data = profile["data"]
+
+    # 1. avg_sentence_length must exist at the top level of data.
+    assert "avg_sentence_length" in data, (
+        "avg_sentence_length missing from top-level data dict — "
+        "it should be promoted from data['averages']"
+    )
+
+    # 2. The value must NOT be the LinguisticProfile default of 12.0 —
+    #    our test messages have varying but known sentence lengths.
+    assert data["avg_sentence_length"] != 12.0, (
+        f"avg_sentence_length is {data['avg_sentence_length']} (the default); "
+        "the computed average should differ from the hardcoded default"
+    )
+
+    # 3. The top-level value must equal the value stored in averages.
+    assert data["avg_sentence_length"] == data["averages"]["avg_sentence_length"], (
+        "Top-level avg_sentence_length does not match data['averages']['avg_sentence_length']"
+    )
+
+
 def test_profanity_contexts_populated(linguistic_extractor, user_model_store):
     """profanity_contexts should list channels where the user has used profanity."""
     # Send a message with profanity via "signal" source
