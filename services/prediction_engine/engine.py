@@ -2225,6 +2225,33 @@ class PredictionEngine:
         """
         return is_marketing_or_noreply(from_addr, payload)
 
+    def _count_calendar_event_types(self) -> tuple[int, int]:
+        """Count all-day vs timed calendar events in the events database.
+
+        Scans up to 1000 ``calendar.event.created`` event payloads and
+        classifies each as all-day or timed based on the ``is_all_day``
+        field.  Malformed or unparseable payloads are silently skipped.
+
+        Returns:
+            Tuple of (all_day_count, timed_count).
+        """
+        all_day_count = 0
+        timed_count = 0
+        with self.db.get_connection("events") as conn:
+            rows = conn.execute(
+                "SELECT payload FROM events WHERE type = 'calendar.event.created' LIMIT 1000"
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+                if payload.get("is_all_day"):
+                    all_day_count += 1
+                else:
+                    timed_count += 1
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                pass
+        return all_day_count, timed_count
+
     async def get_diagnostics(self) -> dict:
         """
         Comprehensive prediction engine diagnostics.
@@ -2320,30 +2347,11 @@ class PredictionEngine:
         }
 
         # --- Calendar conflicts ---
+        all_day_count, timed_count = self._count_calendar_event_types()
         with self.db.get_connection("events") as conn:
             calendar_events = conn.execute(
                 "SELECT COUNT(*) as count FROM events WHERE type = 'calendar.event.created'"
             ).fetchone()["count"]
-
-            # Count all-day vs timed events
-            all_events = conn.execute(
-                "SELECT payload FROM events WHERE type = 'calendar.event.created' LIMIT 1000"
-            ).fetchall()
-
-            all_day_count = 0
-            timed_count = 0
-            for row in all_events:
-                try:
-                    payload = json.loads(row["payload"])
-                    if payload.get("is_all_day"):
-                        all_day_count += 1
-                    else:
-                        timed_count += 1
-                except (json.JSONDecodeError, KeyError, ValueError):
-                    # Malformed or missing payload — skip this event and
-                    # continue counting the rest.  The previous bare except:
-                    # would have caught KeyboardInterrupt/SystemExit too.
-                    pass
 
         conflict_status = "active" if prediction_type_counts.get("conflict", 0) > 0 else "blocked"
         conflict_blockers = []
@@ -2415,17 +2423,15 @@ class PredictionEngine:
         }
 
         # --- Preparation needs (need) ---
-        with self.db.get_connection("events") as conn:
-            upcoming_events = conn.execute(
-                """SELECT COUNT(*) as count FROM events
-                   WHERE type = 'calendar.event.created'"""
-            ).fetchone()["count"]
+        # Reuse the pre-computed all_day_count / timed_count from the helper
+        # so this section is independent of the conflict section above.
+        total_calendar_events = all_day_count + timed_count
 
         need_status = "active" if prediction_type_counts.get("need", 0) > 0 else "blocked"
         need_blockers = []
         need_recommendations = []
 
-        if upcoming_events == 0:
+        if total_calendar_events == 0:
             need_blockers.append("No calendar events available")
             need_recommendations.append("Enable calendar connector to track upcoming events")
         elif timed_count == 0:
@@ -2436,7 +2442,7 @@ class PredictionEngine:
             "status": need_status,
             "generated_last_7d": prediction_type_counts.get("need", 0),
             "data_available": {
-                "total_events": upcoming_events,
+                "total_events": total_calendar_events,
                 "timed_events": timed_count,
             },
             "blockers": need_blockers,
