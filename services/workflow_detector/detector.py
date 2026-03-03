@@ -89,23 +89,43 @@ class WorkflowDetector:
         """
         workflows = []
 
-        # Detect email-triggered workflows (e.g., "respond to boss emails")
-        email_workflows = self._detect_email_workflows(lookback_days)
-        workflows.extend(email_workflows)
+        # Each strategy is wrapped in try/except so that a failure in one
+        # (e.g. corrupted user_model.db) does not prevent the others from
+        # running.  This follows the same fail-open pattern used by the
+        # RoutineDetector and InsightEngine correlators.
+        email_workflows = []
+        try:
+            email_workflows = self._detect_email_workflows(lookback_days)
+            workflows.extend(email_workflows)
+        except Exception:
+            logger.exception("WorkflowDetector: email workflow detection failed")
 
-        # Detect task-triggered workflows (e.g., "complete assigned tasks")
-        task_workflows = self._detect_task_workflows(lookback_days)
-        workflows.extend(task_workflows)
+        task_workflows = []
+        try:
+            task_workflows = self._detect_task_workflows(lookback_days)
+            workflows.extend(task_workflows)
+        except Exception:
+            logger.exception("WorkflowDetector: task workflow detection failed")
 
-        # Detect calendar-triggered workflows (e.g., "meeting prep and follow-up")
-        calendar_workflows = self._detect_calendar_workflows(lookback_days)
-        workflows.extend(calendar_workflows)
+        calendar_workflows = []
+        try:
+            calendar_workflows = self._detect_calendar_workflows(lookback_days)
+            workflows.extend(calendar_workflows)
+        except Exception:
+            logger.exception("WorkflowDetector: calendar workflow detection failed")
 
-        # Detect interaction-based workflows from episodic memory
-        interaction_workflows = self._detect_interaction_workflows(lookback_days)
-        workflows.extend(interaction_workflows)
+        interaction_workflows = []
+        try:
+            interaction_workflows = self._detect_interaction_workflows(lookback_days)
+            workflows.extend(interaction_workflows)
+        except Exception:
+            logger.exception("WorkflowDetector: interaction workflow detection failed")
 
-        logger.info(f"Detected {len(workflows)} workflows from {lookback_days} days of history")
+        logger.info(
+            f"Detected {len(workflows)} workflows from {lookback_days} days of history "
+            f"({len(email_workflows)} email, {len(task_workflows)} task, "
+            f"{len(calendar_workflows)} calendar, {len(interaction_workflows)} interaction)"
+        )
         return workflows
 
     def _detect_email_workflows(self, lookback_days: int) -> list[dict[str, Any]]:
@@ -551,45 +571,51 @@ class WorkflowDetector:
         # Sliding window: interaction_type → [(timestamp, episode_id), ...]
         active_interactions: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
 
-        # Fetch all episodes in chronological order
-        with self.db.get_connection("user_model") as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, interaction_type, timestamp
-                FROM episodes
-                WHERE julianday(timestamp) > julianday(?)
-                  AND interaction_type IS NOT NULL
-                ORDER BY timestamp ASC
-            """, (cutoff.isoformat(),))
+        # Fetch all episodes in chronological order.
+        # Wrapped in try/except so a corrupted user_model.db returns an empty
+        # list instead of crashing the entire workflow detection pipeline.
+        try:
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, interaction_type, timestamp
+                    FROM episodes
+                    WHERE julianday(timestamp) > julianday(?)
+                      AND interaction_type IS NOT NULL
+                    ORDER BY timestamp ASC
+                """, (cutoff.isoformat(),))
 
-            for episode_id, interaction_type, timestamp_str in cursor:
-                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                for episode_id, interaction_type, timestamp_str in cursor:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
 
-                # Track this interaction in the sliding window
-                active_interactions[interaction_type].append((timestamp, episode_id))
+                    # Track this interaction in the sliding window
+                    active_interactions[interaction_type].append((timestamp, episode_id))
 
-                # Check if this interaction follows any other active interactions
-                expired_types = []
-                for prev_type, prev_list in active_interactions.items():
-                    if prev_type == interaction_type:
-                        continue  # Skip same-type sequences
+                    # Check if this interaction follows any other active interactions
+                    expired_types = []
+                    for prev_type, prev_list in active_interactions.items():
+                        if prev_type == interaction_type:
+                            continue  # Skip same-type sequences
 
-                    # Remove old interactions outside the time window
-                    active_interactions[prev_type] = [
-                        (prev_ts, prev_id) for prev_ts, prev_id in prev_list
-                        if timestamp - prev_ts <= max_gap
-                    ]
+                        # Remove old interactions outside the time window
+                        active_interactions[prev_type] = [
+                            (prev_ts, prev_id) for prev_ts, prev_id in prev_list
+                            if timestamp - prev_ts <= max_gap
+                        ]
 
-                    if not active_interactions[prev_type]:
-                        expired_types.append(prev_type)
-                    else:
-                        # This interaction follows the previous type
-                        for prev_ts, prev_id in active_interactions[prev_type]:
-                            delay_hours = (timestamp - prev_ts).total_seconds() / 3600
-                            interaction_stats[prev_type][interaction_type].append(delay_hours)
+                        if not active_interactions[prev_type]:
+                            expired_types.append(prev_type)
+                        else:
+                            # This interaction follows the previous type
+                            for prev_ts, prev_id in active_interactions[prev_type]:
+                                delay_hours = (timestamp - prev_ts).total_seconds() / 3600
+                                interaction_stats[prev_type][interaction_type].append(delay_hours)
 
-                for prev_type in expired_types:
-                    del active_interactions[prev_type]
+                    for prev_type in expired_types:
+                        del active_interactions[prev_type]
+        except Exception:
+            logger.warning("WorkflowDetector: user_model.db unavailable for interaction workflows")
+            return []
 
         # Build workflows from interaction sequences
         for first_action, following_types in interaction_stats.items():
