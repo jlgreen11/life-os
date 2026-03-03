@@ -220,8 +220,12 @@ class VectorStore:
                     self._table.add([doc])
                     chunks_stored += 1
                 except Exception as e:
-                    logger.error("LanceDB add error: %s", e)
-                    return False
+                    # Log and continue to the next chunk rather than aborting
+                    # the entire document.  A transient error on one chunk
+                    # should not discard remaining chunks.  The chunks_stored
+                    # == 0 check after the loop handles total failure.
+                    logger.error("LanceDB add error for chunk %d of %s: %s", i, doc_id, e)
+                    continue
             else:
                 self._fallback_docs.append({
                     "doc_id": chunk_id,
@@ -298,11 +302,23 @@ class VectorStore:
                     if not all(meta.get(k) == v for k, v in filter_metadata.items()):
                         continue
 
+                # Convert distance to similarity: LanceDB returns _distance
+                # (lower = more similar), but callers expect scores where
+                # higher = more relevant (like cosine similarity).
+                # Default _distance to 1.0 (max distance) so missing values
+                # map to score=0 rather than score=1.
+                score = 1.0 - float(r.get("_distance", 1.0))
+
+                # Threshold filter: skip near-random matches, consistent
+                # with the 0.1 floor in the NumPy fallback backend.
+                if score < 0.1:
+                    continue
+
                 filtered.append({
                     "doc_id": r["doc_id"],
                     "text": r["text"],
                     "metadata": meta,
-                    "score": float(r.get("_distance", 0)),
+                    "score": score,
                     "created_at": r.get("created_at"),
                 })
 
