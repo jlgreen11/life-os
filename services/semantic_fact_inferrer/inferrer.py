@@ -267,10 +267,11 @@ class SemanticFactInferrer:
         # Filter 1: Skip contacts with zero outbound messages.
         # These are pure inbound senders (newsletters, automated receipts, etc.)
         # that the user has never replied to.
+        # Also defensively skip non-dict entries (e.g., None from corrupted data).
         bidirectional_contacts = {
             contact_id: contact_data
             for contact_id, contact_data in contacts.items()
-            if contact_data.get("outbound_count", 0) > 0
+            if isinstance(contact_data, dict) and contact_data.get("outbound_count", 0) > 0
         }
 
         # Filter 2: Apply the shared marketing filter to remove automated/commercial
@@ -295,9 +296,13 @@ class SemanticFactInferrer:
         # Previously this was computed over all bidirectional contacts, which
         # inflated the average with high-volume marketing senders and raised
         # the high_priority_threshold so high that real contacts rarely qualified.
-        interaction_counts = [c.get("interaction_count", 0) for c in human_contacts.values()]
+        # Defensively handle non-dict contact data (e.g., None values from corrupted data)
+        interaction_counts = []
+        for c in human_contacts.values():
+            if isinstance(c, dict):
+                interaction_counts.append(c.get("interaction_count", 0))
         if not interaction_counts:
-            return
+            return {"type": "relationship", "processed": True, "reason": None}
 
         avg_interactions = sum(interaction_counts) / len(interaction_counts)
         high_priority_threshold = avg_interactions * 2  # 2x average = high priority
