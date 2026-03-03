@@ -680,6 +680,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         items = []
         sections_loaded = []
+        sections_failed = []
 
         # --- Notifications (all topics except 'system') ---
         if topic in (None, "inbox", "messages", "email"):
@@ -706,6 +707,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 sections_loaded.append("notifications")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "notifications", e)
+                sections_failed.append({"section": "notifications", "error": str(e)})
 
         # --- Tasks ---
         if topic in (None, "inbox", "tasks"):
@@ -726,6 +728,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 sections_loaded.append("tasks")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "tasks", e)
+                sections_failed.append({"section": "tasks", "error": str(e)})
 
         # --- Calendar (upcoming events for badge count) ---
         if topic in (None, "inbox", "calendar"):
@@ -799,6 +802,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 sections_loaded.append("calendar")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "calendar", e)
+                sections_failed.append({"section": "calendar", "error": str(e)})
 
         # --- Actual email events (email.received) ---
         # The notifications section above only surfaces emails that triggered a
@@ -873,6 +877,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 sections_loaded.append("email")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "email", e)
+                sections_failed.append({"section": "email", "error": str(e)})
 
         # --- Actual message events (message.received) ---
         # Same rationale as email: show real inbound messages even when no
@@ -934,6 +939,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 sections_loaded.append("messages")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "messages", e)
+                sections_failed.append({"section": "messages", "error": str(e)})
 
         # --- Enrich email items with AI-extracted action items ---
         # The task manager extracts actionable tasks from every email it processes
@@ -993,11 +999,12 @@ def register_routes(app: FastAPI, life_os) -> None:
                         if item.get("metadata") is None:
                             item["metadata"] = {}
                         item["metadata"]["action_items"] = action_items
-            except Exception:
+            except Exception as e:
                 # Action-item enrichment is non-critical.  If the tasks DB is
                 # unavailable or the query fails, the feed still returns all items
                 # — they just won't have action_items chips on email cards.
-                pass
+                logger.warning("dashboard_feed: action-item enrichment failed: %s", e)
+                sections_failed.append({"section": "action_items", "error": str(e)})
 
         # --- Sort by priority (critical > high > normal > low), then newest first ---
         priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
@@ -1018,6 +1025,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             "count": len(sorted_items[:limit]),
             "topic": topic or "inbox",
             "sections_loaded": sections_loaded,
+            "sections_failed": sections_failed,
         }
 
     @app.get("/api/dashboard/badges")
