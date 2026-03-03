@@ -537,6 +537,110 @@ def test_lancedb_search_error_handling():
         assert results == []
 
 
+def test_lancedb_search_applies_metadata_filter():
+    """LanceDB search filters results by metadata when filter_metadata is provided.
+
+    Adds 3 documents with different type metadata (email, message, calendar),
+    searches with filter_metadata={"type": "email"}, and asserts only the
+    email document is returned.
+    """
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        # Simulate LanceDB returning 3 documents with different metadata types
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
+            {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
+            {"doc_id": "doc3", "text": "Calendar event", "metadata": json.dumps({"type": "calendar"}), "_distance": 0.3, "created_at": "2026-01-01T00:00:00Z"},
+        ]
+
+        results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata={"type": "email"})
+        assert len(results) == 1
+        assert results[0]["doc_id"] == "doc1"
+        assert results[0]["metadata"]["type"] == "email"
+
+
+def test_lancedb_search_no_filter_returns_all():
+    """LanceDB search returns all results when filter_metadata is None."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
+            {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
+        ]
+
+        results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata=None)
+        assert len(results) == 2
+        assert results[0]["doc_id"] == "doc1"
+        assert results[1]["doc_id"] == "doc2"
+
+
+def test_lancedb_search_filter_no_matches():
+    """LanceDB search returns empty list when filter_metadata matches nothing."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
+            {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
+        ]
+
+        results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata={"type": "nonexistent"})
+        assert len(results) == 0
+
+
+def test_lancedb_search_overfetches_when_filtering():
+    """LanceDB search over-fetches by 3x when filter_metadata is provided.
+
+    This compensates for post-retrieval filtering that removes non-matching
+    documents, ensuring enough candidates are fetched to fill the requested limit.
+    """
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        store._table.search.return_value.limit.return_value.to_list.return_value = []
+
+        # Search with filter and limit=5 — should over-fetch with limit=15
+        store._lancedb_search([0.1] * 384, limit=5, filter_metadata={"type": "email"})
+        store._table.search.return_value.limit.assert_called_with(15)
+
+        # Search without filter and limit=5 — should use exact limit=5
+        store._lancedb_search([0.1] * 384, limit=5, filter_metadata=None)
+        store._table.search.return_value.limit.assert_called_with(5)
+
+
+def test_lancedb_search_truncates_to_limit_after_filtering():
+    """LanceDB search returns at most `limit` results even after filtering."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        # Return 5 matching documents
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": f"doc{i}", "text": f"Email {i}", "metadata": json.dumps({"type": "email"}), "_distance": 0.1 * i, "created_at": "2026-01-01T00:00:00Z"}
+            for i in range(5)
+        ]
+
+        # Request limit=2 — should only return 2 even though 5 match
+        results = store._lancedb_search([0.1] * 384, limit=2, filter_metadata={"type": "email"})
+        assert len(results) == 2
+
+
 def test_add_document_lancedb_error_handling():
     """LanceDB add errors are caught and return False."""
     with patch("storage.vector_store.VectorStore._ensure_table"), \
