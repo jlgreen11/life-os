@@ -165,7 +165,7 @@ class DatabaseManager:
             # pages are touched, not just the first row's.
             if db_name == "user_model" and status == "ok":
                 blob_probes = [
-                    "SELECT content_full FROM episodes LIMIT 1",
+                    "SELECT SUM(LENGTH(content_full)) FROM episodes",
                     "SELECT SUM(LENGTH(data)) FROM signal_profiles",
                     "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts",
                     "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines",
@@ -262,7 +262,7 @@ class DatabaseManager:
         # targeted probes that force SQLite to read every overflow page.
         if not is_corrupt and db_name == "user_model":
             blob_probes = [
-                "SELECT content_full FROM episodes LIMIT 1",
+                "SELECT SUM(LENGTH(content_full)) FROM episodes",
                 "SELECT SUM(LENGTH(data)) FROM signal_profiles",
                 "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts",
                 "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines",
