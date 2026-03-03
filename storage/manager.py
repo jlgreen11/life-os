@@ -145,6 +145,38 @@ class DatabaseManager:
                 status = "corrupted"
                 logger.warning("Database health check failed for %s: %s", db_name, exc)
 
+            # PRAGMA quick_check only scans B-tree pages and misses blob
+            # overflow page corruption.  For user_model.db — which stores large
+            # JSON blobs in TEXT columns that spill into overflow pages — run
+            # targeted probes that force SQLite to read every overflow page.
+            # SUM(LENGTH(...)) is used instead of LIMIT 1 so ALL rows' overflow
+            # pages are touched, not just the first row's.
+            if db_name == "user_model" and status == "ok":
+                blob_probes = [
+                    "SELECT content_full FROM episodes LIMIT 1",
+                    "SELECT SUM(LENGTH(data)) FROM signal_profiles",
+                    "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts",
+                    "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines",
+                    "SELECT SUM(LENGTH(contributing_signals)) FROM mood_history",
+                    "SELECT SUM(LENGTH(supporting_signals)) FROM predictions",
+                    "SELECT SUM(LENGTH(evidence)) FROM insights",
+                ]
+                try:
+                    conn2 = sqlite3.connect(db_path)
+                    conn2.execute("PRAGMA journal_mode=WAL")
+                    for probe in blob_probes:
+                        try:
+                            conn2.execute(probe).fetchone()
+                        except Exception as exc:
+                            errors.append(f"blob probe failed: {exc}")
+                            status = "corrupted"
+                    conn2.close()
+                except Exception as exc:
+                    # Degrade gracefully if we can't open the connection at all
+                    # or if tables don't exist yet (empty schema).
+                    errors.append(f"blob probe connection failed: {exc}")
+                    status = "corrupted"
+
             results[db_name] = {
                 "status": status,
                 "errors": errors,

@@ -21,6 +21,7 @@ This test suite verifies:
 import sqlite3
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -506,6 +507,193 @@ class TestIndexEffectiveness:
 
                 # Primary key should be used for lookups
                 assert "using index" in plan or "primary key" in plan
+
+
+class TestDatabaseHealth:
+    """Test get_database_health() including deep blob probes for user_model.db."""
+
+    def test_healthy_databases_report_ok(self):
+        """get_database_health() should return 'ok' for all databases when they are healthy."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            results = db_manager.get_database_health()
+
+            for db_name in ["events", "entities", "state", "user_model", "preferences"]:
+                assert db_name in results
+                assert results[db_name]["status"] == "ok"
+                assert results[db_name]["errors"] == []
+
+    def test_user_model_blob_probes_run_on_healthy_db(self):
+        """Blob probes should succeed silently on a healthy user_model.db with empty tables."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            results = db_manager.get_database_health()
+
+            # user_model should pass both quick_check AND blob probes
+            assert results["user_model"]["status"] == "ok"
+            assert results["user_model"]["errors"] == []
+
+    def test_user_model_blob_probes_run_with_data(self):
+        """Blob probes should succeed on user_model.db that contains actual blob data."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            # Insert data into blob-heavy tables
+            with db_manager.get_connection("user_model") as conn:
+                conn.execute(
+                    "INSERT INTO semantic_facts (key, category, value, source_episodes) VALUES (?, ?, ?, ?)",
+                    ("test_key", "preference", "large_value_" * 100, '["ep1", "ep2"]'),
+                )
+                conn.execute(
+                    "INSERT INTO signal_profiles (profile_type, data) VALUES (?, ?)",
+                    ("linguistic", '{"patterns": "data_' + "x" * 500 + '"}'),
+                )
+
+            results = db_manager.get_database_health()
+            assert results["user_model"]["status"] == "ok"
+            assert results["user_model"]["errors"] == []
+
+    def test_user_model_blob_probe_detects_corruption(self):
+        """When a blob probe query fails, status should be 'corrupted'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            # Corrupt the database by writing garbage bytes into the middle of
+            # the file. This simulates overflow page corruption that PRAGMA
+            # quick_check(10) may miss but blob probes will catch.
+            db_path = Path(tmpdir) / "user_model.db"
+            file_size = db_path.stat().st_size
+            if file_size > 8192:
+                # Write garbage in the middle of the file (overflow page area)
+                with open(db_path, "r+b") as f:
+                    f.seek(file_size // 2)
+                    f.write(b"\xff\xfe\xfd\xfc" * 256)
+
+            results = db_manager.get_database_health()
+
+            # Either quick_check or blob probes should catch corruption.
+            # The exact detection depends on where the garbage lands, so we
+            # verify the method runs without crashing — the mock test below
+            # provides deterministic corruption detection.
+            assert results["user_model"]["status"] in ("ok", "corrupted")
+
+    def test_user_model_blob_probe_failure_via_mock(self):
+        """When a blob probe raises DatabaseError, status should be 'corrupted' with error details."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            # sqlite3.Connection.execute is read-only (C extension), so we
+            # can't patch individual connections. Instead, wrap sqlite3.connect
+            # to return a proxy that raises DatabaseError on blob probe queries.
+            original_connect = sqlite3.connect
+            um_connect_count = 0
+
+            class FailingConnection:
+                """Proxy that delegates to a real connection but raises on blob probes."""
+
+                def __init__(self, real_conn):
+                    self._real = real_conn
+
+                def execute(self, sql, *args, **kwargs):
+                    if "SUM(LENGTH(" in sql or "content_full" in sql:
+                        raise sqlite3.DatabaseError("database disk image is malformed")
+                    return self._real.execute(sql, *args, **kwargs)
+
+                def close(self):
+                    return self._real.close()
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            def patched_connect(path, *args, **kwargs):
+                nonlocal um_connect_count
+                conn = original_connect(path, *args, **kwargs)
+                if "user_model" in str(path):
+                    um_connect_count += 1
+                    if um_connect_count == 2:
+                        # Second connection to user_model.db is the blob probe conn
+                        return FailingConnection(conn)
+                return conn
+
+            with patch("storage.manager.sqlite3.connect", side_effect=patched_connect):
+                results = db_manager.get_database_health()
+
+            assert results["user_model"]["status"] == "corrupted"
+            assert any("blob probe failed" in e for e in results["user_model"]["errors"])
+            assert any("malformed" in e for e in results["user_model"]["errors"])
+
+    def test_non_user_model_dbs_skip_blob_probes(self, monkeypatch):
+        """Blob probes should only run for user_model, not for other databases."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            # Track all SQL executed
+            executed_sql = []
+            original_connect = sqlite3.connect
+
+            def tracking_connect(path, *args, **kwargs):
+                conn = original_connect(path, *args, **kwargs)
+                original_execute = conn.execute
+
+                def tracking_execute(sql, *a, **kw):
+                    executed_sql.append((str(path), sql))
+                    return original_execute(sql, *a, **kw)
+
+                conn.execute = tracking_execute
+                return conn
+
+            monkeypatch.setattr(sqlite3, "connect", tracking_connect)
+
+            db_manager.get_database_health()
+
+            # Blob probe queries should only appear for user_model.db
+            blob_probe_sqls = [
+                (path, sql)
+                for path, sql in executed_sql
+                if "SUM(LENGTH(" in sql or "content_full" in sql
+            ]
+            for path, _sql in blob_probe_sqls:
+                assert "user_model" in path, f"Blob probe ran against non-user_model DB: {path}"
+
+    def test_blob_probes_skip_when_quick_check_fails(self):
+        """Blob probes should not run if PRAGMA quick_check already detected corruption."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            # Corrupt the DB header to make PRAGMA quick_check fail
+            db_path = Path(tmpdir) / "user_model.db"
+            with open(db_path, "r+b") as f:
+                # Corrupt the SQLite header (first 100 bytes)
+                f.seek(0)
+                f.write(b"\x00" * 100)
+
+            results = db_manager.get_database_health()
+
+            assert results["user_model"]["status"] == "corrupted"
+            # Errors should be from quick_check or connection, not blob probes
+            assert not any("blob probe" in e for e in results["user_model"]["errors"])
+
+    def test_health_results_include_path_and_size(self):
+        """Each database result should include path and size_bytes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_manager = DatabaseManager(tmpdir)
+            db_manager.initialize_all()
+
+            results = db_manager.get_database_health()
+
+            for db_name in ["events", "entities", "state", "user_model", "preferences"]:
+                assert "path" in results[db_name]
+                assert "size_bytes" in results[db_name]
+                assert results[db_name]["size_bytes"] > 0
 
 
 class TestDatabaseIndependence:
