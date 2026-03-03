@@ -262,12 +262,21 @@ class PredictionEngine:
             except Exception as e:
                 generation_stats['preparation_needs'] = f'error: {e}'
                 logger.error("preparation_needs check failed: %s", e)
+
+            try:
+                reminder_preds = await self._check_calendar_event_reminders(current_context)
+                generation_stats['calendar_reminders'] = len(reminder_preds)
+                predictions.extend(reminder_preds)
+            except Exception as e:
+                generation_stats['calendar_reminders'] = f'error: {e}'
+                logger.error("calendar_reminders check failed: %s", e)
         else:
             # Skip time-based predictions, mark as not run
             generation_stats['calendar_conflicts'] = '(skipped: no time trigger)'
             generation_stats['routine_deviations'] = '(skipped: no time trigger)'
             generation_stats['relationship_maintenance'] = '(skipped: no time trigger)'
             generation_stats['preparation_needs'] = '(skipped: no time trigger)'
+            generation_stats['calendar_reminders'] = '(skipped: no time trigger)'
 
         # HYBRID predictions: Run on EITHER trigger (new events OR time-based).
         # Follow-up checks need to run on time-based triggers too, because emails
@@ -702,6 +711,126 @@ class PredictionEngine:
             comparisons_made, skipped_all_day_pairs, len(predictions),
         )
 
+        return predictions
+
+    async def _check_calendar_event_reminders(self, ctx: dict) -> list[Prediction]:
+        """Generate REMINDER predictions for upcoming calendar events.
+
+        Unlike other prediction generators, this works entirely from events.db
+        and requires no signal profiles. This ensures the prediction engine
+        produces basic useful output even when user_model.db is degraded.
+
+        Generates reminders for:
+        - Events starting in the next 2-24 hours (not imminent <2h, not far >24h)
+        - Only timed events (skip all-day events — they don't need time reminders)
+        - One reminder per event (deduplicated against existing predictions)
+        """
+        predictions = []
+        now = datetime.now(timezone.utc)
+        window_start = now + timedelta(hours=2)
+        window_end = now + timedelta(hours=24)
+
+        # Query calendar events from events.db (same approach as _check_calendar_conflicts)
+        with self.db.get_connection("events") as conn:
+            cutoff = (now - timedelta(days=30)).isoformat()
+            events = conn.execute(
+                """SELECT id, payload FROM events
+                   WHERE type = 'calendar.event.created'
+                   AND timestamp > ?""",
+                (cutoff,),
+            ).fetchall()
+
+        if not events:
+            return predictions
+
+        # Parse and filter to events starting in the 2-24h window
+        upcoming = []
+        for event in events:
+            try:
+                payload = json.loads(event["payload"])
+                # Handle double-encoded JSON
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+
+                start_str = payload.get("start_time", "")
+                if not start_str:
+                    continue
+
+                # Skip all-day events (date-only format like '2026-03-04')
+                if len(start_str) <= 10:
+                    continue
+
+                start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=timezone.utc)
+
+                if window_start <= start_dt <= window_end:
+                    upcoming.append({
+                        "event_id": event["id"],
+                        "title": payload.get("title", payload.get("summary", "Upcoming event")),
+                        "start_dt": start_dt,
+                        "location": payload.get("location", ""),
+                        "payload": payload,
+                    })
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+
+        if not upcoming:
+            logger.debug("calendar_reminders: no events in 2-24h window")
+            return predictions
+
+        # Deduplicate: check which events already have reminder predictions
+        existing_event_ids: set[str] = set()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT supporting_signals FROM predictions
+                       WHERE prediction_type = 'reminder'
+                       AND created_at > ?
+                       AND (resolved_at IS NULL OR user_response != 'filtered')""",
+                    ((now - timedelta(hours=48)).isoformat(),),
+                ).fetchall()
+                for row in rows:
+                    try:
+                        signals = json.loads(row["supporting_signals"] or "{}")
+                        eid = signals.get("calendar_event_id")
+                        if eid:
+                            existing_event_ids.add(eid)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            logger.debug("calendar_reminders: could not check existing predictions: %s", e)
+
+        for evt in upcoming:
+            if evt["event_id"] in existing_event_ids:
+                continue
+
+            hours_until = (evt["start_dt"] - now).total_seconds() / 3600
+            location_str = f" at {evt['location']}" if evt["location"] else ""
+
+            predictions.append(Prediction(
+                id=str(uuid.uuid4()),
+                prediction_type="reminder",
+                description=f"Upcoming: {evt['title']}{location_str} in {hours_until:.0f} hours",
+                confidence=0.85,  # High confidence — it's a real scheduled event
+                confidence_gate=ConfidenceGate.DEFAULT,
+                time_horizon="24_hours",
+                suggested_action=f"Prepare for {evt['title']}",
+                supporting_signals={
+                    "calendar_event_id": evt["event_id"],
+                    "event_title": evt["title"],
+                    "event_start": evt["start_dt"].isoformat(),
+                    "hours_until": round(hours_until, 1),
+                    "location": evt["location"],
+                },
+            ))
+
+        logger.info(
+            "calendar_reminders: %d upcoming events in 2-24h window, "
+            "%d new reminders (skipped %d already predicted)",
+            len(upcoming), len(predictions),
+            len(existing_event_ids & {e["event_id"] for e in upcoming}),
+        )
         return predictions
 
     async def _check_follow_up_needs(self, ctx: dict) -> list[Prediction]:
