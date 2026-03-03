@@ -636,6 +636,19 @@ class DatabaseManager:
                     value           TEXT NOT NULL,
                     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
+
+                -- Published conflict pairs — prevents re-publishing on restart.
+                -- event_id_a < event_id_b (sorted) so (A,B) and (B,A) map to the same row.
+                CREATE TABLE IF NOT EXISTS published_conflicts (
+                    event_id_a  TEXT NOT NULL,
+                    event_id_b  TEXT NOT NULL,
+                    detected_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    source      TEXT NOT NULL DEFAULT 'conflict_detector',
+                    PRIMARY KEY (event_id_a, event_id_b)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_published_conflicts_detected
+                    ON published_conflicts(detected_at);
             """)
 
     # -----------------------------------------------------------------------

@@ -53,7 +53,42 @@ class CalDAVConnector(BaseConnector):
         # Track already-published conflict pairs so we don't re-publish on every
         # sync cycle.  Key is a frozenset of (row_id_a, row_id_b) to handle pair
         # ordering.  Mirrors the pattern in ConflictDetector._published_conflicts.
+        # Populated from state.db on init so restarts don't lose dedup state.
         self._published_conflicts: set[frozenset[str]] = set()
+        self._load_published_conflicts()
+
+    def _load_published_conflicts(self):
+        """Load previously-published conflict pairs from state.db.
+
+        Populates the in-memory ``_published_conflicts`` set so that conflicts
+        detected before a process restart are not re-published as new events.
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    "SELECT event_id_a, event_id_b FROM published_conflicts WHERE source = 'caldav'"
+                ).fetchall()
+                for row in rows:
+                    self._published_conflicts.add(frozenset([row[0], row[1]]))
+                logger.debug("Loaded %d published caldav conflict pairs from state.db", len(rows))
+        except Exception as e:
+            logger.warning("Could not load published conflicts: %s", e)
+
+    def _persist_conflict(self, pair_key: frozenset[str]):
+        """Persist a newly-published conflict pair to state.db.
+
+        Uses sorted ordering so (A,B) and (B,A) always map to the same row.
+        INSERT OR IGNORE avoids errors on duplicate inserts.
+        """
+        ids = sorted(pair_key)
+        try:
+            with self.db.get_connection("state") as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO published_conflicts (event_id_a, event_id_b, source) VALUES (?, ?, ?)",
+                    (ids[0], ids[1], "caldav"),
+                )
+        except Exception as e:
+            logger.warning("Could not persist conflict pair: %s", e)
 
     async def authenticate(self) -> bool:
         """Connect to the CalDAV server and discover available calendars.
@@ -401,6 +436,7 @@ END:VCALENDAR"""
 
                         if event_pair not in self._published_conflicts:
                             self._published_conflicts.add(event_pair)
+                            self._persist_conflict(event_pair)
                             new_conflicts += 1
 
                             # Build conflict event payload
