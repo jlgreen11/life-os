@@ -214,6 +214,16 @@ class InsightEngine:
             logger.exception("email_volume correlator failed")
 
         try:
+            raw.extend(self._email_peak_hour_insights())
+        except Exception:
+            logger.exception("email_peak_hour correlator failed")
+
+        try:
+            raw.extend(self._meeting_density_insights())
+        except Exception:
+            logger.exception("meeting_density correlator failed")
+
+        try:
             raw.extend(self._communication_style_insights())
         except Exception:
             logger.exception("communication_style correlator failed")
@@ -984,6 +994,135 @@ class InsightEngine:
                 ],
                 category="email_volume",
                 entity=busiest_day,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Email Peak Hour
+    # ------------------------------------------------------------------
+
+    def _email_peak_hour_insights(self) -> list[Insight]:
+        """Identify the user's peak email hours.
+
+        Queries email.received events from the last 30 days, buckets by
+        hour-of-day in the user's timezone, and surfaces the peak hour if
+        it is significantly busier than the average.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("events") as conn:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                rows = conn.execute(
+                    """SELECT timestamp FROM events
+                       WHERE type = 'email.received'
+                       AND timestamp > ?""",
+                    (cutoff,),
+                ).fetchall()
+        except Exception:
+            return []
+
+        if len(rows) < 50:
+            return []  # Need at least 50 emails for meaningful hourly analysis
+
+        hour_counts: Counter[int] = Counter()
+        for row in rows:
+            try:
+                dt = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+                local_dt = dt.astimezone(self._tz)
+                hour_counts[local_dt.hour] += 1
+            except (ValueError, TypeError):
+                continue
+
+        if not hour_counts:
+            return []
+
+        peak_hour, peak_count = hour_counts.most_common(1)[0]
+        avg_count = sum(hour_counts.values()) / max(len(hour_counts), 1)
+
+        # Only surface if the peak hour is at least 2.0x the average
+        if peak_count >= avg_count * 2.0:
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your email peaks between {peak_hour}:00-{peak_hour + 1}:00 "
+                    f"({peak_count} emails vs ~{int(avg_count)} average)"
+                ),
+                confidence=min(0.85, 0.5 + (peak_count / max(avg_count, 1) - 1.0) * 0.15),
+                evidence=[
+                    f"peak_hour={peak_hour}",
+                    f"peak_count={peak_count}",
+                    f"avg_hourly={int(avg_count)}",
+                ],
+                category="email_timing",
+                entity=str(peak_hour),
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Meeting Density by Day of Week
+    # ------------------------------------------------------------------
+
+    def _meeting_density_insights(self) -> list[Insight]:
+        """Identify the user's meeting-heaviest day of the week.
+
+        Queries calendar.event.created events from the last 30 days,
+        buckets by day-of-week, and surfaces the busiest day.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("events") as conn:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                rows = conn.execute(
+                    """SELECT timestamp FROM events
+                       WHERE type = 'calendar.event.created'
+                       AND timestamp > ?""",
+                    (cutoff,),
+                ).fetchall()
+        except Exception:
+            return []
+
+        if len(rows) < 10:
+            return []  # Need at least 10 calendar events
+
+        day_counts: Counter[str] = Counter()
+        for row in rows:
+            try:
+                dt = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+                local_dt = dt.astimezone(self._tz)
+                day_counts[local_dt.strftime("%A")] += 1
+            except (ValueError, TypeError):
+                continue
+
+        if not day_counts:
+            return []
+
+        peak_day, peak_count = day_counts.most_common(1)[0]
+        avg_count = sum(day_counts.values()) / max(len(day_counts), 1)
+
+        # Only surface if peak day is at least 1.5x the average
+        if peak_count >= avg_count * 1.5:
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your meeting-heaviest day is {peak_day} "
+                    f"({peak_count} meetings vs ~{int(avg_count)} average)"
+                ),
+                confidence=min(0.8, 0.45 + (peak_count / max(avg_count, 1) - 1.0) * 0.2),
+                evidence=[
+                    f"peak_day={peak_day}",
+                    f"peak_count={peak_count}",
+                    f"avg_daily={int(avg_count)}",
+                ],
+                category="meeting_density",
+                entity=peak_day,
             )
             insight.compute_dedup_key()
             insights.append(insight)
