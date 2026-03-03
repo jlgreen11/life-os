@@ -127,45 +127,51 @@ class UserModelStore:
         despite 29K+ mood signals available). Now explicitly checks for None
         and uses {} as fallback, ensuring proper JSON serialization.
         """
-        with self.db.get_connection("user_model") as conn:
-            # INSERT OR REPLACE: if a row with the same PRIMARY KEY (id) already
-            # exists, SQLite deletes it and inserts the new row.  This is the
-            # idempotent upsert strategy used throughout the episodic layer.
+        # Pre-compute list values outside the DB block so telemetry can
+        # reference them even if the DB write fails.
+        inferred_mood = episode.get("inferred_mood") or {}
+        contacts_involved = episode.get("contacts_involved") or []
+        topics = episode.get("topics") or []
+        entities = episode.get("entities") or []
 
-            # CRITICAL: Handle None values explicitly for JSON serialization.
-            # dict.get(key, default) returns the actual value (even if None)
-            # when the key exists, NOT the default. So we must check explicitly.
-            inferred_mood = episode.get("inferred_mood") or {}
-            contacts_involved = episode.get("contacts_involved") or []
-            topics = episode.get("topics") or []
-            entities = episode.get("entities") or []
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # INSERT OR REPLACE: if a row with the same PRIMARY KEY (id) already
+                # exists, SQLite deletes it and inserts the new row.  This is the
+                # idempotent upsert strategy used throughout the episodic layer.
 
-            conn.execute(
-                """INSERT OR REPLACE INTO episodes
-                   (id, timestamp, event_id, location, inferred_mood, active_domain,
-                    energy_level, interaction_type, content_summary, content_full,
-                    contacts_involved, topics, entities, outcome, user_satisfaction, embedding_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    episode["id"],
-                    episode["timestamp"],
-                    episode["event_id"],
-                    episode.get("location"),
-                    json.dumps(inferred_mood),
-                    episode.get("active_domain"),
-                    episode.get("energy_level"),
-                    episode.get("interaction_type", "unknown"),
-                    episode.get("content_summary", ""),
-                    episode.get("content_full"),
-                    json.dumps(contacts_involved),
-                    json.dumps(topics),
-                    json.dumps(entities),
-                    episode.get("outcome"),
-                    episode.get("user_satisfaction"),
-                    episode.get("embedding_id"),
-                ),
+                conn.execute(
+                    """INSERT OR REPLACE INTO episodes
+                       (id, timestamp, event_id, location, inferred_mood, active_domain,
+                        energy_level, interaction_type, content_summary, content_full,
+                        contacts_involved, topics, entities, outcome, user_satisfaction, embedding_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        episode["id"],
+                        episode["timestamp"],
+                        episode["event_id"],
+                        episode.get("location"),
+                        json.dumps(inferred_mood),
+                        episode.get("active_domain"),
+                        episode.get("energy_level"),
+                        episode.get("interaction_type", "unknown"),
+                        episode.get("content_summary", ""),
+                        episode.get("content_full"),
+                        json.dumps(contacts_involved),
+                        json.dumps(topics),
+                        json.dumps(entities),
+                        episode.get("outcome"),
+                        episode.get("user_satisfaction"),
+                        episode.get("embedding_id"),
+                    ),
+                )
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.store_episode failed (user_model.db may be corrupt): %s", e
             )
 
+        # Telemetry runs outside the try/except so it fires even when the
+        # DB write fails — this helps the health loop detect degradation.
         self._emit_telemetry("usermodel.episode.stored", {
             "episode_id": episode["id"],
             "event_id": episode["event_id"],
@@ -322,19 +328,26 @@ class UserModelStore:
         This ensures the sample counter survives the replace and accurately
         reflects how many data points have been incorporated into the profile.
         """
-        with self.db.get_connection("user_model") as conn:
-            # INSERT OR REPLACE deletes any existing row with the same PRIMARY KEY
-            # and inserts the new one.  The COALESCE sub-select reads the old
-            # samples_count *before* the delete occurs (within the same statement),
-            # so we can carry it forward incremented by 1.
-            conn.execute(
-                """INSERT OR REPLACE INTO signal_profiles (profile_type, data, samples_count, updated_at)
-                   VALUES (?, ?,
-                           COALESCE((SELECT samples_count FROM signal_profiles WHERE profile_type = ?), 0) + 1,
-                           strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
-                (profile_type, json.dumps(data), profile_type),
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # INSERT OR REPLACE deletes any existing row with the same PRIMARY KEY
+                # and inserts the new one.  The COALESCE sub-select reads the old
+                # samples_count *before* the delete occurs (within the same statement),
+                # so we can carry it forward incremented by 1.
+                conn.execute(
+                    """INSERT OR REPLACE INTO signal_profiles (profile_type, data, samples_count, updated_at)
+                       VALUES (?, ?,
+                               COALESCE((SELECT samples_count FROM signal_profiles WHERE profile_type = ?), 0) + 1,
+                               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
+                    (profile_type, json.dumps(data), profile_type),
+                )
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.update_signal_profile failed (user_model.db may be corrupt): %s", e
             )
 
+        # Telemetry runs outside the try/except so it fires even when the
+        # DB write fails — tracks that an update was attempted.
         self._emit_telemetry("usermodel.signal_profile.updated", {
             "profile_type": profile_type,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -346,16 +359,24 @@ class UserModelStore:
         The ``data`` column is stored as a JSON string in SQLite, so we
         deserialize it back to a Python dict before returning.
         """
-        with self.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM signal_profiles WHERE profile_type = ?",
-                (profile_type,),
-            ).fetchone()
-            if row:
-                result = dict(row)
-                # Deserialize the JSON blob back into a native Python dict.
-                result["data"] = json.loads(result["data"])
-                return result
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT * FROM signal_profiles WHERE profile_type = ?",
+                    (profile_type,),
+                ).fetchone()
+                if row:
+                    result = dict(row)
+                    # Deserialize the JSON blob back into a native Python dict.
+                    result["data"] = json.loads(result["data"])
+                    return result
+                return None
+        except Exception as e:
+            # Fail-open: corruption is indistinguishable from "no data yet".
+            # Callers (signal extractors) will bootstrap fresh profiles.
+            logger.warning(
+                "UserModelStore.get_signal_profile failed (user_model.db may be corrupt): %s", e
+            )
             return None
 
     def store_mood(self, mood: dict):
@@ -366,25 +387,32 @@ class UserModelStore:
         energy and stress) can still be recorded without raising errors.
         """
         timestamp = mood.get("timestamp", datetime.now(timezone.utc).isoformat())
-        with self.db.get_connection("user_model") as conn:
-            conn.execute(
-                """INSERT INTO mood_history
-                   (timestamp, energy_level, stress_level, social_battery,
-                    cognitive_load, emotional_valence, confidence, contributing_signals, trend)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    timestamp,
-                    mood.get("energy_level", 0.5),
-                    mood.get("stress_level", 0.3),
-                    mood.get("social_battery", 0.5),
-                    mood.get("cognitive_load", 0.3),
-                    mood.get("emotional_valence", 0.5),
-                    mood.get("confidence", 0.0),
-                    json.dumps(mood.get("contributing_signals", [])),
-                    mood.get("trend", "stable"),
-                ),
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    """INSERT INTO mood_history
+                       (timestamp, energy_level, stress_level, social_battery,
+                        cognitive_load, emotional_valence, confidence, contributing_signals, trend)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        timestamp,
+                        mood.get("energy_level", 0.5),
+                        mood.get("stress_level", 0.3),
+                        mood.get("social_battery", 0.5),
+                        mood.get("cognitive_load", 0.3),
+                        mood.get("emotional_valence", 0.5),
+                        mood.get("confidence", 0.0),
+                        json.dumps(mood.get("contributing_signals", [])),
+                        mood.get("trend", "stable"),
+                    ),
+                )
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.store_mood failed (user_model.db may be corrupt): %s", e
             )
 
+        # Telemetry runs outside the try/except so it fires even when the
+        # DB write fails — tracks that a mood recording was attempted.
         self._emit_telemetry("usermodel.mood.recorded", {
             "energy_level": mood.get("energy_level", 0.5),
             "stress_level": mood.get("stress_level", 0.3),
