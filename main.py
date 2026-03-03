@@ -180,6 +180,10 @@ class LifeOS:
         # handlers after a NATS restart without requiring a full Life OS restart.
         self._event_handlers_registered = False
 
+        # Task IDs that have already been flagged as overdue, preventing
+        # duplicate notifications on subsequent loop iterations.
+        self._notified_overdue_tasks: set[str] = set()
+
         # Connector management
         self.config_encryptor = ConfigEncryptor(data_dir)
         self.connector_map: dict[str, object] = {}  # connector_id -> BaseConnector
@@ -442,6 +446,7 @@ class LifeOS:
         self._start_background_task("routine_detection_loop", self._routine_detection_loop())
         self._start_background_task("behavioral_accuracy_loop", self._behavioral_accuracy_loop())
         self._start_background_task("task_completion_loop", self._task_completion_loop())
+        self._start_background_task("task_overdue_loop", self._task_overdue_loop())
         self._start_background_task("digest_delivery_loop", self._digest_delivery_loop())
         self._start_background_task("db_health_loop", self._db_health_loop())
         self._start_background_task("conflict_detection_loop", self._conflict_detection_loop())
@@ -3272,6 +3277,92 @@ class LifeOS:
             # 1800 seconds = 30 minutes. Tasks aren't typically completed within
             # minutes (unlike prediction validation), so we can run less frequently
             # while still maintaining responsive workflow detection.
+            await asyncio.sleep(1800)  # 30 minutes
+
+    async def _task_overdue_loop(self):
+        """Detect overdue tasks and publish task.overdue events with notifications.
+
+        The TASK_OVERDUE event type is defined in models/core.py but nothing
+        publishes it without this loop.  Every 30 minutes we query for pending
+        tasks whose due_date has passed and, for each *newly*-overdue task:
+
+          1. Publish a ``task.overdue`` event via the event bus so downstream
+             handlers (rules engine, signal extractor) can react.
+          2. Create a high-priority notification so the user knows a deadline
+             was missed.
+
+        A ``_notified_overdue_tasks`` set (initialized in ``__init__``) tracks
+        which task IDs have already been flagged, preventing duplicate
+        notifications on subsequent iterations.
+
+        Interval: 30 minutes (1800 seconds)
+          - Matches the task completion loop cadence.
+          - Overdue detection doesn't need sub-minute precision; 30 minutes
+            strikes a good balance between timeliness and resource usage.
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                overdue_tasks = self.task_manager.get_overdue_tasks()
+                newly_notified = 0
+
+                for task in overdue_tasks:
+                    task_id = task.get("id")
+                    if not task_id or task_id in self._notified_overdue_tasks:
+                        continue
+
+                    # Compute a human-readable overdue delta
+                    due_date_str = task.get("due_date", "")
+                    try:
+                        due_dt = datetime.fromisoformat(due_date_str)
+                        delta = datetime.now(timezone.utc) - due_dt
+                        total_hours = int(delta.total_seconds() // 3600)
+                        if total_hours >= 48:
+                            overdue_delta = f"{total_hours // 24} days"
+                        elif total_hours >= 1:
+                            overdue_delta = f"{total_hours} hours"
+                        else:
+                            overdue_delta = f"{int(delta.total_seconds() // 60)} minutes"
+                    except (ValueError, TypeError):
+                        overdue_delta = "unknown duration"
+
+                    task_title = task.get("title", "Untitled task")
+                    task_priority = task.get("priority", "normal")
+                    task_domain = task.get("domain")
+
+                    # Publish task.overdue event for downstream pipeline processing
+                    await self.event_bus.publish(
+                        "task.overdue",
+                        {
+                            "task_id": task_id,
+                            "title": task_title,
+                            "due_date": due_date_str,
+                            "priority": task_priority,
+                            "overdue_by": overdue_delta,
+                        },
+                        source="task_manager",
+                    )
+
+                    # Create a user-facing notification
+                    await self.notification_manager.create_notification(
+                        title=f"Task overdue: {task_title}",
+                        body=f"Due {overdue_delta} ago",
+                        priority="high",
+                        source_event_id=task_id,
+                        domain=task_domain,
+                    )
+
+                    self._notified_overdue_tasks.add(task_id)
+                    newly_notified += 1
+
+                if newly_notified > 0:
+                    logger.info(
+                        "  TaskOverdueLoop: notified %d newly-overdue task(s)",
+                        newly_notified,
+                    )
+
+            except Exception as e:
+                logger.error("Task overdue detection error: %s", e)
+
             await asyncio.sleep(1800)  # 30 minutes
 
     async def _digest_delivery_loop(self):
