@@ -11,6 +11,7 @@ action execution, and health checks.
 """
 
 import json
+import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -945,7 +946,8 @@ async def test_health_check_not_authenticated(connector):
     """Test health check when connector is not authenticated."""
     connector._gmail_service = None
 
-    result = await connector.health_check()
+    with patch("os.path.exists", return_value=False):
+        result = await connector.health_check()
 
     assert result["status"] == "error"
     assert "Not authenticated" in result["details"]
@@ -961,6 +963,65 @@ async def test_health_check_api_error(connector):
 
     assert result["status"] == "error"
     assert "Network error" in result["details"]
+
+
+@pytest.mark.asyncio
+async def test_health_check_includes_diagnostics_when_not_authenticated(connector):
+    """Test health check returns diagnostic fields when not authenticated and no token file."""
+    connector._gmail_service = None
+
+    with patch("os.path.exists", return_value=False):
+        result = await connector.health_check()
+
+    assert result["status"] == "error"
+    assert result["token_file_exists"] is False
+    assert result["has_refresh_token"] is False
+    assert result["token_age_hours"] is None
+    assert "recovery_hint" in result
+    assert "Token file missing" in result["recovery_hint"]
+    assert result["connector"] == "google"
+
+
+@pytest.mark.asyncio
+async def test_health_check_attempts_token_refresh(connector):
+    """Test health check attempts token refresh and recovers when successful."""
+    connector._gmail_service = None
+
+    mock_creds = MagicMock()
+    mock_creds.valid = True
+
+    with patch("os.path.exists", return_value=True), \
+         patch("os.path.getmtime", return_value=time.time() - 3600), \
+         patch("builtins.open", MagicMock()), \
+         patch("json.load", return_value={"refresh_token": "tok123"}), \
+         patch.object(connector, "_load_credentials", return_value=mock_creds), \
+         patch.object(connector, "authenticate", return_value=True) as mock_auth:
+
+        result = await connector.health_check()
+
+    assert result["status"] == "recovered"
+    assert "Token refreshed" in result["details"]
+    mock_auth.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_health_check_reports_refresh_failure_details(connector):
+    """Test health check reports specific error when token refresh fails."""
+    connector._gmail_service = None
+
+    with patch("os.path.exists", return_value=True), \
+         patch("os.path.getmtime", return_value=time.time() - 7200), \
+         patch("builtins.open", MagicMock()), \
+         patch("json.load", return_value={"refresh_token": "tok123"}), \
+         patch.object(connector, "_load_credentials",
+                      side_effect=ValueError("Token refresh failed (invalid_grant)")):
+
+        result = await connector.health_check()
+
+    assert result["status"] == "error"
+    assert "Token refresh failed" in result["details"]
+    assert "invalid_grant" in result["details"]
+    assert result["recovery_hint"] == "Re-authenticate via /admin connector panel"
 
 
 # ------------------------------------------------------------------

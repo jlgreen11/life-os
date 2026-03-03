@@ -834,7 +834,15 @@ class GoogleConnector(BaseConnector):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> dict[str, Any]:
-        """Verify Gmail API connectivity."""
+        """Verify Gmail API connectivity with diagnostics and recovery attempt.
+
+        When the connector is not authenticated, gathers diagnostic info about
+        the token file and attempts a token refresh. If refresh succeeds,
+        re-authenticates and reports 'recovered' status. On failure, returns
+        actionable guidance for the user.
+        """
+        import os
+
         try:
             if self._gmail_service:
                 profile = self._gmail_service.users().getProfile(userId="me").execute()
@@ -843,6 +851,87 @@ class GoogleConnector(BaseConnector):
                     "connector": self.CONNECTOR_ID,
                     "email": profile.get("emailAddress"),
                 }
-            return {"status": "error", "details": "Not authenticated"}
         except Exception as e:
-            return {"status": "error", "details": str(e)}
+            return {"status": "error", "connector": self.CONNECTOR_ID, "details": str(e)}
+
+        # Not authenticated — gather diagnostics and attempt recovery
+        diagnostics = self._build_health_diagnostics()
+
+        # Attempt token refresh if token file exists
+        if diagnostics["token_file_exists"]:
+            try:
+                self._load_credentials()
+                # Credentials loaded successfully — try full re-authentication
+                if await self.authenticate():
+                    diagnostics["status"] = "recovered"
+                    diagnostics["details"] = "Token refreshed and services restored"
+                    diagnostics["recovery_hint"] = "Recovered automatically"
+                    return diagnostics
+            except Exception as e:
+                diagnostics["details"] = f"Token refresh failed: {e}"
+                diagnostics["recovery_hint"] = "Re-authenticate via /admin connector panel"
+
+        return diagnostics
+
+    def _build_health_diagnostics(self) -> dict[str, Any]:
+        """Build diagnostic fields for health_check when not authenticated.
+
+        Gathers token file state and connector sync history to provide
+        actionable information in the admin dashboard.
+        """
+        import os
+
+        token_file_exists = os.path.exists(self._token_file)
+
+        # Token age in hours
+        token_age_hours = None
+        if token_file_exists:
+            try:
+                mtime = os.path.getmtime(self._token_file)
+                token_age_hours = round((time.time() - mtime) / 3600, 1)
+            except OSError:
+                pass
+
+        # Check if stored token has a refresh_token
+        has_refresh_token = False
+        if token_file_exists:
+            try:
+                import json as _json
+
+                with open(self._token_file) as f:
+                    token_data = _json.load(f)
+                has_refresh_token = bool(token_data.get("refresh_token"))
+            except Exception:
+                pass
+
+        # Last successful sync from connector state
+        last_sync = None
+        try:
+            with self.db.get_connection("state") as conn:
+                row = conn.execute(
+                    "SELECT last_sync FROM connector_state WHERE connector_id = ?",
+                    (self.CONNECTOR_ID,),
+                ).fetchone()
+                if row and row["last_sync"]:
+                    last_sync = row["last_sync"]
+        except Exception:
+            pass
+
+        # Build recovery hint
+        if not token_file_exists:
+            recovery_hint = "Token file missing — complete initial OAuth setup via /admin connector panel"
+        elif not has_refresh_token:
+            recovery_hint = "No refresh token — re-authenticate via /admin connector panel"
+        else:
+            recovery_hint = "Re-authenticate via /admin connector panel"
+
+        return {
+            "status": "error",
+            "connector": self.CONNECTOR_ID,
+            "details": "Not authenticated",
+            "token_file_exists": token_file_exists,
+            "has_refresh_token": has_refresh_token,
+            "token_age_hours": token_age_hours,
+            "recovery_hint": recovery_hint,
+            "last_sync": last_sync,
+        }
