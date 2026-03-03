@@ -20,7 +20,7 @@ class TestRoutineDetector:
         detector = RoutineDetector(db, user_model_store)
         assert detector.db is db
         assert detector.user_model_store is user_model_store
-        assert detector.min_occurrences == 2
+        assert detector.min_occurrences == 3
         assert detector.time_window_hours == 2
         assert detector.consistency_threshold == 0.6
 
@@ -28,7 +28,7 @@ class TestRoutineDetector:
         """Should not detect routines when episode count < min_occurrences."""
         detector = RoutineDetector(db, user_model_store)
 
-        # Create only 1 episode (below min_occurrences of 2)
+        # Create only 1 episode (below min_occurrences of 3)
         episode = {
             "id": str(uuid.uuid4()),
             "timestamp": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
@@ -600,13 +600,13 @@ class TestRoutineDetector:
         assert routine["consistency_score"] >= 0.6
         assert len(routine["steps"]) >= 1
 
-    def test_temporal_routine_detected_with_two_occurrences(self, db, user_model_store):
-        """Regression: a pattern appearing on exactly 2 distinct days should be
-        detected as a routine now that min_occurrences has been lowered to 2.
+    def test_temporal_routine_not_detected_with_two_occurrences(self, db, user_model_store):
+        """A pattern appearing on exactly 2 distinct days should NOT be detected
+        as a routine because min_occurrences=3 requires at least 3 instances.
 
-        With the old threshold of 3 this test would fail because 2 day_count < 3.
-        The consistency_threshold (0.6) is the real quality gate; two occurrences
-        over two active days gives consistency = 1.0 which easily passes.
+        Two occurrences is too few to distinguish a genuine recurring pattern
+        from coincidence (e.g., visiting the same coffee shop on two consecutive
+        days). The min_occurrences=3 threshold provides a more reliable signal.
         """
         detector = RoutineDetector(db, user_model_store)
 
@@ -634,16 +634,14 @@ class TestRoutineDetector:
 
         routines = detector.detect_routines(lookback_days=30)
 
-        # The morning bucket should contain both interaction types each on 2 days
+        # With min_occurrences=3, 2-day patterns should NOT be detected
         morning_routines = [r for r in routines if r["trigger"] == "morning"]
-        assert len(morning_routines) >= 1, (
-            "Expected a morning routine from 2-day pattern; min_occurrences=2 should allow it"
+        sparse_steps = []
+        for r in morning_routines:
+            sparse_steps.extend(s for s in r["steps"] if s["action"].startswith("sparse_morning_"))
+        assert len(sparse_steps) == 0, (
+            "Expected no routine from 2-day pattern; min_occurrences=3 should reject it"
         )
-
-        routine = morning_routines[0]
-        sparse_steps = [s for s in routine["steps"] if s["action"].startswith("sparse_morning_")]
-        assert len(sparse_steps) >= 1
-        assert routine["consistency_score"] >= 0.6
 
     def test_event_triggered_routine_with_single_followup(self, db, user_model_store):
         """Regression: an event-triggered routine with exactly 1 consistent

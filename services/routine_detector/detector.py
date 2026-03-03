@@ -52,7 +52,7 @@ class RoutineDetector:
         self.user_model_store = user_model_store
 
         # Detection thresholds
-        self.min_occurrences = 2  # Need at least 2 instances to call it a routine
+        self.min_occurrences = 3  # Need at least 3 instances to call it a routine
         self.time_window_hours = 2  # Actions within 2h can be part of same routine
         self.consistency_threshold = 0.6  # 60% of instances must match for it to be a routine
 
@@ -102,6 +102,11 @@ class RoutineDetector:
             f"({len(temporal_routines)} temporal, {len(location_routines)} location-based, "
             f"{len(event_routines)} event-triggered)"
         )
+
+        # Prune stored routines that are no longer being detected.
+        # This prevents abandoned patterns from accumulating and generating
+        # false routine_deviation predictions in the prediction engine.
+        self.prune_stale_routines(routines)
 
         return routines
 
@@ -578,6 +583,49 @@ class RoutineDetector:
                     )
 
         return routines
+
+    def prune_stale_routines(self, detected_routines: list[dict[str, Any]], max_stale_days: int = 14) -> int:
+        """Remove stored routines that were not re-detected and are older than the stale threshold.
+
+        A routine is considered stale when:
+        1. It was NOT found in the current detection run (not in detected_routines), AND
+        2. Its updated_at timestamp is older than max_stale_days ago.
+
+        This prevents abandoned patterns from accumulating in the database and
+        generating false routine_deviation predictions in the prediction engine.
+
+        Args:
+            detected_routines: List of routine dicts from the current detection run.
+                Each must have a "name" key.
+            max_stale_days: Number of days after which an un-redetected routine is
+                pruned. Default 14 days.
+
+        Returns:
+            Number of routines pruned.
+        """
+        detected_names = {r["name"] for r in detected_routines}
+        pruned = 0
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=max_stale_days)).isoformat()
+            with self.db.get_connection("user_model") as conn:
+                stored = conn.execute(
+                    "SELECT name, updated_at FROM routines"
+                ).fetchall()
+                for row in stored:
+                    name = row["name"]
+                    updated_at = row["updated_at"] or ""
+                    if name not in detected_names and updated_at < cutoff:
+                        conn.execute("DELETE FROM routines WHERE name = ?", (name,))
+                        pruned += 1
+                        logger.info(
+                            "Pruned stale routine: %s (last updated %s, cutoff %s)",
+                            name, updated_at, cutoff,
+                        )
+            if pruned:
+                logger.info("Pruned %d stale routine(s) from database", pruned)
+        except Exception as e:
+            logger.warning("prune_stale_routines failed (non-critical): %s", e)
+        return pruned
 
     def store_routines(self, routines: list[dict[str, Any]]) -> int:
         """Persist detected routines to the database.
