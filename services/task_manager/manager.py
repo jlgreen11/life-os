@@ -90,7 +90,7 @@ class TaskManager:
         self.db = db  # Database access for tasks, events, and contacts tables
         self.bus = event_bus
         self.ai_engine = ai_engine
-        self._ai_engine_warned = False
+        self._ai_engine_skip_count = 0
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -112,6 +112,7 @@ class TaskManager:
             - message.received: Direct messages may contain action items
             - message.sent: Outgoing messages may report completed tasks
             - calendar.event.created: Calendar descriptions may list TODOs
+            - calendar.event.updated: Edited calendar events may add new TODOs
 
         Sent events are processed to detect already-completed tasks. For example,
         "I sent the report yesterday" in an outgoing email should create a task
@@ -122,9 +123,12 @@ class TaskManager:
             event: Event dict with type, payload, and metadata
         """
         if not self.ai_engine:
-            if not self._ai_engine_warned:
-                logger.warning('task_manager: AI engine not available — automatic task extraction disabled')
-                self._ai_engine_warned = True
+            self._ai_engine_skip_count += 1
+            if self._ai_engine_skip_count == 1 or self._ai_engine_skip_count % 100 == 0:
+                logger.warning(
+                    'task_manager: AI engine not available — automatic task extraction disabled '
+                    '(%d events skipped so far)', self._ai_engine_skip_count
+                )
             return
 
         event_type = event.get("type", "")
@@ -140,6 +144,7 @@ class TaskManager:
             "message.received",
             "message.sent",
             "calendar.event.created",
+            "calendar.event.updated",
         ]:
             return
 
@@ -153,9 +158,10 @@ class TaskManager:
         elif event_type in ("message.received", "message.sent"):
             # For messages (both received and sent), use the message body
             text = payload.get("body", "")
-        elif event_type == "calendar.event.created":
-            # For calendar events, check the description field for action items
-            text = payload.get("description", "")
+        elif event_type in ("calendar.event.created", "calendar.event.updated"):
+            # For calendar events (both new and updated), combine description
+            # and summary to capture action items in either field
+            text = payload.get("description", "") + " " + payload.get("summary", "")
 
         # --- Strip HTML from email bodies ---
         # Email connectors often store raw HTML. LLMs need plain text to
