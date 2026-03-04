@@ -441,6 +441,18 @@ class LifeOS:
         # → no notifications → dead system.
         await self._verify_and_retry_backfills()
 
+        # 1.18. Auto-rebuild missing signal profiles from historical events.
+        # After all individual backfills (1.8-1.17), run a unified check that
+        # detects ANY missing profiles and rebuilds them in one pass.  Acts as
+        # a final safety net for profiles that slipped through individual
+        # backfills or were added by new extractors without a dedicated backfill.
+        try:
+            rebuild_result = self.signal_extractor.check_and_rebuild_missing_profiles()
+            if rebuild_result.get("rebuilt"):
+                logger.info("startup: rebuilt %d missing signal profiles", len(rebuild_result["rebuilt"]))
+        except Exception as e:
+            logger.warning("startup: signal profile rebuild failed (non-fatal): %s", e)
+
         # 2. Initialize vector store
         logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()

@@ -89,6 +89,87 @@ class SignalExtractorPipeline:
 
         return all_signals
 
+    def check_and_rebuild_missing_profiles(self) -> dict:
+        """Check for missing signal profiles and rebuild them from historical events if needed.
+
+        Defines the full set of expected profile types and queries each one.
+        If any are missing AND events exist in events.db, triggers a full
+        rebuild via rebuild_profiles_from_events().  Returns immediately if
+        all profiles are present — no unnecessary event replay.
+
+        This method is designed to run once at startup as a self-healing
+        mechanism after data loss, schema migrations, or extractor additions.
+        The entire method is wrapped in try/except so a failure never blocks
+        startup.
+
+        Returns:
+            A dict with keys:
+            - ``missing_before``: list of profile types that were absent
+            - ``rebuilt``: list of profile types that were successfully rebuilt
+            - ``skipped``: bool, True if rebuild was skipped (no events or no missing profiles)
+        """
+        expected_profiles = [
+            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
+            "relationships", "topics", "temporal", "spatial", "decision",
+        ]
+
+        try:
+            # Determine which profiles are missing.
+            missing = []
+            for profile_type in expected_profiles:
+                profile = self.ums.get_signal_profile(profile_type)
+                if profile is None:
+                    missing.append(profile_type)
+
+            if not missing:
+                logger.info("check_and_rebuild_missing_profiles: all expected signal profiles present")
+                return {"missing_before": [], "rebuilt": [], "skipped": True}
+
+            # Check whether there are events to replay.
+            with self.db.get_connection("events") as conn:
+                row = conn.execute("SELECT COUNT(*) AS cnt FROM events").fetchone()
+                event_count = row["cnt"] if row else 0
+
+            if event_count == 0:
+                logger.info(
+                    "check_and_rebuild_missing_profiles: %d profiles missing (%s) but no events in events.db — skipping rebuild",
+                    len(missing), ", ".join(missing),
+                )
+                return {"missing_before": missing, "rebuilt": [], "skipped": True}
+
+            logger.info(
+                "check_and_rebuild_missing_profiles: %d profiles missing (%s), %d events available — starting rebuild",
+                len(missing), ", ".join(missing), event_count,
+            )
+
+            # Replay up to 10,000 recent events through all extractors.
+            rebuild_result = self.rebuild_profiles_from_events(event_limit=10000)
+
+            # Determine which previously-missing profiles now exist.
+            rebuilt = []
+            still_missing = []
+            for profile_type in missing:
+                profile = self.ums.get_signal_profile(profile_type)
+                if profile is not None:
+                    rebuilt.append(profile_type)
+                else:
+                    still_missing.append(profile_type)
+
+            logger.info(
+                "check_and_rebuild_missing_profiles: rebuilt %d profiles (%s), %d still missing (%s), %d events processed, %d errors",
+                len(rebuilt), ", ".join(rebuilt) or "none",
+                len(still_missing), ", ".join(still_missing) or "none",
+                rebuild_result.get("events_processed", 0),
+                len(rebuild_result.get("errors", [])),
+            )
+
+            return {"missing_before": missing, "rebuilt": rebuilt, "skipped": False}
+
+        except Exception as e:
+            # Fail-open: never block startup due to profile rebuild failures.
+            logger.warning("check_and_rebuild_missing_profiles: failed (non-fatal): %s", e, exc_info=True)
+            return {"missing_before": [], "rebuilt": [], "skipped": True}
+
     def rebuild_profiles_from_events(self, event_limit: int = 5000) -> dict:
         """Rebuild all signal profiles by replaying historical events from events.db.
 
