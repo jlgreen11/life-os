@@ -157,7 +157,8 @@ class LifeOS:
         # TaskCompletionDetector infers task completion from behavioral signals
         # (emails sent, inactivity, etc.) to enable workflow detection
         self.task_completion_detector = TaskCompletionDetector(
-            self.db, self.task_manager, self.event_bus
+            self.db, self.task_manager, self.event_bus,
+            user_model_store=self.user_model_store,
         )
         # ConflictDetector scans calendar events for scheduling overlaps and
         # publishes calendar.conflict.detected events for the rules engine

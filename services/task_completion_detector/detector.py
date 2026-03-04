@@ -47,17 +47,26 @@ class TaskCompletionDetector:
     → confirm completion).
     """
 
-    def __init__(self, db: DatabaseManager, task_manager: Any, event_bus: Any):
+    def __init__(
+        self,
+        db: DatabaseManager,
+        task_manager: Any,
+        event_bus: Any,
+        user_model_store: Any = None,
+    ):
         """Initialize the task completion detector.
 
         Args:
             db: Database manager for querying tasks and events
             task_manager: Task manager for marking tasks complete
             event_bus: Event bus for publishing completion events
+            user_model_store: Optional UserModelStore for updating episode outcomes
+                when a task linked to an episode is completed
         """
         self.db = db
         self.task_manager = task_manager
         self.event_bus = event_bus
+        self.user_model_store = user_model_store
 
         # Detection thresholds
         self.inactivity_days = 7  # Mark tasks inactive after 7 days with no signals
@@ -216,6 +225,7 @@ class TaskCompletionDetector:
                 # Require score >= 2.0 to avoid false positives (e.g., 2 exact or 1 exact + 2 stems)
                 if keyword_overlap >= 2.0 and has_completion_keyword:
                     await self.task_manager.complete_task(task_id)
+                    self._update_episode_outcome(task.get("source"), "activity_match")
                     completed_count += 1
                     logger.debug(
                         f"Auto-completed task '{task['title']}' based on sent "
@@ -254,7 +264,7 @@ class TaskCompletionDetector:
         # strategy 1 AND is older than `inactivity_days` should be closed.
         with self.db.get_connection("state") as conn:
             cursor = conn.execute("""
-                SELECT id, title, created_at
+                SELECT id, title, created_at, source
                 FROM tasks
                 WHERE status = 'pending'
                   AND created_at < ?
@@ -265,6 +275,7 @@ class TaskCompletionDetector:
 
         for task in inactive_tasks:
             await self.task_manager.complete_task(task['id'])
+            self._update_episode_outcome(task.get("source"), "inactivity")
             completed_count += 1
             logger.debug(
                 "Auto-completed inactive task '%s' "
@@ -290,7 +301,7 @@ class TaskCompletionDetector:
         # Find very old pending tasks
         with self.db.get_connection("state") as conn:
             cursor = conn.execute("""
-                SELECT id, title, created_at
+                SELECT id, title, created_at, source
                 FROM tasks
                 WHERE status = 'pending'
                   AND created_at < ?
@@ -302,6 +313,7 @@ class TaskCompletionDetector:
         # Mark them all complete - they're too old to be actionable
         for task in stale_tasks:
             await self.task_manager.complete_task(task['id'])
+            self._update_episode_outcome(task.get("source"), "stale")
             completed_count += 1
             logger.debug(
                 f"Archived stale task '{task['title']}' "
@@ -309,6 +321,34 @@ class TaskCompletionDetector:
             )
 
         return completed_count
+
+    def _update_episode_outcome(self, task_source: str | None, completion_method: str):
+        """Update the episode linked to a completed task's source event.
+
+        Looks up the episode created from the same originating event and sets
+        its ``outcome`` field to the detection strategy that completed the task.
+
+        Args:
+            task_source: The task's ``source`` field (originating event ID).
+            completion_method: Detection strategy string, e.g. 'activity_match'.
+        """
+        if not self.user_model_store or not task_source:
+            return
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT id FROM episodes WHERE event_id = ? LIMIT 1",
+                    (task_source,),
+                ).fetchone()
+
+            if row:
+                self.user_model_store.update_episode(row["id"], outcome=completion_method)
+                logger.debug(
+                    "Updated episode %s outcome to '%s'", row["id"], completion_method,
+                )
+        except Exception as e:
+            logger.warning("Failed to update episode outcome for source %s: %s", task_source, e)
 
     def _extract_text_content(self, payload: dict) -> str:
         """Extract searchable text from an event payload.

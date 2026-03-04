@@ -184,6 +184,60 @@ class UserModelStore:
             "stored_at": episode["timestamp"],
         })
 
+    def update_episode(
+        self,
+        episode_id: str,
+        outcome: str | None = None,
+        user_satisfaction: float | None = None,
+        embedding_id: str | None = None,
+    ) -> bool:
+        """Update mutable fields on an existing episode.
+
+        Uses COALESCE so callers can update individual fields without
+        overwriting others — e.g. setting ``outcome`` leaves
+        ``user_satisfaction`` untouched if it was already set.
+
+        Args:
+            episode_id: Primary key of the episode to update.
+            outcome: Completion outcome string (e.g. 'activity_match', 'inactivity').
+            user_satisfaction: User satisfaction score (0.0–1.0).
+            embedding_id: Vector store entry linked to this episode.
+
+        Returns:
+            True if a row was updated, False if the episode_id was not found.
+        """
+        updated = False
+        try:
+            with self.db.get_connection("user_model") as conn:
+                cursor = conn.execute(
+                    """UPDATE episodes
+                       SET outcome = COALESCE(?, outcome),
+                           user_satisfaction = COALESCE(?, user_satisfaction),
+                           embedding_id = COALESCE(?, embedding_id)
+                       WHERE id = ?""",
+                    (outcome, user_satisfaction, embedding_id, episode_id),
+                )
+                updated = cursor.rowcount > 0
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.update_episode failed for episode %s: %s",
+                episode_id, e,
+            )
+
+        # Track which fields were supplied for observability.
+        fields_set = [
+            name for name, val in
+            [("outcome", outcome), ("user_satisfaction", user_satisfaction), ("embedding_id", embedding_id)]
+            if val is not None
+        ]
+        self._emit_telemetry("usermodel.episode.updated", {
+            "episode_id": episode_id,
+            "fields_set": fields_set,
+            "row_updated": updated,
+        })
+
+        return updated
+
     def update_semantic_fact(self, key: str, category: str, value: Any,
                             confidence: float, episode_id: Optional[str] = None):
         """Update or create a semantic memory fact.
