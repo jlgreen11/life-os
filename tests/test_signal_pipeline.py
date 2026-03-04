@@ -6,9 +6,12 @@ routes events through all extractors (linguistic, cadence, mood, relationship,
 topic). This pipeline processes 43K+ events/day and is critical infrastructure.
 """
 
+import json
+
 import pytest
 from datetime import datetime, timezone
 from services.signal_extractor.pipeline import SignalExtractorPipeline
+from storage.event_store import EventStore
 from models.user_model import MoodState
 
 
@@ -658,3 +661,234 @@ async def test_pipeline_handles_unicode_content(db, user_model_store):
 
     signals = await pipeline.process_event(event)
     assert isinstance(signals, list)
+
+
+# =============================================================================
+# rebuild_profiles_from_events Tests
+# =============================================================================
+
+
+def _store_test_event(db, event_id, event_type, source, payload, metadata=None, timestamp=None):
+    """Helper to insert an event into events.db with JSON-serialised payload/metadata."""
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat()
+    es = EventStore(db)
+    es.store_event({
+        "id": event_id,
+        "type": event_type,
+        "source": source,
+        "timestamp": timestamp,
+        "priority": "normal",
+        "payload": payload,
+        "metadata": metadata or {},
+    })
+
+
+def test_rebuild_profiles_from_events_basic(db, user_model_store):
+    """Test that rebuild loads events from events.db and processes them through extractors."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Store an email.received event (triggers linguistic, cadence, mood, relationship, topic extractors)
+    _store_test_event(db, "rebuild-1", "email.received", "proton_mail", {
+        "subject": "Weekly sync notes",
+        "body": "Here are the notes from today's sync. Great discussion about the roadmap.",
+        "from": "colleague@work.com",
+        "to": ["user@example.com"],
+    })
+
+    result = pipeline.rebuild_profiles_from_events()
+
+    assert result["events_processed"] == 1
+    assert len(result["profiles_rebuilt"]) > 0
+    assert isinstance(result["errors"], list)
+
+
+def test_rebuild_profiles_populates_signal_profiles(db, user_model_store):
+    """Test that after rebuild, signal profiles actually exist in user_model.db."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Store several communication events to populate cadence and relationship profiles.
+    for i in range(5):
+        _store_test_event(db, f"rebuild-pop-{i}", "email.received", "proton_mail", {
+            "subject": f"Email {i}",
+            "body": f"Message content number {i} with some meaningful text about the project.",
+            "from": "alice@company.com",
+            "to": ["user@example.com"],
+        }, timestamp=f"2026-03-01T{10 + i}:00:00+00:00")
+
+    # No profiles should exist yet.
+    assert user_model_store.get_signal_profile("cadence") is None
+    assert user_model_store.get_signal_profile("relationships") is None
+
+    result = pipeline.rebuild_profiles_from_events()
+
+    assert result["events_processed"] == 5
+
+    # After rebuild, at least cadence and relationships should be populated
+    # (email.received triggers CadenceExtractor and RelationshipExtractor).
+    cadence_profile = user_model_store.get_signal_profile("cadence")
+    assert cadence_profile is not None
+
+    relationship_profile = user_model_store.get_signal_profile("relationships")
+    assert relationship_profile is not None
+
+
+def test_rebuild_profiles_with_mixed_event_types(db, user_model_store):
+    """Test rebuild with mixed event types to verify multiple extractors fire."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Email event — triggers linguistic, cadence, mood, relationship, topic
+    _store_test_event(db, "mix-email", "email.received", "proton_mail", {
+        "subject": "Project update",
+        "body": "The project is going well. Let's schedule a review.",
+        "from": "bob@work.com",
+        "to": ["user@example.com"],
+    }, timestamp="2026-03-01T10:00:00+00:00")
+
+    # Calendar event — triggers temporal, topic
+    _store_test_event(db, "mix-cal", "calendar.event.created", "caldav", {
+        "summary": "Team standup",
+        "start": "2026-03-02T09:00:00Z",
+        "end": "2026-03-02T09:30:00Z",
+        "location": "Conference Room A",
+    }, timestamp="2026-03-01T11:00:00+00:00")
+
+    # Task event — triggers decision, topic
+    _store_test_event(db, "mix-task", "task.created", "task_manager", {
+        "title": "Review quarterly budget",
+        "description": "Prepare Q1 budget review for leadership meeting",
+        "due_date": "2026-03-20T17:00:00Z",
+    }, timestamp="2026-03-01T12:00:00+00:00")
+
+    result = pipeline.rebuild_profiles_from_events()
+
+    assert result["events_processed"] == 3
+    # Multiple extractor types should have fired.
+    assert len(result["profiles_rebuilt"]) >= 2
+
+
+def test_rebuild_profiles_fail_open_on_extractor_error(db, user_model_store):
+    """Test that an error in one extractor doesn't stop processing of other events or extractors."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Store a normal event.
+    _store_test_event(db, "ok-event", "email.received", "proton_mail", {
+        "subject": "Normal email",
+        "body": "This email should process fine.",
+        "from": "alice@company.com",
+        "to": ["user@example.com"],
+    }, timestamp="2026-03-01T10:00:00+00:00")
+
+    # Temporarily sabotage one extractor to trigger the fail-open path.
+    original_extract = pipeline.extractors[0].extract
+    def broken_extract(event):
+        raise RuntimeError("Simulated extractor failure")
+    pipeline.extractors[0].extract = broken_extract
+
+    try:
+        result = pipeline.rebuild_profiles_from_events()
+    finally:
+        pipeline.extractors[0].extract = original_extract
+
+    # Event should still be processed (other extractors succeed).
+    assert result["events_processed"] == 1
+    # The broken extractor's error should be captured.
+    assert len(result["errors"]) >= 1
+    assert "Simulated extractor failure" in result["errors"][0]
+    # Other extractors should still have succeeded.
+    assert len(result["profiles_rebuilt"]) >= 1
+
+
+def test_rebuild_profiles_event_limit(db, user_model_store):
+    """Test that event_limit caps the number of events loaded from events.db."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Store 10 events.
+    for i in range(10):
+        _store_test_event(db, f"limit-{i}", "email.received", "proton_mail", {
+            "subject": f"Email {i}",
+            "body": f"Content {i}",
+            "from": "sender@example.com",
+            "to": ["user@example.com"],
+        }, timestamp=f"2026-03-01T{10 + i}:00:00+00:00")
+
+    # Rebuild with limit of 3.
+    result = pipeline.rebuild_profiles_from_events(event_limit=3)
+
+    assert result["events_processed"] == 3
+
+
+def test_rebuild_profiles_empty_events_db(db, user_model_store):
+    """Test that rebuild handles an empty events.db gracefully."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    result = pipeline.rebuild_profiles_from_events()
+
+    assert result["events_processed"] == 0
+    assert result["profiles_rebuilt"] == []
+    assert result["errors"] == []
+
+
+def test_rebuild_profiles_handles_empty_metadata(db, user_model_store):
+    """Test that rebuild handles events with empty JSON metadata."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Insert an event with empty-object metadata via the EventStore.
+    _store_test_event(db, "empty-meta", "email.received", "proton_mail", {
+        "subject": "Test",
+        "body": "Hello world",
+        "from": "a@b.com",
+        "to": ["u@x.com"],
+    }, metadata={})
+
+    result = pipeline.rebuild_profiles_from_events()
+
+    # Should process without errors.
+    assert result["events_processed"] == 1
+    assert len(result["profiles_rebuilt"]) > 0
+
+
+def test_rebuild_profiles_chronological_order(db, user_model_store):
+    """Test that events are processed in chronological order regardless of DB fetch order."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    # Store events with explicit timestamps out of insertion order.
+    _store_test_event(db, "chrono-3", "email.received", "proton_mail", {
+        "subject": "Third",
+        "body": "Third message",
+        "from": "alice@company.com",
+        "to": ["user@example.com"],
+    }, timestamp="2026-03-01T12:00:00+00:00")
+
+    _store_test_event(db, "chrono-1", "email.received", "proton_mail", {
+        "subject": "First",
+        "body": "First message",
+        "from": "alice@company.com",
+        "to": ["user@example.com"],
+    }, timestamp="2026-03-01T10:00:00+00:00")
+
+    _store_test_event(db, "chrono-2", "email.received", "proton_mail", {
+        "subject": "Second",
+        "body": "Second message",
+        "from": "alice@company.com",
+        "to": ["user@example.com"],
+    }, timestamp="2026-03-01T11:00:00+00:00")
+
+    # Track processing order by monkey-patching one extractor.
+    processed_ids = []
+    original_extract = pipeline.extractors[1].extract  # CadenceExtractor
+
+    def tracking_extract(event):
+        processed_ids.append(event["id"])
+        return original_extract(event)
+
+    pipeline.extractors[1].extract = tracking_extract
+
+    try:
+        result = pipeline.rebuild_profiles_from_events()
+    finally:
+        pipeline.extractors[1].extract = original_extract
+
+    assert result["events_processed"] == 3
+    # Events should have been processed in chronological order.
+    assert processed_ids == ["chrono-1", "chrono-2", "chrono-3"]
