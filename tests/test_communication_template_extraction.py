@@ -274,3 +274,67 @@ class TestCommunicationTemplateExtraction:
         )
         assert tpl2 is not None
         assert tpl2["samples_analyzed"] > count1
+
+    def test_inbound_email_does_not_create_template(
+        self, linguistic_extractor, user_model_store
+    ):
+        """Inbound (received) emails should NOT store communication templates.
+
+        Templates capture the *user's* writing style, not contacts' styles.
+        Only outbound messages feed into template creation.
+        """
+        for i in range(6):
+            event = {
+                "id": f"evt-inbound-{i}",
+                "type": EventType.EMAIL_RECEIVED.value,
+                "source": "email",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "payload": {
+                    "from_address": "sender@example.com",
+                    "body": (
+                        "Hi Jeremy, just following up on the quarterly review. "
+                        "Please let me know your availability next week. "
+                        "Best regards, Sender"
+                    ),
+                    "channel": "email",
+                },
+            }
+            linguistic_extractor.extract(event)
+
+        # No template should exist for the inbound sender
+        template = user_model_store.get_communication_template(
+            contact_id="sender@example.com"
+        )
+        assert template is None or template["contact_id"] != "sender@example.com"
+
+    def test_template_has_all_required_fields(
+        self, linguistic_extractor, user_model_store
+    ):
+        """Stored templates must contain every field the schema expects."""
+        for body in ALICE_EMAILS:
+            event = _make_email_sent_event("alice@example.com", body)
+            linguistic_extractor.extract(event)
+
+        template = user_model_store.get_communication_template(
+            contact_id="alice@example.com"
+        )
+        assert template is not None
+
+        required_fields = [
+            "id",
+            "context",
+            "contact_id",
+            "channel",
+            "greeting",
+            "closing",
+            "formality",
+            "typical_length",
+            "uses_emoji",
+            "common_phrases",
+            "avoids_phrases",
+            "tone_notes",
+            "example_message_ids",
+            "samples_analyzed",
+        ]
+        for field in required_fields:
+            assert field in template, f"Missing required field: {field}"
