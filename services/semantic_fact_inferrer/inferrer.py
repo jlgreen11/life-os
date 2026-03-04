@@ -878,6 +878,17 @@ class SemanticFactInferrer:
         facts_created = 0
         facts_failed = 0
 
+        # Diagnostic logging: show threshold requirements at current sample size
+        non_noise_count = sum(1 for t in topic_counts if t.lower() not in TOPIC_NOISE_BLOCKLIST)
+        min_expertise_count = max(5, int(total_samples * 0.08))
+        min_interest_count = max(3, int(total_samples * 0.03))
+        logger.info(
+            "Topic threshold diagnostics: total_topics=%d, non_noise_topics=%d, "
+            "total_samples=%d, min_count_for_expertise=%d (8%%), min_count_for_interest=%d (3%%)",
+            len(topic_counts), non_noise_count, total_samples,
+            min_expertise_count, min_interest_count,
+        )
+
         for topic, count in topic_counts.items():
             # Skip noise tokens — HTML/CSS garbage and generic English words
             if topic.lower() in TOPIC_NOISE_BLOCKLIST:
@@ -922,6 +933,42 @@ class SemanticFactInferrer:
                 except Exception as e:
                     logger.error("Failed to store interest fact for topic %s: %s", topic, e)
                     facts_failed += 1
+
+        # --- Top-N relative fallback for sparse data ---
+        # When standard thresholds produce 0 facts (e.g., marketing email dilution
+        # pushes real topics below absolute frequency thresholds), fall back to a
+        # relative approach: take the top non-noise topics by count with reduced
+        # confidence to still capture user interests from sparse data.
+        if facts_created == 0:
+            fallback_candidates = sorted(
+                (
+                    (topic, count)
+                    for topic, count in topic_counts.items()
+                    if topic.lower() not in TOPIC_NOISE_BLOCKLIST and count >= 2
+                ),
+                key=lambda x: x[1],
+                reverse=True,
+            )[:5]
+            if fallback_candidates:
+                logger.info(
+                    "Standard thresholds produced 0 facts; using top-N relative fallback "
+                    "with %d candidate topics",
+                    len(fallback_candidates),
+                )
+                for topic, count in fallback_candidates:
+                    fallback_confidence = min(0.6, base_confidence * 0.6 + count / total_samples)
+                    try:
+                        self.ums.update_semantic_fact(
+                            key=f"interest_{topic}",
+                            category="implicit_preference",
+                            value=topic,
+                            confidence=fallback_confidence,
+                            episode_id=episode_id,
+                        )
+                        facts_created += 1
+                    except Exception as e:
+                        logger.error("Failed to store fallback interest fact for topic %s: %s", topic, e)
+                        facts_failed += 1
 
         # --- Infer diverse interests when no single topic dominates ---
         # If no topic exceeds the expertise threshold (8%) but there are many
