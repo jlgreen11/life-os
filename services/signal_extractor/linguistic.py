@@ -13,6 +13,8 @@ Extracts: vocabulary complexity, formality, common patterns, per-contact style.
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 import statistics
 from collections import Counter
@@ -21,6 +23,8 @@ from typing import Optional
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
+
+logger = logging.getLogger(__name__)
 
 
 class LinguisticExtractor(BaseExtractor):
@@ -466,6 +470,10 @@ class LinguisticExtractor(BaseExtractor):
     # average, producing misleading per-contact style guidance.
     _MIN_PER_CONTACT_SAMPLES = 3
 
+    # Higher threshold for communication templates — templates feed AI-drafted
+    # replies, so we need higher statistical confidence than for style averages.
+    _MIN_TEMPLATE_SAMPLES = 5
+
     def _update_profile(self, signal: dict):
         """Incrementally update the stored linguistic profile.
 
@@ -708,6 +716,10 @@ class LinguisticExtractor(BaseExtractor):
         # field name so the AI engine can look up per-contact style when drafting.
         data["style_by_contact"] = per_contact_avgs
 
+        # Store communication templates for contacts with sufficient data so
+        # the AI engine can draft messages matching per-contact writing style.
+        self._store_per_contact_templates(data["per_contact"], per_contact_avgs)
+
         # Track how many samples are currently in the ring buffer so
         # LinguisticProfile.samples_analyzed reflects reality.
         data["samples_analyzed"] = len(data.get("samples", []))
@@ -822,3 +834,84 @@ class LinguisticExtractor(BaseExtractor):
         data["per_contact_averages"][contact] = avgs
 
         self.ums.update_signal_profile("linguistic_inbound", data)
+
+    def _store_per_contact_templates(self, per_contact_samples: dict, per_contact_avgs: dict):
+        """Store communication templates derived from per-contact linguistic data.
+
+        Iterates over contacts with sufficient outbound message samples and
+        creates CommunicationTemplate entries capturing per-contact writing style
+        (greeting, closing, formality, message length, emoji usage, tone notes).
+
+        These templates enable the AI engine to draft messages that match the
+        user's established writing style for each specific contact rather than
+        using a one-size-fits-all global style.
+
+        Template IDs are deterministic (hash of ``linguistic:{contact}:outbound``)
+        so repeated calls for the same contact produce idempotent upserts.
+
+        Args:
+            per_contact_samples: Raw per-contact metric ring buffers from the
+                linguistic profile (keyed by contact_id).
+            per_contact_avgs: Pre-computed per-contact averages (keyed by
+                contact_id) with formality, emoji_rate, etc.
+        """
+        for contact_id, avgs in per_contact_avgs.items():
+            samples_count = avgs.get("samples_count", 0)
+            if samples_count < self._MIN_TEMPLATE_SAMPLES:
+                continue
+
+            csamples = per_contact_samples.get(contact_id, [])
+            if not csamples:
+                continue
+
+            # Extract per-contact greeting/closing patterns (most common)
+            greetings = [s["greeting_detected"] for s in csamples if s.get("greeting_detected")]
+            closings = [s["closing_detected"] for s in csamples if s.get("closing_detected")]
+            top_greeting = Counter(greetings).most_common(1)[0][0] if greetings else None
+            top_closing = Counter(closings).most_common(1)[0][0] if closings else None
+
+            # Average word count as typical message length (in words)
+            avg_word_count = statistics.mean(s["word_count"] for s in csamples)
+
+            # Determine the most common channel for this contact
+            channels = [s.get("channel", "email") for s in csamples if s.get("channel")]
+            channel = Counter(channels).most_common(1)[0][0] if channels else "email"
+
+            # Deterministic template ID — distinct from RelationshipExtractor
+            # templates (which use "{address}:{channel}:{direction}" hashes)
+            template_id = hashlib.sha256(
+                f"linguistic:{contact_id}:outbound".encode()
+            ).hexdigest()[:16]
+
+            # Derive tone notes from linguistic feature averages
+            tone_notes = []
+            if avgs.get("hedge_rate", 0) > 0.1:
+                tone_notes.append("tends to hedge")
+            if avgs.get("assertion_rate", 0) > 0.1:
+                tone_notes.append("tends to be assertive")
+            if avgs.get("question_rate", 0) > 0.2:
+                tone_notes.append("asks many questions")
+            if avgs.get("exclamation_rate", 0) > 0.15:
+                tone_notes.append("uses exclamations frequently")
+
+            template = {
+                "id": template_id,
+                "context": "linguistic_outbound",
+                "contact_id": contact_id,
+                "channel": channel,
+                "greeting": top_greeting,
+                "closing": top_closing,
+                "formality": avgs.get("formality", 0.5),
+                "typical_length": round(avg_word_count),
+                "uses_emoji": avgs.get("emoji_rate", 0) > 0.01,
+                "common_phrases": [],
+                "avoids_phrases": [],
+                "tone_notes": tone_notes,
+                "example_message_ids": [],
+                "samples_analyzed": samples_count,
+            }
+
+            try:
+                self.ums.store_communication_template(template)
+            except Exception as e:
+                logger.warning("Failed to store linguistic template for %s: %s", contact_id, e)
