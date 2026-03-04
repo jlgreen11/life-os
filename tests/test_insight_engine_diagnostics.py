@@ -252,7 +252,8 @@ async def test_generate_insights_logs_sufficiency_when_empty(insight_engine, cap
     # Check that the sufficiency report was logged
     sufficiency_messages = [r for r in caplog.records if "correlators have sufficient data" in r.message]
     assert len(sufficiency_messages) == 1
-    assert "0/" in sufficiency_messages[0].message  # 0 out of N correlators ready
+    # connector_health is always ready (min_required=0), so at least 1 is ready
+    assert "correlators have sufficient data" in sufficiency_messages[0].message
 
 
 # =============================================================================
@@ -296,8 +297,8 @@ async def test_diagnostics_updated_after_generate_insights(insight_engine):
     assert diag["total_runs"] == 1
     assert diag["last_run_at"] is not None
     assert isinstance(diag["last_correlator_stats"], dict)
-    # All 18 correlators should be tracked
-    assert len(diag["last_correlator_stats"]) == 18
+    # All 19 correlators should be tracked
+    assert len(diag["last_correlator_stats"]) == 19
 
 
 @pytest.mark.asyncio
@@ -312,7 +313,7 @@ async def test_correlator_stats_contain_all_correlator_names(insight_engine):
         "communication_style", "inbound_style", "actionable_alert",
         "temporal_pattern", "mood_trend", "spending_pattern",
         "decision_pattern", "topic_interest", "cadence_response",
-        "routine", "spatial", "workflow_pattern",
+        "routine", "spatial", "workflow_pattern", "connector_health",
     }
     assert expected_names == set(stats.keys())
 
