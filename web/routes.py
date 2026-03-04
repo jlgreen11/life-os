@@ -741,15 +741,29 @@ def register_routes(app: FastAPI, life_os) -> None:
         # --- Calendar (upcoming events for badge count) ---
         if topic in (None, "inbox", "calendar"):
             try:
+                import asyncio
+
                 now = datetime.now(timezone.utc)
                 # Show events in the next 7 days for the feed/badge
                 end_window = now + timedelta(days=7)
-                with life_os.db.get_connection("events") as conn:
-                    rows = conn.execute(
-                        """SELECT id, payload, timestamp FROM events
-                           WHERE type = 'calendar.event.created'
-                           ORDER BY timestamp DESC""",
-                    ).fetchall()
+                # Generous lookback: event row timestamps don't always match
+                # the calendar start_time, so fetch recent rows and filter in
+                # Python.  LIMIT 500 caps the worst case.
+                lookback = (now - timedelta(days=30)).isoformat()
+
+                def _cal_query():
+                    """Run the calendar query off the async event loop."""
+                    with life_os.db.get_connection("events") as conn:
+                        return conn.execute(
+                            """SELECT id, payload, timestamp FROM events
+                               WHERE type = 'calendar.event.created'
+                                 AND timestamp > ?
+                               ORDER BY timestamp DESC
+                               LIMIT 500""",
+                            (lookback,),
+                        ).fetchall()
+
+                rows = await asyncio.to_thread(_cal_query)
 
                 # Deduplicate by event_id
                 seen_eids: set[str] = set()
@@ -1162,11 +1176,18 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         def _query():
             with life_os.db.get_connection("events") as conn:
+                # Use the caller-provided start/end to narrow the SQL query.
+                # json_extract filters on the payload's start_time so SQLite
+                # only scans relevant rows.  LIMIT 1000 is a safety cap.
                 rows = conn.execute(
                     """SELECT id, payload, timestamp
                        FROM events
                        WHERE type = 'calendar.event.created'
-                       ORDER BY timestamp DESC""",
+                         AND json_extract(payload, '$.start_time') < ?
+                         AND json_extract(payload, '$.start_time') >= ?
+                       ORDER BY timestamp DESC
+                       LIMIT 1000""",
+                    (end, start),
                 ).fetchall()
             return [dict(r) for r in rows]
 
