@@ -391,6 +391,7 @@ class SemanticFactInferrer:
 
         data = profile["data"]
         contacts = data.get("contacts", {})
+        logger.info("Relationship profile: %d total contacts", len(contacts))
 
         # --- Infer high-priority contacts based on interaction frequency ---
         # A contact is high-priority if they have significantly more interactions
@@ -407,6 +408,10 @@ class SemanticFactInferrer:
             for contact_id, contact_data in contacts.items()
             if isinstance(contact_data, dict) and contact_data.get("outbound_count", 0) > 0
         }
+        logger.info(
+            "Bidirectional contacts (outbound > 0): %d out of %d",
+            len(bidirectional_contacts), len(contacts),
+        )
 
         # Filter 2: Apply the shared marketing filter to remove automated/commercial
         # senders that the user may have occasionally replied to.  Examples:
@@ -421,6 +426,10 @@ class SemanticFactInferrer:
             for contact_id, contact_data in bidirectional_contacts.items()
             if not is_marketing_or_noreply(contact_id)
         }
+        logger.info(
+            "Human contacts after marketing filter: %d out of %d bidirectional",
+            len(human_contacts), len(bidirectional_contacts),
+        )
 
         if not human_contacts:
             logger.info("No human bidirectional contacts found after marketing filter, skipping relationship inference")
@@ -440,6 +449,12 @@ class SemanticFactInferrer:
 
         avg_interactions = sum(interaction_counts) / len(interaction_counts)
         high_priority_threshold = avg_interactions * 2  # 2x average = high priority
+        high_priority_count = sum(1 for c in human_contacts.values()
+                                 if isinstance(c, dict) and c.get("interaction_count", 0) >= high_priority_threshold)
+        logger.info(
+            "Relationship threshold: avg=%.1f, high_priority_threshold=%.1f, contacts_exceeding=%d",
+            avg_interactions, high_priority_threshold, high_priority_count,
+        )
 
         for contact_id, contact_data in human_contacts.items():
             interaction_count = contact_data.get("interaction_count", 0)
@@ -641,6 +656,10 @@ class SemanticFactInferrer:
         data = profile["data"]
         # The topic extractor stores data as "topic_counts", not "topic_frequencies"
         topic_counts = data.get("topic_counts", {})
+        logger.info(
+            "Topic profile loaded: samples_count=%d, topic_counts_size=%d",
+            samples, len(topic_counts),
+        )
 
         # Get recent episodes to link as source evidence for topic-based facts.
         # Topics are extracted from all inbound and outbound email, so we do not
@@ -751,6 +770,8 @@ class SemanticFactInferrer:
         # and has been mentioned at least 10 times.
         total_samples = profile.get("samples_count", 1)
         filtered_count = 0
+        facts_created = 0
+        facts_failed = 0
 
         for topic, count in topic_counts.items():
             # Skip noise tokens — HTML/CSS garbage and generic English words
@@ -762,26 +783,50 @@ class SemanticFactInferrer:
 
             if count >= 5 and frequency_ratio > 0.08:
                 # Frequently discussed topic — likely an expertise area
-                self.ums.update_semantic_fact(
-                    key=f"expertise_{topic}",
-                    category="expertise",
-                    value=topic,
-                    confidence=min(0.95, base_confidence + frequency_ratio * 2),  # Higher freq = higher confidence
-                    episode_id=episode_id,
+                logger.debug(
+                    "Creating expertise fact: topic=%s, count=%d, frequency=%.3f",
+                    topic, count, frequency_ratio,
                 )
+                try:
+                    self.ums.update_semantic_fact(
+                        key=f"expertise_{topic}",
+                        category="expertise",
+                        value=topic,
+                        confidence=min(0.95, base_confidence + frequency_ratio * 2),  # Higher freq = higher confidence
+                        episode_id=episode_id,
+                    )
+                    facts_created += 1
+                except Exception as e:
+                    logger.error("Failed to store expertise fact for topic %s: %s", topic, e)
+                    facts_failed += 1
             elif count >= 3 and frequency_ratio > 0.03:
                 # Moderately discussed topic — area of interest
-                self.ums.update_semantic_fact(
-                    key=f"interest_{topic}",
-                    category="implicit_preference",
-                    value=topic,
-                    confidence=min(0.8, (base_confidence - 0.1) + frequency_ratio * 3),
-                    episode_id=episode_id,
+                logger.debug(
+                    "Creating interest fact: topic=%s, count=%d, frequency=%.3f",
+                    topic, count, frequency_ratio,
                 )
+                try:
+                    self.ums.update_semantic_fact(
+                        key=f"interest_{topic}",
+                        category="implicit_preference",
+                        value=topic,
+                        confidence=min(0.8, (base_confidence - 0.1) + frequency_ratio * 3),
+                        episode_id=episode_id,
+                    )
+                    facts_created += 1
+                except Exception as e:
+                    logger.error("Failed to store interest fact for topic %s: %s", topic, e)
+                    facts_failed += 1
 
-        if filtered_count > 0:
-            logger.info(f"Filtered {filtered_count} noise tokens from topic-based fact inference")
-        logger.info(f"Inferred semantic facts from topic profile (samples={profile.get('samples_count')})")
+        surviving = len(topic_counts) - filtered_count
+        logger.info(
+            "Topics after noise filter: %d survived out of %d total (%d noise tokens filtered)",
+            surviving, len(topic_counts), filtered_count,
+        )
+        logger.info(
+            "Topic inference complete: %d facts created, %d failed (samples=%d)",
+            facts_created, facts_failed, total_samples,
+        )
         return {"type": "topic", "processed": True, "reason": None}
 
     def infer_from_cadence_profile(self):
