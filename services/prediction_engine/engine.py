@@ -1134,12 +1134,78 @@ class PredictionEngine:
                 (cutoff,),
             ).fetchall()
 
-            # Outbound messages in the same window
+            # --- Stale-data fallback ---
+            # When the standard lookback window yields 0 inbound messages AND
+            # the most recent email.received event is older than 72 hours, it
+            # likely means the connector has been down (e.g. Google auth failure).
+            # Extend the lookback to the last active period so accumulated
+            # unreplied emails still surface.  Capped at 14 days to keep scan
+            # volume bounded.
+            if len(inbound) == 0:
+                latest_row = conn.execute(
+                    """SELECT timestamp FROM events
+                       WHERE type = 'email.received'
+                       ORDER BY timestamp DESC LIMIT 1"""
+                ).fetchone()
+
+                if latest_row:
+                    try:
+                        latest_ts = datetime.fromisoformat(
+                            latest_row["timestamp"].replace("Z", "+00:00")
+                        )
+                        staleness = datetime.now(timezone.utc) - latest_ts
+                        max_lookback = timedelta(days=14)
+
+                        if staleness > timedelta(hours=72):
+                            # Re-query: scan the 24-hour window around the last
+                            # active email period, capped at 14 days ago.
+                            fallback_start = max(
+                                latest_ts - timedelta(hours=24),
+                                datetime.now(timezone.utc) - max_lookback,
+                            )
+                            fallback_cutoff = fallback_start.isoformat()
+                            days_ago = staleness.days
+
+                            logger.warning(
+                                "follow_up_needs: no recent emails detected, "
+                                "extending lookback to last active period "
+                                "(%d days ago)",
+                                days_ago,
+                            )
+
+                            inbound = conn.execute(
+                                """SELECT id, payload, timestamp FROM events
+                                   WHERE type IN ('email.received', 'message.received')
+                                   AND timestamp > ?
+                                   ORDER BY timestamp DESC""",
+                                (fallback_cutoff,),
+                            ).fetchall()
+                    except (ValueError, TypeError) as e:
+                        logger.warning(
+                            "follow_up_needs: stale-data fallback failed "
+                            "to parse latest timestamp: %s", e
+                        )
+
+            # Outbound messages in the same window (use widest cutoff to
+            # cover both standard and fallback periods)
+            outbound_cutoff = cutoff
+            if len(inbound) > 0:
+                # Use the oldest inbound timestamp as the outbound cutoff
+                # to ensure we catch replies to fallback-window emails too.
+                try:
+                    oldest_inbound_ts = min(
+                        msg["timestamp"] for msg in inbound
+                    )
+                    if oldest_inbound_ts < outbound_cutoff:
+                        outbound_cutoff = oldest_inbound_ts
+                except (ValueError, TypeError):
+                    pass  # Keep original cutoff on parse errors
+
             outbound = conn.execute(
                 """SELECT payload FROM events
                    WHERE type IN ('email.sent', 'message.sent')
                    AND timestamp > ?""",
-                (cutoff,),
+                (outbound_cutoff,),
             ).fetchall()
 
         # Build a set of thread/message IDs we've already replied to,
@@ -1192,8 +1258,11 @@ class PredictionEngine:
             except (ValueError, TypeError):
                 hours_ago = 24
 
-            # Don't nag about very recent messages — give the user time
-            if hours_ago < 3:
+            # Don't nag about very recent messages — give the user time.
+            # Priority contacts get a shorter grace period (1h vs 3h) because
+            # important emails from established contacts deserve faster alerting.
+            grace_hours = 1 if is_priority else 3
+            if hours_ago < grace_hours:
                 continue
 
             # --- Confidence scoring for follow-up predictions ---
