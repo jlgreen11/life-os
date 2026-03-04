@@ -84,7 +84,7 @@ class TestSemanticInferrerDbResilience:
         Patches get_signal_profile to raise OperationalError only for 'linguistic',
         while the relationship profile has valid data.  Verifies:
           (a) run_all_inference() does not raise
-          (b) results list has 8 entries (one per profile)
+          (b) results list has 9 entries (one per inference method)
           (c) the linguistic entry has processed=False
           (d) the relationship entry has processed=True (or at least not error)
         """
@@ -293,11 +293,11 @@ class TestSemanticInferrerDbResilience:
         with patch.object(user_model_store, "get_signal_profile", side_effect=counting_corrupt_get):
             inferrer.run_all_inference()
 
-        # run_all_inference has 8 methods.  Each calls get_signal_profile
-        # once at its entry point.  With total corruption, exactly 8 calls
+        # run_all_inference has 9 methods.  Each calls get_signal_profile
+        # once at its entry point.  With total corruption, exactly 9 calls
         # should be made — no retries.
-        assert call_count["n"] == 8, (
-            f"Expected exactly 8 get_signal_profile calls (one per profile), got {call_count['n']}"
+        assert call_count["n"] == 9, (
+            f"Expected exactly 9 get_signal_profile calls (one per profile), got {call_count['n']}"
         )
 
     def test_integrity_error_caught(self, user_model_store):

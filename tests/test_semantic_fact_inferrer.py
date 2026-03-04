@@ -448,7 +448,7 @@ class TestSemanticFactInferrer:
         assert "mood (error)" in summary_lines[0]
 
     def test_run_all_inference_collects_all_results_despite_multiple_failures(self, user_model_store):
-        """Even with multiple profile failures, results list has 8 entries."""
+        """Even with multiple profile failures, results list has 9 entries."""
         inferrer = SemanticFactInferrer(user_model_store)
 
         with (

@@ -216,6 +216,140 @@ class SemanticFactInferrer:
         logger.info(f"Inferred semantic facts from linguistic profile (samples={profile.get('samples_count')})")
         return {"type": "linguistic", "processed": True, "reason": None}
 
+    def infer_from_inbound_linguistic_profile(self):
+        """
+        Derive semantic facts from the inbound linguistic signal profile.
+
+        Analyzes communication patterns from messages *received* by the user to
+        infer facts about their communication environment — e.g., whether they
+        operate in a formal professional setting, whether they are a go-to expert
+        (high inbound question rate), or whether their contacts communicate
+        cautiously (high hedge rate).
+
+        This complements infer_from_linguistic_profile (which reads the user's
+        own outbound writing) by mining the much larger pool of inbound samples
+        (typically 10x–100x more data) to characterise the user's surroundings.
+
+        Confidence threshold: Require 10+ samples. The threshold is lower than
+        outbound (which uses 1) because inbound data is aggregate across many
+        senders, so even small sample counts carry meaningful signal about the
+        user's environment.
+        """
+        profile = self.ums.get_signal_profile("linguistic_inbound")
+        if not profile or profile.get("samples_count", 0) < 10:
+            logger.info("Inbound linguistic profile has insufficient samples (<10), skipping inference")
+            return {"type": "inbound_linguistic", "processed": False, "reason": "insufficient samples (<10)"}
+
+        data = profile["data"]
+        samples = profile.get("samples_count", 0)
+
+        # Link to recent episodes for provenance (no interaction_type filter
+        # since inbound messages span email_received, message_received, etc.)
+        recent_episodes = self._get_recent_episodes(limit=5)
+        episode_id = recent_episodes[0] if recent_episodes else None
+
+        # Scale confidence for early inferences — full confidence at 50+ samples
+        base_confidence = self._early_inference_confidence(samples, old_threshold=50)
+
+        # --- Compute aggregate inbound averages across all contacts ---
+        # The inbound profile stores per_contact_averages but no global averages,
+        # so we derive them by averaging across all contacts' averages.
+        per_contact_avgs = data.get("per_contact_averages", {})
+        if not per_contact_avgs:
+            logger.info("Inbound linguistic profile has no per-contact averages, skipping inference")
+            return {"type": "inbound_linguistic", "processed": False, "reason": "no per-contact data"}
+
+        # Compute weighted averages across contacts (weighted by sample count)
+        total_weight = 0
+        weighted_formality = 0.0
+        weighted_question_rate = 0.0
+        weighted_hedge_rate = 0.0
+        for _contact, avgs in per_contact_avgs.items():
+            weight = avgs.get("samples_count", 1)
+            total_weight += weight
+            weighted_formality += avgs.get("formality", 0.5) * weight
+            weighted_question_rate += avgs.get("question_rate", 0.0) * weight
+            weighted_hedge_rate += avgs.get("hedge_rate", 0.0) * weight
+
+        if total_weight == 0:
+            return {"type": "inbound_linguistic", "processed": False, "reason": "no weighted data"}
+
+        avg_formality = weighted_formality / total_weight
+        avg_question_rate = weighted_question_rate / total_weight
+        avg_hedge_rate = weighted_hedge_rate / total_weight
+
+        # --- Inbound communication environment (formality) ---
+        if avg_formality > 0.7:
+            self.ums.update_semantic_fact(
+                key="inbound_communication_environment",
+                category="implicit_preference",
+                value="formal_professional_environment",
+                confidence=min(0.95, base_confidence + (avg_formality - 0.7)),
+                episode_id=episode_id,
+            )
+        elif avg_formality < 0.3:
+            self.ums.update_semantic_fact(
+                key="inbound_communication_environment",
+                category="implicit_preference",
+                value="casual_informal_environment",
+                confidence=min(0.95, base_confidence + (0.3 - avg_formality)),
+                episode_id=episode_id,
+            )
+
+        # --- Inbound question intensity ---
+        # High inbound question rate indicates the user is a go-to expert or
+        # resource person — people frequently ask them questions.
+        if avg_question_rate > 0.5:
+            self.ums.update_semantic_fact(
+                key="inbound_question_intensity",
+                category="implicit_preference",
+                value="frequently_asked_questions",
+                confidence=min(0.9, base_confidence + avg_question_rate * 0.3),
+                episode_id=episode_id,
+            )
+
+        # --- Inbound communication style (hedging) ---
+        # High inbound hedge rate indicates the user's contacts tend to
+        # communicate cautiously or tentatively.
+        if avg_hedge_rate > 0.2:
+            self.ums.update_semantic_fact(
+                key="inbound_communication_style",
+                category="implicit_preference",
+                value="cautious_senders",
+                confidence=min(0.85, base_confidence + avg_hedge_rate),
+                episode_id=episode_id,
+            )
+
+        # --- Per-contact formality distribution analysis ---
+        # Count how many contacts skew formal vs. casual to reinforce the
+        # environment fact with stronger confidence.
+        formal_contacts = sum(
+            1 for avgs in per_contact_avgs.values()
+            if avgs.get("formality", 0.5) > 0.7
+        )
+        casual_contacts = sum(
+            1 for avgs in per_contact_avgs.values()
+            if avgs.get("formality", 0.5) < 0.3
+        )
+        total_contacts = len(per_contact_avgs)
+
+        if total_contacts > 0 and formal_contacts / total_contacts > 0.7:
+            # Overwhelming majority of contacts are formal — reinforce the fact
+            self.ums.update_semantic_fact(
+                key="inbound_communication_environment",
+                category="implicit_preference",
+                value="formal_professional_environment",
+                confidence=min(0.95, base_confidence + 0.15),
+                episode_id=episode_id,
+            )
+
+        logger.info(
+            "Inferred semantic facts from inbound linguistic profile "
+            "(samples=%s, contacts=%s, avg_formality=%.2f)",
+            samples, total_contacts, avg_formality,
+        )
+        return {"type": "inbound_linguistic", "processed": True, "reason": None}
+
     def infer_from_relationship_profile(self):
         """
         Derive semantic facts from relationship signal profile.
@@ -1284,7 +1418,7 @@ class SemanticFactInferrer:
         """
         Log a summary of which profile types were processed vs skipped.
 
-        Called by run_all_inference() after all 8 inference methods complete.
+        Called by run_all_inference() after all 9 inference methods complete.
         Provides at-a-glance observability at the default INFO log level so
         operators can tell whether the cognitive pipeline is actually running
         or still waiting for sufficient data.
@@ -1327,6 +1461,7 @@ class SemanticFactInferrer:
 
         methods = [
             ("linguistic", self.infer_from_linguistic_profile),
+            ("inbound_linguistic", self.infer_from_inbound_linguistic_profile),
             ("relationship", self.infer_from_relationship_profile),
             ("topic", self.infer_from_topic_profile),
             ("cadence", self.infer_from_cadence_profile),
