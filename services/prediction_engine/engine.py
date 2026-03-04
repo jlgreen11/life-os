@@ -40,6 +40,55 @@ from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.database import DatabaseManager, UserModelStore
 
 
+def _parse_score_from_reasoning(reasoning: str) -> float | None:
+    """Extract the numeric score from a predict_reaction() reasoning string.
+
+    The reasoning has the form 'score=0.30, dismissals=0, ...'.
+    Returns the parsed float or None if parsing fails.
+    """
+    try:
+        # Find the score=X.XX segment
+        for part in reasoning.split(","):
+            part = part.strip()
+            if part.startswith("score="):
+                return float(part.split("=", 1)[1])
+    except (ValueError, IndexError):
+        pass
+    return None
+
+
+def _parse_penalty_frequency(
+    reasoning: str,
+    prediction_type: str,
+    freq: dict[str, int],
+) -> None:
+    """Increment penalty frequency counters based on a reasoning string.
+
+    Modifies *freq* in-place.  Each penalty is counted at most once per
+    prediction (boolean presence, not magnitude).
+    """
+    try:
+        for part in reasoning.split(","):
+            part = part.strip()
+            if part.startswith("stress_signals="):
+                count = int(part.split("=", 1)[1])
+                if count > 2:  # matches the >2 threshold in predict_reaction
+                    freq["stress"] += 1
+            elif part.startswith("dismissals="):
+                count = int(part.split("=", 1)[1])
+                if count > 5:  # matches the >5 threshold in predict_reaction
+                    freq["dismissals"] += 1
+            elif part.startswith("quiet_hours=True"):
+                freq["quiet_hours"] += 1
+            elif part.startswith("low_activity=True"):
+                freq["low_activity"] += 1
+        # Opportunity type penalty is applied in predict_reaction when type == "opportunity"
+        if prediction_type == "opportunity":
+            freq["opportunity_type"] += 1
+    except (ValueError, IndexError):
+        pass  # Non-fatal; penalty tracking is best-effort
+
+
 class PredictionEngine:
     """
     Generates predictions about user needs by combining:
@@ -81,6 +130,12 @@ class PredictionEngine:
         # When this exceeds 3, the filtering log is escalated from DEBUG to
         # WARNING so operators notice that no predictions are reaching users.
         self._zero_surfacing_cycles: int = 0
+
+        # Per-run surfacing diagnostics — tracks WHY predictions are filtered
+        # so operators can diagnose 0% surfacing rates.  Populated at the end
+        # of each generate_predictions() cycle and included in both
+        # get_runtime_diagnostics() and get_diagnostics().
+        self._surfacing_diagnostics: dict[str, Any] = self._empty_surfacing_diagnostics()
 
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
@@ -251,7 +306,48 @@ class PredictionEngine:
             },
             "persistence_failure_detected": self._persistence_failure_detected,
             "zero_surfacing_cycles": self._zero_surfacing_cycles,
+            "surfacing": self._surfacing_diagnostics,
         }
+
+    @staticmethod
+    def _empty_surfacing_diagnostics() -> dict[str, Any]:
+        """Return a fresh surfacing diagnostics dict with zeroed counters.
+
+        Called once at __init__ and again at the start of each
+        generate_predictions() cycle to reset per-run tracking.
+        """
+        return {
+            "total_generated": 0,
+            "filtered_by_reaction": {"total": 0, "helpful": 0, "neutral": 0, "annoying": 0},
+            "filtered_by_confidence": 0,
+            "score_distribution": {"below_neg0.1": 0, "neg0.1_to_0.2": 0, "0.2_to_0.5": 0, "above_0.5": 0},
+            "penalty_frequency": {
+                "stress": 0,
+                "dismissals": 0,
+                "quiet_hours": 0,
+                "low_activity": 0,
+                "opportunity_type": 0,
+            },
+            "sample_filtered_reasons": [],
+        }
+
+    def _bucket_reaction_score(self, score: float) -> str:
+        """Classify a reaction score into a histogram bucket.
+
+        Buckets:
+            < -0.1       → 'below_neg0.1'
+            -0.1 to 0.2  → 'neg0.1_to_0.2'
+            0.2 to 0.5   → '0.2_to_0.5'
+            > 0.5        → 'above_0.5'
+        """
+        if score < -0.1:
+            return "below_neg0.1"
+        elif score < 0.2:
+            return "neg0.1_to_0.2"
+        elif score <= 0.5:
+            return "0.2_to_0.5"
+        else:
+            return "above_0.5"
 
     def _has_new_events(self) -> bool:
         """Check if any new events have arrived since last prediction run.
@@ -499,14 +595,47 @@ class PredictionEngine:
         # Track reaction predictions for each prediction so we can log filter reasons
         reaction_map = {}
         filtered = []
+
+        # Reset per-run surfacing diagnostics
+        surf_diag = self._empty_surfacing_diagnostics()
+        surf_diag["total_generated"] = len(predictions)
+
         for pred in predictions:
             reaction = await self.predict_reaction(pred, current_context)
             reaction_map[pred.id] = reaction
+
+            # Parse the structured reasoning to extract penalty flags.
+            # The reasoning string has the form:
+            #   "score=X.XX, dismissals=N, stress_signals=N, quiet_hours=True/False, low_activity=True/False"
+            reasoning = reaction.reasoning
+            _parse_penalty_frequency(reasoning, pred.prediction_type, surf_diag["penalty_frequency"])
+
+            # Extract the numeric score from reasoning for histogram bucketing
+            reaction_score = _parse_score_from_reasoning(reasoning)
+            if reaction_score is not None:
+                bucket = self._bucket_reaction_score(reaction_score)
+                surf_diag["score_distribution"][bucket] += 1
+
+            # Track reaction classification counts
+            surf_diag["filtered_by_reaction"][reaction.predicted_reaction] = (
+                surf_diag["filtered_by_reaction"].get(reaction.predicted_reaction, 0) + 1
+            )
+
             if reaction.predicted_reaction in ("helpful", "neutral"):
                 filtered.append(pred)
             else:
                 # Mark why this prediction was filtered (annoying reaction)
                 pred.filter_reason = f"reaction:{reaction.predicted_reaction} ({reaction.reasoning})"
+                surf_diag["filtered_by_reaction"]["total"] += 1
+                # Capture sample filtered reasons (capped at 5)
+                if len(surf_diag["sample_filtered_reasons"]) < 5:
+                    surf_diag["sample_filtered_reasons"].append({
+                        "prediction_type": pred.prediction_type,
+                        "score": reaction_score,
+                        "reaction": reaction.predicted_reaction,
+                        "reason": f"reaction:{reaction.predicted_reaction}",
+                        "reasoning": reasoning,
+                    })
 
         # Confidence floor — don't surface anything below SUGGEST threshold (0.3).
         # This enables relationship maintenance, preparation, and other valuable
@@ -519,7 +648,20 @@ class PredictionEngine:
             else:
                 # Mark why this prediction was filtered (low confidence)
                 p.filter_reason = f"confidence:{p.confidence:.3f} (threshold:0.3)"
+                surf_diag["filtered_by_confidence"] += 1
+                # Capture sample filtered reasons (capped at 5)
+                if len(surf_diag["sample_filtered_reasons"]) < 5:
+                    surf_diag["sample_filtered_reasons"].append({
+                        "prediction_type": p.prediction_type,
+                        "score": None,
+                        "reaction": "passed_reaction",
+                        "reason": f"confidence:{p.confidence:.3f}",
+                        "reasoning": f"below 0.3 threshold (confidence={p.confidence:.3f})",
+                    })
         filtered = filtered_after_confidence
+
+        # Persist surfacing diagnostics for this run
+        self._surfacing_diagnostics = surf_diag
 
         # Sort by confidence to prioritize delivery order (notification manager uses this).
         # We no longer cap the number of surfaced predictions - if a prediction passes
@@ -699,6 +841,7 @@ class PredictionEngine:
             "zero_surfacing_cycles": self._zero_surfacing_cycles,
             "store_failures_this_run": run_store_failures,
             "store_failures_total": self._store_failure_count,
+            "surfacing": self._surfacing_diagnostics,
         }
         self._persist_state("last_run_diagnostics", json.dumps(self._last_run_diagnostics))
 
@@ -3049,6 +3192,10 @@ class PredictionEngine:
             "blockers": overall_blockers,
             "persistence_failure_detected": self._persistence_failure_detected,
         }
+
+        # Include last-run surfacing diagnostics so the async diagnostics
+        # endpoint also shows per-prediction filter breakdown.
+        diagnostics["surfacing"] = self._surfacing_diagnostics
 
         return diagnostics
 
