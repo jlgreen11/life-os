@@ -16,8 +16,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
@@ -201,7 +201,8 @@ class RoutineDetector:
         """
         try:
             with self.db.get_connection("user_model") as conn:
-                rows = conn.execute("""
+                rows = conn.execute(
+                    """
                     WITH ranked AS (
                         SELECT
                             interaction_type,
@@ -222,11 +223,94 @@ class RoutineDetector:
                     FROM ranked a
                     JOIN ranked b ON a.day = b.day AND b.rn = a.rn + 1
                     GROUP BY a.interaction_type
-                """, (cutoff.isoformat(),)).fetchall()
+                """,
+                    (cutoff.isoformat(),),
+                ).fetchall()
             return {row[0]: row[1] for row in rows if row[1] is not None}
         except sqlite3.DatabaseError as e:
             logger.warning("_compute_step_duration_map: user_model.db query failed: %s", e)
             return {}
+
+    def _derive_interaction_type_from_event(self, event_id: str) -> str | None:
+        """Derive an interaction type from the linked event when episode has no usable type.
+
+        Looks up the original event by event_id in the events database and maps
+        the event's ``type`` field (e.g. 'email.received') to a routine-friendly
+        interaction type string (e.g. 'email_received').
+
+        This fallback ensures episodes created before the granular classification
+        was introduced still contribute to routine detection.
+
+        Args:
+            event_id: The event ID linking the episode to its source event.
+
+        Returns:
+            A derived interaction type string, or None if the event cannot be found
+            or its type cannot be mapped.
+        """
+        try:
+            with self.db.get_connection("events") as conn:
+                row = conn.execute("SELECT type FROM events WHERE id = ?", (event_id,)).fetchone()
+            if not row or not row[0]:
+                return None
+            # Convert dotted event type to underscored interaction type
+            # e.g. "email.received" → "email_received"
+            return row[0].replace(".", "_")
+        except Exception:
+            return None
+
+    def _fallback_temporal_episodes(self, cutoff: datetime) -> list[tuple[str, str]]:
+        """Fallback query for temporal detection when no episodes have usable interaction_type.
+
+        Re-queries episodes WITHOUT the ``interaction_type IS NOT NULL`` filter,
+        then derives an interaction type for each row from the linked event's
+        ``type`` field in the events database.  Rows whose event_id cannot be
+        resolved or whose derived type is empty are skipped.
+
+        This handles the common production scenario where episodes were created
+        before the granular classification logic was deployed, leaving
+        interaction_type as NULL, 'unknown', or the old generic 'communication'.
+
+        Args:
+            cutoff: Only include episodes after this timestamp.
+
+        Returns:
+            List of (timestamp, derived_interaction_type) tuples, matching
+            the format expected by the caller.
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT timestamp, event_id, interaction_type
+                   FROM episodes
+                   WHERE timestamp > ?
+                   ORDER BY timestamp""",
+                (cutoff.isoformat(),),
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        logger.info(
+            "Temporal detection fallback: %d total episodes in window (ignoring interaction_type filter)",
+            len(rows),
+        )
+
+        results: list[tuple[str, str]] = []
+        for ts, event_id, existing_type in rows:
+            # Use existing type if it's non-null and not a useless placeholder
+            if existing_type and existing_type not in (None, "unknown", "communication"):
+                results.append((ts, existing_type))
+                continue
+            # Otherwise derive from the linked event
+            derived = self._derive_interaction_type_from_event(event_id)
+            if derived:
+                results.append((ts, derived))
+
+        logger.info(
+            "Temporal detection fallback: %d episodes recovered with derived interaction types",
+            len(results),
+        )
+        return results
 
     def _detect_temporal_routines(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect routines that occur at similar times each day.
@@ -252,6 +336,10 @@ class RoutineDetector:
         where no successor was observed, and a 15-minute default for the final
         step of every routine (no successor to measure against).
 
+        When all episodes lack a usable ``interaction_type`` (NULL or 'unknown'),
+        a fallback re-queries without the type filter and derives a classification
+        from the linked event's ``type`` field via the events database.
+
         Args:
             lookback_days: Days of history to analyze
 
@@ -259,7 +347,7 @@ class RoutineDetector:
             List of temporal routines
         """
         routines = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Number of distinct days with any episode data in the window.
         # This is the denominator for consistency: an action that fires on 8 of
@@ -273,21 +361,48 @@ class RoutineDetector:
 
         # Fetch raw episode timestamps and interaction types so that we can
         # convert UTC → local timezone in Python before bucketing.
+        # Exclude placeholder types ('unknown', 'communication') that provide
+        # no signal for routine detection — they were set before the granular
+        # classification logic was deployed.
         try:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT timestamp, interaction_type
                     FROM episodes
-                    WHERE timestamp > ? AND interaction_type IS NOT NULL
+                    WHERE timestamp > ?
+                      AND interaction_type IS NOT NULL
+                      AND interaction_type NOT IN ('unknown', 'communication')
                     ORDER BY timestamp
-                """, (cutoff.isoformat(),))
+                """,
+                    (cutoff.isoformat(),),
+                )
                 raw_episodes = cursor.fetchall()
         except sqlite3.DatabaseError as e:
             logger.warning("_detect_temporal_routines: user_model.db query failed: %s", e)
             return []
 
+        logger.info(
+            "Temporal detection: %d episodes with usable interaction_type in lookback window",
+            len(raw_episodes),
+        )
+
+        # Fallback: if no episodes have a usable interaction_type, re-query
+        # WITHOUT the filter and derive classification from the linked event.
         if not raw_episodes:
+            try:
+                raw_episodes = self._fallback_temporal_episodes(cutoff)
+                if raw_episodes:
+                    logger.info(
+                        "Temporal detection: fallback recovered %d episodes via event_type derivation",
+                        len(raw_episodes),
+                    )
+            except Exception:
+                logger.exception("Temporal detection: fallback query failed")
+
+        if not raw_episodes:
+            logger.info("Temporal detection: 0 usable episodes after fallback — skipping")
             return routines
 
         # Bucket episodes by local time-of-day. Track distinct local dates per
@@ -299,7 +414,7 @@ class RoutineDetector:
                 # Parse the stored ISO 8601 timestamp and convert to local tz.
                 dt_utc = datetime.fromisoformat(ts_str)
                 if dt_utc.tzinfo is None:
-                    dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                    dt_utc = dt_utc.replace(tzinfo=UTC)
                 dt_local = dt_utc.astimezone(self._tz)
                 bucket = self._hour_to_bucket(dt_local.hour)
                 local_date = dt_local.strftime("%Y-%m-%d")
@@ -307,6 +422,11 @@ class RoutineDetector:
             except (ValueError, TypeError):
                 # Skip episodes with unparseable timestamps.
                 continue
+
+        logger.info(
+            "Temporal detection: %d (bucket, type) pairs found",
+            len(bucket_day_sets),
+        )
 
         # Filter to (bucket, type) pairs meeting min_occurrences.
         hour_actions = [
@@ -316,6 +436,12 @@ class RoutineDetector:
         ]
         # Sort by bucket then day_count descending to match previous output order.
         hour_actions.sort(key=lambda x: (x[0], -x[2]))
+
+        logger.info(
+            "Temporal detection: %d pairs meet min_occurrences=%d",
+            len(hour_actions),
+            self.min_occurrences,
+        )
 
         if not hour_actions:
             return routines
@@ -353,6 +479,14 @@ class RoutineDetector:
                 avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
                 consistency = min(1.0, avg_day_count / active_days)
 
+                logger.info(
+                    "Temporal detection: bucket %s consistency=%.2f (threshold=%.2f) %s",
+                    bucket_name,
+                    consistency,
+                    self.consistency_threshold,
+                    "PASS" if consistency >= self.consistency_threshold else "FAIL",
+                )
+
                 if consistency >= self.consistency_threshold:
                     steps = actions[:10]  # Cap at 10 steps
                     # Compute total routine duration: sum of measured gap durations
@@ -384,7 +518,9 @@ class RoutineDetector:
                     routines.append(routine)
                     logger.debug(
                         "Detected %s routine with %d steps, consistency %.2f",
-                        bucket_name, len(actions), consistency,
+                        bucket_name,
+                        len(actions),
+                        consistency,
                     )
 
         return routines
@@ -412,7 +548,7 @@ class RoutineDetector:
             List of location-based routines
         """
         routines = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Reuse active-day count computed once for the whole detection pass.
         # Wrapped in try/except so a corrupted DB returns a safe default (1).
@@ -439,7 +575,8 @@ class RoutineDetector:
         try:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         location,
                         interaction_type,
@@ -451,12 +588,20 @@ class RoutineDetector:
                     GROUP BY location, interaction_type
                     HAVING day_count >= ?
                     ORDER BY location, day_count DESC
-                """, (cutoff.isoformat(), self.min_occurrences))
+                """,
+                    (cutoff.isoformat(), self.min_occurrences),
+                )
 
                 location_actions = cursor.fetchall()
         except sqlite3.DatabaseError as e:
             logger.warning("_detect_location_routines: user_model.db query failed: %s", e)
             return []
+
+        logger.info(
+            "Location detection: %d (location, type) pairs meet min_occurrences=%d",
+            len(location_actions) if location_actions else 0,
+            self.min_occurrences,
+        )
 
         if not location_actions:
             return routines
@@ -476,6 +621,14 @@ class RoutineDetector:
 
                 avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
                 consistency = min(1.0, avg_day_count / active_days)
+
+                logger.info(
+                    "Location detection: %s consistency=%.2f (threshold=%.2f) %s",
+                    location,
+                    consistency,
+                    self.consistency_threshold,
+                    "PASS" if consistency >= self.consistency_threshold else "FAIL",
+                )
 
                 if consistency >= self.consistency_threshold:
                     routine = {
@@ -498,7 +651,9 @@ class RoutineDetector:
                     routines.append(routine)
                     logger.debug(
                         "Detected location routine for %s with %d steps, consistency %.2f",
-                        location, len(actions), consistency,
+                        location,
+                        len(actions),
+                        consistency,
                     )
 
         return routines
@@ -530,14 +685,15 @@ class RoutineDetector:
             List of event-triggered routines
         """
         routines = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Look for interaction types that occur on enough distinct days to be
         # candidates for routine triggers.
         try:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT
                         interaction_type,
                         COUNT(DISTINCT DATE(timestamp)) as days_occurred
@@ -546,12 +702,20 @@ class RoutineDetector:
                     GROUP BY interaction_type
                     HAVING days_occurred >= ?
                     ORDER BY days_occurred DESC
-                """, (cutoff.isoformat(), self.min_occurrences))
+                """,
+                    (cutoff.isoformat(), self.min_occurrences),
+                )
 
                 trigger_events = cursor.fetchall()
         except sqlite3.DatabaseError as e:
             logger.warning("_detect_event_triggered_routines: user_model.db trigger query failed: %s", e)
             return []
+
+        logger.info(
+            "Event-triggered detection: %d candidate trigger types meet min_occurrences=%d",
+            len(trigger_events) if trigger_events else 0,
+            self.min_occurrences,
+        )
 
         # Compute measured inter-step durations once, shared across all trigger types.
         # Falls back to 5.0 minutes for interaction types where no same-day successor
@@ -576,7 +740,8 @@ class RoutineDetector:
             try:
                 with self.db.get_connection("user_model") as conn:
                     cursor = conn.cursor()
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                         SELECT
                             e2.interaction_type,
                             COUNT(DISTINCT DATE(e1.timestamp)) as day_count
@@ -590,13 +755,16 @@ class RoutineDetector:
                         GROUP BY e2.interaction_type
                         HAVING day_count >= ?
                         ORDER BY day_count DESC
-                    """, (interaction_type, cutoff.isoformat(), self.min_occurrences))
+                    """,
+                        (interaction_type, cutoff.isoformat(), self.min_occurrences),
+                    )
 
                     following_actions = cursor.fetchall()
             except sqlite3.DatabaseError as e:
                 logger.warning(
                     "_detect_event_triggered_routines: user_model.db follow-up query failed for %s: %s",
-                    interaction_type, e,
+                    interaction_type,
+                    e,
                 )
                 continue
 
@@ -606,6 +774,14 @@ class RoutineDetector:
                 # actions also appeared.  Use days_occurred as the denominator
                 # (number of days the trigger fired) rather than total active days.
                 consistency = min(1.0, avg_day_count / days_occurred)
+
+                logger.info(
+                    "Event-triggered detection: after_%s consistency=%.2f (threshold=%.2f) %s",
+                    interaction_type,
+                    consistency,
+                    self.consistency_threshold,
+                    "PASS" if consistency >= self.consistency_threshold else "FAIL",
+                )
 
                 if consistency >= self.consistency_threshold:
                     trigger_name = interaction_type.replace("_", " ").title()
@@ -639,7 +815,8 @@ class RoutineDetector:
                     routines.append(routine)
                     logger.debug(
                         "Detected event-triggered routine after %s, consistency %.2f",
-                        interaction_type, consistency,
+                        interaction_type,
+                        consistency,
                     )
 
         return routines
@@ -666,11 +843,9 @@ class RoutineDetector:
         detected_names = {r["name"] for r in detected_routines}
         pruned = 0
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=max_stale_days)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=max_stale_days)).isoformat()
             with self.db.get_connection("user_model") as conn:
-                stored = conn.execute(
-                    "SELECT name, updated_at FROM routines"
-                ).fetchall()
+                stored = conn.execute("SELECT name, updated_at FROM routines").fetchall()
                 for row in stored:
                     name = row["name"]
                     updated_at = row["updated_at"] or ""
@@ -679,7 +854,9 @@ class RoutineDetector:
                         pruned += 1
                         logger.info(
                             "Pruned stale routine: %s (last updated %s, cutoff %s)",
-                            name, updated_at, cutoff,
+                            name,
+                            updated_at,
+                            cutoff,
                         )
             if pruned:
                 logger.info("Pruned %d stale routine(s) from database", pruned)
