@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 logger = logging.getLogger(__name__)
 
 from web.schemas import (
+    BadgeCountsResponse,
     BackupRestoreRequest,
     CommandRequest,
     ConnectorConfigRequest,
@@ -1087,7 +1088,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             "sections_failed": sections_failed,
         }
 
-    @app.get("/api/dashboard/badges")
+    @app.get("/api/dashboard/badges", response_model=BadgeCountsResponse)
     async def dashboard_badges():
         """Return per-topic badge counts without loading full feed items.
 
