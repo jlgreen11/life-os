@@ -454,6 +454,27 @@ class LifeOS:
         except Exception as e:
             logger.warning("startup: signal profile rebuild failed (non-fatal): %s", e)
 
+        # 1.19. Re-infer semantic facts if table is empty after DB recovery.
+        # After a corruption recovery cycle the semantic_facts table may be
+        # wiped while episodes still exist.  The normal inference loop runs
+        # every 6 hours, so facts would stay at 0 for too long.  This check
+        # triggers an immediate re-inference to restore Layer 2 (Semantic
+        # Memory) before the system starts serving briefings and predictions.
+        try:
+            with self.db.get_connection("user_model") as conn:
+                fact_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+                episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+            if fact_count == 0 and episode_count > 0:
+                logger.info("startup: 0 semantic facts with %d episodes — running re-inference", episode_count)
+                await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
+                with self.db.get_connection("user_model") as conn:
+                    new_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+                logger.info("startup: semantic fact re-inference complete, now %d facts", new_count)
+            elif fact_count > 0:
+                logger.info("startup: %d semantic facts exist, skipping re-inference", fact_count)
+        except Exception as e:
+            logger.warning("startup: semantic fact re-inference failed (non-fatal): %s", e)
+
         # 2. Initialize vector store
         logger.info("[2/7] Initializing vector store...")
         self.vector_store.initialize()
