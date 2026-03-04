@@ -74,6 +74,12 @@ class DatabaseManager:
         self._init_user_model_db()
         self._init_preferences_db()
 
+        # Start with a clean WAL state for user_model — the most contention-prone
+        # database (signal extraction, episode creation, routine detection, and the
+        # prediction engine all write to it concurrently).  Checkpointing here also
+        # helps after corruption recovery by collapsing any leftover WAL frames.
+        self.checkpoint_wal("user_model")
+
     @contextmanager
     def get_connection(self, db_name: str) -> Generator[sqlite3.Connection, None, None]:
         """Get a database connection with WAL mode and foreign keys enabled."""
@@ -83,6 +89,12 @@ class DatabaseManager:
         # is active, which is critical because the event bus may write events at
         # the same time the web layer is reading tasks or notifications.
         conn.execute("PRAGMA journal_mode=WAL")
+
+        # When multiple async tasks write to the same database concurrently
+        # (e.g., signal extraction and episode creation both targeting user_model.db),
+        # the second writer would get an immediate "database is locked" error without
+        # a busy timeout.  5 seconds is generous for the fast writes this system does.
+        conn.execute("PRAGMA busy_timeout=5000")
 
         # Foreign keys are disabled by default in SQLite; enable them so that
         # ON DELETE / REFERENCES constraints in the schema are actually enforced.
@@ -103,6 +115,40 @@ class DatabaseManager:
             raise
         finally:
             conn.close()
+
+    def checkpoint_wal(self, db_name: str) -> None:
+        """Force a full WAL checkpoint and truncate the WAL file for the given database.
+
+        Runs ``PRAGMA wal_checkpoint(TRUNCATE)`` which writes all WAL frames back
+        into the main database file and then truncates the WAL to zero length.
+        This is useful for maintenance (reducing WAL file growth) and recovery
+        after corruption repair.
+
+        Args:
+            db_name: One of the five database names (events, entities, state,
+                     user_model, preferences).  Raises ``KeyError`` if the name
+                     is not recognised.
+        """
+        # Access _databases dict directly — raises KeyError for unknown names,
+        # which is the expected behaviour documented above.
+        db_path = self._databases[db_name]
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                # Result is (busy, log_pages, checkpointed_pages)
+                busy, log_pages, checkpointed = result if result else (0, 0, 0)
+                logger.info(
+                    "WAL checkpoint for %s: busy=%s, log_pages=%s, checkpointed=%s",
+                    db_name,
+                    busy,
+                    log_pages,
+                    checkpointed,
+                )
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("WAL checkpoint failed for %s", db_name, exc_info=True)
 
     def get_database_health(self) -> dict[str, dict]:
         """Run an integrity check on every database and return per-DB results.
