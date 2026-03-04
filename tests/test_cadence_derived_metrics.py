@@ -18,6 +18,7 @@ Test strategy:
 """
 
 from datetime import datetime, timezone, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -437,3 +438,130 @@ def test_domain_response_times_persisted_after_extract_calls(
     # Gmail replies ~1 hour = 3600 s; corp replies ~4 hours = 14400 s.
     assert abs(domains["gmail.com"] - 3600) < 10
     assert abs(domains["corp.example.com"] - 14400) < 10
+
+
+# ---------------------------------------------------------------------------
+# Resilience tests — profile persistence survives derived-metric failures
+# ---------------------------------------------------------------------------
+
+
+def test_profile_persisted_even_when_compute_derived_metrics_raises(extractor, user_model_store):
+    """_update_profile should persist raw signal data even if _compute_derived_metrics throws."""
+    # First, process one event so the profile exists with some data.
+    ts = datetime(2026, 2, 17, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+    extractor.extract({
+        "id": "resilience-1",
+        "type": EventType.EMAIL_SENT.value,
+        "source": "email",
+        "timestamp": ts,
+        "payload": {"to_addresses": ["test@example.com"], "body": "hello"},
+        "metadata": {},
+    })
+
+    # Now make _compute_derived_metrics raise on the next call.
+    with patch.object(extractor, "_compute_derived_metrics", side_effect=RuntimeError("boom")):
+        extractor.extract({
+            "id": "resilience-2",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "email",
+            "timestamp": ts,
+            "payload": {"to_addresses": ["test@example.com"], "body": "hello again"},
+            "metadata": {},
+        })
+
+    # The profile should still be updated with the raw activity data.
+    profile = user_model_store.get_signal_profile("cadence")
+    assert profile is not None
+    assert profile["samples_count"] >= 2
+    # hourly_activity should reflect both events.
+    assert int(profile["data"]["hourly_activity"].get("10", 0)) >= 2
+
+
+def test_extract_returns_signals_even_when_update_profile_fails(extractor):
+    """extract() should return signals even if _update_profile throws."""
+    with patch.object(extractor, "_update_profile", side_effect=RuntimeError("db error")):
+        signals = extractor.extract({
+            "id": "sig-return-1",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "email",
+            "timestamp": datetime(2026, 2, 17, 10, 0, 0, tzinfo=timezone.utc).isoformat(),
+            "payload": {"to_addresses": ["test@example.com"], "body": "test"},
+            "metadata": {},
+        })
+
+    # Signals should still be returned (at minimum a cadence_activity signal).
+    assert len(signals) >= 1
+    assert any(s["type"] == "cadence_activity" for s in signals)
+
+
+def test_compute_read_not_replied_with_empty_response_times(extractor):
+    """_compute_read_not_replied should work when response_times is empty but inbound counts exist."""
+    data = _activity_data({})
+    data["per_contact_inbound_count"] = {
+        "alice@example.com": 5,
+        "bob@example.com": 10,
+    }
+    # No per_contact_response_times at all — simulates early rebuild state.
+    data["per_contact_response_times"] = {}
+
+    extractor._compute_read_not_replied(data)
+
+    # Both contacts should appear as unreplied.
+    assert "read_not_replied" in data
+    contacts = {e["contact_id"] for e in data["read_not_replied"]}
+    assert "alice@example.com" in contacts
+    assert "bob@example.com" in contacts
+    # All messages should be unreplied.
+    for entry in data["read_not_replied"]:
+        assert entry["unreplied_ratio"] == 1.0
+
+
+def test_compute_thread_metrics_with_missing_thread_tracking(extractor):
+    """_compute_thread_metrics should be a no-op when thread_tracking key is absent."""
+    data = _activity_data({})
+    # Explicitly remove thread_tracking to simulate old profile data.
+    data.pop("thread_tracking", None)
+
+    # Should not raise.
+    extractor._compute_thread_metrics(data)
+
+    # No thread metrics should have been added.
+    assert "thread_completion_rate" not in data
+    assert "avg_thread_length" not in data
+
+
+def test_compute_thread_metrics_with_non_dict_thread_tracking(extractor):
+    """_compute_thread_metrics should handle thread_tracking being None or non-dict."""
+    data = _activity_data({})
+    data["thread_tracking"] = None
+
+    # Should not raise.
+    extractor._compute_thread_metrics(data)
+    assert "thread_completion_rate" not in data
+
+
+def test_rebuild_scenario_100_emails_produces_cadence_profile(extractor, user_model_store):
+    """Processing 100 email.received events should produce a cadence profile."""
+    base = datetime(2026, 2, 1, 8, 0, 0, tzinfo=timezone.utc)
+    for i in range(100):
+        ts = (base + timedelta(hours=i % 12, minutes=i % 60)).isoformat()
+        extractor.extract({
+            "id": f"rebuild-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "email",
+            "timestamp": ts,
+            "payload": {
+                "sender": f"contact{i % 10}@example.com",
+                "subject": f"Subject {i}",
+                "body": f"Message body {i}",
+            },
+            "metadata": {},
+        })
+
+    profile = user_model_store.get_signal_profile("cadence")
+    assert profile is not None
+    assert profile["samples_count"] >= 100
+    # Should have accumulated inbound counts.
+    assert len(profile["data"].get("per_contact_inbound_count", {})) > 0
+    # Should have hourly activity.
+    assert len(profile["data"].get("hourly_activity", {})) > 0

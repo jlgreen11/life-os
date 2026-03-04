@@ -162,7 +162,15 @@ class CadenceExtractor(BaseExtractor):
                          event.get('id', 'unknown'), e)
 
         # Persist the signals into the running cadence profile.
-        self._update_profile(signals)
+        # Wrapped in try/except so that a persistence failure still returns the
+        # extracted signals to the pipeline (they may be used downstream).
+        try:
+            self._update_profile(signals)
+        except Exception as e:
+            logger.error(
+                "cadence: _update_profile failed for event %s: %s",
+                event.get("id", "?"), e, exc_info=True,
+            )
         return signals
 
     def _calculate_response_time(self, original_message_id: str,
@@ -330,7 +338,12 @@ class CadenceExtractor(BaseExtractor):
         # Recompute derived metrics from the updated raw histograms so that
         # CadenceProfile fields (peak_hours, quiet_hours_observed,
         # avg_response_time_by_domain) always reflect the latest data.
-        self._compute_derived_metrics(data)
+        # Wrapped in try/except so that a failure in any derived-metric method
+        # does not prevent the raw signal data from being persisted.
+        try:
+            self._compute_derived_metrics(data)
+        except Exception as e:
+            logger.warning("cadence: _compute_derived_metrics failed (non-fatal): %s", e)
 
         self.ums.update_signal_profile("cadence", data)
 
@@ -638,6 +651,13 @@ class CadenceExtractor(BaseExtractor):
 
         entries = []
         for contact, inbound_count in inbound_counts.items():
+            # Coerce to int for safety — JSON round-tripping or partial rebuilds
+            # could leave non-integer values in the dict.
+            try:
+                inbound_count = int(inbound_count)
+            except (TypeError, ValueError):
+                continue
+
             # Skip low-volume contacts to avoid noise.
             if inbound_count < 3:
                 continue
@@ -680,9 +700,11 @@ class CadenceExtractor(BaseExtractor):
         Stores results directly in ``data["thread_completion_rate"]`` and
         ``data["avg_thread_length"]``.
         """
-        thread_tracking = data.get("thread_tracking", {})
-        threads = thread_tracking.get("threads", {})
-        if not threads:
+        thread_tracking = data.get("thread_tracking")
+        if not isinstance(thread_tracking, dict):
+            return
+        threads = thread_tracking.get("threads")
+        if not isinstance(threads, dict) or not threads:
             return
 
         now = datetime.now(timezone.utc)
