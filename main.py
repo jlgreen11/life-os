@@ -1710,6 +1710,63 @@ class LifeOS:
             # Fail-open: backfill errors must never crash the startup sequence.
             logger.warning("       ⚠ Linguistic profile backfill failed (non-fatal): %s", e)
 
+    async def _backfill_inbound_linguistic_profile_if_needed(self):
+        """Auto-trigger linguistic_inbound signal profile backfill when the profile is missing.
+
+        The linguistic_inbound profile stores per-contact incoming style data (formality,
+        hedge rate, question rate, vocabulary complexity) from email.received and
+        message.received events.  The SemanticFactInferrer reads this profile via
+        ``infer_from_inbound_linguistic_profile()`` to produce facts about the user's
+        communication environment — whether contacts are formal or casual, whether the
+        user is a go-to expert (high inbound question rate), etc.
+
+        Without this backfill, a DB reset leaves the inbound profile empty, causing
+        the inferrer to produce zero facts from the largest data source in the system
+        (typically 10x–100x more inbound events than outbound).
+        """
+        try:
+            # Guard: skip if the linguistic_inbound profile already has meaningful data.
+            # Threshold of 10 samples matches the inferrer's minimum requirement for
+            # inbound inference (see infer_from_inbound_linguistic_profile()).
+            profile = self.user_model_store.get_signal_profile("linguistic_inbound")
+            if profile and profile.get("samples_count", 0) >= 10:
+                return
+
+            # Check that we have inbound communication events to learn from.
+            with self.db.get_connection("events") as conn:
+                event_count = conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE type IN ('email.received', 'message.received')"
+                ).fetchone()[0]
+
+            if event_count < 1:
+                return
+
+            logger.info(
+                "       → Backfilling linguistic_inbound signal profile from %s inbound events...",
+                f"{event_count:,}",
+            )
+
+            def _run_backfill():
+                from scripts.backfill_linguistic_inbound_profile import backfill_linguistic_inbound_profile
+
+                return backfill_linguistic_inbound_profile(
+                    data_dir=self.db.data_dir,
+                    batch_size=1000,
+                )
+
+            stats = await asyncio.to_thread(_run_backfill)
+
+            logger.info(
+                "       ✓ Inbound linguistic profile: %s samples from %s events (%.1fs)",
+                f"{stats['final_samples']:,}",
+                f"{stats['events_processed']:,}",
+                stats["elapsed_seconds"],
+            )
+
+        except Exception as e:
+            # Fail-open: backfill errors must never crash the startup sequence.
+            logger.warning("       ⚠ Inbound linguistic profile backfill failed (non-fatal): %s", e)
+
     async def _backfill_cadence_profile_if_needed(self):
         """Auto-trigger cadence signal profile backfill when the profile is missing.
 
@@ -2004,6 +2061,7 @@ class LifeOS:
                 "mood_signals": self._backfill_mood_signals_profile_if_needed,
                 "spatial": self._backfill_spatial_profile_if_needed,
                 "decision": self._backfill_decision_profile_if_needed,
+                "linguistic_inbound": self._backfill_inbound_linguistic_profile_if_needed,
             }
 
             expected_types = list(profile_backfill_map.keys())
