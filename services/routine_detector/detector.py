@@ -177,25 +177,20 @@ class RoutineDetector:
         except Exception:
             logger.exception("Temporal routine detection failed (possible DB corruption)")
 
-        # Fallback: when primary temporal detection finds nothing and the
-        # temporal signal profile has insufficient samples (<25), try
+        # Fallback: when primary temporal detection finds nothing, try
         # detecting routines directly from raw episode data.  This handles
-        # the common scenario where signal profiles are missing or corrupted
-        # but thousands of episodes exist.
+        # scenarios where signal profiles are missing, corrupted, or where
+        # primary detection returns 0 despite thousands of episodes.
         if not temporal_routines:
-            profile_samples = self._get_temporal_profile_sample_count()
-            if profile_samples < 25:
-                logger.info(
-                    "Temporal detection returned 0 routines with only %d profile samples "
-                    "(< 25 threshold) — trying episode-based fallback",
-                    profile_samples,
-                )
-                try:
-                    fallback_routines = self._detect_routines_from_episodes_fallback(lookback_days)
-                    temporal_routines = fallback_routines
-                    routines.extend(fallback_routines)
-                except Exception:
-                    logger.exception("Episode-based fallback routine detection failed")
+            logger.info(
+                "Temporal detection returned 0 routines — trying episode-based fallback",
+            )
+            try:
+                fallback_routines = self._detect_routines_from_episodes_fallback(lookback_days)
+                temporal_routines = fallback_routines
+                routines.extend(fallback_routines)
+            except Exception:
+                logger.exception("Episode-based fallback routine detection failed")
 
         location_routines = []
         try:
@@ -1119,6 +1114,13 @@ class RoutineDetector:
                         len(steps),
                         consistency,
                     )
+
+        logger.info(
+            "Episode fallback: evaluated %d (bucket, type) pairs, %d passed min_occurrences, produced %d routines",
+            len(bucket_day_sets),
+            len(hour_actions),
+            len(routines),
+        )
 
         return routines
 
