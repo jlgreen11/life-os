@@ -111,6 +111,34 @@ class CadenceExtractor(BaseExtractor):
                         "initiator": "contact",
                     })
 
+        # ----- Thread/conversation tracking -----
+        # Track message-level thread activity to compute thread_completion_rate
+        # (does the user follow through on conversations?) and avg_thread_length
+        # (how many messages per conversation?).  Uses thread_id, in_reply_to,
+        # or subject as the thread key — whichever is available.
+        thread_key = (
+            payload.get("thread_id")
+            or payload.get("in_reply_to")
+            or payload.get("subject")
+        )
+        if thread_key:
+            is_outbound = "sent" in event_type.lower()
+            if is_outbound:
+                contact = (
+                    payload.get("to_addresses", [None])[0]
+                    if payload.get("to_addresses")
+                    else None
+                )
+            else:
+                contact = payload.get("sender") or payload.get("from_address")
+            signals.append({
+                "type": "cadence_thread_activity",
+                "thread_id": thread_key,
+                "direction": "outbound" if is_outbound else "inbound",
+                "contact_id": contact,
+                "timestamp": timestamp,
+            })
+
         # ----- Activity-window detection -----
         # Record the hour-of-day and day-of-week for every communication event
         # (both inbound and outbound).  Over time this builds a heatmap of the
@@ -208,6 +236,7 @@ class CadenceExtractor(BaseExtractor):
             data["per_contact_initiations"] = {}
         if "per_contact_inbound_count" not in data:
             data["per_contact_inbound_count"] = {}
+        data.setdefault("thread_tracking", {"threads": {}})
 
         for signal in signals:
             if signal["type"] == "cadence_response_time":
@@ -264,6 +293,34 @@ class CadenceExtractor(BaseExtractor):
                         data["per_contact_inbound_count"].get(contact, 0) + 1
                     )
 
+            elif signal["type"] == "cadence_thread_activity":
+                # Track per-thread message activity for thread_completion_rate
+                # and avg_thread_length computation.
+                thread_id = signal.get("thread_id")
+                if thread_id:
+                    threads = data["thread_tracking"]["threads"]
+                    if thread_id not in threads:
+                        threads[thread_id] = {
+                            "message_count": 0,
+                            "has_user_reply": False,
+                            "last_message_ts": signal.get("timestamp", ""),
+                            "contact": signal.get("contact_id"),
+                        }
+                    entry = threads[thread_id]
+                    entry["message_count"] += 1
+                    entry["last_message_ts"] = signal.get("timestamp", entry["last_message_ts"])
+                    if signal.get("direction") == "outbound":
+                        entry["has_user_reply"] = True
+
+                    # Evict oldest threads when exceeding 500 to bound storage.
+                    if len(threads) > 500:
+                        sorted_keys = sorted(
+                            threads.keys(),
+                            key=lambda k: threads[k].get("last_message_ts", ""),
+                        )
+                        for old_key in sorted_keys[: len(threads) - 500]:
+                            del threads[old_key]
+
         # Cap the global response-time list to prevent unbounded growth.
         # Keeping the most recent 1000 entries provides enough data for
         # statistical baselines while bounding storage.
@@ -310,6 +367,7 @@ class CadenceExtractor(BaseExtractor):
         self._compute_channel_response_times(data)
         self._compute_initiates_ratio(data)
         self._compute_read_not_replied(data)
+        self._compute_thread_metrics(data)
 
     def _compute_peak_hours(self, data: dict) -> None:
         """Derive peak activity hours from the hourly_activity histogram.
@@ -600,3 +658,57 @@ class CadenceExtractor(BaseExtractor):
 
         # Cap at 50 contacts to bound storage.
         data["read_not_replied"] = entries[:50]
+
+    def _compute_thread_metrics(self, data: dict) -> None:
+        """Derive thread_completion_rate and avg_thread_length from tracked threads.
+
+        Iterates all threads in ``data["thread_tracking"]["threads"]`` and
+        computes two metrics that feed into ``CadenceProfile``:
+
+          - **thread_completion_rate**: fraction of threads where the user sent
+            at least one reply (``has_user_reply == True``).  A high rate
+            indicates follow-through; a low rate indicates conversation
+            abandonment.
+          - **avg_thread_length**: mean ``message_count`` across all eligible
+            threads.  Reveals communication depth.
+
+        Only threads whose ``last_message_ts`` is older than 24 hours are
+        included in the rate calculation so that recently-started threads
+        (which the user hasn't had time to reply to) don't artificially
+        deflate the completion rate.
+
+        Stores results directly in ``data["thread_completion_rate"]`` and
+        ``data["avg_thread_length"]``.
+        """
+        thread_tracking = data.get("thread_tracking", {})
+        threads = thread_tracking.get("threads", {})
+        if not threads:
+            return
+
+        now = datetime.now(timezone.utc)
+        cutoff_seconds = 24 * 3600  # 24 hours
+
+        eligible_threads = []
+        for thread in threads.values():
+            last_ts = thread.get("last_message_ts", "")
+            if not last_ts:
+                # No timestamp — include it (it's presumably old).
+                eligible_threads.append(thread)
+                continue
+            try:
+                last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                age = (now - last_dt).total_seconds()
+                if age >= cutoff_seconds:
+                    eligible_threads.append(thread)
+            except (ValueError, AttributeError):
+                # Malformed timestamp — include conservatively.
+                eligible_threads.append(thread)
+
+        if not eligible_threads:
+            return
+
+        completed = sum(1 for t in eligible_threads if t.get("has_user_reply"))
+        data["thread_completion_rate"] = completed / len(eligible_threads)
+
+        total_messages = sum(t.get("message_count", 0) for t in eligible_threads)
+        data["avg_thread_length"] = total_messages / len(eligible_threads)
