@@ -27,6 +27,7 @@ Insight Types:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -196,6 +197,19 @@ class InsightEngine:
             "min_required": 1,
         }
 
+        # Connector-state correlator: always runnable (checks state.db directly)
+        try:
+            with self.db.get_connection("state") as conn:
+                cs_count = conn.execute("SELECT COUNT(*) FROM connector_state").fetchone()[0]
+        except Exception:
+            cs_count = -1
+        report["_connector_health_insights"] = {
+            "source": "connector_state",
+            "status": "ready" if cs_count >= 0 else "error",
+            "count": cs_count,
+            "min_required": 0,
+        }
+
         # Events-DB correlators: need minimum event counts
         events_correlators = [
             ("_email_volume_insights", "email.received", 7),
@@ -258,6 +272,7 @@ class InsightEngine:
             ("routine", self._routine_insights),
             ("spatial", self._spatial_insights),
             ("workflow_pattern", self._workflow_pattern_insights),
+            ("connector_health", self._connector_health_insights),
         ]
 
         for name, method in correlators:
@@ -3887,6 +3902,113 @@ class InsightEngine:
                 fresh.append(insight)
 
         return fresh
+
+    # ------------------------------------------------------------------
+    # Connector health correlator
+    # ------------------------------------------------------------------
+
+    def _connector_health_insights(self) -> list[Insight]:
+        """Surface persistent connector failures as actionable alerts.
+
+        Queries the ``connector_state`` table in state.db and produces
+        insights for two classes of problem:
+
+        **Error-state connectors** (status='error'):
+            Generates a high-severity ``actionable_alert`` so the user
+            knows a connector has been actively failing and needs manual
+            intervention (e.g. re-authenticate, fix config).
+
+        **Silently stalled connectors** (last_sync > 48h, status != 'error'):
+            Generates a medium-severity alert for connectors that appear
+            healthy (no error status) but have not synced recently, which
+            may indicate a silent failure or a disabled scheduler.
+
+        Dedup strategy:
+            Category ``connector_error`` or ``connector_stalled`` + entity =
+            connector_id.  Uses a 24-hour staleness TTL so the insight
+            refreshes daily until the problem is resolved.
+
+        Returns:
+            list[Insight]: Zero or more ``actionable_alert`` insights.
+        """
+        insights: list[Insight] = []
+        now = datetime.now(timezone.utc)
+
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    """SELECT connector_id, status, enabled, last_sync,
+                              error_count, last_error, updated_at
+                       FROM connector_state
+                       WHERE enabled = 1"""
+                ).fetchall()
+        except Exception:
+            logger.exception("connector_health_insights: failed to query connector_state")
+            return insights
+
+        for row in rows:
+            connector_id = row["connector_id"]
+            status = row["status"]
+            last_sync = row["last_sync"]
+            last_error = row["last_error"] or "unknown error"
+
+            if status == "error":
+                # Active error state — high severity
+                summary = (
+                    f"{connector_id} connector has been failing since "
+                    f"{last_sync or 'never'}. Error: {last_error}"
+                )
+                dedup_raw = f"actionable_alert:connector_error:{connector_id}"
+                insights.append(Insight(
+                    type="actionable_alert",
+                    summary=summary,
+                    confidence=0.95,
+                    evidence=[
+                        f"connector_id={connector_id}",
+                        f"status={status}",
+                        f"error_count={row['error_count']}",
+                        f"last_error={last_error}",
+                    ],
+                    category="connector_error",
+                    entity=connector_id,
+                    staleness_ttl_hours=24,
+                    dedup_key=hashlib.sha256(dedup_raw.encode()).hexdigest()[:16],
+                    source_key="system.connector_health",
+                ))
+            elif last_sync:
+                # Check for silently stalled connectors (> 48h since last sync)
+                try:
+                    sync_dt = datetime.fromisoformat(
+                        last_sync.replace("Z", "+00:00")
+                    )
+                    hours_since_sync = (now - sync_dt).total_seconds() / 3600
+                except (ValueError, TypeError):
+                    # Unparseable timestamp — skip this connector
+                    continue
+
+                if hours_since_sync > 48:
+                    summary = (
+                        f"{connector_id} connector has not synced "
+                        f"in {hours_since_sync:.0f} hours"
+                    )
+                    dedup_raw = f"actionable_alert:connector_stalled:{connector_id}"
+                    insights.append(Insight(
+                        type="actionable_alert",
+                        summary=summary,
+                        confidence=0.8,
+                        evidence=[
+                            f"connector_id={connector_id}",
+                            f"status={status}",
+                            f"hours_since_sync={hours_since_sync:.0f}",
+                        ],
+                        category="connector_stalled",
+                        entity=connector_id,
+                        staleness_ttl_hours=24,
+                        dedup_key=hashlib.sha256(dedup_raw.encode()).hexdigest()[:16],
+                        source_key="system.connector_health",
+                    ))
+
+        return insights
 
     # ------------------------------------------------------------------
     # Storage
