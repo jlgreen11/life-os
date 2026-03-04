@@ -432,8 +432,8 @@ class SemanticFactInferrer:
         )
 
         if not human_contacts:
-            logger.info("No human bidirectional contacts found after marketing filter, skipping relationship inference")
-            return {"type": "relationship", "processed": True, "reason": None}
+            logger.info("No human bidirectional contacts found after marketing filter — trying inbound-only fallback")
+            return self._infer_from_inbound_only_contacts(contacts, base_confidence)
 
         # Calculate average interaction count across human contacts only.
         # Previously this was computed over all bidirectional contacts, which
@@ -513,6 +513,88 @@ class SemanticFactInferrer:
 
         logger.info(f"Inferred semantic facts from relationship profile (samples={profile.get('samples_count')})")
         return {"type": "relationship", "processed": True, "reason": None}
+
+    def _infer_from_inbound_only_contacts(self, contacts: dict, base_confidence: float) -> dict:
+        """
+        Fallback inference for when no bidirectional contacts exist.
+
+        When the user has very few outbound messages (e.g., mostly receives email),
+        the main relationship inference path produces zero facts because it requires
+        outbound_count > 0.  This fallback derives communication volume and frequent
+        sender facts from inbound-only contacts, after filtering out marketing/automated
+        senders.
+
+        Args:
+            contacts: Full contacts dict from the relationship profile.
+            base_confidence: Pre-computed confidence from _early_inference_confidence.
+
+        Returns:
+            Result dict with type, processed status, and fact count.
+        """
+        # Filter to non-marketing inbound-only contacts (outbound_count == 0)
+        inbound_only = {
+            contact_id: contact_data
+            for contact_id, contact_data in contacts.items()
+            if isinstance(contact_data, dict)
+            and contact_data.get("outbound_count", 0) == 0
+            and not is_marketing_or_noreply(contact_id)
+        }
+
+        if len(inbound_only) < 5:
+            logger.info(
+                "Only %d inbound-only human contacts (need 5+), skipping inbound-only inference",
+                len(inbound_only),
+            )
+            return {"type": "relationship", "processed": True, "reason": "too_few_inbound_only"}
+
+        facts_stored = 0
+
+        # --- Communication volume category ---
+        count = len(inbound_only)
+        if count > 50:
+            volume_value = "high_volume_email"
+        elif count >= 10:
+            volume_value = "moderate_volume_email"
+        else:
+            volume_value = "low_volume_email"
+
+        self.ums.update_semantic_fact(
+            key="communication_volume_category",
+            category="implicit_preference",
+            value=volume_value,
+            confidence=min(0.9, base_confidence + 0.2),
+            episode_id=None,
+        )
+        facts_stored += 1
+
+        # --- Top 5 frequent senders ---
+        sorted_contacts = sorted(
+            inbound_only.items(),
+            key=lambda item: item[1].get("interaction_count", 0),
+            reverse=True,
+        )
+        for contact_id, contact_data in sorted_contacts[:5]:
+            interaction_count = contact_data.get("interaction_count", 0)
+            if interaction_count < 1:
+                continue
+            # Link to recent episodes with this contact for provenance
+            contact_episodes = self._get_recent_episodes(contact=contact_id, limit=1)
+            episode_id = contact_episodes[0] if contact_episodes else None
+
+            self.ums.update_semantic_fact(
+                key=f"frequent_sender_{contact_id}",
+                category="implicit_preference",
+                value=f"inbound_sender_count_{interaction_count}",
+                confidence=min(0.9, base_confidence + min(0.3, interaction_count / 100)),
+                episode_id=episode_id,
+            )
+            facts_stored += 1
+
+        logger.info(
+            "Inferred %d facts from %d inbound-only human contacts (fallback path)",
+            facts_stored, len(inbound_only),
+        )
+        return {"type": "relationship", "processed": True, "facts_stored": facts_stored}
 
     def _purge_noise_topic_facts(self, noise_blocklist: set) -> int:
         """
