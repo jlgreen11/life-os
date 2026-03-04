@@ -991,16 +991,100 @@ class LifeOS:
                 except Exception as e:
                     logger.warning("       ⚠ Could not recover episodes: %s", e)
 
-                # Other tables: read everything (these are small and corruption-free)
+                # Other tables: try safe (non-blob) columns first, then
+                # full SELECT *, then row-by-row as last resort.  Blob
+                # columns that commonly corrupt (supporting_signals,
+                # source_episodes, steps, variations, evidence) are
+                # skipped in safe mode — their DEFAULT values will be
+                # applied when inserting into the fresh DB.
+                SAFE_TABLE_COLS = {
+                    "semantic_facts": (
+                        "key, category, value, confidence, first_observed, "
+                        "last_confirmed, times_confirmed, is_user_corrected"
+                    ),
+                    "routines": (
+                        "name, trigger_condition, typical_duration, "
+                        "consistency_score, times_observed, updated_at"
+                    ),
+                    "predictions": (
+                        "id, prediction_type, description, confidence, "
+                        "confidence_gate, time_horizon, suggested_action, "
+                        "was_surfaced, user_response, was_accurate, "
+                        "filter_reason, resolution_reason, created_at, resolved_at"
+                    ),
+                    "insights": (
+                        "id, type, summary, confidence, category, entity, "
+                        "staleness_ttl_hours, dedup_key, feedback, created_at"
+                    ),
+                }
+
                 for table in recovered_tables:
-                    try:
-                        rows = src.execute(f"SELECT * FROM {table}").fetchall()
-                        recovered_tables[table] = [tuple(r) for r in rows]
-                        logger.info(
-                            "       ✓ Recovered %d rows from %s", len(rows), table
-                        )
-                    except Exception as e:
-                        logger.warning("       ⚠ Could not recover %s: %s", table, e)
+                    safe_cols = SAFE_TABLE_COLS.get(table)
+                    recovered = False
+
+                    # Strategy 1: safe columns only (skips blob columns)
+                    if safe_cols and not recovered:
+                        try:
+                            rows = src.execute(
+                                f"SELECT {safe_cols} FROM {table}"
+                            ).fetchall()
+                            recovered_tables[table] = [tuple(r) for r in rows]
+                            logger.info(
+                                "       ✓ Recovered %d rows from %s (safe columns)",
+                                len(rows), table,
+                            )
+                            recovered = True
+                        except Exception as e:
+                            logger.warning(
+                                "       ⚠ Safe-column recovery failed for %s: %s",
+                                table, e,
+                            )
+
+                    # Strategy 2: full SELECT * (works if no blob corruption)
+                    if not recovered:
+                        try:
+                            rows = src.execute(f"SELECT * FROM {table}").fetchall()
+                            recovered_tables[table] = [tuple(r) for r in rows]
+                            logger.info(
+                                "       ✓ Recovered %d rows from %s (all columns)",
+                                len(rows), table,
+                            )
+                            recovered = True
+                        except Exception as e:
+                            logger.warning(
+                                "       ⚠ Full SELECT recovery failed for %s: %s",
+                                table, e,
+                            )
+
+                    # Strategy 3: row-by-row using ROWID (salvages partial data)
+                    if not recovered and safe_cols:
+                        try:
+                            max_rowid = src.execute(
+                                f"SELECT MAX(rowid) FROM {table}"
+                            ).fetchone()[0]
+                            if max_rowid:
+                                partial_rows = []
+                                for rid in range(1, max_rowid + 1):
+                                    try:
+                                        row = src.execute(
+                                            f"SELECT {safe_cols} FROM {table} WHERE rowid = ?",
+                                            (rid,),
+                                        ).fetchone()
+                                        if row:
+                                            partial_rows.append(tuple(row))
+                                    except Exception:
+                                        pass  # Skip corrupted rows
+                                recovered_tables[table] = partial_rows
+                                logger.info(
+                                    "       ✓ Recovered %d/%d rows from %s (row-by-row)",
+                                    len(partial_rows), max_rowid, table,
+                                )
+                            recovered = True
+                        except Exception as e:
+                            logger.warning(
+                                "       ⚠ Row-by-row recovery failed for %s: %s",
+                                table, e,
+                            )
 
         except Exception as dump_err:
             logger.error("       ✗ Failed to dump recoverable data: %s", dump_err)
@@ -1040,17 +1124,27 @@ class LifeOS:
                         recovered_episodes,
                     )
 
-                # Other tables: insert all columns
+                # Other tables: insert using explicit column lists so
+                # skipped blob columns get their DEFAULT values.
                 for table, rows in recovered_tables.items():
                     if not rows:
                         continue
-                    # Determine column count from first row
+                    col_list = SAFE_TABLE_COLS.get(table)
                     placeholders = ", ".join(["?"] * len(rows[0]))
                     try:
-                        dst.executemany(
-                            f"INSERT OR IGNORE INTO {table} VALUES ({placeholders})",
-                            rows,
-                        )
+                        if col_list and len(rows[0]) == len(col_list.split(",")):
+                            # Rows came from safe-column or row-by-row recovery
+                            dst.executemany(
+                                f"INSERT OR IGNORE INTO {table} ({col_list}) "
+                                f"VALUES ({placeholders})",
+                                rows,
+                            )
+                        else:
+                            # Rows came from full SELECT * — insert all columns
+                            dst.executemany(
+                                f"INSERT OR IGNORE INTO {table} VALUES ({placeholders})",
+                                rows,
+                            )
                     except Exception as insert_err:
                         logger.warning(
                             "       ⚠ Could not restore %s: %s", table, insert_err
@@ -1058,9 +1152,11 @@ class LifeOS:
 
             logger.info(
                 "       ✓ Rebuilt fresh user_model.db with %d episodes, "
-                "%d semantic_facts, %d insights",
+                "%d predictions, %d semantic_facts, %d routines, %d insights",
                 len(recovered_episodes),
+                len(recovered_tables["predictions"]),
                 len(recovered_tables["semantic_facts"]),
+                len(recovered_tables["routines"]),
                 len(recovered_tables["insights"]),
             )
 
@@ -1088,10 +1184,12 @@ class LifeOS:
             # ---------------------------------------------------------------
             # Step 5: Atomic swap — archive the corrupted file and replace.
             # ---------------------------------------------------------------
-            corrupted_archive = db_path.with_suffix(".db.corrupted")
-            # Remove old archive if present to avoid rename collision
-            if corrupted_archive.exists():
-                corrupted_archive.unlink()
+            # Use timestamped archive names so multiple corruption events
+            # don't overwrite each other — previous archives may contain
+            # recoverable data that this cycle's archive does not.
+            from datetime import datetime, timezone
+            timestamp_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            corrupted_archive = db_path.with_suffix(f".db.corrupted.{timestamp_str}")
 
             # Remove any WAL/SHM associated with the OLD (corrupted) DB
             # BEFORE the swap so they cannot be erroneously applied to the
@@ -1109,9 +1207,15 @@ class LifeOS:
 
             logger.warning(
                 "       ✓ Rebuilt corrupted user_model.db — "
-                "recovered %d episodes, signal_profiles will be repopulated by backfills. "
+                "recovered %d episodes, %d predictions, %d semantic_facts, "
+                "%d routines, %d insights. "
+                "signal_profiles will be repopulated by backfills. "
                 "Corrupted DB archived at %s",
                 len(recovered_episodes),
+                len(recovered_tables["predictions"]),
+                len(recovered_tables["semantic_facts"]),
+                len(recovered_tables["routines"]),
+                len(recovered_tables["insights"]),
                 corrupted_archive,
             )
 

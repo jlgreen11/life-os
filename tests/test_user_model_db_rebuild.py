@@ -245,7 +245,7 @@ class TestHealthyDatabase:
         await life_os._rebuild_user_model_db_if_corrupted()
 
         # No archive file should exist — confirms no rebuild happened
-        assert not (healthy_data_dir / "user_model.db.corrupted").exists(), \
+        assert not list(healthy_data_dir.glob("user_model.db.corrupted*")), \
             "Archive should not exist when DB is healthy"
 
     @pytest.mark.asyncio
@@ -267,12 +267,12 @@ class TestHealthyDatabase:
 class TestCorruptedDatabase:
     @pytest.mark.asyncio
     async def test_rebuild_archives_corrupted_db(self, simulated_corrupt_data_dir):
-        """When probe fails, the old DB is archived as user_model.db.corrupted."""
+        """When probe fails, the old DB is archived with a timestamped name."""
         life_os = _make_corrupting_life_os(simulated_corrupt_data_dir)
         await life_os._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Corrupted DB should be archived after rebuild"
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Corrupted DB should be archived after rebuild"
 
     @pytest.mark.asyncio
     async def test_fresh_db_is_fully_readable(self, simulated_corrupt_data_dir):
@@ -351,17 +351,18 @@ class TestCorruptedDatabase:
         life_os1 = _make_corrupting_life_os(simulated_corrupt_data_dir)
         await life_os1._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Archive should exist after first rebuild"
-        archive_mtime = archive.stat().st_mtime
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Archive should exist after first rebuild"
+        archive_count_after_first = len(archives)
 
         # Second call: DB is now healthy, should be a no-op
         life_os2 = _make_life_os(simulated_corrupt_data_dir)
         await life_os2._rebuild_user_model_db_if_corrupted()
 
-        # Archive should be unchanged (no second rebuild happened)
-        assert archive.stat().st_mtime == archive_mtime, \
-            "Archive mtime changed — second rebuild should not have fired"
+        # No new archive should have been created (no second rebuild happened)
+        archives_after_second = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives_after_second) == archive_count_after_first, \
+            "New archive created — second rebuild should not have fired"
 
     @pytest.mark.asyncio
     async def test_rebuilt_db_readable_without_wal(self, simulated_corrupt_data_dir):
@@ -428,8 +429,8 @@ class TestBroadCorruptionDetection:
         )
         await life_os._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Rebuild should trigger when semantic_facts is corrupted"
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Rebuild should trigger when semantic_facts is corrupted"
 
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_routines_corruption(self, simulated_corrupt_data_dir):
@@ -439,8 +440,8 @@ class TestBroadCorruptionDetection:
         )
         await life_os._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Rebuild should trigger when routines is corrupted"
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Rebuild should trigger when routines is corrupted"
 
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_mood_history_corruption(self, simulated_corrupt_data_dir):
@@ -450,8 +451,8 @@ class TestBroadCorruptionDetection:
         )
         await life_os._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Rebuild should trigger when mood_history is corrupted"
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Rebuild should trigger when mood_history is corrupted"
 
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_predictions_corruption(self, simulated_corrupt_data_dir):
@@ -461,8 +462,8 @@ class TestBroadCorruptionDetection:
         )
         await life_os._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Rebuild should trigger when predictions is corrupted"
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Rebuild should trigger when predictions is corrupted"
 
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_insights_corruption(self, simulated_corrupt_data_dir):
@@ -472,8 +473,8 @@ class TestBroadCorruptionDetection:
         )
         await life_os._rebuild_user_model_db_if_corrupted()
 
-        archive = simulated_corrupt_data_dir / "user_model.db.corrupted"
-        assert archive.exists(), "Rebuild should trigger when insights is corrupted"
+        archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
+        assert len(archives) >= 1, "Rebuild should trigger when insights is corrupted"
 
     @pytest.mark.asyncio
     async def test_rebuild_recovers_data_after_table_corruption(self, simulated_corrupt_data_dir):
