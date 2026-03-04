@@ -461,9 +461,22 @@ class TestSparseActiveDaysConsistency:
 
         routines = detector.detect_routines(lookback_days=30)
 
-        # 3 occurrences on 6 active days → consistency = 3/6 = 0.5 < 0.6 threshold
-        sporadic_steps = [s for r in routines for s in r["steps"] if s["action"] == "sporadic_check"]
-        assert len(sporadic_steps) == 0, "3 of 6 active days (consistency=0.5) should NOT meet the 0.6 threshold"
+        # 3 occurrences on 6 active days → consistency = 3/6 = 0.5.
+        # With cold-start scaling (6 active days < 7 → threshold = 0.3), this
+        # pattern IS now detected as a provisional routine with cold_start=True
+        # and scaled-down confidence (0.5 * 0.7 = 0.35).
+        sporadic_routines = [
+            r for r in routines
+            for s in r["steps"]
+            if s["action"] == "sporadic_check"
+        ]
+        assert len(sporadic_routines) >= 1, (
+            "With cold-start threshold (0.3 for < 7 active days), "
+            "consistency=0.5 should be detected as a provisional routine"
+        )
+        routine = sporadic_routines[0]
+        assert routine.get("cold_start") is True, "Routine below base threshold should be marked cold_start"
+        assert routine["consistency_score"] < 0.5, "Cold-start confidence should be scaled down (0.5 * 0.7)"
 
 
 class TestDeriveInteractionType:

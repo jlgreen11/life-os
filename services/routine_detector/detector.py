@@ -62,6 +62,44 @@ class RoutineDetector:
         self.time_window_hours = 2  # Actions within 2h can be part of same routine
         self.consistency_threshold = 0.6  # 60% of instances must match for it to be a routine
 
+    def _effective_consistency_threshold(self, active_days: int) -> float:
+        """Return a consistency threshold scaled by data maturity.
+
+        During cold-start (few active days), the base threshold of 0.6 is too
+        strict — a pattern must appear on 60 % of active days, which is nearly
+        impossible when data is sparse or unevenly distributed.  This method
+        applies a graduated scale so that the system can surface provisional
+        routines early while converging to full strictness as data matures.
+
+        Scaling tiers:
+            active_days < 7   → 0.3  (very lenient — system just started)
+            active_days < 14  → 0.4  (moderate — building data)
+            active_days < 30  → 0.5  (approaching maturity)
+            active_days >= 30 → self.consistency_threshold (0.6 — full strictness)
+
+        Args:
+            active_days: Number of distinct calendar days with episode data.
+
+        Returns:
+            The effective threshold to use for consistency filtering.
+        """
+        if active_days < 7:
+            threshold = 0.3
+        elif active_days < 14:
+            threshold = 0.4
+        elif active_days < 30:
+            threshold = 0.5
+        else:
+            threshold = self.consistency_threshold
+
+        logger.info(
+            "Effective consistency threshold: %.2f (active_days=%d, base=%.2f)",
+            threshold,
+            active_days,
+            self.consistency_threshold,
+        )
+        return threshold
+
     @staticmethod
     def _hour_to_bucket(hour: int) -> str:
         """Map an hour (0–23) to a time-of-day bucket name.
@@ -479,15 +517,24 @@ class RoutineDetector:
                 avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
                 consistency = min(1.0, avg_day_count / active_days)
 
+                effective_threshold = self._effective_consistency_threshold(active_days)
+                is_cold_start = effective_threshold < self.consistency_threshold
+
+                logger.info(
+                    "Temporal routine detection: %d active days, effective threshold=%.2f (base=%.2f)",
+                    active_days,
+                    effective_threshold,
+                    self.consistency_threshold,
+                )
                 logger.info(
                     "Temporal detection: bucket %s consistency=%.2f (threshold=%.2f) %s",
                     bucket_name,
                     consistency,
-                    self.consistency_threshold,
-                    "PASS" if consistency >= self.consistency_threshold else "FAIL",
+                    effective_threshold,
+                    "PASS" if consistency >= effective_threshold else "FAIL",
                 )
 
-                if consistency >= self.consistency_threshold:
+                if consistency >= effective_threshold:
                     steps = actions[:10]  # Cap at 10 steps
                     # Compute total routine duration: sum of measured gap durations
                     # for all-but-last step, plus the default for the last step.
@@ -496,6 +543,12 @@ class RoutineDetector:
                         # Last step has no measured gap to a successor, so use default.
                         step_durations[-1] = LAST_STEP_DEFAULT_MINUTES
                     total_duration = sum(step_durations) if step_durations else LAST_STEP_DEFAULT_MINUTES
+
+                    # Scale confidence down for cold-start detections that would
+                    # have failed the full base threshold.  This signals to
+                    # downstream consumers that the routine is provisional.
+                    would_fail_base = consistency < self.consistency_threshold
+                    confidence = consistency * 0.7 if (is_cold_start and would_fail_base) else consistency
 
                     routine = {
                         "name": f"{bucket_name.capitalize()} routine",
@@ -511,9 +564,10 @@ class RoutineDetector:
                             for i, (action, dc, dur) in enumerate(steps)
                         ],
                         "typical_duration_minutes": total_duration,
-                        "consistency_score": consistency,
+                        "consistency_score": confidence,
                         "times_observed": int(avg_day_count),
                         "variations": [],  # Could add variation detection in future
+                        "cold_start": is_cold_start and would_fail_base,
                     }
                     routines.append(routine)
                     logger.debug(
@@ -622,15 +676,29 @@ class RoutineDetector:
                 avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
                 consistency = min(1.0, avg_day_count / active_days)
 
+                effective_threshold = self._effective_consistency_threshold(active_days)
+                is_cold_start = effective_threshold < self.consistency_threshold
+
+                logger.info(
+                    "Location routine detection: %d active days, effective threshold=%.2f (base=%.2f)",
+                    active_days,
+                    effective_threshold,
+                    self.consistency_threshold,
+                )
                 logger.info(
                     "Location detection: %s consistency=%.2f (threshold=%.2f) %s",
                     location,
                     consistency,
-                    self.consistency_threshold,
-                    "PASS" if consistency >= self.consistency_threshold else "FAIL",
+                    effective_threshold,
+                    "PASS" if consistency >= effective_threshold else "FAIL",
                 )
 
-                if consistency >= self.consistency_threshold:
+                if consistency >= effective_threshold:
+                    # Scale confidence down for cold-start detections that would
+                    # have failed the full base threshold.
+                    would_fail_base = consistency < self.consistency_threshold
+                    confidence = consistency * 0.7 if (is_cold_start and would_fail_base) else consistency
+
                     routine = {
                         "name": f"Arrive at {location}",
                         "trigger": f"arrive_{location.lower().replace(' ', '_')}",
@@ -644,9 +712,10 @@ class RoutineDetector:
                             for i, (action, dc, duration) in enumerate(actions[:10])
                         ],
                         "typical_duration_minutes": sum(d for _, _, d in actions),
-                        "consistency_score": consistency,
+                        "consistency_score": confidence,
                         "times_observed": int(avg_day_count),
                         "variations": [],
+                        "cold_start": is_cold_start and would_fail_base,
                     }
                     routines.append(routine)
                     logger.debug(
@@ -775,15 +844,26 @@ class RoutineDetector:
                 # (number of days the trigger fired) rather than total active days.
                 consistency = min(1.0, avg_day_count / days_occurred)
 
+                # Event-triggered routines use days_occurred (trigger days) as
+                # the maturity signal, since the trigger may not fire every day.
+                effective_threshold = self._effective_consistency_threshold(days_occurred)
+                is_cold_start = effective_threshold < self.consistency_threshold
+
+                logger.info(
+                    "Event-triggered routine detection: %d trigger days, effective threshold=%.2f (base=%.2f)",
+                    days_occurred,
+                    effective_threshold,
+                    self.consistency_threshold,
+                )
                 logger.info(
                     "Event-triggered detection: after_%s consistency=%.2f (threshold=%.2f) %s",
                     interaction_type,
                     consistency,
-                    self.consistency_threshold,
-                    "PASS" if consistency >= self.consistency_threshold else "FAIL",
+                    effective_threshold,
+                    "PASS" if consistency >= effective_threshold else "FAIL",
                 )
 
-                if consistency >= self.consistency_threshold:
+                if consistency >= effective_threshold:
                     trigger_name = interaction_type.replace("_", " ").title()
 
                     # Attach measured durations to each following action.
@@ -794,6 +874,11 @@ class RoutineDetector:
                         for action, dc in following_actions[:10]
                     ]
                     total_duration = sum(d for _, _, d in steps_with_duration)
+
+                    # Scale confidence down for cold-start detections that would
+                    # have failed the full base threshold.
+                    would_fail_base = consistency < self.consistency_threshold
+                    confidence = consistency * 0.7 if (is_cold_start and would_fail_base) else consistency
 
                     routine = {
                         "name": f"After {trigger_name}",
@@ -808,9 +893,10 @@ class RoutineDetector:
                             for i, (action, dc, dur) in enumerate(steps_with_duration)
                         ],
                         "typical_duration_minutes": total_duration,
-                        "consistency_score": consistency,
+                        "consistency_score": confidence,
                         "times_observed": int(avg_day_count),
                         "variations": [],
+                        "cold_start": is_cold_start and would_fail_base,
                     }
                     routines.append(routine)
                     logger.debug(
