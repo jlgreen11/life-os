@@ -169,10 +169,13 @@ class SignalExtractorPipeline:
                 len(missing), ", ".join(missing), event_count,
             )
 
-            # Replay up to 10,000 recent events through all extractors,
+            # Replay up to 50,000 recent events through all extractors,
             # filtering to only the event types the missing profiles need.
+            # With 57K+ total events where ~55% are system.rule.triggered
+            # (filtered out by type), 50K ensures we reach far enough back
+            # to capture sufficient email/message/calendar events for all profiles.
             rebuild_result = self.rebuild_profiles_from_events(
-                event_limit=10000, missing_profiles=missing,
+                event_limit=50000, missing_profiles=missing,
             )
 
             # Determine which previously-missing profiles now exist.
@@ -202,7 +205,7 @@ class SignalExtractorPipeline:
 
     def rebuild_profiles_from_events(
         self,
-        event_limit: int = 5000,
+        event_limit: int = 50000,
         missing_profiles: list[str] | None = None,
     ) -> dict:
         """Rebuild signal profiles by replaying historical events from events.db.
@@ -273,6 +276,12 @@ class SignalExtractorPipeline:
                     "FROM events ORDER BY timestamp DESC LIMIT ?",
                     (event_limit,),
                 ).fetchall()
+
+        logger.info(
+            "rebuild_profiles_from_events: fetched %d events (limit was %d)%s",
+            len(rows), event_limit,
+            " — limit reached, older relevant events may exist" if len(rows) >= event_limit else "",
+        )
 
         if not rows:
             logger.info("rebuild_profiles_from_events: no events found in events.db")
