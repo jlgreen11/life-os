@@ -157,7 +157,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         EXPECTED_PROFILES = [
             "relationships", "temporal", "topics", "linguistic",
-            "cadence", "mood_signals", "spatial", "decision",
+            "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
         ]
 
         result: dict = {}
@@ -201,6 +201,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "semantic_facts_count": "SELECT COUNT(*) as c FROM semantic_facts",
                 "routines_count": "SELECT COUNT(*) as c FROM routines",
                 "mood_readings_count": "SELECT COUNT(*) as c FROM mood_history",
+                "workflows_count": "SELECT COUNT(*) as c FROM workflows",
+                "communication_templates_count": "SELECT COUNT(*) as c FROM communication_templates",
             }
             with life_os.db.get_connection("user_model") as conn:
                 for key, sql in tables.items():
@@ -299,9 +301,16 @@ def register_routes(app: FastAPI, life_os) -> None:
             )
             preds_24h = result.get("predictions", {}).get("last_24h", 0)
 
+            # Check Layer 3 procedural memory as secondary indicator
+            um = result.get("user_model", {})
+            workflows_empty = isinstance(um, dict) and um.get("workflows_count") == 0
+            templates_empty = isinstance(um, dict) and um.get("communication_templates_count") == 0
+
             if existing_count == 0:
                 result["overall_status"] = "broken"
             elif existing_count < len(EXPECTED_PROFILES) or preds_24h == 0:
+                result["overall_status"] = "degraded"
+            elif workflows_empty and templates_empty:
                 result["overall_status"] = "degraded"
             else:
                 result["overall_status"] = "healthy"
@@ -329,7 +338,11 @@ def register_routes(app: FastAPI, life_os) -> None:
             um = result.get("user_model", {})
             if isinstance(um, dict) and not um.get("error"):
                 um_error_found = False
-                for table_key in ["episodes_count", "semantic_facts_count", "routines_count"]:
+                um_table_keys = [
+                    "episodes_count", "semantic_facts_count", "routines_count",
+                    "workflows_count", "communication_templates_count",
+                ]
+                for table_key in um_table_keys:
                     value = um.get(table_key)
                     if isinstance(value, str) and "error" in value:
                         recommendations.append({
@@ -351,6 +364,30 @@ def register_routes(app: FastAPI, life_os) -> None:
                                 "message": f"{friendly} table is empty",
                                 "action": "POST /api/admin/backfills/trigger to populate from event history",
                             })
+                    # Layer 3 procedural memory: workflows and communication templates
+                    if um.get("workflows_count") == 0:
+                        recommendations.append({
+                            "severity": "medium",
+                            "area": "user_model",
+                            "message": "workflows table is empty — Layer 3 procedural memory has no detected workflows",
+                            "action": (
+                                "Ensure routine_detector and workflow detection loops are running — "
+                                "workflows require sufficient episode history to detect patterns"
+                            ),
+                        })
+                    if um.get("communication_templates_count") == 0:
+                        recommendations.append({
+                            "severity": "medium",
+                            "area": "user_model",
+                            "message": (
+                                "communication_templates table is empty — "
+                                "Layer 3 procedural memory has no learned templates"
+                            ),
+                            "action": (
+                                "Templates are extracted from outbound messages — "
+                                "ensure message connectors (email, Signal, iMessage) are syncing sent messages"
+                            ),
+                        })
 
             # Check predictions
             preds = result.get("predictions", {})

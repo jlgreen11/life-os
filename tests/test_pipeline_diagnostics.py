@@ -151,7 +151,7 @@ def test_pipeline_diagnostics_returns_all_sections():
 
 
 def test_pipeline_diagnostics_reports_empty_profiles():
-    """With no signal profiles in DB, all 8 types show exists=False."""
+    """With no signal profiles in DB, all 9 types show exists=False."""
     life_os = _make_life_os(signal_profiles={})
     app = create_web_app(life_os)
     client = TestClient(app)
@@ -162,7 +162,7 @@ def test_pipeline_diagnostics_reports_empty_profiles():
     profiles = data["signal_profiles"]
     expected_types = [
         "relationships", "temporal", "topics", "linguistic",
-        "cadence", "mood_signals", "spatial", "decision",
+        "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
     ]
     for ptype in expected_types:
         assert ptype in profiles, f"Missing profile type: {ptype}"
@@ -233,7 +233,10 @@ def test_pipeline_diagnostics_handles_db_error():
     # isolates each query, so individual keys contain "error: ..." strings
     # rather than crashing the whole section).
     um = data["user_model"]
-    for key in ["episodes_count", "semantic_facts_count", "routines_count", "mood_readings_count"]:
+    for key in [
+        "episodes_count", "semantic_facts_count", "routines_count",
+        "mood_readings_count", "workflows_count", "communication_templates_count",
+    ]:
         assert isinstance(um[key], str) and "error" in um[key], (
             f"Expected error string in user_model[{key!r}], got {um[key]!r}"
         )
@@ -265,11 +268,11 @@ def test_pipeline_diagnostics_overall_status_broken():
 
 
 def test_pipeline_diagnostics_overall_status_healthy():
-    """With all profiles and recent predictions, overall_status is 'healthy'."""
-    # Build all 8 profiles
+    """With all profiles, recent predictions, and Layer 3 data, overall_status is 'healthy'."""
+    # Build all 9 profiles (including linguistic_inbound)
     all_types = [
         "relationships", "temporal", "topics", "linguistic",
-        "cadence", "mood_signals", "spatial", "decision",
+        "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
     ]
     profiles = {
         ptype: {
@@ -281,11 +284,15 @@ def test_pipeline_diagnostics_overall_status_healthy():
         for ptype in all_types
     }
 
-    # Make predictions queries return non-zero last_24h
+    # Make predictions and user_model queries return non-zero counts.
+    # workflows and communication_templates must have non-zero counts
+    # to avoid the "degraded" status from empty Layer 3 tables.
     pred_conn = _make_mock_conn({
         "COUNT(*) as c FROM predictions WHERE": {"c": 5},
         "COUNT(*) as c FROM predictions": {"c": 50},
         "MAX(created_at)": {"ts": "2026-03-01T12:00:00Z"},
+        "COUNT(*) as c FROM workflows": {"c": 2},
+        "COUNT(*) as c FROM communication_templates": {"c": 3},
     })
 
     life_os = _make_life_os(signal_profiles=profiles, user_model_conn=pred_conn)
