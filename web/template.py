@@ -3900,7 +3900,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         ws.onmessage = function(e) {
             try {
                 var data = JSON.parse(e.data);
-                if (data.type === 'notification' || data.type === 'event') {
+                if (data.type === 'notification' || data.type === 'event' || data.type === 'digest') {
                     // Show the banner so the user can choose to refresh the feed.
                     document.getElementById('newItemsBanner').classList.add('visible');
                     // Also refresh badge counts immediately so the nav dot stays accurate.
