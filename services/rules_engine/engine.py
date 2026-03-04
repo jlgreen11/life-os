@@ -314,20 +314,49 @@ class RulesEngine:
         elif op == "not_in":
             return actual not in expected
         elif op == "gt":
-            return actual is not None and actual > expected
+            if actual is None:
+                return False
+            try:
+                return float(actual) > float(expected)
+            except (TypeError, ValueError):
+                return False
         elif op == "lt":
-            return actual is not None and actual < expected
+            if actual is None:
+                return False
+            try:
+                return float(actual) < float(expected)
+            except (TypeError, ValueError):
+                return False
         elif op == "gte":
-            return actual is not None and actual >= expected
+            if actual is None:
+                return False
+            try:
+                return float(actual) >= float(expected)
+            except (TypeError, ValueError):
+                return False
         elif op == "lte":
-            return actual is not None and actual <= expected
+            if actual is None:
+                return False
+            try:
+                return float(actual) <= float(expected)
+            except (TypeError, ValueError):
+                return False
         elif op == "exists":
             return actual is not None
         elif op == "not_exists":
             return actual is None
         elif op == "regex":
             # Case-insensitive regex search within the field value
-            return isinstance(actual, str) and bool(re.search(expected, actual, re.IGNORECASE))
+            if not isinstance(actual, str):
+                return False
+            try:
+                return bool(re.search(expected, actual, re.IGNORECASE))
+            except re.error:
+                logger.warning(
+                    "Invalid regex pattern in rule condition: %r",
+                    expected,
+                )
+                return False
         else:
             return False  # Unknown operator — fail closed
 
