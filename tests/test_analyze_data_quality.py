@@ -1021,3 +1021,137 @@ class TestDatabaseHealthStructure:
         assert "could not connect" in health["events"]["detail"]
         # Other databases should still be ok
         assert health["user_model"]["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Event-sourced prediction activity tests
+# ---------------------------------------------------------------------------
+
+
+def _insert_prediction_events(tmp_path, events):
+    """Insert prediction-related events into events.db.
+
+    Args:
+        tmp_path: Directory containing events.db.
+        events: List of (id, type, timestamp) tuples to insert.
+    """
+    conn = sqlite3.connect(str(tmp_path / "events.db"))
+    for evt_id, evt_type, evt_ts in events:
+        conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            (evt_id, evt_type, "prediction_engine", evt_ts),
+        )
+    conn.commit()
+    conn.close()
+
+
+class TestEventSourcedPredictionActivity:
+    """Tests for event-sourced prediction pipeline metrics."""
+
+    def test_event_activity_present_in_report(self, tmp_path):
+        """prediction_pipeline section includes event_activity and last_generation_event."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        pp = report["sections"]["prediction_pipeline"]
+        assert "event_activity" in pp, "Missing event_activity key"
+        assert "last_generation_event" in pp, "Missing last_generation_event key"
+
+    def test_event_activity_counts_prediction_events(self, tmp_path):
+        """event_activity counts prediction-related events from events.db."""
+        _create_all_dbs(tmp_path)
+
+        _insert_prediction_events(tmp_path, [
+            ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
+            ("e2", "usermodel.prediction.generated", "2026-03-01T11:00:00Z"),
+            ("e3", "usermodel.prediction.generated", "2026-03-01T12:00:00Z"),
+            ("e4", "usermodel.prediction.deduplicated", "2026-03-01T10:30:00Z"),
+            ("e5", "usermodel.prediction.deduplicated", "2026-03-01T11:30:00Z"),
+        ])
+
+        report = analyze(str(tmp_path))
+        pp = report["sections"]["prediction_pipeline"]
+
+        assert pp["event_activity"]["usermodel.prediction.generated"] == 3
+        assert pp["event_activity"]["usermodel.prediction.deduplicated"] == 2
+
+    def test_empty_predictions_table_but_events_show_activity(self, tmp_path):
+        """When predictions table is empty but events exist, total_generated=0 and event_activity > 0.
+
+        This is the core scenario: after cleanup, the predictions table is empty but
+        the events table proves the pipeline was working.
+        """
+        _create_all_dbs(tmp_path)
+
+        _insert_prediction_events(tmp_path, [
+            ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
+            ("e2", "usermodel.prediction.generated", "2026-03-01T11:00:00Z"),
+        ])
+
+        report = analyze(str(tmp_path))
+        pp = report["sections"]["prediction_pipeline"]
+
+        # predictions table is empty → total_generated=0
+        assert pp["total_generated"] == 0
+        # But events prove the pipeline ran
+        assert pp["event_activity"]["usermodel.prediction.generated"] == 2
+
+    def test_last_generation_event_timestamp(self, tmp_path):
+        """last_generation_event returns the most recent prediction.generated timestamp."""
+        _create_all_dbs(tmp_path)
+
+        _insert_prediction_events(tmp_path, [
+            ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
+            ("e2", "usermodel.prediction.generated", "2026-03-02T15:30:00Z"),
+            ("e3", "usermodel.prediction.generated", "2026-03-01T08:00:00Z"),
+        ])
+
+        report = analyze(str(tmp_path))
+        pp = report["sections"]["prediction_pipeline"]
+
+        assert pp["last_generation_event"] == "2026-03-02T15:30:00Z"
+
+    def test_last_generation_event_none_when_no_events(self, tmp_path):
+        """last_generation_event is None when no prediction.generated events exist."""
+        _create_all_dbs(tmp_path)
+
+        report = analyze(str(tmp_path))
+        pp = report["sections"]["prediction_pipeline"]
+
+        assert pp["last_generation_event"] is None
+
+    def test_event_activity_empty_dict_when_no_prediction_events(self, tmp_path):
+        """event_activity is an empty dict when no prediction events exist."""
+        _create_all_dbs(tmp_path)
+
+        report = analyze(str(tmp_path))
+        pp = report["sections"]["prediction_pipeline"]
+
+        assert pp["event_activity"] == {}
+
+    def test_event_activity_ignores_non_prediction_events(self, tmp_path):
+        """event_activity only counts usermodel.prediction.* events, not other types."""
+        _create_all_dbs(tmp_path)
+
+        # Insert a mix of prediction and non-prediction events
+        conn = sqlite3.connect(str(tmp_path / "events.db"))
+        conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            ("e1", "usermodel.prediction.generated", "prediction_engine", "2026-03-01T10:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            ("e2", "email.received", "gmail", "2026-03-01T10:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            ("e3", "calendar.event_created", "caldav", "2026-03-01T10:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        pp = report["sections"]["prediction_pipeline"]
+
+        assert len(pp["event_activity"]) == 1
+        assert pp["event_activity"]["usermodel.prediction.generated"] == 1

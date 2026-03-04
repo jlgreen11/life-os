@@ -274,6 +274,46 @@ def analyze(data_dir: str = "./data") -> dict:
         except Exception as e:
             report["sections"]["prediction_pipeline"] = {"error": str(e)}
 
+        # ---------------------------------------------------------------
+        # Event-sourced prediction activity — cross-reference the events
+        # table to detect pipeline activity even when the predictions
+        # table is empty (e.g. after cleanup runs).
+        # ---------------------------------------------------------------
+        try:
+            pp_section = report["sections"].setdefault("prediction_pipeline", {})
+            ev_conn = _connect(data_path / "events.db")
+            if ev_conn:
+                try:
+                    pred_events = _query(
+                        ev_conn,
+                        """SELECT type, COUNT(*) as count
+                           FROM events
+                           WHERE type LIKE 'usermodel.prediction.%'
+                           GROUP BY type
+                           ORDER BY count DESC""",
+                        [],
+                    )
+                    pp_section["event_activity"] = (
+                        {r["type"]: r["count"] for r in pred_events} if pred_events else {}
+                    )
+
+                    last_pred = _query_one(
+                        ev_conn,
+                        """SELECT timestamp FROM events
+                           WHERE type = 'usermodel.prediction.generated'
+                           ORDER BY timestamp DESC LIMIT 1""",
+                    )
+                    pp_section["last_generation_event"] = last_pred["timestamp"] if last_pred else None
+                finally:
+                    ev_conn.close()
+            else:
+                pp_section["event_activity"] = {"error": "could not connect to events.db"}
+                pp_section["last_generation_event"] = None
+        except Exception as e:
+            pp_section = report["sections"].setdefault("prediction_pipeline", {})
+            pp_section["event_activity"] = {"error": str(e)}
+            pp_section["last_generation_event"] = None
+
         try:
             # Signal profiles freshness
             profiles = _query(um_conn, "SELECT profile_type, samples_count, updated_at FROM signal_profiles", [])
