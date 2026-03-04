@@ -3,10 +3,12 @@ Tests for the GET /api/contacts/{contact_email}/interactions endpoint.
 
 Verifies that the endpoint correctly queries interaction history for a
 contact, respects the limit parameter, handles unknown contacts gracefully,
-and works with URL-encoded email addresses.
+works with URL-encoded email addresses, and applies a 365-day timestamp
+bound to prevent full-table scans.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, MagicMock
 
 import pytest
@@ -445,3 +447,60 @@ def test_empty_interactions_for_unknown_contact(client):
     data = response.json()
     assert data["interactions"] == []
     assert data["total_interactions"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Timestamp bound tests
+# ---------------------------------------------------------------------------
+
+
+def test_queries_include_timestamp_cutoff(mock_life_os, client):
+    """Both SQL queries include a timestamp > ? parameter for a 365-day lookback.
+
+    Verifies the cutoff parameter is present in the SQL calls by inspecting
+    the arguments passed to conn.execute().
+    """
+    _setup_db_responses(mock_life_os, event_rows=[], total_count=0)
+
+    client.get("/api/contacts/alice@example.com/interactions")
+
+    # Retrieve the events connection mock to inspect execute calls.
+    # _setup_db_responses sets side_effect on get_connection, so we
+    # call it with "events" to get the context manager, then __enter__.
+    events_ctx = mock_life_os.db.get_connection("events")
+    events_conn = events_ctx.__enter__()
+
+    assert events_conn.execute.call_count == 2
+
+    # Both calls should have a cutoff ISO timestamp as the 7th positional
+    # parameter (6 type placeholders + 1 cutoff).
+    for call in events_conn.execute.call_args_list:
+        sql = call[0][0]
+        params = call[0][1]
+
+        # The SQL must contain the timestamp bound clause
+        assert "timestamp > ?" in sql, "Query missing timestamp > ? bound"
+
+        # The 7th parameter (index 6) should be the cutoff timestamp
+        cutoff_param = params[6]
+        cutoff_dt = datetime.fromisoformat(cutoff_param)
+        expected_cutoff = datetime.now(timezone.utc) - timedelta(days=365)
+        # Allow 5 seconds of clock drift
+        assert abs((cutoff_dt - expected_cutoff).total_seconds()) < 5, (
+            f"Cutoff {cutoff_param} is not within 5 seconds of expected {expected_cutoff.isoformat()}"
+        )
+
+
+def test_count_query_has_safety_limit(mock_life_os, client):
+    """The COUNT query wraps a sub-select with LIMIT 10000 as a safety measure."""
+    _setup_db_responses(mock_life_os, event_rows=[], total_count=0)
+
+    client.get("/api/contacts/alice@example.com/interactions")
+
+    events_ctx = mock_life_os.db.get_connection("events")
+    events_conn = events_ctx.__enter__()
+
+    # First execute call is the count query
+    count_sql = events_conn.execute.call_args_list[0][0][0]
+    assert "LIMIT 10000" in count_sql, "Count query missing LIMIT 10000 safety cap"
+    assert "SELECT COUNT(*) FROM (" in count_sql, "Count query should use sub-select for LIMIT"
