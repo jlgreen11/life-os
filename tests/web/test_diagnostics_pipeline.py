@@ -116,7 +116,7 @@ def _all_profiles_present() -> dict:
     """Return a signal_profiles dict where every expected profile exists."""
     names = [
         "relationships", "temporal", "topics", "linguistic",
-        "cadence", "mood_signals", "spatial", "decision",
+        "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
     ]
     return {
         name: {"samples_count": 10, "updated_at": "2026-01-01T00:00:00"}
@@ -155,6 +155,26 @@ def _insert_routine(db) -> None:
         )
 
 
+def _insert_workflow(db) -> None:
+    """Insert a minimal workflow so workflows_count > 0."""
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            """INSERT INTO workflows (name, steps, trigger_conditions)
+               VALUES (?, '[]', '[]')""",
+            (f"workflow_{uuid.uuid4().hex[:8]}",),
+        )
+
+
+def _insert_communication_template(db) -> None:
+    """Insert a minimal communication template so communication_templates_count > 0."""
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            """INSERT INTO communication_templates (id, context)
+               VALUES (?, 'general')""",
+            (str(uuid.uuid4()),),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -173,6 +193,8 @@ async def test_healthy_system_no_recommendations(db):
     _insert_episode(db)
     _insert_semantic_fact(db)
     _insert_routine(db)
+    _insert_workflow(db)
+    _insert_communication_template(db)
 
     resp = client.get("/api/diagnostics/pipeline")
     assert resp.status_code == 200
@@ -204,7 +226,7 @@ async def test_missing_profiles_recommendation(db):
     profile_recs = [r for r in recs if r["area"] == "signal_profiles"]
     assert len(profile_recs) == 1
     assert profile_recs[0]["severity"] == "high"
-    assert "6 signal profile(s) missing" in profile_recs[0]["message"]
+    assert "7 signal profile(s) missing" in profile_recs[0]["message"]
     assert "backfills" in profile_recs[0]["action"]
 
 
@@ -306,12 +328,14 @@ async def test_empty_user_model_tables_recommendation(db):
 
     recs = data["recommendations"]
     um_recs = [r for r in recs if r["area"] == "user_model"]
-    assert len(um_recs) == 3, f"Expected 3 user_model recommendations for empty tables, got {len(um_recs)}"
+    assert len(um_recs) == 5, f"Expected 5 user_model recommendations for empty tables, got {len(um_recs)}"
     assert all(r["severity"] == "medium" for r in um_recs)
-    table_names = {r["message"].split(" table")[0] for r in um_recs}
-    assert "episodes" in table_names
-    assert "semantic_facts" in table_names
-    assert "routines" in table_names
+    messages = " ".join(r["message"] for r in um_recs)
+    assert "episodes" in messages
+    assert "semantic_facts" in messages
+    assert "routines" in messages
+    assert "workflows" in messages
+    assert "communication_templates" in messages
 
 
 @pytest.mark.asyncio
