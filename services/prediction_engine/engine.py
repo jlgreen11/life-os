@@ -382,6 +382,14 @@ class PredictionEngine:
             except Exception as e:
                 generation_stats['calendar_reminders'] = f'error: {e}'
                 logger.error("calendar_reminders check failed: %s", e)
+
+            try:
+                connector_preds = await self._check_connector_health(current_context)
+                generation_stats['connector_health'] = len(connector_preds)
+                predictions.extend(connector_preds)
+            except Exception as e:
+                generation_stats['connector_health'] = f'error: {e}'
+                logger.error("connector_health check failed: %s", e)
         else:
             # Skip time-based predictions, mark as not run
             generation_stats['calendar_conflicts'] = '(skipped: no time trigger)'
@@ -389,6 +397,7 @@ class PredictionEngine:
             generation_stats['relationship_maintenance'] = '(skipped: no time trigger)'
             generation_stats['preparation_needs'] = '(skipped: no time trigger)'
             generation_stats['calendar_reminders'] = '(skipped: no time trigger)'
+            generation_stats['connector_health'] = '(skipped: no time trigger)'
 
         # HYBRID predictions: Run on EITHER trigger (new events OR time-based).
         # Follow-up checks need to run on time-based triggers too, because emails
@@ -1999,6 +2008,115 @@ class PredictionEngine:
             "spending_patterns: Analyzed %d transactions "
             "(total=$%.0f, categories=%d, high_spend=%d) → %d predictions",
             len(transactions), total, len(by_category), high_spend_categories, len(predictions),
+        )
+
+        return predictions
+
+    async def _check_connector_health(self, ctx: dict) -> list[Prediction]:
+        """Detect enabled connectors stuck in an error state and generate risk predictions.
+
+        Queries the connector_state table in state.db for enabled connectors
+        with status='error' and error_count >= 3 (to skip transient failures).
+        Deduplicates against existing connector health predictions from the last
+        7 days to avoid re-alerting for the same broken connector.
+
+        Returns:
+            List of Prediction objects for connectors that need user attention.
+        """
+        predictions: list[Prediction] = []
+        now = datetime.now(timezone.utc)
+
+        # Query broken connectors from state.db
+        try:
+            with self.db.get_connection("state") as conn:
+                broken = conn.execute(
+                    """SELECT connector_id, status, enabled, last_sync,
+                              error_count, last_error, updated_at
+                       FROM connector_state
+                       WHERE enabled = 1
+                         AND status = 'error'
+                         AND error_count >= 3""",
+                ).fetchall()
+        except Exception as e:
+            logger.warning("connector_health: failed to query connector_state (fail-open): %s", e)
+            return predictions
+
+        if not broken:
+            logger.debug("connector_health: all enabled connectors healthy")
+            return predictions
+
+        # Deduplication: check for existing connector health predictions in last 7 days
+        already_predicted_connectors: set[str] = set()
+        try:
+            dedup_cutoff = (now - timedelta(days=7)).isoformat()
+            with self.db.get_connection("user_model") as conn:
+                existing = conn.execute(
+                    """SELECT supporting_signals FROM predictions
+                       WHERE prediction_type = 'risk'
+                       AND created_at > ?""",
+                    (dedup_cutoff,),
+                ).fetchall()
+
+            for row in existing:
+                try:
+                    signals = json.loads(row["supporting_signals"])
+                    cid = signals.get("connector_id")
+                    # Only match predictions that are specifically connector health alerts
+                    if cid and signals.get("prediction_source") == "connector_health":
+                        already_predicted_connectors.add(cid)
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.debug("connector_health: skipping malformed dedup entry: %s", e)
+        except Exception as e:
+            logger.warning(
+                "connector_health dedup query failed (skipping dedup, may produce duplicates): %s", e
+            )
+
+        for row in broken:
+            connector_id = row["connector_id"]
+
+            # Skip if already predicted in the last 7 days
+            if connector_id in already_predicted_connectors:
+                continue
+
+            # Calculate staleness from last_sync (or updated_at as fallback)
+            reference_time = row["last_sync"] or row["updated_at"]
+            try:
+                ref_dt = datetime.fromisoformat(reference_time)
+                if ref_dt.tzinfo is None:
+                    ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+                staleness = now - ref_dt
+                days_stale = max(1, int(staleness.total_seconds() / 86400))
+            except (ValueError, TypeError):
+                days_stale = 0  # Can't determine staleness, still report the error
+
+            last_error = row["last_error"] or "Unknown error"
+            error_count = row["error_count"] or 0
+
+            if days_stale > 0:
+                desc = f"{connector_id} connector has been failing for {days_stale} day{'s' if days_stale != 1 else ''} — {last_error}"
+            else:
+                desc = f"{connector_id} connector is in error state — {last_error}"
+
+            predictions.append(Prediction(
+                prediction_type="risk",
+                description=desc,
+                confidence=0.95,
+                confidence_gate=ConfidenceGate.DEFAULT,
+                time_horizon="this_week",
+                suggested_action=f"Check {connector_id} connector configuration and reauthenticate if needed",
+                supporting_signals={
+                    "prediction_source": "connector_health",
+                    "connector_id": connector_id,
+                    "error_count": error_count,
+                    "last_error": last_error,
+                    "last_sync": row["last_sync"],
+                    "days_stale": days_stale,
+                },
+            ))
+
+        logger.info(
+            "connector_health: %d broken connectors found, %d already predicted, %d new predictions",
+            len(broken), len(already_predicted_connectors), len(predictions),
         )
 
         return predictions
