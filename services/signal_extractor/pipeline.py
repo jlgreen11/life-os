@@ -434,3 +434,91 @@ class SignalExtractorPipeline:
                 "high_confidence_facts": [],
                 "degraded": True,
             }
+
+    def get_diagnostics(self) -> dict:
+        """Return diagnostic information about the signal extraction pipeline.
+
+        Reports per-profile status, available event types for rebuild,
+        extractor readiness, and overall health so operators can understand
+        why profiles are or aren't being populated.
+
+        Each section is queried independently with try/except so that a single
+        DB failure doesn't prevent the rest of the diagnostics from returning.
+        """
+        result: dict = {}
+
+        # 1. Profile status — which profiles exist and their sample counts
+        try:
+            expected = [
+                "linguistic", "linguistic_inbound", "cadence", "mood_signals",
+                "relationships", "topics", "temporal", "spatial", "decision",
+            ]
+            profiles = {}
+            for pt in expected:
+                profile = self.ums.get_signal_profile(pt)
+                if profile:
+                    profiles[pt] = {
+                        "status": "ok",
+                        "samples_count": profile.get("samples_count", 0),
+                        "updated_at": profile.get("updated_at"),
+                    }
+                else:
+                    profiles[pt] = {"status": "missing"}
+            result["profiles"] = profiles
+            result["profiles_present"] = sum(1 for v in profiles.values() if v["status"] == "ok")
+            result["profiles_missing"] = sum(1 for v in profiles.values() if v["status"] == "missing")
+        except Exception as e:
+            result["profiles"] = {"error": str(e)}
+
+        # 2. Available event types for rebuild — what's in events.db.
+        # Cross-reference with PROFILE_EVENT_TYPES to show which missing
+        # profiles COULD be rebuilt from available event data.
+        try:
+            with self.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    "SELECT type, COUNT(*) as cnt FROM events "
+                    "WHERE type NOT LIKE 'test%' AND type NOT LIKE 'system.rule%' "
+                    "GROUP BY type ORDER BY cnt DESC LIMIT 30"
+                ).fetchall()
+            event_counts = {r["type"]: r["cnt"] for r in rows}
+            result["available_event_types"] = event_counts
+
+            # For each missing profile, check if qualifying events exist.
+            rebuild_feasibility: dict = {}
+            for pt, status in result.get("profiles", {}).items():
+                if isinstance(status, dict) and status.get("status") == "missing":
+                    needed_types = PROFILE_EVENT_TYPES.get(pt, [])
+                    available = sum(event_counts.get(t, 0) for t in needed_types)
+                    rebuild_feasibility[pt] = {
+                        "needed_event_types": needed_types,
+                        "available_events": available,
+                        "can_rebuild": available > 0,
+                    }
+            result["rebuild_feasibility"] = rebuild_feasibility
+        except Exception as e:
+            result["available_event_types"] = {"error": str(e)}
+
+        # 3. Extractor registration — list all registered extractors
+        try:
+            result["extractors"] = [
+                type(ext).__name__ for ext in self.extractors
+            ]
+            result["extractor_count"] = len(self.extractors)
+        except Exception as e:
+            result["extractors"] = {"error": str(e)}
+
+        # 4. Overall health
+        try:
+            present = result.get("profiles_present", 0)
+            missing = result.get("profiles_missing", 0)
+            if missing == 0:
+                health = "ok"
+            elif present >= 2:
+                health = "partial"
+            else:
+                health = "degraded"
+            result["health"] = health
+        except Exception:
+            result["health"] = "unknown"
+
+        return result
