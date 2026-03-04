@@ -141,13 +141,13 @@ class TestSkipLogsAtInfoLevel:
         with caplog.at_level(logging.INFO, logger="services.semantic_fact_inferrer.inferrer"):
             inferrer.run_all_inference()
 
-        # All 8 profile types should appear in skip messages at INFO level
+        # All 9 profile types should appear in skip messages at INFO level
         info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
         skip_messages = [m for m in info_messages if "skipping inference" in m.lower()]
 
-        # At minimum, all 8 methods should log a skip (profiles are empty)
-        assert len(skip_messages) >= 8, (
-            f"Expected at least 8 skip messages at INFO level, got {len(skip_messages)}: {skip_messages}"
+        # At minimum, all 9 methods should log a skip (profiles are empty)
+        assert len(skip_messages) >= 9, (
+            f"Expected at least 9 skip messages at INFO level, got {len(skip_messages)}: {skip_messages}"
         )
 
     def test_skip_messages_not_at_debug(self, user_model_store, caplog):
