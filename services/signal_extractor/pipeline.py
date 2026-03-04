@@ -7,6 +7,7 @@ Subscribes to the NATS event bus and processes every event.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 
@@ -87,6 +88,102 @@ class SignalExtractorPipeline:
                     logger.error("Extractor %s error: %s", type(extractor).__name__, e, exc_info=True)
 
         return all_signals
+
+    def rebuild_profiles_from_events(self, event_limit: int = 5000) -> dict:
+        """Rebuild all signal profiles by replaying historical events from events.db.
+
+        After database corruption and repair, signal profiles may be permanently
+        lost because the normal pipeline only processes NEW events from NATS.
+        This method replays stored events through the extractors to reconstruct
+        all signal profiles (linguistic, cadence, mood, relationships, topics,
+        temporal, spatial, decision).
+
+        Events are loaded in reverse-chronological order from events.db and then
+        processed in chronological order so that profiles accumulate correctly
+        (e.g., response-time calculations need earlier events first).
+
+        Each extractor call is wrapped in try/except following the fail-open
+        pattern: a failure in one extractor does not block others from processing
+        the same event.
+
+        Args:
+            event_limit: Maximum number of recent events to replay.  Defaults to
+                5000 which covers roughly 2-3 days of typical activity.
+
+        Returns:
+            A stats dict with keys ``events_processed``, ``profiles_rebuilt``
+            (list of extractor names that successfully processed at least one
+            event), and ``errors`` (list of error description strings).
+        """
+        logger.info("rebuild_profiles_from_events: loading up to %d events from events.db", event_limit)
+
+        # Load recent events from events.db (DESC so we get the most recent first).
+        with self.db.get_connection("events") as conn:
+            rows = conn.execute(
+                "SELECT id, type, source, timestamp, priority, payload, metadata "
+                "FROM events ORDER BY timestamp DESC LIMIT ?",
+                (event_limit,),
+            ).fetchall()
+
+        if not rows:
+            logger.info("rebuild_profiles_from_events: no events found in events.db")
+            return {"events_processed": 0, "profiles_rebuilt": [], "errors": []}
+
+        # Reverse to chronological order so profiles accumulate correctly.
+        rows = list(reversed(rows))
+
+        logger.info("rebuild_profiles_from_events: replaying %d events through %d extractors",
+                     len(rows), len(self.extractors))
+
+        events_processed = 0
+        # Track which extractors successfully processed at least one event.
+        extractor_hits: dict[str, int] = {}
+        errors: list[str] = []
+
+        for i, row in enumerate(rows):
+            # Deserialize the row into the event dict format extractors expect.
+            try:
+                event = {
+                    "id": row["id"],
+                    "type": row["type"],
+                    "source": row["source"],
+                    "timestamp": row["timestamp"],
+                    "priority": row["priority"],
+                    "payload": json.loads(row["payload"]) if row["payload"] else {},
+                    "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
+                }
+            except (json.JSONDecodeError, KeyError) as e:
+                errors.append(f"Event row deserialization error at index {i}: {e}")
+                continue
+
+            # Fan out to every extractor, just like process_event() does.
+            for extractor in self.extractors:
+                if extractor.can_process(event):
+                    try:
+                        extractor.extract(event)
+                        name = type(extractor).__name__
+                        extractor_hits[name] = extractor_hits.get(name, 0) + 1
+                    except Exception as e:
+                        # Fail-open: log and continue with next extractor.
+                        errors.append(f"{type(extractor).__name__} error on event {event.get('id', '?')}: {e}")
+
+            events_processed += 1
+
+            # Progress logging every 500 events.
+            if (i + 1) % 500 == 0:
+                logger.info("rebuild_profiles_from_events: processed %d / %d events", i + 1, len(rows))
+
+        profiles_rebuilt = sorted(extractor_hits.keys())
+        logger.info(
+            "rebuild_profiles_from_events: done — %d events processed, %d profiles rebuilt (%s), %d errors",
+            events_processed, len(profiles_rebuilt), ", ".join(profiles_rebuilt) or "none", len(errors),
+        )
+
+        return {
+            "events_processed": events_processed,
+            "profiles_rebuilt": profiles_rebuilt,
+            "errors": errors,
+        }
 
     def get_current_mood(self) -> MoodState:
         """Get the current mood estimate and persist it to the mood history.
