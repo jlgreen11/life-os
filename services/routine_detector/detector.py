@@ -26,6 +26,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Mapping from event type prefixes to activity classifications used when
+# signal profile data is unavailable.  The fallback episode-based routine
+# detector uses this to classify raw episodes by their linked event type
+# instead of relying on the temporal signal profile's interaction_type.
+EVENT_TYPE_TO_ACTIVITY: dict[str, str] = {
+    "email.received": "email_check",
+    "email.sent": "email_compose",
+    "calendar.event.created": "calendar_review",
+    "calendar.event.updated": "calendar_review",
+    "notification.created": "notification_check",
+    "system.connector.sync_complete": "system_maintenance",
+    "message.received": "message_check",
+    "message.sent": "message_compose",
+    "task.created": "task_management",
+    "task.completed": "task_management",
+    "browser.page_visited": "web_browsing",
+}
+
 
 class RoutineDetector:
     """Detects recurring behavioral patterns from episodic memory.
@@ -157,6 +175,26 @@ class RoutineDetector:
             routines.extend(temporal_routines)
         except Exception:
             logger.exception("Temporal routine detection failed (possible DB corruption)")
+
+        # Fallback: when primary temporal detection finds nothing and the
+        # temporal signal profile has insufficient samples (<25), try
+        # detecting routines directly from raw episode data.  This handles
+        # the common scenario where signal profiles are missing or corrupted
+        # but thousands of episodes exist.
+        if not temporal_routines:
+            profile_samples = self._get_temporal_profile_sample_count()
+            if profile_samples < 25:
+                logger.info(
+                    "Temporal detection returned 0 routines with only %d profile samples "
+                    "(< 25 threshold) — trying episode-based fallback",
+                    profile_samples,
+                )
+                try:
+                    fallback_routines = self._detect_routines_from_episodes_fallback(lookback_days)
+                    temporal_routines = fallback_routines
+                    routines.extend(fallback_routines)
+                except Exception:
+                    logger.exception("Episode-based fallback routine detection failed")
 
         location_routines = []
         try:
@@ -878,6 +916,237 @@ class RoutineDetector:
                     )
 
         return routines
+
+    def _get_temporal_profile_sample_count(self) -> int:
+        """Return the sample count from the temporal signal profile.
+
+        Used to decide whether the primary temporal detection has enough
+        upstream data to classify episodes reliably.  When the temporal
+        profile has fewer than 25 samples, the episode-based fallback
+        should be tried instead.
+
+        Returns:
+            Number of samples in the temporal signal profile, or 0 if
+            the profile is missing or the query fails.
+        """
+        try:
+            profile = self.user_model_store.get_signal_profile("temporal")
+            if profile and "samples_count" in profile:
+                return int(profile["samples_count"])
+            return 0
+        except Exception:
+            logger.warning("Failed to read temporal signal profile sample count")
+            return 0
+
+    def _detect_routines_from_episodes_fallback(self, lookback_days: int) -> list[dict[str, Any]]:
+        """Fallback routine detection that works directly from raw episode data.
+
+        When signal profiles are unavailable (e.g., due to user_model.db
+        corruption or insufficient upstream data), the primary temporal
+        detection may return 0 results despite thousands of episodes.
+
+        This method bypasses signal profiles entirely by:
+        1. Querying episodes directly from user_model.db
+        2. Classifying episode types using the event_type field from the
+           linked event record via the EVENT_TYPE_TO_ACTIVITY mapping
+        3. Grouping episodes by time-of-day bucket and activity type
+        4. Applying the same consistency threshold as primary detection
+
+        The output format matches ``_detect_temporal_routines()`` so that
+        routines from either path can be stored and consumed identically.
+
+        Args:
+            lookback_days: Days of history to analyze
+
+        Returns:
+            List of detected routines in the same format as
+            ``_detect_temporal_routines()``.
+        """
+        routines: list[dict[str, Any]] = []
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
+
+        # Count active days for consistency normalization
+        try:
+            active_days = self._count_active_days(cutoff)
+        except Exception:
+            logger.exception("_count_active_days failed in episode fallback; using default 1")
+            active_days = 1
+
+        # Fetch episodes with their linked event_ids
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT timestamp, event_id, interaction_type
+                       FROM episodes
+                       WHERE timestamp > ?
+                       ORDER BY timestamp""",
+                    (cutoff.isoformat(),),
+                ).fetchall()
+        except sqlite3.DatabaseError as e:
+            logger.warning("Episode fallback: user_model.db query failed: %s", e)
+            return []
+
+        if not rows:
+            logger.info("Episode fallback: 0 episodes in lookback window")
+            return []
+
+        logger.info("Episode fallback: %d episodes in lookback window", len(rows))
+
+        # Classify each episode — prefer existing interaction_type, fall back
+        # to EVENT_TYPE_TO_ACTIVITY mapping via the linked event's type field.
+        classified: list[tuple[str, str]] = []  # (timestamp, activity_type)
+        for ts, event_id, existing_type in rows:
+            # Use existing type if it's meaningful
+            if existing_type and existing_type not in (None, "unknown", "communication"):
+                classified.append((ts, existing_type))
+                continue
+
+            # Look up the event type and map it to an activity
+            activity = self._classify_event_type_to_activity(event_id)
+            if activity:
+                classified.append((ts, activity))
+
+        if not classified:
+            logger.info("Episode fallback: 0 episodes could be classified")
+            return []
+
+        logger.info("Episode fallback: %d episodes classified", len(classified))
+
+        # Bucket by time-of-day and activity type — same logic as primary detection
+        bucket_day_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for ts_str, activity_type in classified:
+            try:
+                dt_utc = datetime.fromisoformat(ts_str)
+                if dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=UTC)
+                dt_local = dt_utc.astimezone(self._tz)
+                bucket = self._hour_to_bucket(dt_local.hour)
+                local_date = dt_local.strftime("%Y-%m-%d")
+                bucket_day_sets[(bucket, activity_type)].add(local_date)
+            except (ValueError, TypeError):
+                continue
+
+        # Filter to pairs meeting min_occurrences
+        hour_actions = [
+            (bucket, atype, len(days))
+            for (bucket, atype), days in bucket_day_sets.items()
+            if len(days) >= self.min_occurrences
+        ]
+        hour_actions.sort(key=lambda x: (x[0], -x[2]))
+
+        if not hour_actions:
+            logger.info("Episode fallback: no (bucket, type) pairs meet min_occurrences=%d", self.min_occurrences)
+            return []
+
+        # Compute step durations
+        LAST_STEP_DEFAULT_MINUTES = 15.0
+        try:
+            step_duration_map = self._compute_step_duration_map(cutoff)
+        except Exception:
+            logger.exception("Episode fallback: _compute_step_duration_map failed; using empty map")
+            step_duration_map = {}
+
+        # Group by time bucket and build routines
+        bucket_actions: dict[str, list] = defaultdict(list)
+        for time_bucket, activity_type, day_count in hour_actions:
+            duration = step_duration_map.get(activity_type, 5.0)
+            bucket_actions[time_bucket].append((activity_type, day_count, duration))
+
+        effective_threshold = self._effective_consistency_threshold(active_days)
+        is_cold_start = effective_threshold < self.consistency_threshold
+
+        for bucket_name, actions in bucket_actions.items():
+            if len(actions) >= 1:
+                actions.sort(key=lambda x: x[1], reverse=True)
+
+                avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
+                consistency = min(1.0, avg_day_count / active_days)
+
+                logger.info(
+                    "Episode fallback: bucket %s consistency=%.2f (threshold=%.2f) %s",
+                    bucket_name,
+                    consistency,
+                    effective_threshold,
+                    "PASS" if consistency >= effective_threshold else "FAIL",
+                )
+
+                if consistency >= effective_threshold:
+                    steps = actions[:10]
+                    step_durations = [d for _, _, d in steps]
+                    if step_durations:
+                        step_durations[-1] = LAST_STEP_DEFAULT_MINUTES
+                    total_duration = sum(step_durations) if step_durations else LAST_STEP_DEFAULT_MINUTES
+
+                    would_fail_base = consistency < self.consistency_threshold
+                    confidence = consistency * 0.7 if (is_cold_start and would_fail_base) else consistency
+
+                    routine = {
+                        "name": f"{bucket_name.capitalize()} routine",
+                        "trigger": bucket_name,
+                        "steps": [
+                            {
+                                "order": i,
+                                "action": action,
+                                "typical_duration_minutes": dur,
+                                "skip_rate": max(0.0, 1.0 - (dc / active_days)),
+                            }
+                            for i, (action, dc, dur) in enumerate(steps)
+                        ],
+                        "typical_duration_minutes": total_duration,
+                        "consistency_score": confidence,
+                        "times_observed": int(avg_day_count),
+                        "variations": [],
+                        "cold_start": is_cold_start and would_fail_base,
+                        "detection_method": "episode_fallback",
+                    }
+                    routines.append(routine)
+                    logger.info(
+                        "Episode fallback: detected %s routine with %d steps, consistency %.2f",
+                        bucket_name,
+                        len(steps),
+                        consistency,
+                    )
+
+        return routines
+
+    def _classify_event_type_to_activity(self, event_id: str) -> str | None:
+        """Map an episode's linked event type to an activity classification.
+
+        Looks up the event by ID in the events database and maps its ``type``
+        field to an activity name using the ``EVENT_TYPE_TO_ACTIVITY`` mapping.
+        Falls back to prefix matching if an exact match isn't found.
+
+        Args:
+            event_id: The event ID linked from the episode.
+
+        Returns:
+            Activity classification string, or None if unmappable.
+        """
+        if not event_id:
+            return None
+        try:
+            with self.db.get_connection("events") as conn:
+                row = conn.execute(
+                    "SELECT type FROM events WHERE id = ?",
+                    (event_id,),
+                ).fetchone()
+            if not row or not row[0]:
+                return None
+
+            event_type = row[0]
+
+            # Exact match first
+            if event_type in EVENT_TYPE_TO_ACTIVITY:
+                return EVENT_TYPE_TO_ACTIVITY[event_type]
+
+            # Prefix match: e.g. "email.received.important" → "email.received"
+            for prefix, activity in EVENT_TYPE_TO_ACTIVITY.items():
+                if event_type.startswith(prefix):
+                    return activity
+
+            return None
+        except Exception:
+            return None
 
     def _detect_location_routines(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect routines triggered by location changes (arrive/depart patterns).
