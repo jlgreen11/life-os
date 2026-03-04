@@ -1,30 +1,27 @@
 """
-Tests for workflow detector success threshold fix.
+Tests for workflow detector threshold logic.
 
-This test suite verifies that the workflow detector can find realistic email
-response workflows even when the overall response rate is low (< 1%).
+This test suite verifies that the workflow detector uses absolute completion
+counts (not success rates) to decide whether a workflow is real.
 
 Background:
 - With 77K emails received and only 229 sent, the response rate is ~0.3%
 - Most emails (marketing, newsletters) don't require responses
-- The original 40% success threshold blocked ALL workflow detection
-- The fix lowers the threshold to 1% to enable detection of actual workflows
+- The original rate-based threshold blocked ALL workflow detection
+- The fix uses absolute completion count (min_completions=3) instead
 
 Test strategy:
 - Create realistic email patterns (high volume inbox + selective responses)
-- Verify workflows are detected even with low overall response rates
-- Ensure the detector still filters out truly random patterns
+- Verify workflows are detected when completion count >= 3, regardless of rate
+- Ensure the detector still filters out senders with < 3 completions
 """
 
-import pytest
-
-pytestmark = pytest.mark.skip(reason="Workflow detection disabled pending algorithmic redesign")
 from datetime import datetime, timedelta, timezone
+
 from services.workflow_detector.detector import WorkflowDetector
 
 
-@pytest.mark.asyncio
-async def test_email_workflow_detection_with_low_response_rate(db, user_model_store, event_store):
+def test_email_workflow_detection_with_low_response_rate(db, user_model_store, event_store):
     """
     Test that email response workflows are detected even when the overall
     response rate is very low (< 1%).
@@ -32,10 +29,10 @@ async def test_email_workflow_detection_with_low_response_rate(db, user_model_st
     Scenario:
     - 100 marketing emails received (no responses)
     - 10 boss emails received, 5 responses sent within 2h
-    - Success rate for boss emails: 50% (high)
-    - Overall success rate: 5/110 = 4.5%
+    - Overall response rate: 5/110 = 4.5% (was below old rate threshold)
+    - Completion count for boss: 5 >= min_completions(3)
 
-    Expected: Workflow detected for boss emails despite low overall rate.
+    Expected: Workflow detected for boss emails (5 completions >= 3).
     """
     detector = WorkflowDetector(db, user_model_store)
 
@@ -93,9 +90,9 @@ async def test_email_workflow_detection_with_low_response_rate(db, user_model_st
     # Run detection
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Should detect workflow for boss emails
+    # Should detect workflow for boss emails (5 completions >= min_completions=3)
     boss_workflows = [w for w in workflows if "boss@company.com" in w["name"]]
-    assert len(boss_workflows) >= 1, "Should detect workflow for boss emails despite low overall response rate"
+    assert len(boss_workflows) >= 1, "Should detect workflow for boss emails (5 completions >= 3)"
 
     boss_workflow = boss_workflows[0]
     assert boss_workflow["success_rate"] > 0.0, "Success rate should be non-zero"
@@ -103,18 +100,17 @@ async def test_email_workflow_detection_with_low_response_rate(db, user_model_st
     assert boss_workflow["times_observed"] == 10, "Should observe all 10 boss emails"
 
 
-@pytest.mark.asyncio
-async def test_workflow_detection_filters_pure_noise(db, user_model_store, event_store):
+def test_workflow_detection_filters_pure_noise(db, user_model_store, event_store):
     """
     Test that the detector still filters out random patterns with no correlation.
 
     Scenario:
     - 100 emails received from sender A
     - 3 random email.sent events (not correlated with sender A)
-    - Success rate: 3/100 = 3% (above 1% threshold)
-    - BUT: The sent emails don't occur within max_step_gap_hours
+    - The sent emails are to a different recipient
 
-    Expected: No workflow detected because events aren't temporally correlated.
+    Expected: No workflow detected because events aren't temporally correlated
+    with the sender.
     """
     detector = WorkflowDetector(db, user_model_store)
 
@@ -126,7 +122,7 @@ async def test_workflow_detection_filters_pure_noise(db, user_model_store, event
             "id": f"email-a-{i}",
             "type": "email.received",
             "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i*6)).isoformat(),  # Every 6 hours
+            "timestamp": (base_time + timedelta(hours=i * 6)).isoformat(),  # Every 6 hours
             "priority": 3,
             "payload": {
                 "from_address": "sender-a@example.com",
@@ -138,7 +134,7 @@ async def test_workflow_detection_filters_pure_noise(db, user_model_store, event
     # 3 random sent emails NOT correlated with sender A (sent to different recipient)
     for i in range(3):
         # Send these at times that DON'T align with the received emails
-        random_time = base_time + timedelta(hours=i*100 + 10)  # Every 100h, offset by 10h
+        random_time = base_time + timedelta(hours=i * 100 + 10)  # Every 100h, offset by 10h
         event_store.store_event({
             "id": f"random-sent-{i}",
             "type": "email.sent",
@@ -160,20 +156,17 @@ async def test_workflow_detection_filters_pure_noise(db, user_model_store, event
     assert len(sender_a_workflows) == 0, "Should not detect workflow for uncorrelated random events"
 
 
-@pytest.mark.asyncio
-async def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_store):
+def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_store):
     """
-    Test workflow detection with a realistic inbox profile matching Life OS data:
-    - 77K total emails
-    - 229 sent (0.3% response rate)
-    - Mix of senders (marketing, personal, work)
+    Test workflow detection with a realistic inbox profile:
+    - High volume marketing/newsletter noise
+    - Work emails with >= 3 responses (should be detected)
+    - Family emails with < 3 responses (should NOT be detected)
 
-    This simulates the actual production scenario that blocked workflow detection.
-
-    Due to test database performance, we scale down to:
-    - 1000 total emails
-    - 10 sent (1% response rate)
-    - Should still detect workflows for responsive senders
+    With absolute completion count guard (min_completions=3):
+    - colleague@work.com: 8 responses >= 3 → DETECTED
+    - Marketing senders: 0 responses < 3 → filtered out
+    - mom@family.com: 2 responses < 3 → filtered out
     """
     detector = WorkflowDetector(db, user_model_store)
 
@@ -185,7 +178,7 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
             "id": f"marketing-bulk-{i}",
             "type": "email.received",
             "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i*0.5)).isoformat(),
+            "timestamp": (base_time + timedelta(hours=i * 0.5)).isoformat(),
             "priority": 3,
             "payload": {
                 "from_address": f"promo{i % 20}@marketing.com",  # 20 different senders
@@ -200,7 +193,7 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
             "id": f"newsletter-{i}",
             "type": "email.received",
             "source": "gmail",
-            "timestamp": (base_time + timedelta(days=i*0.1)).isoformat(),
+            "timestamp": (base_time + timedelta(days=i * 0.1)).isoformat(),
             "priority": 3,
             "payload": {
                 "from_address": "newsletter@substack.com",
@@ -211,7 +204,7 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
 
     # 40 work emails, respond to 8 of them (20% response rate)
     for i in range(40):
-        receive_time = base_time + timedelta(days=i*0.5)
+        receive_time = base_time + timedelta(days=i * 0.5)
         event_store.store_event({
             "id": f"work-{i}",
             "type": "email.received",
@@ -241,9 +234,9 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
                 "metadata": {},
             })
 
-    # 10 family emails, respond to 2 of them (20% response rate)
+    # 10 family emails, respond to 2 of them (< min_completions)
     for i in range(10):
-        receive_time = base_time + timedelta(days=i*2)
+        receive_time = base_time + timedelta(days=i * 2)
         event_store.store_event({
             "id": f"family-{i}",
             "type": "email.received",
@@ -257,7 +250,7 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
             "metadata": {},
         })
 
-        # Respond to 20% (every 5th email)
+        # Respond to 2 emails (i=0 and i=5) — below min_completions=3
         if i % 5 == 0:
             response_time = receive_time + timedelta(hours=3)
             event_store.store_event({
@@ -273,105 +266,107 @@ async def test_workflow_detection_with_realistic_inbox(db, user_model_store, eve
                 "metadata": {},
             })
 
-    # Total: 1000 received, 10 sent = 1% overall response rate
-    # Run detection
+    # Total: 1000 received, 10 sent
+    # With absolute count: colleague@work.com (8 completions >= 3) detected,
+    # mom@family.com (2 completions < 3) filtered, marketing (0) filtered
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # EXPECTED RESULT: NO WORKFLOWS DETECTED
-    # Why? The top 20 senders by volume are:
-    # - newsletter@substack.com (150 emails, 0 responses = 0% success rate)
-    # - promo0-promo19@marketing.com (40 emails each, 0 responses = 0% success rate)
-    #
-    # colleague@work.com (40 emails, 8 responses = 20% success rate) doesn't make
-    # the top 20 cut because it ties with promo19 at 40 emails but comes later
-    # alphabetically in SQL sorting.
-    #
-    # This demonstrates CORRECT BEHAVIOR:
-    # 1. System correctly limits to top 20 senders by volume (performance optimization)
-    # 2. System correctly filters out workflows with 0% success rate (noise reduction)
-    # 3. In a realistic inbox with 99% noise, we don't waste storage on non-actionable workflows
-    #
-    # The optimization is working as designed - it prioritizes high-volume senders
-    # but only stores workflows that meet the success threshold.
+    # colleague@work.com should be detected (8 completions >= 3)
+    work_workflows = [w for w in workflows if "colleague@work.com" in w["name"]]
+    assert len(work_workflows) >= 1, (
+        f"Should detect colleague@work.com workflow (8 completions >= 3), got {len(work_workflows)}"
+    )
 
-    assert len(workflows) == 0, f"Should filter out zero-response senders in realistic inbox, got {len(workflows)} workflows"
+    # mom@family.com should NOT be detected (2 completions < 3)
+    family_workflows = [w for w in workflows if "mom@family.com" in w["name"]]
+    assert len(family_workflows) == 0, (
+        "Should NOT detect mom@family.com workflow (2 completions < min_completions=3)"
+    )
+
+    # Marketing senders should NOT be detected (0 completions)
+    marketing_workflows = [w for w in workflows if "marketing.com" in w.get("name", "")]
+    assert len(marketing_workflows) == 0, "Should NOT detect marketing workflows (0 completions)"
 
 
-@pytest.mark.asyncio
-async def test_workflow_threshold_boundary_cases(db, user_model_store, event_store):
+def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_store):
     """
-    Test edge cases around the 1% success threshold.
+    Test edge cases around the min_completions=3 absolute count boundary.
 
     Cases:
-    1. Exactly 1% success rate → should detect
-    2. 0.99% success rate → should not detect
-    3. 0.5% with high volume → should not detect
+    1. Exactly 3 completions out of 1000 received → should detect
+    2. Only 2 completions out of 10 received → should NOT detect (even with 20% rate)
     """
     detector = WorkflowDetector(db, user_model_store)
 
     base_time = datetime.now(timezone.utc) - timedelta(days=20)
 
-    # Case 1: Exactly 1% (100 emails, 1 response)
+    # Case 1: 3 completions out of many received (0.3% rate but 3 absolute)
     for i in range(100):
         event_store.store_event({
-            "id": f"exact-1pct-{i}",
+            "id": f"boundary-above-recv-{i}",
             "type": "email.received",
             "source": "gmail",
             "timestamp": (base_time + timedelta(hours=i)).isoformat(),
             "priority": 3,
-            "payload": {"from_address": "exact1pct@test.com"},
+            "payload": {"from_address": "above-boundary@test.com"},
             "metadata": {},
         })
 
-    # 1 response within time window
-    event_store.store_event({
-        "id": "exact-1pct-response",
-        "type": "email.sent",
-        "source": "gmail",
-        "timestamp": (base_time + timedelta(hours=2)).isoformat(),
-        "priority": 2,
-        "payload": {"to_addresses": ["exact1pct@test.com"]},
-        "metadata": {},
-    })
-
-    # Case 2: 0.99% (101 emails, 1 response) - just under threshold
-    for i in range(101):
+    # 3 responses within time window
+    for i in range(3):
         event_store.store_event({
-            "id": f"under-1pct-{i}",
+            "id": f"boundary-above-resp-{i}",
+            "type": "email.sent",
+            "source": "gmail",
+            "timestamp": (base_time + timedelta(hours=i * 2 + 1)).isoformat(),
+            "priority": 2,
+            "payload": {"to_addresses": ["above-boundary@test.com"]},
+            "metadata": {},
+        })
+
+    # Case 2: 2 completions out of 10 received (20% rate but only 2 absolute)
+    # Space received emails 1 day apart so each sent matches only 1 received
+    for i in range(10):
+        event_store.store_event({
+            "id": f"boundary-below-recv-{i}",
             "type": "email.received",
             "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i+200)).isoformat(),
+            "timestamp": (base_time + timedelta(days=i)).isoformat(),
             "priority": 3,
-            "payload": {"from_address": "under1pct@test.com"},
+            "payload": {"from_address": "below-boundary@test.com"},
             "metadata": {},
         })
 
-    # 1 response
-    event_store.store_event({
-        "id": "under-1pct-response",
-        "type": "email.sent",
-        "source": "gmail",
-        "timestamp": (base_time + timedelta(hours=202)).isoformat(),
-        "priority": 2,
-        "payload": {"to_addresses": ["under1pct@test.com"]},
-        "metadata": {},
-    })
+    # 2 replies, each 1h after a received email (within 4h gap, but only 1 match each)
+    for i in range(2):
+        event_store.store_event({
+            "id": f"boundary-below-resp-{i}",
+            "type": "email.sent",
+            "source": "gmail",
+            "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+            "priority": 2,
+            "payload": {"to_addresses": ["below-boundary@test.com"]},
+            "metadata": {},
+        })
 
     workflows = detector.detect_workflows(lookback_days=30)
 
-    exact_workflows = [w for w in workflows if "exact1pct@test.com" in w["name"]]
-    under_workflows = [w for w in workflows if "under1pct@test.com" in w["name"]]
+    above_workflows = [w for w in workflows if "above-boundary@test.com" in w["name"]]
+    below_workflows = [w for w in workflows if "below-boundary@test.com" in w["name"]]
 
-    # Both should be detected since 1% is the threshold and both have responses
-    # The key is having min_occurrences (3) following actions, not just success rate
-    # So these tests verify the threshold exists but may need adjustment based on
-    # whether the SQL query finds enough correlated events
-    assert len(exact_workflows) >= 0, "1% threshold case handled"
-    assert len(under_workflows) >= 0, "Just under 1% threshold case handled"
+    # 3 completions >= min_completions → detected
+    assert len(above_workflows) >= 1, (
+        "Should detect workflow with 3 completions (>= min_completions=3)"
+    )
+
+    # 2 completions < min_completions → NOT detected, even with 20% success rate
+    assert len(below_workflows) == 0, (
+        "Should NOT detect workflow with only 2 completions (< min_completions=3), "
+        "even though success rate is 20%"
+    )
 
 
-@pytest.mark.asyncio
-async def test_multi_step_workflow_detection(db, user_model_store, event_store):
+def test_multi_step_workflow_detection(db, user_model_store, event_store):
     """
     Test detection of multi-step workflows (email received → task created → email sent).
 
@@ -431,7 +426,7 @@ async def test_multi_step_workflow_detection(db, user_model_store, event_store):
 
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Should detect multi-step workflow
+    # Should detect multi-step workflow (10 completions >= 3)
     client_workflows = [w for w in workflows if "client@business.com" in w["name"]]
     assert len(client_workflows) >= 1, "Should detect multi-step workflow"
 
@@ -446,8 +441,7 @@ async def test_multi_step_workflow_detection(db, user_model_store, event_store):
     assert has_task or has_email, "Workflow should include task and/or email steps"
 
 
-@pytest.mark.asyncio
-async def test_workflow_storage_integration(db, user_model_store, event_store):
+def test_workflow_storage_integration(db, user_model_store, event_store):
     """
     Test that detected workflows are correctly stored in the database.
 
@@ -457,7 +451,7 @@ async def test_workflow_storage_integration(db, user_model_store, event_store):
 
     base_time = datetime.now(timezone.utc) - timedelta(days=10)
 
-    # Create a simple workflow pattern (5 emails, 3 responses = 60% success rate)
+    # Create a simple workflow pattern (5 emails, 3 responses = 3 completions >= min)
     for i in range(5):
         receive_time = base_time + timedelta(days=i)
         event_store.store_event({

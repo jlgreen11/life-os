@@ -59,13 +59,12 @@ class WorkflowDetector:
         self.min_occurrences = 3  # Need at least 3 instances to identify a workflow
         self.max_step_gap_hours = 4  # Steps within 4h can be part of same workflow
         self.min_steps = 2  # Workflows must have at least 2 distinct steps
-        # Lower success threshold to 1% to handle realistic email response rates.
-        # Most emails (marketing, newsletters, notifications) don't require responses.
-        # With 77K emails received and 229 sent, the response rate is ~0.3%, so a 40%
-        # threshold would block all workflow detection. A 1% threshold allows detection
-        # of workflows that actually happen (e.g., "respond to boss emails") without
-        # requiring unrealistic response rates.
-        self.success_threshold = 0.01  # 1% success rate minimum to store workflow
+        # Require at least 3 actual completions to identify a workflow, regardless
+        # of overall rate.  This handles the email asymmetry where most received
+        # emails are automated/marketing and don't need replies.  A user who has
+        # replied to their boss 15 times but received 5000 total emails has a 0.3%
+        # rate, but those 15 replies clearly represent a real workflow.
+        self.min_completions = 3  # Absolute completion count minimum to store workflow
 
     def detect_workflows(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all workflows from recent event history.
@@ -266,7 +265,7 @@ class WorkflowDetector:
                 else:
                     typical_duration = None
 
-                if success_rate >= self.success_threshold:
+                if completion_count >= self.min_completions:
                     workflow = {
                         "name": f"Responding to {sender}",
                         "trigger_conditions": [f"email.received.from.{sender}"],
@@ -277,7 +276,7 @@ class WorkflowDetector:
                         "times_observed": receive_count,
                     }
                     workflows.append(workflow)
-                    logger.debug(f"Detected email workflow for {sender}: {len(steps)} steps, {success_rate:.2f} success rate")
+                    logger.debug(f"Detected email workflow for {sender}: {len(steps)} steps, {completion_count} completions")
 
         # Cap at top 20 senders by email volume to keep workflow storage manageable
         # and focus on the most significant communication patterns.  On systems
@@ -386,7 +385,7 @@ class WorkflowDetector:
             # Calculate typical duration
             typical_duration = task_actions[0][2] * 60 if task_actions and task_actions[0][2] else None
 
-            if success_rate >= self.success_threshold:
+            if completion_count >= self.min_completions:
                 workflow = {
                     "name": "Task completion workflow",
                     "trigger_conditions": ["task.created"],
@@ -397,7 +396,7 @@ class WorkflowDetector:
                     "times_observed": task_stats['total_tasks'],
                 }
                 workflows.append(workflow)
-                logger.debug(f"Detected task workflow: {len(steps)} steps, {success_rate:.2f} success rate")
+                logger.debug(f"Detected task workflow: {len(steps)} steps, {completion_count} completions")
 
         return workflows
 
@@ -530,7 +529,7 @@ class WorkflowDetector:
             followup_count = sum(count for _, count, timing in calendar_actions if timing == "after")
             success_rate = min(1.0, followup_count / calendar_stats['event_count'])
 
-            if success_rate >= self.success_threshold:
+            if followup_count >= self.min_completions:
                 workflow = {
                     "name": "Calendar event workflow",
                     "trigger_conditions": ["calendar.event.created"],
@@ -541,7 +540,7 @@ class WorkflowDetector:
                     "times_observed": calendar_stats['event_count'],
                 }
                 workflows.append(workflow)
-                logger.debug(f"Detected calendar workflow: {len(steps)} steps, {success_rate:.2f} success rate")
+                logger.debug(f"Detected calendar workflow: {len(steps)} steps, {followup_count} completions")
 
         return workflows
 
@@ -637,8 +636,10 @@ class WorkflowDetector:
 
                 # Estimate success rate (assume if all steps occurred, it succeeded)
                 success_rate = min(1.0, following_actions[-1][1] / following_actions[0][1]) if following_actions else 0.5
+                # Use the least frequent following action count as completion count
+                completion_count = following_actions[-1][1] if following_actions else 0
 
-                if success_rate >= self.success_threshold:
+                if completion_count >= self.min_completions:
                     workflow = {
                         "name": f"{first_action.replace('_', ' ').title()} workflow",
                         "trigger_conditions": [first_action],
@@ -697,7 +698,7 @@ class WorkflowDetector:
                 "min_occurrences": self.min_occurrences,
                 "max_step_gap_hours": self.max_step_gap_hours,
                 "min_steps": self.min_steps,
-                "success_threshold": self.success_threshold,
+                "min_completions": self.min_completions,
             }
         except Exception as e:
             logger.warning("get_diagnostics: thresholds failed: %s", e)
