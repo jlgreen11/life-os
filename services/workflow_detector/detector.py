@@ -57,14 +57,14 @@ class WorkflowDetector:
 
         # Detection thresholds
         self.min_occurrences = 3  # Need at least 3 instances to identify a workflow
-        self.max_step_gap_hours = 4  # Steps within 4h can be part of same workflow
+        self.max_step_gap_hours = 12  # Steps within 12h can be part of same workflow (covers workday spans)
         self.min_steps = 2  # Workflows must have at least 2 distinct steps
         # Require at least 3 actual completions to identify a workflow, regardless
         # of overall rate.  This handles the email asymmetry where most received
         # emails are automated/marketing and don't need replies.  A user who has
         # replied to their boss 15 times but received 5000 total emails has a 0.3%
         # rate, but those 15 replies clearly represent a real workflow.
-        self.min_completions = 3  # Absolute completion count minimum to store workflow
+        self.min_completions = 2  # Absolute completion count minimum to store workflow
 
     def detect_workflows(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all workflows from recent event history.

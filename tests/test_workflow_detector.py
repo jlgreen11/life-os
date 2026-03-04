@@ -506,8 +506,8 @@ class TestWorkflowDetectionStrategies:
                     json.dumps({})
                 ))
 
-                # Response sent 6 hours later (exceeds max_step_gap_hours of 4)
-                response_time = event_time + timedelta(hours=6)
+                # Response sent 13 hours later (exceeds max_step_gap_hours of 12)
+                response_time = event_time + timedelta(hours=13)
                 conn.execute("""
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)

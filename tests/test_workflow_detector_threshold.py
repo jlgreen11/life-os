@@ -8,7 +8,7 @@ Background:
 - With 77K emails received and only 229 sent, the response rate is ~0.3%
 - Most emails (marketing, newsletters) don't require responses
 - The original rate-based threshold blocked ALL workflow detection
-- The fix uses absolute completion count (min_completions=3) instead
+- The fix uses absolute completion count (min_completions=2) instead
 
 Test strategy:
 - Create realistic email patterns (high volume inbox + selective responses)
@@ -90,7 +90,7 @@ def test_email_workflow_detection_with_low_response_rate(db, user_model_store, e
     # Run detection
     workflows = detector.detect_workflows(lookback_days=30)
 
-    # Should detect workflow for boss emails (5 completions >= min_completions=3)
+    # Should detect workflow for boss emails (5 completions >= min_completions=2)
     boss_workflows = [w for w in workflows if "boss@company.com" in w["name"]]
     assert len(boss_workflows) >= 1, "Should detect workflow for boss emails (5 completions >= 3)"
 
@@ -163,10 +163,10 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
     - Work emails with >= 3 responses (should be detected)
     - Family emails with < 3 responses (should NOT be detected)
 
-    With absolute completion count guard (min_completions=3):
+    With absolute completion count guard (min_completions=2):
     - colleague@work.com: 8 responses >= 3 → DETECTED
     - Marketing senders: 0 responses < 3 → filtered out
-    - mom@family.com: 2 responses < 3 → filtered out
+    - mom@family.com: 1 response < 2 → filtered out
     """
     detector = WorkflowDetector(db, user_model_store)
 
@@ -234,7 +234,7 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
                 "metadata": {},
             })
 
-    # 10 family emails, respond to 2 of them (< min_completions)
+    # 10 family emails, respond to 1 of them (< min_completions=2)
     for i in range(10):
         receive_time = base_time + timedelta(days=i * 2)
         event_store.store_event({
@@ -250,8 +250,8 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
             "metadata": {},
         })
 
-        # Respond to 2 emails (i=0 and i=5) — below min_completions=3
-        if i % 5 == 0:
+        # Respond to 1 email (i=0 only) — below min_completions=2
+        if i == 0:
             response_time = receive_time + timedelta(hours=3)
             event_store.store_event({
                 "id": f"family-response-{i}",
@@ -277,10 +277,10 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
         f"Should detect colleague@work.com workflow (8 completions >= 3), got {len(work_workflows)}"
     )
 
-    # mom@family.com should NOT be detected (2 completions < 3)
+    # mom@family.com should NOT be detected (1 completion < 2)
     family_workflows = [w for w in workflows if "mom@family.com" in w["name"]]
     assert len(family_workflows) == 0, (
-        "Should NOT detect mom@family.com workflow (2 completions < min_completions=3)"
+        "Should NOT detect mom@family.com workflow (1 completion < min_completions=2)"
     )
 
     # Marketing senders should NOT be detected (0 completions)
@@ -290,11 +290,11 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
 
 def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_store):
     """
-    Test edge cases around the min_completions=3 absolute count boundary.
+    Test edge cases around the min_completions=2 absolute count boundary.
 
     Cases:
     1. Exactly 3 completions out of 1000 received → should detect
-    2. Only 2 completions out of 10 received → should NOT detect (even with 20% rate)
+    2. Only 1 completion out of 10 received → should NOT detect (even with 10% rate)
     """
     detector = WorkflowDetector(db, user_model_store)
 
@@ -324,7 +324,7 @@ def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_stor
             "metadata": {},
         })
 
-    # Case 2: 2 completions out of 10 received (20% rate but only 2 absolute)
+    # Case 2: 1 completion out of 10 received (10% rate but only 1 absolute)
     # Space received emails 1 day apart so each sent matches only 1 received
     for i in range(10):
         event_store.store_event({
@@ -337,8 +337,8 @@ def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_stor
             "metadata": {},
         })
 
-    # 2 replies, each 1h after a received email (within 4h gap, but only 1 match each)
-    for i in range(2):
+    # 1 reply, 1h after a received email (within 12h gap, but only 1 match)
+    for i in range(1):
         event_store.store_event({
             "id": f"boundary-below-resp-{i}",
             "type": "email.sent",
@@ -356,13 +356,13 @@ def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_stor
 
     # 3 completions >= min_completions → detected
     assert len(above_workflows) >= 1, (
-        "Should detect workflow with 3 completions (>= min_completions=3)"
+        "Should detect workflow with 3 completions (>= min_completions=2)"
     )
 
-    # 2 completions < min_completions → NOT detected, even with 20% success rate
+    # 1 completion < min_completions → NOT detected, even with 10% success rate
     assert len(below_workflows) == 0, (
-        "Should NOT detect workflow with only 2 completions (< min_completions=3), "
-        "even though success rate is 20%"
+        "Should NOT detect workflow with only 1 completion (< min_completions=2), "
+        "even though success rate is 10%"
     )
 
 

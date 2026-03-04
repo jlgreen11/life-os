@@ -2,7 +2,7 @@
 Tests for workflow detector absolute completion count guard.
 
 Validates that the workflow detector uses absolute completion counts
-(min_completions=3) instead of rate-based thresholds to decide whether
+(min_completions=2) instead of rate-based thresholds to decide whether
 a workflow is real.  This fixes the fundamental problem where a user
 who replied to their boss 15 times but received 5000 total emails had
 a 0.3% rate, below any reasonable percentage threshold.
@@ -33,7 +33,7 @@ class TestEmailWorkflowAbsoluteCount:
     def test_3_replies_out_of_1000_detected(self, detector, db):
         """Email workflow with 3 replies out of 1000 received is detected.
 
-        completion_count=3 >= min_completions=3, so the workflow should
+        completion_count=3 >= min_completions=2, so the workflow should
         be detected even though the success rate is only 0.3%.
         """
         base_time = datetime.now(timezone.utc) - timedelta(days=20)
@@ -77,7 +77,7 @@ class TestEmailWorkflowAbsoluteCount:
         sender_workflows = [w for w in workflows if sender in w["name"]]
         assert len(sender_workflows) >= 1, (
             f"Should detect workflow with 3 completions out of 1000 received "
-            f"(completion_count=3 >= min_completions=3), got {len(sender_workflows)}"
+            f"(completion_count=3 >= min_completions=2), got {len(sender_workflows)}"
         )
 
         # Success rate is retained for informational purposes
@@ -85,11 +85,11 @@ class TestEmailWorkflowAbsoluteCount:
         assert "success_rate" in workflow
         assert workflow["success_rate"] < 0.01  # 0.3% rate
 
-    def test_2_replies_out_of_10_not_detected(self, detector, db):
-        """Email workflow with 2 replies out of 10 received is NOT detected.
+    def test_1_reply_out_of_10_not_detected(self, detector, db):
+        """Email workflow with 1 reply out of 10 received is NOT detected.
 
-        completion_count=2 < min_completions=3, so the workflow should NOT
-        be detected even though the success rate is 20%.
+        completion_count=1 < min_completions=2, so the workflow should NOT
+        be detected even though the success rate is 10%.
         """
         base_time = datetime.now(timezone.utc) - timedelta(days=10)
         sender = "frequent@example.com"
@@ -111,8 +111,8 @@ class TestEmailWorkflowAbsoluteCount:
                     ),
                 )
 
-            # Only 2 replies (below min_completions=3)
-            for i in range(2):
+            # Only 1 reply (below min_completions=2)
+            for i in range(1):
                 response_time = base_time + timedelta(days=i, hours=1)
                 conn.execute(
                     """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata,
@@ -131,14 +131,14 @@ class TestEmailWorkflowAbsoluteCount:
 
         sender_workflows = [w for w in workflows if sender in w["name"]]
         assert len(sender_workflows) == 0, (
-            "Should NOT detect workflow with only 2 completions "
-            "(completion_count=2 < min_completions=3), even though rate is 20%"
+            "Should NOT detect workflow with only 1 completion "
+            "(completion_count=1 < min_completions=2), even though rate is 10%"
         )
 
     def test_5_replies_out_of_500_detected(self, detector, db):
         """Email workflow with 5 replies out of 500 received is detected.
 
-        completion_count=5 >= min_completions=3, so the workflow should
+        completion_count=5 >= min_completions=2, so the workflow should
         be detected even though the success rate is only 1%.
         """
         base_time = datetime.now(timezone.utc) - timedelta(days=20)
@@ -182,7 +182,7 @@ class TestEmailWorkflowAbsoluteCount:
         sender_workflows = [w for w in workflows if sender in w["name"]]
         assert len(sender_workflows) >= 1, (
             f"Should detect workflow with 5 completions out of 500 received "
-            f"(completion_count=5 >= min_completions=3), got {len(sender_workflows)}"
+            f"(completion_count=5 >= min_completions=2), got {len(sender_workflows)}"
         )
 
 
@@ -192,7 +192,7 @@ class TestTaskWorkflowAbsoluteCount:
     def test_task_workflow_with_3_completions_detected(self, detector, db):
         """Task workflow with 3+ completions is detected regardless of rate.
 
-        Creates 20 tasks, completes 3 — completion_count=3 >= min_completions=3.
+        Creates 20 tasks, completes 3 — completion_count=3 >= min_completions=2.
         """
         base_time = datetime.now(timezone.utc) - timedelta(days=15)
 
@@ -244,13 +244,13 @@ class TestTaskWorkflowAbsoluteCount:
 
         task_workflows = [w for w in workflows if "task" in w["name"].lower()]
         assert len(task_workflows) >= 1, (
-            "Should detect task workflow with 3 completions >= min_completions=3"
+            "Should detect task workflow with 3 completions >= min_completions=2"
         )
 
-    def test_task_workflow_with_2_completions_not_detected(self, detector, db):
-        """Task workflow with only 2 completions is NOT detected.
+    def test_task_workflow_with_1_completion_not_detected(self, detector, db):
+        """Task workflow with only 1 completion is NOT detected.
 
-        Creates 5 tasks, completes 2 — completion_count=2 < min_completions=3.
+        Creates 5 tasks, completes 1 — completion_count=1 < min_completions=2.
         """
         base_time = datetime.now(timezone.utc) - timedelta(days=10)
 
@@ -283,8 +283,8 @@ class TestTaskWorkflowAbsoluteCount:
                     ),
                 )
 
-                # Only complete first 2
-                if i < 2:
+                # Only complete first 1
+                if i < 1:
                     complete_time = create_time + timedelta(hours=2)
                     conn.execute(
                         """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
@@ -301,7 +301,7 @@ class TestTaskWorkflowAbsoluteCount:
 
         task_workflows = [w for w in workflows if "task" in w["name"].lower()]
         assert len(task_workflows) == 0, (
-            "Should NOT detect task workflow with 2 completions < min_completions=3"
+            "Should NOT detect task workflow with 1 completion < min_completions=2"
         )
 
 
@@ -311,7 +311,7 @@ class TestMinCompletionsAttribute:
     def test_min_completions_attribute_exists(self, detector):
         """Verify min_completions attribute exists and success_threshold is removed."""
         assert hasattr(detector, "min_completions"), "Should have min_completions attribute"
-        assert detector.min_completions == 3, "min_completions should default to 3"
+        assert detector.min_completions == 2, "min_completions should default to 2"
         assert not hasattr(detector, "success_threshold"), (
             "success_threshold should be removed (replaced by min_completions)"
         )
@@ -322,7 +322,7 @@ class TestMinCompletionsAttribute:
         thresholds = diagnostics["thresholds"]
 
         assert "min_completions" in thresholds, "Diagnostics should report min_completions"
-        assert thresholds["min_completions"] == 3
+        assert thresholds["min_completions"] == 2
         assert "success_threshold" not in thresholds, (
             "Diagnostics should NOT report success_threshold (removed)"
         )
