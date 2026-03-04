@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -442,12 +443,15 @@ Respond with exactly one word: critical, high, normal, or low."""
         # If vector store is unavailable or disabled, fall back to simple SQL LIKE
         # pattern matching. This is less intelligent but provides a reliable baseline.
         if not self.vector_store or not results:
+            # Restrict the LIKE scan to the last 90 days to avoid a full-table
+            # scan across the entire event history (54K+ rows).
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
             with self.db.get_connection("events") as conn:
                 rows = conn.execute(
                     """SELECT type, source, timestamp, payload FROM events
-                       WHERE payload LIKE ?
+                       WHERE payload LIKE ? AND timestamp > ?
                        ORDER BY timestamp DESC LIMIT 20""",
-                    (f"%{query}%",),
+                    (f"%{query}%", cutoff),
                 ).fetchall()
 
             # Convert SQL rows into the common result format

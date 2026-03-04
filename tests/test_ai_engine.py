@@ -21,7 +21,7 @@ Coverage areas:
 import json
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from services.ai_engine.engine import AIEngine
 from services.ai_engine.context import ContextAssembler
@@ -744,3 +744,89 @@ async def test_pii_shield_integration_in_draft_reply(db, user_model_store):
             assert "alice@example.com" in result
             assert "[PERSON_1]" not in result
             assert "[EMAIL_1]" not in result
+
+
+# -------------------------------------------------------------------
+# SQL Fallback Timestamp Bound Tests
+# -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_sql_fallback_excludes_old_events(db, user_model_store, event_store):
+    """SQL fallback search should only return events from the last 90 days."""
+    now = datetime.now(timezone.utc)
+
+    # Insert a recent event (within 90-day window)
+    recent_ts = (now - timedelta(days=10)).isoformat()
+    event_store.store_event({
+        "id": "evt-recent",
+        "type": "email.received",
+        "source": "gmail",
+        "timestamp": recent_ts,
+        "priority": "normal",
+        "payload": {"snippet": "Recent budget report for Q1"},
+        "metadata": {},
+    })
+
+    # Insert an old event (outside 90-day window)
+    old_ts = (now - timedelta(days=180)).isoformat()
+    event_store.store_event({
+        "id": "evt-old",
+        "type": "email.received",
+        "source": "gmail",
+        "timestamp": old_ts,
+        "priority": "normal",
+        "payload": {"snippet": "Old budget report from last year"},
+        "metadata": {},
+    })
+
+    # Force SQL fallback by setting vector_store=None
+    engine = AIEngine(db, user_model_store, {})
+    engine.vector_store = None
+
+    with patch.object(engine.context, "assemble_search_context") as mock_context:
+        mock_context.return_value = "User is searching for: budget report"
+
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
+            mock_local.return_value = "Found a recent budget report."
+
+            await engine.search_life("budget report")
+
+            # Verify LLM was called with results containing only the recent event
+            context_sent = mock_local.call_args[0][1]
+            assert "Search results:" in context_sent
+            assert "Recent budget report" in context_sent
+            assert "Old budget report" not in context_sent
+
+
+@pytest.mark.asyncio
+async def test_search_sql_fallback_includes_boundary_events(db, user_model_store, event_store):
+    """SQL fallback should include events right at the 90-day boundary."""
+    now = datetime.now(timezone.utc)
+
+    # Insert an event just inside the 90-day window (89 days ago)
+    boundary_ts = (now - timedelta(days=89)).isoformat()
+    event_store.store_event({
+        "id": "evt-boundary",
+        "type": "message.received",
+        "source": "slack",
+        "timestamp": boundary_ts,
+        "priority": "normal",
+        "payload": {"snippet": "Boundary meeting notes"},
+        "metadata": {},
+    })
+
+    engine = AIEngine(db, user_model_store, {})
+    engine.vector_store = None
+
+    with patch.object(engine.context, "assemble_search_context") as mock_context:
+        mock_context.return_value = "User is searching for: meeting notes"
+
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
+            mock_local.return_value = "Found meeting notes."
+
+            await engine.search_life("meeting notes")
+
+            context_sent = mock_local.call_args[0][1]
+            assert "Search results:" in context_sent
+            assert "Boundary meeting notes" in context_sent
