@@ -691,3 +691,219 @@ class TestRoutineDetector:
         assert len(routine["steps"]) == 1
         assert routine["steps"][0]["action"] == "post_call_email_check"
         assert routine["consistency_score"] >= 0.6
+
+    def test_cold_start_threshold_scaling(self, db, user_model_store):
+        """Verify _effective_consistency_threshold() returns correct tiered values.
+
+        The method scales the consistency threshold based on data maturity:
+        - < 7 active days  → 0.3 (very lenient)
+        - < 14 active days → 0.4 (moderate)
+        - < 30 active days → 0.5 (approaching maturity)
+        - >= 30 active days → 0.6 (full base threshold)
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        assert detector._effective_consistency_threshold(3) == 0.3
+        assert detector._effective_consistency_threshold(6) == 0.3
+        assert detector._effective_consistency_threshold(7) == 0.4
+        assert detector._effective_consistency_threshold(13) == 0.4
+        assert detector._effective_consistency_threshold(14) == 0.5
+        assert detector._effective_consistency_threshold(29) == 0.5
+        assert detector._effective_consistency_threshold(30) == 0.6
+        assert detector._effective_consistency_threshold(60) == 0.6
+        assert detector._effective_consistency_threshold(365) == 0.6
+
+    def test_temporal_routine_detection_cold_start(self, db, user_model_store):
+        """During cold-start (< 7 active days), a pattern with ~0.4 consistency
+        should be detected because the effective threshold drops to 0.3.
+
+        Creates a morning email pattern on 3 of 5 active days (consistency = 0.6).
+        Even with the base threshold this would pass, but with cold-start scaling
+        the threshold is 0.3, so even sparser patterns would also be caught.
+
+        Also verifies the detected routine has cold_start=False when the consistency
+        exceeds the base threshold (0.6 >= 0.6).
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        base_date = datetime.now(timezone.utc) - timedelta(days=5)
+
+        # Create episodes on 5 days with morning email on 3 of them
+        for day_offset in range(5):
+            day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+
+            # Morning email on days 0, 2, 4 (3 of 5 = 0.6 consistency)
+            if day_offset in [0, 2, 4]:
+                user_model_store.store_episode({
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "cold_start_email",
+                    "content_summary": "Cold start email",
+                })
+
+            # Filler on all days so active_days = 5
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": (day_start + timedelta(hours=4)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": f"cs_filler_{day_offset}",
+                "content_summary": f"Filler {day_offset}",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # With 5 active days, threshold is 0.3, and 3/5 = 0.6 consistency → detected
+        morning = [r for r in routines if r["trigger"] == "morning"]
+        assert len(morning) >= 1
+        routine = morning[0]
+        # consistency 0.6 >= base 0.6, so no cold_start scaling
+        assert routine["cold_start"] is False
+
+    def test_cold_start_sparse_pattern_detected(self, db, user_model_store):
+        """A pattern with consistency below the base threshold (0.6) but above
+        the cold-start threshold (0.3) should be detected with reduced confidence
+        and cold_start=True.
+
+        Creates episodes on 5 days with a morning action on only 2 of 5 days
+        (consistency = 0.4). The base threshold of 0.6 would reject this, but
+        the cold-start threshold of 0.3 (for < 7 active days) accepts it.
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        base_date = datetime.now(timezone.utc) - timedelta(days=5)
+
+        # Morning action on only 3 of 5 days to get consistency near the boundary.
+        # We need min_occurrences=3, so 3 days is the minimum.
+        # 3/5 = 0.6 → this passes even the base threshold.
+        # To test cold_start=True, we need consistency < 0.6 but >= 0.3.
+        # Use 3 occurrences over a higher number of active days.
+        # Create 10 filler days so active_days=10, but morning action on 4 days → 0.4.
+        for day_offset in range(10):
+            day_start = base_date.replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+            # Filler on all 10 days
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": f"filler_cs2_{day_offset}",
+                "content_summary": f"Filler {day_offset}",
+            })
+
+        # Morning action on 4 of 10 days → consistency = 0.4
+        for day_offset in [0, 3, 6, 9]:
+            day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "sparse_cold_email",
+                "content_summary": "Sparse cold email",
+            })
+
+        # With 10 active days (< 14), threshold is 0.4.
+        # consistency = 4/10 = 0.4, which passes 0.4 threshold but fails base 0.6.
+        routines = detector.detect_routines(lookback_days=30)
+
+        morning = [r for r in routines if r["trigger"] == "morning"]
+        assert len(morning) >= 1
+        routine = morning[0]
+        # The routine should be marked as cold-start with reduced confidence
+        assert routine["cold_start"] is True
+        # Confidence should be scaled: 0.4 * 0.7 = 0.28
+        assert routine["consistency_score"] == pytest.approx(0.4 * 0.7, abs=0.05)
+
+    def test_routine_confidence_scaled_for_cold_start(self, db, user_model_store):
+        """Routines detected below the base threshold have reduced confidence
+        (consistency * 0.7) and cold_start=True in metadata.
+
+        This ensures downstream consumers (e.g., prediction engine) treat
+        cold-start routines as provisional.
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        # Create a location-based pattern with 5 active days and location
+        # actions on 3 of them → consistency = 3/5 = 0.6, which passes
+        # cold-start threshold of 0.3 (< 7 days) AND base threshold 0.6.
+        # To get cold_start=True, we need consistency < 0.6.
+        # Use 6 active days, location on 3 → 3/6 = 0.5 (< 0.6 base, >= 0.3 cold-start)
+        base_date = datetime.now(timezone.utc) - timedelta(days=6)
+
+        for day_offset in range(6):
+            day_start = base_date.replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+            # Filler on all 6 days
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": f"filler_loc_{day_offset}",
+                "content_summary": f"Filler {day_offset}",
+                "location": "Gym",
+            })
+
+        # Location action on 3 of 6 days at Gym → consistency = 0.5
+        for day_offset in [0, 2, 4]:
+            day_start = base_date.replace(hour=7, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "gym_workout",
+                "content_summary": "Gym workout",
+                "location": "Gym",
+            })
+
+        routines = detector.detect_routines(lookback_days=30)
+
+        # gym_workout appears on 3/6 days = 0.5 consistency.
+        # With 6 active days (< 7), threshold = 0.3, so it passes.
+        # But 0.5 < base 0.6, so cold_start=True and confidence = 0.5 * 0.7 = 0.35
+        gym_routines = [r for r in routines if "Gym" in r.get("name", "")]
+        assert len(gym_routines) >= 1
+        routine = gym_routines[0]
+        assert routine["cold_start"] is True
+        assert routine["consistency_score"] < 0.6  # Scaled down
+
+    def test_mature_data_uses_full_threshold(self, db, user_model_store):
+        """With 30+ active days, the full base threshold (0.6) should be used.
+
+        A pattern appearing on 10 of 35 days (consistency ~0.29) should NOT be
+        detected when active_days >= 30, because the threshold remains at 0.6.
+        """
+        detector = RoutineDetector(db, user_model_store)
+
+        base_date = datetime.now(timezone.utc) - timedelta(days=35)
+
+        # Create episodes on 35 days
+        for day_offset in range(35):
+            day_start = base_date.replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": f"filler_mat_{day_offset}",
+                "content_summary": f"Filler {day_offset}",
+            })
+
+        # Morning action on only 10 of 35 days → consistency ≈ 0.29 < 0.6
+        for day_offset in [0, 3, 7, 10, 14, 17, 21, 24, 28, 31]:
+            day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+            user_model_store.store_episode({
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "mature_morning_check",
+                "content_summary": "Mature morning check",
+            })
+
+        routines = detector.detect_routines(lookback_days=40)
+
+        # With 35 active days, threshold = 0.6 (full). 10/35 ≈ 0.29 < 0.6 → rejected.
+        mature_routines = [
+            r for r in routines
+            if any(s["action"] == "mature_morning_check" for s in r.get("steps", []))
+        ]
+        assert len(mature_routines) == 0, (
+            "With 35 active days (>= 30), base threshold 0.6 should apply — "
+            "10/35 ≈ 0.29 consistency should not produce a routine"
+        )
