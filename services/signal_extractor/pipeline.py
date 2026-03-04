@@ -57,6 +57,51 @@ PROFILE_EVENT_TYPES: dict[str, list[str]] = {
 }
 
 
+def _is_profile_stale(profile: dict) -> bool:
+    """Determine whether an existing signal profile row has no useful data.
+
+    A profile is considered stale when:
+    - Its ``data`` field is falsy (None, empty dict)
+    - Its ``data`` has no keys beyond common metadata (e.g., only ``updated_at``)
+    - Its ``samples_count`` is below the minimum threshold (< 5)
+
+    This catches rows that were created by a single event or schema migration
+    but don't contain enough accumulated signal data to be useful.
+
+    Args:
+        profile: A dict as returned by ``UserModelStore.get_signal_profile()``,
+            containing at minimum ``data`` and ``samples_count`` keys.
+
+    Returns:
+        True if the profile should be treated as missing and rebuilt.
+    """
+    # Metadata-only keys that don't count as real signal data.
+    _METADATA_KEYS = {"updated_at", "created_at", "profile_type"}
+    _MIN_SAMPLES = 5
+
+    data = profile.get("data")
+    samples = profile.get("samples_count", 0)
+
+    # No data at all — stale.
+    if not data:
+        return True
+
+    # Data exists but has no meaningful keys (only metadata or empty nested dicts).
+    meaningful_keys = {k for k in data if k not in _METADATA_KEYS}
+    if not meaningful_keys:
+        return True
+
+    # Data keys exist but all values are empty containers (e.g., {"averages": {}}).
+    if all(isinstance(data[k], dict) and not data[k] for k in meaningful_keys):
+        return True
+
+    # Too few samples to be reliable.
+    if samples < _MIN_SAMPLES:
+        return True
+
+    return False
+
+
 class SignalExtractorPipeline:
     """
     The main pipeline that routes events through all extractors.
@@ -141,11 +186,15 @@ class SignalExtractorPipeline:
         ]
 
         try:
-            # Determine which profiles are missing.
+            # Determine which profiles are missing or stale (exist but have
+            # no useful data).  Stale profiles are treated identically to
+            # missing ones — they need a full rebuild from historical events.
             missing = []
             for profile_type in expected_profiles:
                 profile = self.ums.get_signal_profile(profile_type)
                 if profile is None:
+                    missing.append(profile_type)
+                elif _is_profile_stale(profile):
                     missing.append(profile_type)
 
             if not missing:
@@ -178,12 +227,14 @@ class SignalExtractorPipeline:
                 event_limit=50000, missing_profiles=missing,
             )
 
-            # Determine which previously-missing profiles now exist.
+            # Determine which previously-missing/stale profiles now have
+            # useful data.  Use the same stale check so a rebuild that only
+            # produced a single sample isn't counted as success.
             rebuilt = []
             still_missing = []
             for profile_type in missing:
                 profile = self.ums.get_signal_profile(profile_type)
-                if profile is not None:
+                if profile is not None and not _is_profile_stale(profile):
                     rebuilt.append(profile_type)
                 else:
                     still_missing.append(profile_type)
@@ -465,17 +516,25 @@ class SignalExtractorPipeline:
             profiles = {}
             for pt in expected:
                 profile = self.ums.get_signal_profile(pt)
-                if profile:
+                if profile is None:
+                    profiles[pt] = {"status": "missing"}
+                elif _is_profile_stale(profile):
+                    profiles[pt] = {
+                        "status": "stale",
+                        "samples_count": profile.get("samples_count", 0),
+                        "updated_at": profile.get("updated_at"),
+                    }
+                else:
                     profiles[pt] = {
                         "status": "ok",
                         "samples_count": profile.get("samples_count", 0),
                         "updated_at": profile.get("updated_at"),
                     }
-                else:
-                    profiles[pt] = {"status": "missing"}
             result["profiles"] = profiles
             result["profiles_present"] = sum(1 for v in profiles.values() if v["status"] == "ok")
-            result["profiles_missing"] = sum(1 for v in profiles.values() if v["status"] == "missing")
+            result["profiles_missing"] = sum(
+                1 for v in profiles.values() if v["status"] in ("missing", "stale")
+            )
         except Exception as e:
             result["profiles"] = {"error": str(e)}
 
@@ -495,7 +554,7 @@ class SignalExtractorPipeline:
             # For each missing profile, check if qualifying events exist.
             rebuild_feasibility: dict = {}
             for pt, status in result.get("profiles", {}).items():
-                if isinstance(status, dict) and status.get("status") == "missing":
+                if isinstance(status, dict) and status.get("status") in ("missing", "stale"):
                     needed_types = PROFILE_EVENT_TYPES.get(pt, [])
                     available = sum(event_counts.get(t, 0) for t in needed_types)
                     rebuild_feasibility[pt] = {
