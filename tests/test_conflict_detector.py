@@ -453,6 +453,65 @@ class TestForwardLookingWindow:
         conflicts = detector.detect_conflicts(forward_hours=96)
         assert len(conflicts) == 1
 
+    def test_old_synced_events_excluded_by_sql_filter(self, db):
+        """Events with a timestamp older than 90 days should be excluded at the SQL level.
+
+        The SQL query bounds results with ``AND timestamp > ?`` using a 90-day
+        lookback.  Events synced more than 90 days ago won't even be fetched,
+        preventing unnecessary I/O on large event tables.
+        """
+        old_timestamp = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+
+        # Two overlapping future events with very old sync timestamps
+        _insert_calendar_event(
+            db,
+            summary="Ancient Sync A",
+            start_time=_future_iso(2),
+            end_time=_future_iso(3),
+            timestamp=old_timestamp,
+        )
+        _insert_calendar_event(
+            db,
+            summary="Ancient Sync B",
+            start_time=_future_iso(2.5),
+            end_time=_future_iso(3.5),
+            timestamp=old_timestamp,
+        )
+
+        detector = ConflictDetector(db)
+        # These events have overlapping calendar times but their sync timestamps
+        # are older than 90 days, so the SQL filter excludes them.
+        conflicts = detector.detect_conflicts()
+        assert conflicts == []
+
+    def test_recent_synced_events_included_by_sql_filter(self, db):
+        """Events with a timestamp within the 90-day window should be fetched and checked.
+
+        Confirms the SQL time filter does not exclude events that were synced
+        recently (even if synced weeks ago, as long as within 90 days).
+        """
+        recent_timestamp = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+        id_a = _insert_calendar_event(
+            db,
+            summary="Recent Sync A",
+            start_time=_future_iso(2),
+            end_time=_future_iso(3),
+            timestamp=recent_timestamp,
+        )
+        id_b = _insert_calendar_event(
+            db,
+            summary="Recent Sync B",
+            start_time=_future_iso(2.5),
+            end_time=_future_iso(3.5),
+            timestamp=recent_timestamp,
+        )
+
+        detector = ConflictDetector(db)
+        conflicts = detector.detect_conflicts()
+        assert len(conflicts) == 1
+        assert {conflicts[0]["event_a_id"], conflicts[0]["event_b_id"]} == {id_a, id_b}
+
     def test_event_currently_in_progress_included(self, db):
         """An event that started in the past but hasn't ended yet should be included."""
         id_a = _insert_calendar_event(

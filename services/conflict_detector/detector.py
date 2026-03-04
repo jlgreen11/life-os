@@ -123,20 +123,26 @@ class ConflictDetector:
     def _detect_conflicts_impl(self, forward_hours: int) -> list[dict[str, Any]]:
         """Core implementation of conflict detection (unwrapped for testing clarity).
 
-        Fetches all calendar events (up to 5000) and filters in Python to those
-        whose start_time falls within the upcoming *forward_hours* window.  This
-        mirrors the CalDAV connector's approach (see ``connectors/caldav/connector.py``
-        CRITICAL FIX iteration 169).
+        Fetches recent calendar events and filters in Python to those whose
+        start_time falls within the upcoming *forward_hours* window.  A 90-day
+        SQL-level lookback on ``timestamp`` bounds the query so we don't scan
+        the entire events table, while the Python filter handles the forward-
+        looking calendar window.
         """
         now = datetime.now(timezone.utc)
         window_end = now + timedelta(hours=forward_hours)
+        # 90-day lookback bounds the SQL query — calendar events synced more
+        # than 90 days ago are unlikely to represent upcoming appointments.
+        timestamp_cutoff = (now - timedelta(days=90)).isoformat()
 
         with self.db.get_connection("events") as conn:
             rows = conn.execute(
-                """SELECT * FROM events
+                """SELECT id, payload, timestamp FROM events
                    WHERE type = 'calendar.event.created'
+                     AND timestamp > ?
                    ORDER BY timestamp DESC
-                   LIMIT 5000""",
+                   LIMIT 2000""",
+                (timestamp_cutoff,),
             ).fetchall()
 
         if len(rows) < 2:
