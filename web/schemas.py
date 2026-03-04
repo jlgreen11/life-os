@@ -206,6 +206,16 @@ class SourceWeightCreate(BaseModel):
 # Partial update for a communication template.  All fields are optional;
 # only supplied fields are changed.  Structural fields (id, context,
 # contact_id, channel) are not exposed here — they are immutable.
+class BadgeCountsResponse(BaseModel):
+    """Response model for GET /api/dashboard/badges.
+
+    Returns per-topic badge counts so the frontend can update tab badges
+    with a single lightweight request instead of 5 separate feed calls.
+    """
+
+    badges: dict[str, int]
+
+
 class TemplateUpdateRequest(BaseModel):
     greeting: Optional[str] = None
     closing: Optional[str] = None
