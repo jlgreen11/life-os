@@ -560,23 +560,30 @@ class LifeOS:
             logger.warning("       ⚠ Episode backfill from events failed (non-fatal): %s", e)
 
     async def _backfill_episode_classification_if_needed(self):
-        """Reclassify old episodes with granular interaction types if needed.
+        """Reclassify old episodes with stale interaction types if needed.
 
-        Checks for episodes with the old generic "communication" interaction_type
-        and reclassifies them using the granular classification logic. This is
-        critical for enabling routine and workflow detection, which rely on seeing
-        diverse interaction types (email_received, email_sent, meeting_scheduled, etc.)
-        rather than everything collapsing into one generic type.
+        Checks for episodes with NULL, 'unknown', or the old generic
+        'communication' interaction_type and reclassifies them using the
+        granular classification logic. This is critical for enabling routine
+        and workflow detection, which rely on seeing diverse interaction types
+        (email_received, email_sent, meeting_scheduled, etc.) rather than
+        everything collapsing into one generic type or being invisible due to
+        NULL values.
 
-        This migration runs automatically on startup, making the system self-healing
-        after deployments that add new classification logic.
+        The routine detector's primary query excludes NULL, 'unknown', and
+        'communication' episodes, so any episode with those types is
+        effectively invisible to routine detection.
+
+        This migration runs automatically on startup, making the system
+        self-healing after deployments that add new classification logic.
         """
         try:
-            # Count episodes with the old generic classification
+            # Count episodes with stale or missing classification
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.execute("""
                     SELECT COUNT(*) FROM episodes
-                    WHERE interaction_type = 'communication'
+                    WHERE interaction_type IS NULL
+                       OR interaction_type IN ('communication', 'unknown')
                 """)
                 stale_count = cursor.fetchone()[0]
 
@@ -591,10 +598,11 @@ class LifeOS:
             with self.db.get_connection("user_model") as user_model_conn, \
                  self.db.get_connection("events") as events_conn:
 
-                # Fetch all stale episodes
+                # Fetch all stale episodes (NULL, 'communication', or 'unknown')
                 cursor = user_model_conn.execute("""
                     SELECT id, event_id FROM episodes
-                    WHERE interaction_type = 'communication'
+                    WHERE interaction_type IS NULL
+                       OR interaction_type IN ('communication', 'unknown')
                 """)
                 stale_episodes = cursor.fetchall()
 
@@ -615,6 +623,11 @@ class LifeOS:
 
                     # Reclassify using the current granular logic
                     new_interaction_type = self._classify_interaction_type(event_type, payload)
+
+                    # Guard: skip if reclassification still yields 'unknown'
+                    # to avoid infinite re-processing on future startups
+                    if new_interaction_type == "unknown":
+                        continue
 
                     # Update the episode
                     user_model_conn.execute("""
