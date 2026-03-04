@@ -10,7 +10,7 @@ Coverage: 40+ endpoints, ~1,000 LOC
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -1321,6 +1321,100 @@ def test_dashboard_feed_calendar_topic(client, mock_life_os):
     assert len(calendar_items) == 1
     assert calendar_items[0]["title"] == "Sprint Review"
     assert calendar_items[0]["kind"] == "event"
+
+
+def test_dashboard_feed_calendar_filters_past_events(client, mock_life_os):
+    """Test dashboard_feed calendar section excludes past events and keeps only future ones.
+
+    The dashboard_feed should only show calendar events whose start_time falls
+    between now and 7 days from now.  Events in the past should be excluded.
+    """
+    now = datetime.now(timezone.utc)
+    future_start = (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    future_end = (now + timedelta(days=2, hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+    past_payload = json.dumps({
+        "event_id": "past-evt",
+        "title": "Past Meeting",
+        "start_time": "2025-01-01T10:00:00+00:00",
+        "end_time": "2025-01-01T11:00:00+00:00",
+        "is_all_day": False,
+    })
+    future_payload = json.dumps({
+        "event_id": "future-evt",
+        "title": "Upcoming Standup",
+        "start_time": future_start,
+        "end_time": future_end,
+        "is_all_day": False,
+    })
+    far_future_payload = json.dumps({
+        "event_id": "far-future-evt",
+        "title": "Far Future",
+        "start_time": "2027-06-01T10:00:00+00:00",
+        "end_time": "2027-06-01T11:00:00+00:00",
+        "is_all_day": False,
+    })
+
+    mock_conn = Mock()
+    mock_conn.execute.return_value.fetchall.return_value = [
+        {"id": "db-past", "payload": past_payload, "timestamp": "2025-01-01T00:00:00Z"},
+        {"id": "db-future", "payload": future_payload, "timestamp": "2026-03-01T00:00:00Z"},
+        {"id": "db-far", "payload": far_future_payload, "timestamp": "2026-03-01T00:00:00Z"},
+    ]
+    mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
+
+    response = client.get("/api/dashboard/feed?topic=calendar")
+    assert response.status_code == 200
+    data = response.json()
+    calendar_items = [i for i in data["items"] if i["channel"] == "calendar"]
+    # Only the event within 7-day window should appear
+    assert len(calendar_items) == 1
+    assert calendar_items[0]["title"] == "Upcoming Standup"
+
+
+def test_dashboard_feed_calendar_sql_has_timestamp_filter(client, mock_life_os):
+    """Verify the dashboard_feed calendar SQL includes a timestamp filter and LIMIT.
+
+    The SQL should contain 'AND timestamp > ?' and 'LIMIT 500' to avoid
+    loading the entire events table.
+    """
+    mock_conn = Mock()
+    mock_conn.execute.return_value.fetchall.return_value = []
+    mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
+
+    response = client.get("/api/dashboard/feed?topic=calendar")
+    assert response.status_code == 200
+
+    # Inspect the SQL passed to conn.execute()
+    call_args = mock_conn.execute.call_args
+    sql = call_args[0][0]
+    assert "timestamp > ?" in sql, "SQL should include timestamp filter"
+    assert "LIMIT 500" in sql, "SQL should include LIMIT 500 safety cap"
+    # Should pass the lookback timestamp as a parameter
+    params = call_args[0][1]
+    assert len(params) == 1, "Should pass exactly one parameter (lookback timestamp)"
+
+
+def test_calendar_events_sql_has_time_filter(client, mock_life_os):
+    """Verify /api/calendar/events SQL includes json_extract time filters and LIMIT.
+
+    The SQL should filter by payload start_time at the SQL level rather than
+    loading all rows and filtering in Python.
+    """
+    mock_conn = Mock()
+    mock_conn.execute.return_value.fetchall.return_value = []
+    mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
+
+    response = client.get("/api/calendar/events?start=2026-03-01&end=2026-03-08")
+    assert response.status_code == 200
+
+    call_args = mock_conn.execute.call_args
+    sql = call_args[0][0]
+    assert "json_extract" in sql, "SQL should use json_extract for time filtering"
+    assert "LIMIT 1000" in sql, "SQL should include LIMIT 1000 safety cap"
+    # Should pass start and end as parameters
+    params = call_args[0][1]
+    assert params == ("2026-03-08", "2026-03-01"), "Should pass (end, start) as filter params"
 
 
 # ---------------------------------------------------------------------------
