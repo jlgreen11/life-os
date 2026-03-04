@@ -441,6 +441,110 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         return result
 
+    @app.get("/api/diagnostics/user-model")
+    async def user_model_diagnostics():
+        """Aggregated health diagnostics for the user model pipeline.
+
+        Calls get_diagnostics() on each service that supports it, queries
+        core user-model DB tables for row counts, and summarises signal
+        profile coverage.  Returns an overall health status of 'healthy'
+        or 'degraded' with a list of detected issues.
+
+        Each section is independently wrapped in try/except so a failure
+        in one area never prevents the rest from reporting.
+        """
+        import asyncio
+
+        diagnostics: dict = {}
+
+        # --- DB counts from user_model.db ---
+        def _db_counts():
+            """Count rows in core user-model tables."""
+            tables = {
+                "episodes": "SELECT COUNT(*) FROM episodes",
+                "semantic_facts": "SELECT COUNT(*) FROM semantic_facts",
+                "routines": "SELECT COUNT(*) FROM routines",
+                "predictions": "SELECT COUNT(*) FROM predictions",
+            }
+            counts: dict = {}
+            with life_os.db.get_connection("user_model") as conn:
+                for key, sql in tables.items():
+                    try:
+                        row = conn.execute(sql).fetchone()
+                        counts[key] = row[0] if row else 0
+                    except Exception as exc:
+                        counts[key] = f"error: {exc}"
+            return counts
+
+        try:
+            diagnostics["db_counts"] = await asyncio.to_thread(_db_counts)
+        except Exception as e:
+            diagnostics["db_counts"] = {"error": str(e)}
+
+        # --- Service diagnostics ---
+        services = {
+            "signal_extractor": getattr(life_os, "signal_extractor", None),
+            "prediction_engine": getattr(life_os, "prediction_engine", None),
+            "notification_manager": getattr(life_os, "notification_manager", None),
+            "routine_detector": getattr(life_os, "routine_detector", None),
+            "workflow_detector": getattr(life_os, "workflow_detector", None),
+            "semantic_fact_inferrer": getattr(life_os, "semantic_fact_inferrer", None),
+        }
+        for name, service in services.items():
+            if service is None:
+                continue
+            try:
+                if hasattr(service, "get_diagnostics"):
+                    diag = service.get_diagnostics()
+                    if asyncio.iscoroutine(diag):
+                        diag = await diag
+                    diagnostics[name] = diag
+            except Exception as e:
+                diagnostics[name] = {"error": str(e)}
+
+        # --- Signal profiles summary ---
+        expected_profiles = [
+            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
+            "relationships", "topics", "temporal", "spatial", "decision",
+        ]
+
+        def _signal_profiles():
+            """Summarise which signal profiles are populated vs missing."""
+            present = []
+            missing = []
+            for pt in expected_profiles:
+                try:
+                    profile = life_os.user_model_store.get_signal_profile(pt)
+                    if profile and profile.get("samples_count", 0) > 0:
+                        present.append({"name": pt, "samples": profile.get("samples_count", 0)})
+                    else:
+                        missing.append(pt)
+                except Exception:
+                    missing.append(pt)
+            return {"present": present, "missing": missing}
+
+        try:
+            diagnostics["signal_profiles"] = await asyncio.to_thread(_signal_profiles)
+        except Exception as e:
+            diagnostics["signal_profiles"] = {"error": str(e)}
+
+        # --- Overall health assessment ---
+        db_counts = diagnostics.get("db_counts", {})
+        issues: list[str] = []
+        if isinstance(db_counts, dict) and "error" not in db_counts:
+            if db_counts.get("episodes", 0) > 100 and db_counts.get("semantic_facts", 0) == 0:
+                issues.append("Semantic facts empty despite sufficient episodes — check inferrer logs")
+            if db_counts.get("episodes", 0) > 100 and db_counts.get("routines", 0) == 0:
+                issues.append("No routines detected despite sufficient episodes — check routine detector")
+        sp = diagnostics.get("signal_profiles", {})
+        if isinstance(sp, dict) and len(sp.get("missing", [])) > 3:
+            issues.append(f"Multiple signal profiles missing: {sp['missing']}")
+
+        diagnostics["health"] = "healthy" if not issues else "degraded"
+        diagnostics["issues"] = issues
+
+        return diagnostics
+
     @app.get("/api/system/sources")
     async def get_system_sources():
         """Return per-source event statistics for the System health dashboard.
