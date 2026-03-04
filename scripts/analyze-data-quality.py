@@ -21,7 +21,7 @@ import argparse
 import json
 import logging
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
@@ -520,7 +520,178 @@ def analyze(data_dir: str = "./data") -> dict:
         report["sections"]["source_weights"] = pref_error
 
     report["query_errors"] = list(_errors)
+
+    # Anomaly detection and health scoring
+    anomalies = detect_anomalies(report["sections"])
+    report["anomalies"] = anomalies
+    report["health_score"] = compute_health_score(anomalies)
+
     return report
+
+
+def detect_anomalies(sections: dict) -> list[dict]:
+    """Analyze collected report sections and detect common failure patterns.
+
+    Each anomaly is a dict with:
+      - severity: 'critical' | 'warning' | 'info'
+      - category: short category string
+      - message: human-readable description
+      - recommendation: actionable suggestion
+    """
+    anomalies: list[dict] = []
+
+    # --- (a) Prediction table empty despite generation events ---
+    pipeline = sections.get("prediction_pipeline", {})
+    total_generated = pipeline.get("total_generated", 0)
+    event_activity = pipeline.get("event_activity", {})
+    gen_events = event_activity.get("usermodel.prediction.generated", 0) if isinstance(event_activity, dict) else 0
+
+    if total_generated == 0 and gen_events > 0:
+        anomalies.append({
+            "severity": "critical",
+            "category": "prediction_persistence",
+            "message": (
+                f"Predictions table has 0 rows but {gen_events} generation events exist "
+                "— predictions are being generated but not persisted"
+            ),
+            "recommendation": (
+                "Check store_prediction() errors in logs; possible schema mismatch after migration"
+            ),
+        })
+
+    # --- (b) High dedup ratio ---
+    dedup_events = event_activity.get("usermodel.prediction.deduplicated", 0) if isinstance(event_activity, dict) else 0
+    gen_events_for_ratio = gen_events if gen_events > 0 else 1
+    if gen_events > 0 and dedup_events > 10 * gen_events:
+        ratio = round(dedup_events / gen_events_for_ratio, 1)
+        anomalies.append({
+            "severity": "warning",
+            "category": "prediction_deduplication",
+            "message": f"Prediction deduplication rate is {ratio}x — most predictions are duplicates",
+            "recommendation": (
+                "Review prediction generation logic for duplicate triggers; "
+                "consider increasing dedup window or reducing generation frequency"
+            ),
+        })
+
+    # --- (c) Zero routines with sufficient episodes ---
+    user_model = sections.get("user_model", {})
+    routines = user_model.get("routines", 0)
+    episodes = user_model.get("episodes", 0)
+
+    if routines == 0 and episodes > 100:
+        anomalies.append({
+            "severity": "warning",
+            "category": "routine_detection",
+            "message": f"No routines detected despite {episodes} episodes",
+            "recommendation": "Check routine_detector diagnostics for interaction_type distribution",
+        })
+
+    # --- (d) Zero workflows ---
+    workflows = user_model.get("workflows", 0)
+    if workflows == 0 and episodes > 100:
+        anomalies.append({
+            "severity": "warning",
+            "category": "workflow_detection",
+            "message": f"No workflows detected despite {episodes} episodes",
+            "recommendation": "Check workflow detection logic; ensure episodes have sufficient variety",
+        })
+
+    # --- (e) Connector errors ---
+    connectors = sections.get("connectors", {})
+    if isinstance(connectors, dict) and "error" not in connectors:
+        for connector_id, info in connectors.items():
+            if isinstance(info, dict) and info.get("status") == "error":
+                error_msg = info.get("error", "unknown error")
+                last_sync = info.get("last_sync")
+                anomalies.append({
+                    "severity": "critical",
+                    "category": "connector_error",
+                    "message": (
+                        f"Connector '{connector_id}' is in error state: {error_msg}"
+                        f" (last_sync: {last_sync or 'never'})"
+                    ),
+                    "recommendation": f"Check connector '{connector_id}' configuration and credentials",
+                })
+
+    # --- (f) Stale data sources ---
+    events = sections.get("events", {})
+    sources = events.get("sources", {})
+    if isinstance(sources, dict):
+        now = datetime.now(UTC)
+        stale_threshold = now - timedelta(days=7)
+        for source_name, source_info in sources.items():
+            if isinstance(source_info, dict):
+                last_event = source_info.get("last_event")
+                if last_event:
+                    try:
+                        # Parse ISO timestamp — handle both with and without timezone
+                        last_dt = datetime.fromisoformat(last_event.replace("Z", "+00:00"))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=UTC)
+                        if last_dt < stale_threshold:
+                            days_ago = (now - last_dt).days
+                            anomalies.append({
+                                "severity": "warning",
+                                "category": "stale_source",
+                                "message": (
+                                    f"Source '{source_name}' last produced data {days_ago} days ago"
+                                ),
+                                "recommendation": (
+                                    f"Check if connector for '{source_name}' is still running and authenticated"
+                                ),
+                            })
+                    except (ValueError, TypeError):
+                        pass  # Skip unparseable timestamps
+
+    # --- (g) No prediction accuracy data ---
+    pred_accuracy = sections.get("prediction_accuracy", {})
+    if isinstance(pred_accuracy, dict) and not pred_accuracy:
+        anomalies.append({
+            "severity": "info",
+            "category": "prediction_accuracy",
+            "message": "No prediction accuracy data available — predictions may not have been resolved yet",
+            "recommendation": "Wait for predictions to be resolved through user interaction or time-based expiry",
+        })
+
+    # --- (h) Pending notification backlog ---
+    notifications = sections.get("notifications", {})
+    if isinstance(notifications, dict) and "error" not in notifications:
+        pending = notifications.get("pending", 0)
+        if pending > 50:
+            anomalies.append({
+                "severity": "warning",
+                "category": "notification_backlog",
+                "message": f"Notification backlog has {pending} pending notifications",
+                "recommendation": (
+                    "Review notification generation rate; consider auto-expiring old notifications "
+                    "or adjusting notification thresholds"
+                ),
+            })
+
+    return anomalies
+
+
+def compute_health_score(anomalies: list[dict]) -> int:
+    """Compute a health score (0-100) based on anomaly count and severity.
+
+    Starts at 100 and subtracts:
+      - 20 per critical anomaly
+      - 10 per warning anomaly
+      - 2 per info anomaly
+
+    Score is clamped to [0, 100].
+    """
+    score = 100
+    for anomaly in anomalies:
+        severity = anomaly.get("severity", "info")
+        if severity == "critical":
+            score -= 20
+        elif severity == "warning":
+            score -= 10
+        else:
+            score -= 2
+    return max(0, min(100, score))
 
 
 if __name__ == "__main__":
