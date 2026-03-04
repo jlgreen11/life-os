@@ -130,6 +130,7 @@ class SemanticFactInferrer:
 
         data = profile["data"]
         averages = data.get("averages", {})
+        samples = profile.get("samples_count", 0)
 
         # Get recent outbound-email episodes to link as source evidence for
         # linguistic facts.  The linguistic profile is built from sent messages
@@ -165,6 +166,17 @@ class SemanticFactInferrer:
                     category="implicit_preference",
                     value="formal",
                     confidence=min(0.95, 0.5 + (formality - 0.7)),  # Higher confidence the more formal
+                    episode_id=episode_id,
+                )
+            elif 0.3 <= formality <= 0.7 and samples >= 30:
+                # Mid-range formality with sufficient data — user adapts formality
+                # to context rather than having a fixed style. This IS a meaningful
+                # communication style fact: context-adaptive communicators.
+                self.ums.update_semantic_fact(
+                    key="communication_style_formality",
+                    category="implicit_preference",
+                    value="balanced",
+                    confidence=min(0.8, 0.3 + min(samples, 100) / 200),  # Grows with sample count
                     episode_id=episode_id,
                 )
 
@@ -293,6 +305,17 @@ class SemanticFactInferrer:
                 category="implicit_preference",
                 value="casual_informal_environment",
                 confidence=min(0.95, base_confidence + (0.3 - avg_formality)),
+                episode_id=episode_id,
+            )
+        elif 0.3 <= avg_formality <= 0.7 and samples >= 30:
+            # Mixed formality environment — the user interacts with both
+            # formal and casual contacts, indicating a diverse communication
+            # environment (e.g., mix of work and personal contacts).
+            self.ums.update_semantic_fact(
+                key="inbound_communication_environment",
+                category="implicit_preference",
+                value="mixed_formality_environment",
+                confidence=min(0.8, base_confidence * 0.8),
                 episode_id=episode_id,
             )
 
@@ -900,6 +923,34 @@ class SemanticFactInferrer:
                     logger.error("Failed to store interest fact for topic %s: %s", topic, e)
                     facts_failed += 1
 
+        # --- Infer diverse interests when no single topic dominates ---
+        # If no topic exceeds the expertise threshold (8%) but there are many
+        # non-noise topics with meaningful counts, the user is a generalist or
+        # polymath with broad interests. This captures users who discuss many
+        # topics without deep specialization in any single area.
+        non_noise_topics = {
+            topic: count
+            for topic, count in topic_counts.items()
+            if topic.lower() not in TOPIC_NOISE_BLOCKLIST and count >= 3
+        }
+        has_dominant_topic = any(
+            count / total_samples > 0.08 for count in non_noise_topics.values()
+        ) if total_samples > 0 else False
+
+        if not has_dominant_topic and len(non_noise_topics) >= 5:
+            try:
+                self.ums.update_semantic_fact(
+                    key="topic_breadth",
+                    category="implicit_preference",
+                    value="diverse_interests",
+                    confidence=min(0.8, base_confidence * 0.8 + len(non_noise_topics) * 0.02),
+                    episode_id=episode_id,
+                )
+                facts_created += 1
+            except Exception as e:
+                logger.error("Failed to store diverse_interests fact: %s", e)
+                facts_failed += 1
+
         surviving = len(topic_counts) - filtered_count
         logger.info(
             "Topics after noise filter: %d survived out of %d total (%d noise tokens filtered)",
@@ -909,7 +960,7 @@ class SemanticFactInferrer:
             "Topic inference complete: %d facts created, %d failed (samples=%d)",
             facts_created, facts_failed, total_samples,
         )
-        return {"type": "topic", "processed": True, "reason": None}
+        return {"type": "topic", "processed": True, "reason": None, "facts_written": facts_created}
 
     def infer_from_cadence_profile(self):
         """
@@ -977,6 +1028,18 @@ class SemanticFactInferrer:
                     confidence=min(0.85, base_confidence + (0.3 - business_hours_ratio) * 2),
                     episode_id=episode_id,
                 )
+            elif 0.3 <= business_hours_ratio <= 0.9:
+                # Moderate work-life boundaries — mostly business hours but with
+                # some evening/weekend activity. Typical of professionals who
+                # occasionally handle personal comms during work or check work
+                # messages in the evening.
+                self.ums.update_semantic_fact(
+                    key="work_life_boundaries",
+                    category="values",
+                    value="moderate_boundaries",
+                    confidence=min(0.8, base_confidence * 0.9),
+                    episode_id=episode_id,
+                )
 
             # --- Infer peak communication hours (single-hour legacy) ---
             # Find the hour with the highest message count — this is the user's
@@ -988,7 +1051,7 @@ class SemanticFactInferrer:
             peak_count = hourly_activity[peak_hour]
             peak_ratio = peak_count / total_messages
 
-            if peak_ratio > 0.2:  # Peak hour accounts for >20% of all messages
+            if peak_ratio > 0.12:  # Peak hour accounts for >12% of all messages (~3x uniform baseline)
                 self.ums.update_semantic_fact(
                     key="peak_communication_hour",
                     category="implicit_preference",
@@ -1552,10 +1615,14 @@ class SemanticFactInferrer:
 
         Args:
             results: List of status dicts from each infer_from_* method, each
-                containing 'type', 'processed' (bool), and 'reason' (str or None).
+                containing 'type', 'processed' (bool), 'reason' (str or None),
+                and optionally 'facts_written' (int) counting DB writes.
         """
         processed = [r["type"] for r in results if r.get("processed")]
         skipped = [(r["type"], r.get("reason", "unknown")) for r in results if not r.get("processed")]
+
+        # Sum facts_written across all results that reported it
+        total_facts = sum(r.get("facts_written", 0) for r in results)
 
         processed_str = ", ".join(processed) if processed else "none"
         if skipped:
@@ -1565,9 +1632,10 @@ class SemanticFactInferrer:
             skipped_str = "none"
 
         logger.info(
-            "SemanticFactInferrer: inference cycle complete — processed: %s; skipped: %s",
+            "SemanticFactInferrer: inference cycle complete — processed: %s; skipped: %s; total_facts_written: %d",
             processed_str,
             skipped_str,
+            total_facts,
         )
 
     def run_all_inference(self):
