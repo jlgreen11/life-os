@@ -885,6 +885,174 @@ class NotificationManager:
 
         return resolved_count
 
+    def get_diagnostics(self) -> dict:
+        """Comprehensive notification pipeline diagnostics.
+
+        Returns a detailed snapshot of the notification system's health including
+        status counts, delivery statistics, domain breakdown, and actionable
+        recommendations. Follows the same diagnostic pattern used by
+        PredictionEngine.get_diagnostics() and InsightEngine.get_diagnostics().
+
+        Returns:
+            Dictionary with structure:
+            {
+                "status_counts": {"pending": int, "delivered": int, ...},
+                "in_memory_batch_depth": int,
+                "delivery_mode": str,
+                "recent_activity": {
+                    "created_24h": int,
+                    "delivered_24h": int,
+                    "expired_24h": int,
+                    "read_rate_7d": float
+                },
+                "domain_breakdown": {"prediction": int, "rule": int, ...},
+                "oldest_pending_hours": float | None,
+                "health": "ok" | "degraded" | "noisy",
+                "recommendations": [str]
+            }
+        """
+        diagnostics: dict = {
+            "status_counts": {},
+            "in_memory_batch_depth": len(self._pending_batch),
+            "delivery_mode": getattr(self, "_delivery_mode", "unknown"),
+            "recent_activity": {},
+            "domain_breakdown": {},
+            "oldest_pending_hours": None,
+            "health": "ok",
+            "recommendations": [],
+        }
+
+        now = datetime.now(timezone.utc)
+        day_ago = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        # --- Status counts ---
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) as cnt FROM notifications GROUP BY status"
+                ).fetchall()
+            diagnostics["status_counts"] = {row["status"]: row["cnt"] for row in rows}
+        except Exception:
+            logger.warning("Diagnostics: failed to query status counts", exc_info=True)
+
+        # --- Recent activity (24h) ---
+        try:
+            with self.db.get_connection("state") as conn:
+                created_24h = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM notifications WHERE created_at > ?",
+                    (day_ago,),
+                ).fetchone()["cnt"]
+
+                delivered_24h = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM notifications WHERE delivered_at > ?",
+                    (day_ago,),
+                ).fetchone()["cnt"]
+
+                expired_24h = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM notifications WHERE status = 'expired' AND created_at > ?",
+                    (day_ago,),
+                ).fetchone()["cnt"]
+
+            diagnostics["recent_activity"] = {
+                "created_24h": created_24h,
+                "delivered_24h": delivered_24h,
+                "expired_24h": expired_24h,
+            }
+        except Exception:
+            logger.warning("Diagnostics: failed to query recent activity", exc_info=True)
+
+        # --- Read rate over last 7 days ---
+        try:
+            with self.db.get_connection("state") as conn:
+                # Denominator: notifications that reached the user (delivered, read, acted_on, dismissed)
+                engagement_rows = conn.execute(
+                    """SELECT status, COUNT(*) as cnt FROM notifications
+                       WHERE status IN ('delivered', 'read', 'acted_on', 'dismissed')
+                         AND created_at > ?
+                       GROUP BY status""",
+                    (week_ago,),
+                ).fetchall()
+
+            engagement = {row["status"]: row["cnt"] for row in engagement_rows}
+            read_count = engagement.get("read", 0) + engagement.get("acted_on", 0)
+            total_engaged = sum(engagement.values())
+            read_rate = round(read_count / total_engaged, 3) if total_engaged > 0 else 0.0
+            diagnostics["recent_activity"]["read_rate_7d"] = read_rate
+        except Exception:
+            logger.warning("Diagnostics: failed to compute read rate", exc_info=True)
+            diagnostics["recent_activity"].setdefault("read_rate_7d", 0.0)
+
+        # --- Domain breakdown ---
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    "SELECT domain, COUNT(*) as cnt FROM notifications GROUP BY domain"
+                ).fetchall()
+            diagnostics["domain_breakdown"] = {
+                (row["domain"] or "unknown"): row["cnt"] for row in rows
+            }
+        except Exception:
+            logger.warning("Diagnostics: failed to query domain breakdown", exc_info=True)
+
+        # --- Oldest pending notification age ---
+        try:
+            with self.db.get_connection("state") as conn:
+                oldest = conn.execute(
+                    "SELECT MIN(created_at) as oldest FROM notifications WHERE status = 'pending'"
+                ).fetchone()
+            if oldest and oldest["oldest"]:
+                oldest_dt = datetime.fromisoformat(oldest["oldest"].replace("Z", "+00:00"))
+                age_hours = round((now - oldest_dt).total_seconds() / 3600, 1)
+                diagnostics["oldest_pending_hours"] = age_hours
+        except Exception:
+            logger.warning("Diagnostics: failed to compute oldest pending age", exc_info=True)
+
+        # --- Health assessment ---
+        status_counts = diagnostics["status_counts"]
+        pending_count = status_counts.get("pending", 0)
+        recent = diagnostics.get("recent_activity", {})
+        read_rate = recent.get("read_rate_7d", 0.0)
+        created_24h = recent.get("created_24h", 0)
+        expired_24h = recent.get("expired_24h", 0)
+        oldest_hours = diagnostics["oldest_pending_hours"]
+
+        recommendations = []
+
+        # Check for noisy pipeline (most notifications ignored)
+        if created_24h > 0 and expired_24h > created_24h * 0.7:
+            diagnostics["health"] = "noisy"
+            recommendations.append(
+                f"High expiry rate: {expired_24h}/{created_24h} notifications expired in 24h. "
+                "Consider tightening prediction confidence gates or notification suppression rules."
+            )
+
+        # Check for degraded state (only flag low read rate if there are delivered notifications)
+        total_notifications = sum(status_counts.values())
+        if read_rate < 0.1 and total_notifications > 0 and diagnostics["health"] != "noisy":
+            diagnostics["health"] = "degraded"
+            recommendations.append(
+                f"Low read rate ({read_rate:.1%} over 7d). Notifications may not be reaching users "
+                "or content may not be compelling enough."
+            )
+
+        if pending_count > 50:
+            diagnostics["health"] = "degraded"
+            recommendations.append(
+                f"{pending_count} pending notifications — batch queue may be stuck. "
+                "Check digest delivery schedule."
+            )
+
+        if oldest_hours is not None and oldest_hours > 48:
+            diagnostics["health"] = "degraded"
+            recommendations.append(
+                f"Oldest pending notification is {oldest_hours:.0f}h old. "
+                "Run expire_stale_notifications() or check the digest schedule."
+            )
+
+        diagnostics["recommendations"] = recommendations
+        return diagnostics
+
     def auto_resolve_filtered_predictions(self, timeout_hours: int = 1) -> int:
         """Auto-resolve predictions that were filtered out before surfacing.
 
