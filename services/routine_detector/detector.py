@@ -62,6 +62,10 @@ class RoutineDetector:
         self.time_window_hours = 2  # Actions within 2h can be part of same routine
         self.consistency_threshold = 0.6  # 60% of instances must match for it to be a routine
 
+        # Diagnostics: cached result from the most recent detect_routines() call
+        self._last_detection_count: int | None = None
+        self._last_detection_time: str | None = None
+
     def _effective_consistency_threshold(self, active_days: int) -> float:
         """Return a consistency threshold scaled by data maturity.
 
@@ -179,7 +183,129 @@ class RoutineDetector:
         # false routine_deviation predictions in the prediction engine.
         self.prune_stale_routines(routines)
 
+        # Cache result for diagnostics observability
+        self._last_detection_count = len(routines)
+        self._last_detection_time = datetime.now(UTC).isoformat()
+
         return routines
+
+    def get_diagnostics(self, lookback_days: int = 30) -> dict:
+        """Return routine detector diagnostic information for monitoring.
+
+        Reports data availability, detection thresholds, and pipeline health
+        so operators can understand why routines are or aren't being detected.
+        Follows the same pattern as InsightEngine.get_diagnostics() and
+        PredictionEngine.get_diagnostics().
+
+        Each field is queried independently with try/except so that a single
+        DB failure doesn't prevent the rest of the diagnostics from returning.
+
+        Args:
+            lookback_days: How many days of history to analyze (default 30).
+
+        Returns:
+            Dict with keys: episode_count, active_days, effective_consistency_threshold,
+            distinct_interaction_types, episodes_per_day, time_bucket_distribution,
+            stored_routines_count, last_detection_count, last_detection_time, health.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
+        result: dict = {}
+
+        # 1. Episode count in lookback window
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE timestamp >= ?",
+                    (cutoff.isoformat(),),
+                ).fetchone()
+            result["episode_count"] = row[0] if row else 0
+        except Exception as e:
+            logger.warning("get_diagnostics: episode_count query failed: %s", e)
+            result["episode_count"] = {"error": str(e)}
+
+        # 2. Active days (distinct calendar days with episode data)
+        try:
+            result["active_days"] = self._count_active_days(cutoff)
+        except Exception as e:
+            logger.warning("get_diagnostics: active_days query failed: %s", e)
+            result["active_days"] = {"error": str(e)}
+
+        # 3. Effective consistency threshold for the current data maturity
+        try:
+            active_days_val = result["active_days"] if isinstance(result["active_days"], int) else 1
+            result["effective_consistency_threshold"] = self._effective_consistency_threshold(active_days_val)
+        except Exception as e:
+            logger.warning("get_diagnostics: threshold computation failed: %s", e)
+            result["effective_consistency_threshold"] = {"error": str(e)}
+
+        # 4. Distinct interaction types in the lookback window
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT interaction_type FROM episodes WHERE timestamp >= ?",
+                    (cutoff.isoformat(),),
+                ).fetchall()
+            result["distinct_interaction_types"] = [row[0] for row in rows if row[0]]
+        except Exception as e:
+            logger.warning("get_diagnostics: distinct_interaction_types query failed: %s", e)
+            result["distinct_interaction_types"] = {"error": str(e)}
+
+        # 5. Episodes per active day
+        try:
+            ep_count = result["episode_count"] if isinstance(result["episode_count"], int) else 0
+            ad = result["active_days"] if isinstance(result["active_days"], int) else 1
+            result["episodes_per_day"] = round(ep_count / max(1, ad), 2)
+        except Exception as e:
+            logger.warning("get_diagnostics: episodes_per_day computation failed: %s", e)
+            result["episodes_per_day"] = {"error": str(e)}
+
+        # 6. Time bucket distribution (episodes per time-of-day bucket)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    "SELECT timestamp FROM episodes WHERE timestamp >= ?",
+                    (cutoff.isoformat(),),
+                ).fetchall()
+            buckets: dict[str, int] = {"morning": 0, "midday": 0, "afternoon": 0, "evening": 0, "night": 0}
+            for (ts_str,) in rows:
+                try:
+                    dt_utc = datetime.fromisoformat(ts_str)
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=UTC)
+                    dt_local = dt_utc.astimezone(self._tz)
+                    bucket = self._hour_to_bucket(dt_local.hour)
+                    buckets[bucket] += 1
+                except (ValueError, TypeError):
+                    continue
+            result["time_bucket_distribution"] = buckets
+        except Exception as e:
+            logger.warning("get_diagnostics: time_bucket_distribution query failed: %s", e)
+            result["time_bucket_distribution"] = {"error": str(e)}
+
+        # 7. Stored routines count
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute("SELECT COUNT(*) FROM routines").fetchone()
+            result["stored_routines_count"] = row[0] if row else 0
+        except Exception as e:
+            logger.warning("get_diagnostics: stored_routines_count query failed: %s", e)
+            result["stored_routines_count"] = {"error": str(e)}
+
+        # 8. Last detection result (cached from most recent detect_routines() call)
+        result["last_detection_count"] = self._last_detection_count
+        result["last_detection_time"] = self._last_detection_time
+
+        # 9. Health indicator
+        if self._last_detection_count is None:
+            result["health"] = "no_data"
+        elif isinstance(result.get("episode_count"), int) and result["episode_count"] == 0:
+            result["health"] = "no_data"
+        elif self._last_detection_count == 0 and isinstance(result.get("episode_count"), int) and result["episode_count"] > 0:
+            result["health"] = "degraded"
+        else:
+            result["health"] = "ok"
+
+        return result
 
     def _count_active_days(self, cutoff: datetime) -> int:
         """Count distinct calendar days with at least one episode since the cutoff.
