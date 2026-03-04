@@ -604,3 +604,342 @@ class TestIsLoggedIn:
         page.url = "https://example.com/LOGIN"
         result = await browser_connector.is_logged_in(page)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _browser_login() Tests
+# ---------------------------------------------------------------------------
+
+
+class TestBrowserLogin:
+    """Verify the full browser login flow: credential lookup, session reuse,
+    fresh login with form filling, 2FA handling, and error recovery."""
+
+    @pytest.mark.asyncio
+    async def test_browser_login_no_credentials_returns_false(
+        self, browser_connector, mock_credential_vault
+    ):
+        """When no credentials exist for the site, _browser_login() returns False."""
+        mock_credential_vault.get_credential.return_value = None
+
+        result = await browser_connector._browser_login()
+
+        assert result is False
+        # Should not have started the browser engine
+        browser_connector._browser_engine.start.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_browser_login_reuses_valid_session(
+        self, browser_connector, mock_browser_engine
+    ):
+        """When a saved session is still valid, _browser_login() returns True
+        without performing a fresh login."""
+        mock_browser_engine.session_manager.has_session.return_value = True
+
+        # Create a mock page that reports being logged in
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_browser_engine.new_page.return_value = mock_page
+
+        # Override is_logged_in to return True (session is still valid)
+        browser_connector.is_logged_in = AsyncMock(return_value=True)
+
+        result = await browser_connector._browser_login()
+
+        assert result is True
+        mock_browser_engine.start.assert_awaited_once()
+        mock_browser_engine.create_context.assert_awaited_once()
+        # Should have navigated to check session validity
+        mock_page.goto.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_browser_login_fresh_login_success(
+        self, browser_connector, mock_browser_engine
+    ):
+        """When no saved session exists, _browser_login() performs a fresh
+        login flow and saves the session on success."""
+        mock_browser_engine.session_manager.has_session.return_value = False
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_browser_engine.new_page.return_value = mock_page
+
+        # is_logged_in returns True after the login form is submitted
+        browser_connector.is_logged_in = AsyncMock(return_value=True)
+
+        with patch.object(browser_connector, "_human") as mock_human, \
+             patch.object(browser_connector, "_interactor") as mock_interactor:
+            mock_human.wait_human = AsyncMock()
+            mock_interactor.login = AsyncMock()
+
+            result = await browser_connector._browser_login()
+
+        assert result is True
+        # Session should be saved after successful login
+        mock_browser_engine.save_session.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_browser_login_fresh_login_failure(
+        self, browser_connector, mock_browser_engine
+    ):
+        """When login form submission doesn't result in a logged-in state,
+        _browser_login() returns False."""
+        mock_browser_engine.session_manager.has_session.return_value = False
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_browser_engine.new_page.return_value = mock_page
+
+        # is_logged_in returns False (login failed)
+        browser_connector.is_logged_in = AsyncMock(return_value=False)
+
+        with patch.object(browser_connector, "_human") as mock_human, \
+             patch.object(browser_connector, "_interactor") as mock_interactor:
+            mock_human.wait_human = AsyncMock()
+            mock_interactor.login = AsyncMock()
+
+            result = await browser_connector._browser_login()
+
+        assert result is False
+        # Session should NOT be saved when login fails
+        mock_browser_engine.save_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_browser_login_2fa_flow(
+        self, browser_connector, mock_browser_engine, mock_credential_vault
+    ):
+        """When REQUIRES_2FA is True and TOTP is available, _browser_login()
+        enters the 2FA code after password submission."""
+        browser_connector.REQUIRES_2FA = True
+        mock_credential_vault.get_totp.return_value = "123456"
+        mock_browser_engine.session_manager.has_session.return_value = False
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_browser_engine.new_page.return_value = mock_page
+
+        browser_connector.is_logged_in = AsyncMock(return_value=True)
+
+        with patch.object(browser_connector, "_human") as mock_human, \
+             patch.object(browser_connector, "_interactor") as mock_interactor:
+            mock_human.wait_human = AsyncMock()
+            mock_interactor.login = AsyncMock()
+            mock_interactor.handle_2fa = AsyncMock()
+
+            result = await browser_connector._browser_login()
+
+        assert result is True
+        # 2FA handler should have been called with the TOTP code
+        mock_interactor.handle_2fa.assert_awaited_once()
+        call_args = mock_interactor.handle_2fa.call_args
+        assert call_args[0][1] == "123456"  # totp_code argument
+
+    @pytest.mark.asyncio
+    async def test_browser_login_2fa_no_totp_returns_false(
+        self, browser_connector, mock_browser_engine, mock_credential_vault
+    ):
+        """When REQUIRES_2FA is True but no TOTP URI is configured,
+        _browser_login() returns False."""
+        browser_connector.REQUIRES_2FA = True
+        mock_credential_vault.get_totp.return_value = None
+        mock_browser_engine.session_manager.has_session.return_value = False
+
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        mock_browser_engine.new_page.return_value = mock_page
+
+        with patch.object(browser_connector, "_human") as mock_human, \
+             patch.object(browser_connector, "_interactor") as mock_interactor:
+            mock_human.wait_human = AsyncMock()
+            mock_interactor.login = AsyncMock()
+
+            result = await browser_connector._browser_login()
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_browser_login_exception_returns_false(
+        self, browser_connector, mock_browser_engine
+    ):
+        """When the browser login flow raises an exception,
+        _browser_login() returns False (fail-open)."""
+        mock_browser_engine.start.side_effect = Exception("Browser crashed")
+
+        result = await browser_connector._browser_login()
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_browser_login_sets_page_and_context(
+        self, browser_connector, mock_browser_engine
+    ):
+        """After successful login, _page and _context are set on the connector."""
+        mock_browser_engine.session_manager.has_session.return_value = False
+
+        mock_context = MagicMock(name="context")
+        mock_page = AsyncMock(name="page")
+        mock_page.goto = AsyncMock()
+        mock_browser_engine.create_context.return_value = mock_context
+        mock_browser_engine.new_page.return_value = mock_page
+
+        browser_connector.is_logged_in = AsyncMock(return_value=True)
+
+        with patch.object(browser_connector, "_human") as mock_human, \
+             patch.object(browser_connector, "_interactor") as mock_interactor:
+            mock_human.wait_human = AsyncMock()
+            mock_interactor.login = AsyncMock()
+
+            await browser_connector._browser_login()
+
+        assert browser_connector._context is mock_context
+        assert browser_connector._page is mock_page
+
+
+# ---------------------------------------------------------------------------
+# navigate_with_rate_limit() Tests
+# ---------------------------------------------------------------------------
+
+
+class TestNavigateWithRateLimit:
+    """Verify navigate_with_rate_limit() delegates to rate_limit_wait and page.goto."""
+
+    @pytest.mark.asyncio
+    async def test_navigate_calls_rate_limit_then_goto(self, browser_connector):
+        """navigate_with_rate_limit() enforces rate limiting before navigation."""
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        browser_connector.rate_limit_wait = AsyncMock()
+
+        await browser_connector.navigate_with_rate_limit(
+            mock_page, "https://example.com/page"
+        )
+
+        browser_connector.rate_limit_wait.assert_awaited_once()
+        mock_page.goto.assert_awaited_once_with(
+            "https://example.com/page", wait_until="networkidle"
+        )
+
+    @pytest.mark.asyncio
+    async def test_navigate_passes_url_to_page(self, browser_connector):
+        """navigate_with_rate_limit() passes the correct URL to page.goto."""
+        mock_page = AsyncMock()
+        mock_page.goto = AsyncMock()
+        browser_connector.rate_limit_wait = AsyncMock()
+
+        url = "https://example.com/specific/page?q=test"
+        await browser_connector.navigate_with_rate_limit(mock_page, url)
+
+        mock_page.goto.assert_awaited_once_with(url, wait_until="networkidle")
+
+
+# ---------------------------------------------------------------------------
+# Default Subclass Interface Tests
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultSubclassInterface:
+    """Verify the default implementations of the subclass interface methods."""
+
+    def test_get_login_url_returns_class_attribute(self, browser_connector):
+        """Default get_login_url() returns the LOGIN_URL class attribute."""
+        assert browser_connector.get_login_url() == "https://example.com/login"
+
+    def test_get_login_selectors_returns_defaults(self, browser_connector):
+        """Default get_login_selectors() returns standard CSS selectors."""
+        selectors = browser_connector.get_login_selectors()
+        assert "username" in selectors
+        assert "password" in selectors
+        assert "submit" in selectors
+
+    @pytest.mark.asyncio
+    async def test_api_authenticate_default_returns_false(self, event_bus, db):
+        """The base api_authenticate() returns False by default (for
+        connectors without an API)."""
+        from connectors.browser.base_connector import BrowserBaseConnector
+
+        # Access the base class default directly (not the test subclass override)
+        result = await BrowserBaseConnector.api_authenticate(
+            MagicMock(spec=BrowserBaseConnector)
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_api_sync_default_raises(self, event_bus, db):
+        """The base api_sync() raises NotImplementedError by default."""
+        from connectors.browser.base_connector import BrowserBaseConnector
+
+        with pytest.raises(NotImplementedError):
+            await BrowserBaseConnector.api_sync(
+                MagicMock(spec=BrowserBaseConnector)
+            )
+
+    @pytest.mark.asyncio
+    async def test_browser_sync_default_raises(self, event_bus, db):
+        """The base browser_sync() raises NotImplementedError by default."""
+        from connectors.browser.base_connector import BrowserBaseConnector
+
+        with pytest.raises(NotImplementedError):
+            await BrowserBaseConnector.browser_sync(
+                MagicMock(spec=BrowserBaseConnector),
+                MagicMock(), MagicMock(), MagicMock(),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Consecutive Failure Progression Tests
+# ---------------------------------------------------------------------------
+
+
+class TestFailureProgression:
+    """Verify the full failure progression from API to browser mode."""
+
+    @pytest.mark.asyncio
+    async def test_three_consecutive_failures_switches_permanently(
+        self, browser_connector
+    ):
+        """After exactly api_failure_threshold consecutive API failures,
+        subsequent sync calls skip the API entirely."""
+        browser_connector._api_failure_threshold = 3
+        browser_connector.api_sync_mock.side_effect = Exception("API down")
+        browser_connector._browser_sync_wrapper = AsyncMock(return_value=2)
+
+        # Three consecutive failures
+        for i in range(3):
+            await browser_connector.sync()
+
+        assert browser_connector._api_failures == 3
+
+        # Fourth call should skip API entirely
+        browser_connector.api_sync_mock.reset_mock()
+        await browser_connector.sync()
+
+        browser_connector.api_sync_mock.assert_not_awaited()
+        assert browser_connector._browser_sync_wrapper.await_count == 4
+
+    @pytest.mark.asyncio
+    async def test_api_success_mid_failures_resets_counter(self, browser_connector):
+        """An API success in the middle of a failure sequence resets the
+        failure counter, preventing premature switch to browser mode."""
+        browser_connector._api_failure_threshold = 3
+
+        # Two failures
+        browser_connector.api_sync_mock.side_effect = Exception("API down")
+        browser_connector._browser_sync_wrapper = AsyncMock(return_value=1)
+        await browser_connector.sync()
+        await browser_connector.sync()
+        assert browser_connector._api_failures == 2
+
+        # Success resets counter
+        browser_connector.api_sync_mock.side_effect = None
+        browser_connector.api_sync_mock.return_value = 5
+        count = await browser_connector.sync()
+        assert count == 5
+        assert browser_connector._api_failures == 0
+
+        # Two more failures — should NOT switch because counter was reset
+        browser_connector.api_sync_mock.side_effect = Exception("API down again")
+        await browser_connector.sync()
+        await browser_connector.sync()
+        assert browser_connector._api_failures == 2
+        # Still below threshold, so API is still attempted
+        assert browser_connector._api_mode is True
