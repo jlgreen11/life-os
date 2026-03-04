@@ -101,6 +101,28 @@ def _create_minimal_user_model_db(tmp_path):
         )
     """)
     conn.execute("CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workflows (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            trigger_pattern TEXT,
+            steps TEXT DEFAULT '[]',
+            confidence REAL DEFAULT 0.0,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS communication_templates (
+            id TEXT PRIMARY KEY,
+            contact_id TEXT,
+            channel TEXT,
+            template_pattern TEXT,
+            confidence REAL DEFAULT 0.0,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -225,13 +247,15 @@ class TestHealthyDatabase:
                 )
 
     def test_database_health_all_ok(self, tmp_path):
-        """All databases should report 'ok' in database_health."""
+        """All databases should report status 'ok' in database_health."""
         _create_all_dbs(tmp_path)
         report = analyze(str(tmp_path))
 
         health = report["sections"]["database_health"]
         for db_name in ["events", "user_model", "state", "preferences", "entities"]:
-            assert health[db_name] == "ok", f"{db_name} health: {health[db_name]}"
+            assert isinstance(health[db_name], dict), f"{db_name} health should be a dict"
+            assert health[db_name]["status"] == "ok", f"{db_name} health: {health[db_name]}"
+            assert health[db_name]["detail"] == "ok"
 
     def test_report_has_generated_at(self, tmp_path):
         """Report includes a generated_at timestamp."""
@@ -659,8 +683,13 @@ def test_user_model_sections_independent(tmp_path):
 
     # signal_profiles should have real data
     sp = sections["signal_profiles"]
-    assert "linguistic" in sp
-    assert sp["linguistic"]["samples"] == 42
+    assert "profiles" in sp
+    assert "linguistic" in sp["profiles"]
+    assert sp["profiles"]["linguistic"]["samples"] == 42
+    # 8 of 9 expected types should be missing (linguistic is present)
+    assert "missing_profiles" in sp
+    assert "linguistic" not in sp["missing_profiles"]
+    assert len(sp["missing_profiles"]) == 8
 
     # user_model should have real data
     um = sections["user_model"]
@@ -720,7 +749,9 @@ class TestCorruptDatabase:
         report = analyze(str(tmp_path))
         health = report["sections"]["database_health"]
 
-        assert health["user_model"] != "ok", f"Corrupted DB should not report 'ok', got: {health['user_model']}"
+        assert health["user_model"]["status"] == "corrupt", (
+            f"Corrupted DB should report 'corrupt', got: {health['user_model']}"
+        )
 
 
 class TestWithData:
@@ -758,9 +789,12 @@ class TestWithData:
 
         report = analyze(str(tmp_path))
 
-        profiles = report["sections"]["signal_profiles"]
-        assert "linguistic" in profiles
-        assert profiles["linguistic"]["samples"] == 42
+        sp = report["sections"]["signal_profiles"]
+        assert "profiles" in sp
+        assert "linguistic" in sp["profiles"]
+        assert sp["profiles"]["linguistic"]["samples"] == 42
+        # linguistic should not be in missing_profiles since we inserted it
+        assert "linguistic" not in sp["missing_profiles"]
 
 
 # ---------------------------------------------------------------------------
@@ -810,3 +844,180 @@ def test_prediction_pipeline_with_data(tmp_path):
     assert pp["filtered"] == 3
     assert pp["filter_reasons"].get("low_confidence") == 2
     assert pp["filter_reasons"].get("reaction_gate") == 1
+
+
+# ---------------------------------------------------------------------------
+# Missing signal profiles tests
+# ---------------------------------------------------------------------------
+
+
+class TestMissingSignalProfiles:
+    """Verify that missing signal profile types are detected."""
+
+    EXPECTED_TYPES = [
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "temporal",
+        "topics",
+        "spatial",
+        "decision",
+    ]
+
+    def test_all_missing_when_table_empty(self, tmp_path):
+        """When signal_profiles table is empty, all 9 expected types are missing."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        sp = report["sections"]["signal_profiles"]
+        assert sorted(sp["missing_profiles"]) == sorted(self.EXPECTED_TYPES)
+
+    def test_present_profile_excluded_from_missing(self, tmp_path):
+        """Inserting a profile removes it from the missing list."""
+        _create_all_dbs(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+        conn.execute(
+            "INSERT INTO signal_profiles (profile_type, samples_count, updated_at) "
+            "VALUES ('cadence', 5, datetime('now'))"
+        )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        sp = report["sections"]["signal_profiles"]
+
+        assert "cadence" not in sp["missing_profiles"]
+        assert "cadence" in sp["profiles"]
+        assert len(sp["missing_profiles"]) == 8
+
+    def test_all_present_means_empty_missing(self, tmp_path):
+        """When all 9 expected profiles exist, missing_profiles is empty."""
+        _create_all_dbs(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+        for ptype in self.EXPECTED_TYPES:
+            conn.execute(
+                "INSERT INTO signal_profiles (profile_type, samples_count, updated_at) "
+                "VALUES (?, 1, datetime('now'))",
+                (ptype,),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        sp = report["sections"]["signal_profiles"]
+
+        assert sp["missing_profiles"] == []
+        assert len(sp["profiles"]) == 9
+
+
+# ---------------------------------------------------------------------------
+# Workflow and communication template count tests
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowAndTemplateCounts:
+    """Verify workflow and communication_templates counts in user_model section."""
+
+    def test_zero_when_tables_empty(self, tmp_path):
+        """Workflow and template counts default to 0 when tables are empty."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        um = report["sections"]["user_model"]
+        assert "workflows" in um
+        assert "communication_templates" in um
+        assert um["workflows"] == 0
+        assert um["communication_templates"] == 0
+
+    def test_counts_reflect_inserted_rows(self, tmp_path):
+        """Counts reflect actually inserted rows."""
+        _create_all_dbs(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+
+        # Insert workflows if table exists
+        try:
+            conn.execute(
+                "INSERT INTO workflows (id, name, trigger_pattern, steps, confidence, "
+                "created_at, updated_at) VALUES ('w1', 'test', 'p', '[]', 0.5, "
+                "datetime('now'), datetime('now'))"
+            )
+            conn.execute(
+                "INSERT INTO workflows (id, name, trigger_pattern, steps, confidence, "
+                "created_at, updated_at) VALUES ('w2', 'test2', 'p2', '[]', 0.5, "
+                "datetime('now'), datetime('now'))"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Table may not exist in minimal DBs
+
+        # Insert communication templates if table exists
+        try:
+            conn.execute(
+                "INSERT INTO communication_templates (id, contact_id, channel, "
+                "template_pattern, confidence, created_at, updated_at) "
+                "VALUES ('t1', 'c1', 'email', 'p', 0.5, datetime('now'), datetime('now'))"
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        um = report["sections"]["user_model"]
+
+        assert isinstance(um["workflows"], int)
+        assert isinstance(um["communication_templates"], int)
+
+    def test_core_fields_still_present(self, tmp_path):
+        """Adding new fields doesn't break existing user_model fields."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        um = report["sections"]["user_model"]
+        for key in ["episodes", "semantic_facts", "routines", "fact_categories", "query_errors"]:
+            assert key in um, f"Missing expected key '{key}' in user_model section"
+
+
+# ---------------------------------------------------------------------------
+# Database health structure tests
+# ---------------------------------------------------------------------------
+
+
+class TestDatabaseHealthStructure:
+    """Verify the new structured database_health entries."""
+
+    def test_each_entry_is_dict_with_status_and_detail(self, tmp_path):
+        """Each health entry should be a dict with 'status' and 'detail' keys."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+        health = report["sections"]["database_health"]
+
+        for db_name in ["events", "user_model", "state", "preferences", "entities"]:
+            entry = health[db_name]
+            assert isinstance(entry, dict), f"{db_name} should be a dict, got {type(entry)}"
+            assert "status" in entry, f"{db_name} missing 'status' key"
+            assert "detail" in entry, f"{db_name} missing 'detail' key"
+            assert entry["status"] in ("ok", "corrupt"), f"{db_name} status should be 'ok' or 'corrupt'"
+
+    def test_connect_failure_reports_corrupt(self, tmp_path):
+        """When _connect returns None, the health entry reports 'corrupt'."""
+        _create_all_dbs(tmp_path)
+
+        real_connect = _mod._connect
+
+        def fail_events_connect(db_path):
+            if "events.db" in str(db_path):
+                return None
+            return real_connect(db_path)
+
+        with patch.object(_mod, "_connect", side_effect=fail_events_connect):
+            report = analyze(str(tmp_path))
+
+        health = report["sections"]["database_health"]
+        assert health["events"]["status"] == "corrupt"
+        assert "could not connect" in health["events"]["detail"]
+        # Other databases should still be ok
+        assert health["user_model"]["status"] == "ok"

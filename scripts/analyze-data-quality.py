@@ -76,7 +76,7 @@ def analyze(data_dir: str = "./data") -> dict:
     report = {"generated_at": datetime.now(UTC).isoformat(), "sections": {}}
 
     # -----------------------------------------------------------------------
-    # Database health — run PRAGMA integrity_check on each database
+    # Database health — run PRAGMA checks on each database independently
     # -----------------------------------------------------------------------
     db_names = ["events", "user_model", "state", "preferences", "entities"]
     health = {}
@@ -84,14 +84,25 @@ def analyze(data_dir: str = "./data") -> dict:
         db_conn = _connect(data_path / f"{db_name}.db")
         if db_conn:
             try:
-                result = db_conn.execute("PRAGMA integrity_check").fetchone()
-                health[db_name] = result[0] if result else "unknown"
+                # Use thorough integrity_check for user_model.db (corruption
+                # there is the #1 blocker for semantic facts and predictions).
+                # Use fast quick_check(1) for all other databases.
+                if db_name == "user_model":
+                    result = db_conn.execute("PRAGMA integrity_check").fetchone()
+                else:
+                    result = db_conn.execute("PRAGMA quick_check(1)").fetchone()
+
+                status_text = result[0] if result else "unknown"
+                health[db_name] = {
+                    "status": "ok" if status_text == "ok" else "corrupt",
+                    "detail": status_text,
+                }
             except Exception as e:
-                health[db_name] = f"error: {e}"
+                health[db_name] = {"status": "corrupt", "detail": str(e)}
             finally:
                 db_conn.close()
         else:
-            health[db_name] = "could not connect"
+            health[db_name] = {"status": "corrupt", "detail": "could not connect"}
     report["sections"]["database_health"] = health
 
     # -----------------------------------------------------------------------
@@ -266,8 +277,26 @@ def analyze(data_dir: str = "./data") -> dict:
         try:
             # Signal profiles freshness
             profiles = _query(um_conn, "SELECT profile_type, samples_count, updated_at FROM signal_profiles", [])
+            existing_types = {r["profile_type"] for r in profiles}
+            expected_types = [
+                "linguistic",
+                "linguistic_inbound",
+                "cadence",
+                "mood_signals",
+                "relationships",
+                "temporal",
+                "topics",
+                "spatial",
+                "decision",
+            ]
+            missing = [t for t in expected_types if t not in existing_types]
+
             report["sections"]["signal_profiles"] = {
-                r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]} for r in profiles
+                "profiles": {
+                    r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]}
+                    for r in profiles
+                },
+                "missing_profiles": missing,
             }
         except Exception as e:
             report["sections"]["signal_profiles"] = {"error": str(e)}
@@ -313,10 +342,28 @@ def analyze(data_dir: str = "./data") -> dict:
                 [],
             )
 
+            # Workflow and communication template counts — tables may not
+            # exist in older schemas, so wrap each independently.
+            workflow_count = 0
+            try:
+                wf_row = _query_one(um_conn, "SELECT COUNT(*) as c FROM workflows")
+                workflow_count = wf_row["c"] if wf_row else 0
+            except Exception:
+                query_errors.append("workflows")
+
+            template_count = 0
+            try:
+                tpl_row = _query_one(um_conn, "SELECT COUNT(*) as c FROM communication_templates")
+                template_count = tpl_row["c"] if tpl_row else 0
+            except Exception:
+                query_errors.append("communication_templates")
+
             report["sections"]["user_model"] = {
                 "episodes": episode_count["c"] if episode_count else 0,
                 "semantic_facts": fact_count["c"] if fact_count else 0,
                 "routines": routine_count["c"] if routine_count else 0,
+                "workflows": workflow_count,
+                "communication_templates": template_count,
                 "fact_categories": {r["category"]: r["c"] for r in fact_categories},
                 "query_errors": query_errors,
             }
