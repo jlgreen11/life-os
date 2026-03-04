@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
@@ -464,7 +465,8 @@ class PredictionEngine:
                 if contact_email:
                     contact_multiplier = self._get_contact_accuracy_multiplier(contact_email)
                     multiplier *= contact_multiplier
-            pred.confidence *= multiplier
+            # Clamp to [0.0, 1.0] after multiplier to prevent NaN/inf propagation
+            pred.confidence = max(0.0, min(1.0, pred.confidence * multiplier))
             pred.confidence_gate = self._gate_from_confidence(pred.confidence)
 
         # --- Reaction prediction gatekeeper ---
@@ -2964,7 +2966,14 @@ class PredictionEngine:
             0.3-0.6 -> SUGGEST   (ask "would you like me to...")
             0.6-0.8 -> DEFAULT   (do it, but make it easy to undo)
             > 0.8  -> AUTONOMOUS (just handle it without asking)
+
+        NaN, inf, and negative values are treated as invalid and
+        conservatively mapped to OBSERVE to prevent dangerous
+        autonomous actions on corrupted confidence scores.
         """
+        # Guard against NaN/inf/negative — these must never escalate to AUTONOMOUS
+        if math.isnan(confidence) or math.isinf(confidence) or confidence < 0:
+            return ConfidenceGate.OBSERVE
         if confidence < 0.3:
             return ConfidenceGate.OBSERVE
         elif confidence < 0.6:
