@@ -79,6 +79,7 @@ class RoutineDetector:
         self.min_occurrences = 3  # Need at least 3 instances to call it a routine
         self.time_window_hours = 2  # Actions within 2h can be part of same routine
         self.consistency_threshold = 0.6  # 60% of instances must match for it to be a routine
+        self.min_episodes_for_detection = 50  # Minimum episodes before skipping fallback
 
         # Diagnostics: cached result from the most recent detect_routines() call
         self._last_detection_count: int | None = None
@@ -764,16 +765,28 @@ class RoutineDetector:
             len(raw_episodes),
         )
 
-        # Fallback: if no episodes have a usable interaction_type, re-query
+        # Fallback: if too few episodes have a usable interaction_type, re-query
         # WITHOUT the filter and derive classification from the linked event.
-        if not raw_episodes:
+        # A handful of episodes (< min_episodes_for_detection) is insufficient for
+        # reliable routine detection, so we supplement with fallback-derived episodes.
+        if len(raw_episodes) < self.min_episodes_for_detection:
+            fallback_reason = "full fallback (0 primary)" if not raw_episodes else (
+                f"supplemental fallback ({len(raw_episodes)} primary < {self.min_episodes_for_detection} threshold)"
+            )
             try:
-                raw_episodes = self._fallback_temporal_episodes(cutoff)
-                if raw_episodes:
+                fallback_episodes = self._fallback_temporal_episodes(cutoff)
+                if fallback_episodes:
                     logger.info(
-                        "Temporal detection: fallback recovered %d episodes via event_type derivation",
-                        len(raw_episodes),
+                        "Temporal detection: %s — recovered %d episodes via event_type derivation",
+                        fallback_reason,
+                        len(fallback_episodes),
                     )
+                    # Merge primary and fallback, deduplicating by (timestamp, interaction_type)
+                    seen = {(ts, it) for ts, it in raw_episodes}
+                    for ep in fallback_episodes:
+                        if ep not in seen:
+                            raw_episodes.append(ep)
+                            seen.add(ep)
             except Exception:
                 logger.exception("Temporal detection: fallback query failed")
 
@@ -1227,14 +1240,20 @@ class RoutineDetector:
             self.min_occurrences,
         )
 
-        # Fallback: if no episodes have a usable interaction_type, re-query
-        # WITHOUT the filter and derive classification from the linked event.
-        if not location_actions:
+        # Fallback: if too few (location, type) pairs have a usable interaction_type,
+        # re-query WITHOUT the filter and derive classification from the linked event.
+        # Location actions are already aggregated, so use a lower threshold of 3.
+        min_location_pairs = 3
+        if len(location_actions) < min_location_pairs:
+            fallback_reason = "full fallback (0 primary)" if not location_actions else (
+                f"supplemental fallback ({len(location_actions)} primary < {min_location_pairs} threshold)"
+            )
             try:
                 fallback_rows = self._fallback_location_episodes(cutoff)
                 if fallback_rows:
                     logger.info(
-                        "Location detection: fallback recovered %d episodes via event_type derivation",
+                        "Location detection: %s — recovered %d episodes via event_type derivation",
+                        fallback_reason,
                         len(fallback_rows),
                     )
                     # Re-aggregate by (location, interaction_type) with day counts
@@ -1245,15 +1264,21 @@ class RoutineDetector:
                             loc_type_days[(location, itype)].add(date_str)
                         except (TypeError, IndexError):
                             continue
-                    # Filter to pairs meeting min_occurrences
-                    location_actions = [
+                    # Build fallback actions and merge with primary
+                    fallback_actions = [
                         (loc, itype, len(days))
                         for (loc, itype), days in loc_type_days.items()
                         if len(days) >= self.min_occurrences
                     ]
+                    # Merge: add fallback pairs not already in primary results
+                    existing_pairs = {(loc, itype) for loc, itype, _ in location_actions}
+                    for loc, itype, day_count in fallback_actions:
+                        if (loc, itype) not in existing_pairs:
+                            location_actions.append((loc, itype, day_count))
+                            existing_pairs.add((loc, itype))
                     location_actions.sort(key=lambda x: (x[0], -x[2]))
                     logger.info(
-                        "Location detection: fallback produced %d (location, type) pairs meeting min_occurrences=%d",
+                        "Location detection: after merge %d (location, type) pairs meeting min_occurrences=%d",
                         len(location_actions),
                         self.min_occurrences,
                     )
@@ -1397,14 +1422,22 @@ class RoutineDetector:
         # trigger episodes by timestamp (since their stored interaction_type
         # is NULL/unknown, the standard follow-up JOIN won't match them).
         # Also keep the full fallback rows for the follow-up matching.
+        # Fallback: if too few trigger event types have a usable interaction_type,
+        # re-query WITHOUT the filter and derive classification from the linked event.
+        # Use a lower threshold of 3 since trigger_events are already aggregated by type.
+        min_trigger_types = 3
         fallback_trigger_timestamps: dict[str, list[str]] = {}
         all_fallback_rows: list[tuple[str, str]] = []
-        if not trigger_events:
+        if len(trigger_events) < min_trigger_types:
+            fallback_reason = "full fallback (0 primary)" if not trigger_events else (
+                f"supplemental fallback ({len(trigger_events)} primary < {min_trigger_types} threshold)"
+            )
             try:
                 all_fallback_rows = self._fallback_event_triggered_episodes(cutoff)
                 if all_fallback_rows:
                     logger.info(
-                        "Event-triggered detection: fallback recovered %d episodes via event_type derivation",
+                        "Event-triggered detection: %s — recovered %d episodes via event_type derivation",
+                        fallback_reason,
                         len(all_fallback_rows),
                     )
                     # Re-aggregate by interaction_type with day counts, and
@@ -1418,20 +1451,27 @@ class RoutineDetector:
                             type_timestamps[itype].append(ts)
                         except (TypeError, IndexError):
                             continue
-                    # Filter to types meeting min_occurrences
-                    trigger_events = [
+                    # Build fallback trigger events and merge with primary
+                    fallback_triggers = [
                         (itype, len(days))
                         for itype, days in type_days.items()
                         if len(days) >= self.min_occurrences
                     ]
+                    # Merge: add fallback types not already in primary results
+                    existing_types = {itype for itype, _ in trigger_events}
+                    for itype, day_count in fallback_triggers:
+                        if itype not in existing_types:
+                            trigger_events.append((itype, day_count))
+                            existing_types.add(itype)
                     trigger_events.sort(key=lambda x: -x[1])
-                    # Only keep timestamps for types that met the threshold
+                    # Only keep timestamps for fallback-derived types
                     fallback_trigger_timestamps = {
                         itype: type_timestamps[itype]
-                        for itype, _ in trigger_events
+                        for itype, _ in fallback_triggers
+                        if itype in {it for it, _ in trigger_events}
                     }
                     logger.info(
-                        "Event-triggered detection: fallback produced %d candidate trigger types meeting min_occurrences=%d",
+                        "Event-triggered detection: after merge %d candidate trigger types meeting min_occurrences=%d",
                         len(trigger_events),
                         self.min_occurrences,
                     )
