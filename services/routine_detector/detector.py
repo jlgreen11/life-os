@@ -476,6 +476,180 @@ class RoutineDetector:
         )
         return results
 
+    def _fallback_location_episodes(self, cutoff: datetime) -> list[tuple[str, str, str]]:
+        """Fallback query for location detection when no episodes have usable interaction_type.
+
+        Re-queries episodes that have a non-NULL location WITHOUT the
+        ``interaction_type IS NOT NULL`` filter, then derives an interaction type
+        for each row from the linked event's ``type`` field in the events database.
+        Rows whose event_id cannot be resolved or whose derived type is empty are
+        skipped.
+
+        This handles the common production scenario where episodes were created
+        before the granular classification logic was deployed, leaving
+        interaction_type as NULL, 'unknown', or the old generic 'communication'.
+
+        Args:
+            cutoff: Only include episodes after this timestamp.
+
+        Returns:
+            List of (location, derived_interaction_type, timestamp) tuples.
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT location, interaction_type, event_id, timestamp
+                   FROM episodes
+                   WHERE timestamp > ?
+                     AND location IS NOT NULL
+                   ORDER BY timestamp""",
+                (cutoff.isoformat(),),
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        logger.info(
+            "Location detection fallback: %d total episodes with location in window (ignoring interaction_type filter)",
+            len(rows),
+        )
+
+        results: list[tuple[str, str, str]] = []
+        for location, existing_type, event_id, ts in rows:
+            # Use existing type if it's non-null and not a useless placeholder
+            if existing_type and existing_type not in (None, "unknown", "communication"):
+                results.append((location, existing_type, ts))
+                continue
+            # Otherwise derive from the linked event
+            derived = self._derive_interaction_type_from_event(event_id)
+            if derived:
+                results.append((location, derived, ts))
+
+        logger.info(
+            "Location detection fallback: %d episodes recovered with derived interaction types",
+            len(results),
+        )
+        return results
+
+    def _fallback_event_triggered_episodes(self, cutoff: datetime) -> list[tuple[str, str]]:
+        """Fallback query for event-triggered detection when no episodes have usable interaction_type.
+
+        Re-queries episodes WITHOUT the ``interaction_type IS NOT NULL`` filter,
+        then derives an interaction type for each row from the linked event's
+        ``type`` field in the events database.  Rows whose event_id cannot be
+        resolved or whose derived type is empty are skipped.
+
+        This handles the common production scenario where episodes were created
+        before the granular classification logic was deployed, leaving
+        interaction_type as NULL, 'unknown', or the old generic 'communication'.
+
+        Args:
+            cutoff: Only include episodes after this timestamp.
+
+        Returns:
+            List of (interaction_type, timestamp) tuples.
+        """
+        with self.db.get_connection("user_model") as conn:
+            rows = conn.execute(
+                """SELECT interaction_type, event_id, timestamp
+                   FROM episodes
+                   WHERE timestamp > ?
+                   ORDER BY timestamp""",
+                (cutoff.isoformat(),),
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        logger.info(
+            "Event-triggered detection fallback: %d total episodes in window (ignoring interaction_type filter)",
+            len(rows),
+        )
+
+        results: list[tuple[str, str]] = []
+        for existing_type, event_id, ts in rows:
+            # Use existing type if it's non-null and not a useless placeholder
+            if existing_type and existing_type not in (None, "unknown", "communication"):
+                results.append((existing_type, ts))
+                continue
+            # Otherwise derive from the linked event
+            derived = self._derive_interaction_type_from_event(event_id)
+            if derived:
+                results.append((derived, ts))
+
+        logger.info(
+            "Event-triggered detection fallback: %d episodes recovered with derived interaction types",
+            len(results),
+        )
+        return results
+
+    def _fallback_follow_up_actions(
+        self,
+        trigger_timestamps: list[str],
+        trigger_type: str,
+        all_fallback_rows: list[tuple[str, str]],
+    ) -> list[tuple[str, int]]:
+        """Find follow-up actions for fallback-derived trigger episodes.
+
+        When trigger episodes have NULL/unknown stored interaction_type (so the
+        standard SQL JOIN can't match them by type), this method uses the known
+        trigger timestamps and the full set of derived (type, timestamp) pairs
+        from the fallback to find follow-up patterns entirely in Python.
+
+        This avoids re-querying the DB (where interaction types are still
+        NULL/unknown) and uses the already-derived types from the fallback.
+
+        Args:
+            trigger_timestamps: ISO timestamps of the trigger episodes.
+            trigger_type: The derived interaction type (used only for exclusion).
+            all_fallback_rows: All (derived_type, timestamp) pairs from the
+                fallback, including both triggers and potential follow-ups.
+
+        Returns:
+            List of (follow_up_interaction_type, day_count) tuples, matching
+            the format of the standard follow-up query result.
+        """
+        from datetime import datetime as _dt
+
+        # Parse trigger timestamps into (date_str, datetime) pairs for matching
+        trigger_parsed: list[tuple[str, _dt]] = []
+        for ts in trigger_timestamps:
+            try:
+                dt = _dt.fromisoformat(ts)
+                trigger_parsed.append((ts[:10], dt))
+            except (ValueError, TypeError):
+                continue
+
+        # Parse all fallback rows into (type, date_str, datetime) for matching
+        all_parsed: list[tuple[str, str, _dt]] = []
+        for itype, ts in all_fallback_rows:
+            try:
+                dt = _dt.fromisoformat(ts)
+                all_parsed.append((itype, ts[:10], dt))
+            except (ValueError, TypeError):
+                continue
+
+        # For each trigger, find follow-up types within 2 hours on the same day
+        follow_up_day_sets: dict[str, set[str]] = defaultdict(set)
+        two_hours = timedelta(hours=2)
+
+        for trig_date, trig_dt in trigger_parsed:
+            for ftype, fdate, fdt in all_parsed:
+                if ftype == trigger_type:
+                    continue
+                if fdate != trig_date:
+                    continue
+                if fdt > trig_dt and (fdt - trig_dt) < two_hours:
+                    follow_up_day_sets[ftype].add(fdate)
+
+        # Filter to follow-up types meeting min_occurrences
+        results = [
+            (follow_type, len(days))
+            for follow_type, days in follow_up_day_sets.items()
+            if len(days) >= self.min_occurrences
+        ]
+        results.sort(key=lambda x: -x[1])
+        return results
+
     def _detect_temporal_routines(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect routines that occur at similar times each day.
 
@@ -765,6 +939,7 @@ class RoutineDetector:
                     WHERE timestamp > ?
                       AND location IS NOT NULL
                       AND interaction_type IS NOT NULL
+                      AND interaction_type NOT IN ('unknown', 'communication')
                     GROUP BY location, interaction_type
                     HAVING day_count >= ?
                     ORDER BY location, day_count DESC
@@ -782,6 +957,39 @@ class RoutineDetector:
             len(location_actions) if location_actions else 0,
             self.min_occurrences,
         )
+
+        # Fallback: if no episodes have a usable interaction_type, re-query
+        # WITHOUT the filter and derive classification from the linked event.
+        if not location_actions:
+            try:
+                fallback_rows = self._fallback_location_episodes(cutoff)
+                if fallback_rows:
+                    logger.info(
+                        "Location detection: fallback recovered %d episodes via event_type derivation",
+                        len(fallback_rows),
+                    )
+                    # Re-aggregate by (location, interaction_type) with day counts
+                    loc_type_days: dict[tuple[str, str], set[str]] = defaultdict(set)
+                    for location, itype, ts in fallback_rows:
+                        try:
+                            date_str = ts[:10]  # Extract YYYY-MM-DD from ISO timestamp
+                            loc_type_days[(location, itype)].add(date_str)
+                        except (TypeError, IndexError):
+                            continue
+                    # Filter to pairs meeting min_occurrences
+                    location_actions = [
+                        (loc, itype, len(days))
+                        for (loc, itype), days in loc_type_days.items()
+                        if len(days) >= self.min_occurrences
+                    ]
+                    location_actions.sort(key=lambda x: (x[0], -x[2]))
+                    logger.info(
+                        "Location detection: fallback produced %d (location, type) pairs meeting min_occurrences=%d",
+                        len(location_actions),
+                        self.min_occurrences,
+                    )
+            except Exception:
+                logger.exception("Location detection: fallback query failed")
 
         if not location_actions:
             return routines
@@ -893,7 +1101,9 @@ class RoutineDetector:
                         interaction_type,
                         COUNT(DISTINCT DATE(timestamp)) as days_occurred
                     FROM episodes
-                    WHERE timestamp > ? AND interaction_type IS NOT NULL
+                    WHERE timestamp > ?
+                      AND interaction_type IS NOT NULL
+                      AND interaction_type NOT IN ('unknown', 'communication')
                     GROUP BY interaction_type
                     HAVING days_occurred >= ?
                     ORDER BY days_occurred DESC
@@ -911,6 +1121,53 @@ class RoutineDetector:
             len(trigger_events) if trigger_events else 0,
             self.min_occurrences,
         )
+
+        # Fallback: if no episodes have a usable interaction_type, re-query
+        # WITHOUT the filter and derive classification from the linked event.
+        # Track timestamps per derived type so the follow-up query can find
+        # trigger episodes by timestamp (since their stored interaction_type
+        # is NULL/unknown, the standard follow-up JOIN won't match them).
+        # Also keep the full fallback rows for the follow-up matching.
+        fallback_trigger_timestamps: dict[str, list[str]] = {}
+        all_fallback_rows: list[tuple[str, str]] = []
+        if not trigger_events:
+            try:
+                all_fallback_rows = self._fallback_event_triggered_episodes(cutoff)
+                if all_fallback_rows:
+                    logger.info(
+                        "Event-triggered detection: fallback recovered %d episodes via event_type derivation",
+                        len(all_fallback_rows),
+                    )
+                    # Re-aggregate by interaction_type with day counts, and
+                    # also store timestamps per type for the follow-up query.
+                    type_days: dict[str, set[str]] = defaultdict(set)
+                    type_timestamps: dict[str, list[str]] = defaultdict(list)
+                    for itype, ts in all_fallback_rows:
+                        try:
+                            date_str = ts[:10]  # Extract YYYY-MM-DD from ISO timestamp
+                            type_days[itype].add(date_str)
+                            type_timestamps[itype].append(ts)
+                        except (TypeError, IndexError):
+                            continue
+                    # Filter to types meeting min_occurrences
+                    trigger_events = [
+                        (itype, len(days))
+                        for itype, days in type_days.items()
+                        if len(days) >= self.min_occurrences
+                    ]
+                    trigger_events.sort(key=lambda x: -x[1])
+                    # Only keep timestamps for types that met the threshold
+                    fallback_trigger_timestamps = {
+                        itype: type_timestamps[itype]
+                        for itype, _ in trigger_events
+                    }
+                    logger.info(
+                        "Event-triggered detection: fallback produced %d candidate trigger types meeting min_occurrences=%d",
+                        len(trigger_events),
+                        self.min_occurrences,
+                    )
+            except Exception:
+                logger.exception("Event-triggered detection: fallback query failed")
 
         # Compute measured inter-step durations once, shared across all trigger types.
         # Falls back to 5.0 minutes for interaction types where no same-day successor
@@ -933,28 +1190,38 @@ class RoutineDetector:
             # compare as always-greater than datetime() output (no TZ suffix),
             # causing the window filter to silently drop every match.
             try:
-                with self.db.get_connection("user_model") as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                        SELECT
-                            e2.interaction_type,
-                            COUNT(DISTINCT DATE(e1.timestamp)) as day_count
-                        FROM episodes e1
-                        JOIN episodes e2 ON DATE(e1.timestamp) = DATE(e2.timestamp)
-                            AND datetime(e2.timestamp) > datetime(e1.timestamp)
-                            AND datetime(e2.timestamp) < datetime(e1.timestamp, '+2 hours')
-                            AND e1.interaction_type != e2.interaction_type
-                        WHERE e1.interaction_type = ?
-                          AND e1.timestamp > ?
-                        GROUP BY e2.interaction_type
-                        HAVING day_count >= ?
-                        ORDER BY day_count DESC
-                    """,
-                        (interaction_type, cutoff.isoformat(), self.min_occurrences),
+                if interaction_type in fallback_trigger_timestamps:
+                    # Fallback mode: trigger episodes have NULL/unknown stored
+                    # interaction_type, so we use their known timestamps and the
+                    # full fallback-derived data to find follow-ups in Python.
+                    following_actions = self._fallback_follow_up_actions(
+                        fallback_trigger_timestamps[interaction_type],
+                        interaction_type,
+                        all_fallback_rows,
                     )
+                else:
+                    with self.db.get_connection("user_model") as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            SELECT
+                                e2.interaction_type,
+                                COUNT(DISTINCT DATE(e1.timestamp)) as day_count
+                            FROM episodes e1
+                            JOIN episodes e2 ON DATE(e1.timestamp) = DATE(e2.timestamp)
+                                AND datetime(e2.timestamp) > datetime(e1.timestamp)
+                                AND datetime(e2.timestamp) < datetime(e1.timestamp, '+2 hours')
+                                AND e1.interaction_type != e2.interaction_type
+                            WHERE e1.interaction_type = ?
+                              AND e1.timestamp > ?
+                            GROUP BY e2.interaction_type
+                            HAVING day_count >= ?
+                            ORDER BY day_count DESC
+                        """,
+                            (interaction_type, cutoff.isoformat(), self.min_occurrences),
+                        )
 
-                    following_actions = cursor.fetchall()
+                        following_actions = cursor.fetchall()
             except sqlite3.DatabaseError as e:
                 logger.warning(
                     "_detect_event_triggered_routines: user_model.db follow-up query failed for %s: %s",
