@@ -66,6 +66,12 @@ class PredictionEngine:
         self._total_predictions_surfaced: int = 0
         self._consecutive_zero_runs: int = 0
 
+        # Store failure tracking — makes silent prediction storage drops visible.
+        # _store_failure_count is a lifetime counter; _last_store_errors is a
+        # capped ring buffer of the most recent 10 errors for diagnostics.
+        self._store_failure_count: int = 0
+        self._last_store_errors: list[dict] = []
+
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
         self._contact_email_map: dict[str, str] = {}
@@ -229,6 +235,10 @@ class PredictionEngine:
             },
             "run_statistics": self._last_run_diagnostics,
             "health": "degraded" if self._consecutive_zero_runs >= 4 else "ok",
+            "store_failures": {
+                "total": self._store_failure_count,
+                "recent_errors": self._last_store_errors,
+            },
         }
 
     def _has_new_events(self) -> bool:
@@ -530,6 +540,7 @@ class PredictionEngine:
         # predictions that will never be shown to the user.
         surfaced_ids = {p.id for p in filtered}
         now = datetime.now(timezone.utc).isoformat()
+        run_store_failures = 0  # Per-run counter; resets each cycle
 
         for pred in predictions:
             pred.was_surfaced = pred.id in surfaced_ids
@@ -549,6 +560,26 @@ class PredictionEngine:
                 self.ums.store_prediction(pred.model_dump())
             except Exception as e:
                 logger.error("Failed to store prediction %s: %s", pred.id, e)
+                run_store_failures += 1
+                self._store_failure_count += 1
+                # Keep a capped ring buffer of the 10 most recent store errors
+                # so diagnostics can show actionable details without unbounded growth.
+                self._last_store_errors.append({
+                    "timestamp": now,
+                    "prediction_id": pred.id,
+                    "prediction_type": pred.prediction_type if hasattr(pred, "prediction_type") else "unknown",
+                    "error_message": str(e),
+                    "error_type": type(e).__name__,
+                })
+                if len(self._last_store_errors) > 10:
+                    self._last_store_errors = self._last_store_errors[-10:]
+
+        if run_store_failures > 0:
+            logger.warning(
+                "Prediction storage: %d/%d predictions failed to store",
+                run_store_failures,
+                len(predictions),
+            )
 
         # Summary log for zero-prediction debugging: reports total output,
         # per-method breakdown, and signal profile availability so operators
@@ -604,6 +635,8 @@ class PredictionEngine:
             "signal_profiles_available": available_profiles,
             "signal_profiles_total": len(profile_types),
             "triggers": {"has_new_events": has_new_events, "time_based_due": time_based_due},
+            "store_failures_this_run": run_store_failures,
+            "store_failures_total": self._store_failure_count,
         }
         self._persist_state("last_run_diagnostics", json.dumps(self._last_run_diagnostics))
 
