@@ -3831,7 +3831,12 @@ class InsightEngine:
 
         An insight is considered stale (and therefore skipped) if the insights
         table already contains a row with the same dedup_key whose created_at
-        is within ``staleness_ttl_hours`` of now.
+        is within the effective TTL window.
+
+        Feedback-aware TTL scaling:
+        - dismissed / not_relevant: TTL * 4 (suppress longer to respect rejection)
+        - useful: TTL * 0.5 (allow resurfacing sooner)
+        - None or unknown: original TTL unchanged (fail-open)
         """
         fresh: list[Insight] = []
         now = datetime.now(timezone.utc)
@@ -3843,7 +3848,7 @@ class InsightEngine:
             try:
                 with self.db.get_connection("user_model") as conn:
                     row = conn.execute(
-                        "SELECT created_at FROM insights WHERE dedup_key = ? ORDER BY created_at DESC LIMIT 1",
+                        "SELECT created_at, feedback FROM insights WHERE dedup_key = ? ORDER BY created_at DESC LIMIT 1",
                         (insight.dedup_key,),
                     ).fetchone()
             except Exception:
@@ -3858,9 +3863,26 @@ class InsightEngine:
             try:
                 created_at = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
                 age_hours = (now - created_at).total_seconds() / 3600
-                if age_hours >= insight.staleness_ttl_hours:
+
+                # Apply feedback-aware TTL scaling
+                feedback = row["feedback"] if "feedback" in row.keys() else None
+                effective_ttl = insight.staleness_ttl_hours
+                if feedback in ("dismissed", "not_relevant"):
+                    effective_ttl = insight.staleness_ttl_hours * 4
+                elif feedback == "useful":
+                    effective_ttl = insight.staleness_ttl_hours * 0.5
+
+                if age_hours >= effective_ttl:
                     fresh.append(insight)
-                # else: skip — still within staleness window
+                else:
+                    if feedback in ("dismissed", "not_relevant"):
+                        logger.debug(
+                            "Suppressing insight (dedup_key=%s) — user feedback '%s' extends TTL to %dh (age=%dh)",
+                            insight.dedup_key,
+                            feedback,
+                            effective_ttl,
+                            int(age_hours),
+                        )
             except (ValueError, TypeError):
                 fresh.append(insight)
 
