@@ -84,7 +84,7 @@ def test_workflow_detector_initialization(db, user_model_store):
     assert detector.min_occurrences == 3, "Should have default min_occurrences threshold"
     assert detector.max_step_gap_hours == 4, "Should have default max_step_gap_hours threshold"
     assert detector.min_steps == 2, "Should have default min_steps threshold"
-    assert detector.success_threshold == 0.01, "Should have 1% success threshold"
+    assert detector.min_completions == 3, "Should have default min_completions threshold"
 
 
 def test_workflow_detection_with_large_event_volume(db, user_model_store, event_store):

@@ -397,7 +397,7 @@ def test_workflow_detector_diagnostics(db, event_store, user_model_store):
     assert diagnostics["thresholds"]["min_occurrences"] == 3
     assert diagnostics["thresholds"]["max_step_gap_hours"] == 4
     assert diagnostics["thresholds"]["min_steps"] == 2
-    assert diagnostics["thresholds"]["success_threshold"] == 0.01
+    assert diagnostics["thresholds"]["min_completions"] == 3
 
     # Verify event_counts includes email.received
     assert isinstance(diagnostics["event_counts"], dict)
