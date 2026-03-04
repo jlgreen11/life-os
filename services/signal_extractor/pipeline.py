@@ -29,6 +29,33 @@ from services.signal_extractor.spatial import SpatialExtractor
 from services.signal_extractor.decision import DecisionExtractor
 from services.signal_extractor.base import BaseExtractor
 
+# Maps each signal profile name to the event types its extractor actually
+# processes (derived from each extractor's can_process() method).  Used by
+# rebuild_profiles_from_events() to narrow the SQL query to only the event
+# types that are relevant to the missing profiles, avoiding wasted budget
+# on system.rule.triggered and other internal events that no extractor handles.
+PROFILE_EVENT_TYPES: dict[str, list[str]] = {
+    "linguistic": ["email.sent", "message.sent", "system.user.command"],
+    "linguistic_inbound": ["email.received", "message.received"],
+    "cadence": ["email.sent", "message.sent", "email.received", "message.received"],
+    "mood_signals": [
+        "email.received", "email.sent", "message.received", "message.sent",
+        "health.metric.updated", "health.sleep.recorded",
+        "calendar.event.created", "finance.transaction.new",
+        "location.changed", "system.user.command",
+    ],
+    "relationships": ["email.received", "email.sent", "message.received", "message.sent"],
+    "temporal": [
+        "email.sent", "message.sent",
+        "calendar.event.created", "calendar.event.updated",
+        "task.created", "task.completed", "task.updated",
+        "system.user.command",
+    ],
+    "topics": ["email.received", "email.sent", "message.received", "message.sent", "system.user.command"],
+    "spatial": ["calendar.event.created", "ios.context.update", "system.user.location_update"],
+    "decision": ["task.completed", "task.created", "email.sent", "message.sent", "calendar.event.created"],
+}
+
 
 class SignalExtractorPipeline:
     """
@@ -142,8 +169,11 @@ class SignalExtractorPipeline:
                 len(missing), ", ".join(missing), event_count,
             )
 
-            # Replay up to 10,000 recent events through all extractors.
-            rebuild_result = self.rebuild_profiles_from_events(event_limit=10000)
+            # Replay up to 10,000 recent events through all extractors,
+            # filtering to only the event types the missing profiles need.
+            rebuild_result = self.rebuild_profiles_from_events(
+                event_limit=10000, missing_profiles=missing,
+            )
 
             # Determine which previously-missing profiles now exist.
             rebuilt = []
@@ -170,14 +200,24 @@ class SignalExtractorPipeline:
             logger.warning("check_and_rebuild_missing_profiles: failed (non-fatal): %s", e, exc_info=True)
             return {"missing_before": [], "rebuilt": [], "skipped": True}
 
-    def rebuild_profiles_from_events(self, event_limit: int = 5000) -> dict:
-        """Rebuild all signal profiles by replaying historical events from events.db.
+    def rebuild_profiles_from_events(
+        self,
+        event_limit: int = 5000,
+        missing_profiles: list[str] | None = None,
+    ) -> dict:
+        """Rebuild signal profiles by replaying historical events from events.db.
 
         After database corruption and repair, signal profiles may be permanently
         lost because the normal pipeline only processes NEW events from NATS.
         This method replays stored events through the extractors to reconstruct
         all signal profiles (linguistic, cadence, mood, relationships, topics,
         temporal, spatial, decision).
+
+        When ``missing_profiles`` is provided, the SQL query is narrowed to only
+        the event types that the corresponding extractors can process.  This
+        avoids wasting the event budget on types like ``system.rule.triggered``
+        (57 % of all events) that no extractor handles, ensuring the replay
+        window reaches further back into relevant history.
 
         Events are loaded in reverse-chronological order from events.db and then
         processed in chronological order so that profiles accumulate correctly
@@ -190,6 +230,10 @@ class SignalExtractorPipeline:
         Args:
             event_limit: Maximum number of recent events to replay.  Defaults to
                 5000 which covers roughly 2-3 days of typical activity.
+            missing_profiles: Optional list of profile names (e.g. ``["cadence",
+                "spatial"]``) whose required event types are used to filter the
+                query.  When ``None`` or empty, all event types are fetched
+                (original behaviour).
 
         Returns:
             A stats dict with keys ``events_processed``, ``profiles_rebuilt``
@@ -198,13 +242,37 @@ class SignalExtractorPipeline:
         """
         logger.info("rebuild_profiles_from_events: loading up to %d events from events.db", event_limit)
 
+        # When missing_profiles is specified, compute the union of event types
+        # needed by those profiles and filter the query accordingly.
+        type_filter_values: list[str] = []
+        if missing_profiles:
+            type_set: set[str] = set()
+            for profile_name in missing_profiles:
+                type_set.update(PROFILE_EVENT_TYPES.get(profile_name, []))
+            type_filter_values = sorted(type_set)
+
+        if type_filter_values:
+            logger.info(
+                "rebuild_profiles_from_events: filtering to %d event types for %d missing profiles",
+                len(type_filter_values), len(missing_profiles or []),
+            )
+
         # Load recent events from events.db (DESC so we get the most recent first).
         with self.db.get_connection("events") as conn:
-            rows = conn.execute(
-                "SELECT id, type, source, timestamp, priority, payload, metadata "
-                "FROM events ORDER BY timestamp DESC LIMIT ?",
-                (event_limit,),
-            ).fetchall()
+            if type_filter_values:
+                placeholders = ", ".join("?" for _ in type_filter_values)
+                rows = conn.execute(
+                    "SELECT id, type, source, timestamp, priority, payload, metadata "
+                    f"FROM events WHERE type IN ({placeholders}) "
+                    "ORDER BY timestamp DESC LIMIT ?",
+                    (*type_filter_values, event_limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, type, source, timestamp, priority, payload, metadata "
+                    "FROM events ORDER BY timestamp DESC LIMIT ?",
+                    (event_limit,),
+                ).fetchall()
 
         if not rows:
             logger.info("rebuild_profiles_from_events: no events found in events.db")
