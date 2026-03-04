@@ -118,8 +118,12 @@ class TestCadenceWorkLifeBoundaries:
         assert boundary_fact["value"] == "flexible_boundaries"
         assert boundary_fact["confidence"] > 0
 
-    def test_no_boundary_fact_for_mixed_schedule(self, user_model_store):
-        """When business-hours ratio is between 30-90%, no boundary fact is stored."""
+    def test_moderate_boundary_fact_for_mixed_schedule(self, user_model_store):
+        """When business-hours ratio is between 30-90%, a moderate_boundaries fact is stored.
+
+        Mixed schedules indicate the user communicates both during and outside
+        business hours — a meaningful work-life pattern worth recording.
+        """
         # Even spread across all hours → ~37.5% business hours
         hourly = {str(h): 10 for h in range(24)}
 
@@ -131,14 +135,15 @@ class TestCadenceWorkLifeBoundaries:
 
         facts = user_model_store.get_semantic_facts(category="values")
         boundary_fact = next((f for f in facts if f["key"] == "work_life_boundaries"), None)
-        assert boundary_fact is None
+        assert boundary_fact is not None
+        assert boundary_fact["value"] == "moderate_boundaries"
 
 
 class TestCadencePeakCommunicationHour:
     """Verify peak communication hour inference from hourly activity spikes."""
 
-    def test_peak_hour_stored_when_above_20_percent(self, user_model_store):
-        """An hour with >20% of all messages should be stored as peak_communication_hour."""
+    def test_peak_hour_stored_when_above_12_percent(self, user_model_store):
+        """An hour with >12% of all messages should be stored as peak_communication_hour."""
         hourly = {str(h): 0 for h in range(24)}
         # 50 messages at hour 10, only 10 elsewhere = 60 total → 50/60 ≈ 83%
         hourly["10"] = 50
@@ -159,8 +164,8 @@ class TestCadencePeakCommunicationHour:
         assert peak_fact["confidence"] > 0.5
 
     def test_no_peak_hour_when_evenly_distributed(self, user_model_store):
-        """With evenly distributed messages, no single hour exceeds 20%."""
-        # 10 messages per hour across 10 hours → each is 10% = below 20%
+        """With evenly distributed messages, no single hour exceeds 12%."""
+        # 10 messages per hour across 10 hours → each is 10% = below 12%
         hourly = {str(h): 0 for h in range(24)}
         for h in range(9, 19):
             hourly[str(h)] = 10

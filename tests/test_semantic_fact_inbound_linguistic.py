@@ -278,8 +278,12 @@ class TestInboundLinguisticInference:
     # Mixed environment (neutral formality)
     # -------------------------------------------------------------------
 
-    def test_neutral_formality_creates_no_environment_fact(self, user_model_store):
-        """Formality between 0.3 and 0.7 does not create an environment fact."""
+    def test_neutral_formality_creates_mixed_environment_fact(self, user_model_store):
+        """Formality between 0.3 and 0.7 with 30+ samples creates a mixed_formality fact.
+
+        Neutral-range formality indicates the user communicates with both
+        formal and casual contacts — a meaningful fact about their environment.
+        """
         self._setup_inbound_profile(user_model_store, {
             "contact1@example.com": {"formality": 0.5, "question_rate": 0.1, "hedge_rate": 0.05, "samples_count": 25},
             "contact2@example.com": {"formality": 0.45, "question_rate": 0.1, "hedge_rate": 0.05, "samples_count": 25},
@@ -290,4 +294,5 @@ class TestInboundLinguisticInference:
 
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
         env_fact = next((f for f in facts if f["key"] == "inbound_communication_environment"), None)
-        assert env_fact is None
+        assert env_fact is not None
+        assert env_fact["value"] == "mixed_formality_environment"
