@@ -523,6 +523,7 @@ class LifeOS:
         self._start_background_task("conflict_detection_loop", self._conflict_detection_loop)
         self._start_background_task("connector_health_monitor_loop", self._connector_health_monitor_loop)
         self._start_background_task("nats_reconnect_loop", self._nats_reconnect_loop)
+        self._start_background_task("notification_expiry_loop", self._notification_expiry_loop)
 
         # 7. Launch web server
         logger.info("[7/7] Starting web server...")
@@ -3972,6 +3973,38 @@ class LifeOS:
                 logger.error("NATS reconnect loop error: %s", e)
 
             await asyncio.sleep(30)
+
+    async def _notification_expiry_loop(self):
+        """Expire stale pending notifications every 4 hours.
+
+        Notifications with status='pending' older than 48 hours are stale
+        (e.g., "You have a meeting at 2pm" from 3 days ago). Without periodic
+        cleanup, they accumulate indefinitely during continuous-run sessions
+        that never consume a digest, cluttering future deliveries.
+
+        The expire_stale_notifications() method already handles the logic —
+        this loop simply calls it on a schedule.
+
+        A 300-second warmup delay avoids redundant work at startup, since
+        _recover_pending_batch() already calls expire_stale_notifications()
+        during initialization.
+
+        Interval: 4 hours (14400 seconds)
+          - Notifications expire after 48 hours, so checking every 4 hours
+            ensures stale items are cleaned up within a reasonable window.
+        """
+        logger.info("NotificationExpiryLoop: warming up for 300s (startup already handles expiry)...")
+        await asyncio.sleep(300)
+
+        while not self.shutdown_event.is_set():
+            try:
+                count, _expired_ids = self.notification_manager.expire_stale_notifications()
+                if count > 0:
+                    logger.info("NotificationExpiryLoop: expired %d stale notifications", count)
+            except Exception as e:
+                logger.error("NotificationExpiryLoop error: %s", e)
+
+            await asyncio.sleep(14400)
 
     async def _db_health_loop(self):
         """Periodically probe user_model.db for corruption and auto-repair.
