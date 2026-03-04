@@ -77,6 +77,11 @@ class PredictionEngine:
         # a silent persistence failure (e.g. WAL not checkpointed, DB recovery).
         self._persistence_failure_detected: bool = False
 
+        # Tracks consecutive prediction cycles where the surfacing rate is 0%.
+        # When this exceeds 3, the filtering log is escalated from DEBUG to
+        # WARNING so operators notice that no predictions are reaching users.
+        self._zero_surfacing_cycles: int = 0
+
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
         self._contact_email_map: dict[str, str] = {}
@@ -245,6 +250,7 @@ class PredictionEngine:
                 "recent_errors": self._last_store_errors,
             },
             "persistence_failure_detected": self._persistence_failure_detected,
+            "zero_surfacing_cycles": self._zero_surfacing_cycles,
         }
 
     def _has_new_events(self) -> bool:
@@ -531,10 +537,27 @@ class PredictionEngine:
         # Log filtering results for observability
         filtered_by_reaction = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("reaction:")])
         filtered_by_confidence = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("confidence:")])
-        logger.debug(
-            "Filtering: %d raw → %d surfaced (filtered: %d by reaction, %d by confidence)",
-            len(predictions), len(filtered), filtered_by_reaction, filtered_by_confidence,
-        )
+
+        # Track consecutive zero-surfacing cycles and escalate log level
+        # when the surfacing rate stays at 0% for too long.
+        if len(predictions) > 0 and len(filtered) == 0:
+            self._zero_surfacing_cycles += 1
+        else:
+            self._zero_surfacing_cycles = 0
+
+        if self._zero_surfacing_cycles >= 3:
+            logger.warning(
+                "Prediction surfacing rate has been 0%% for %d consecutive cycles — "
+                "check reaction prediction and confidence gates. "
+                "This run: %d raw → %d surfaced (filtered: %d by reaction, %d by confidence)",
+                self._zero_surfacing_cycles,
+                len(predictions), len(filtered), filtered_by_reaction, filtered_by_confidence,
+            )
+        else:
+            logger.debug(
+                "Filtering: %d raw → %d surfaced (filtered: %d by reaction, %d by confidence)",
+                len(predictions), len(filtered), filtered_by_reaction, filtered_by_confidence,
+            )
 
         # Store ALL predictions (including filtered-out ones) for accuracy
         # tracking. Mark which ones were actually surfaced so the feedback
@@ -594,16 +617,23 @@ class PredictionEngine:
         # data was lost (DB recovery, WAL issue, etc.).  This makes the
         # critical 'predictions generated but not persisted' anomaly visible
         # at runtime instead of only in periodic data-quality reports.
+        #
+        # We query by created_at (>= run start minus 60s buffer) rather than
+        # resolved_at IS NULL, because filtered predictions have resolved_at
+        # set before storage — a 0% surfacing rate is normal and should not
+        # trigger the alarm.
         if stored_count > 0:
             try:
+                run_start = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
                 with self.db.get_connection("user_model") as conn:
                     actual_count = conn.execute(
-                        "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL"
+                        "SELECT COUNT(*) FROM predictions WHERE created_at >= ?",
+                        (run_start,),
                     ).fetchone()[0]
                 if actual_count == 0:
                     logger.critical(
                         "PREDICTION PERSISTENCE FAILURE: stored %d predictions this run "
-                        "but predictions table has 0 unresolved rows — data is being lost. "
+                        "but found 0 rows with created_at in the last 60s — data is being lost. "
                         "Check for DB recovery events or WAL checkpoint issues.",
                         stored_count,
                     )
@@ -666,6 +696,7 @@ class PredictionEngine:
             "signal_profiles_total": len(profile_types),
             "triggers": {"has_new_events": has_new_events, "time_based_due": time_based_due},
             "stored_count": stored_count,
+            "zero_surfacing_cycles": self._zero_surfacing_cycles,
             "store_failures_this_run": run_store_failures,
             "store_failures_total": self._store_failure_count,
         }
