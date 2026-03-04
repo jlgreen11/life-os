@@ -2457,10 +2457,15 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # Match contact on from_address (inbound), to_addresses (outbound),
         # or sender (fallback).  to_addresses is a JSON array so we use LIKE.
+        # Bound to a 365-day lookback to avoid full-table scans on large
+        # event tables (json_extract + LIKE are expensive).
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+
         interaction_query = f"""
             SELECT id, type, timestamp, payload
             FROM events
             WHERE type IN ({type_placeholders})
+              AND timestamp > ?
               AND (
                   json_extract(payload, '$.from_address') = ?
                   OR payload LIKE ?
@@ -2470,22 +2475,27 @@ def register_routes(app: FastAPI, life_os) -> None:
             LIMIT ?
         """
 
-        # Count query uses same WHERE clause but no LIMIT.
+        # Count query uses same WHERE clause with a safety LIMIT to avoid
+        # unbounded scans — counts above 10 000 are displayed as "10000+".
         count_query = f"""
-            SELECT COUNT(*)
-            FROM events
-            WHERE type IN ({type_placeholders})
-              AND (
-                  json_extract(payload, '$.from_address') = ?
-                  OR payload LIKE ?
-                  OR json_extract(payload, '$.sender') = ?
-              )
+            SELECT COUNT(*) FROM (
+                SELECT 1
+                FROM events
+                WHERE type IN ({type_placeholders})
+                  AND timestamp > ?
+                  AND (
+                      json_extract(payload, '$.from_address') = ?
+                      OR payload LIKE ?
+                      OR json_extract(payload, '$.sender') = ?
+                  )
+                LIMIT 10000
+            )
         """
 
         # The LIKE pattern wraps the email in quotes to match within a JSON
         # array value like ["alice@example.com", "bob@example.com"].
         like_pattern = f'%"{decoded_email}"%'
-        base_params = list(interaction_types) + [decoded_email, like_pattern, decoded_email]
+        base_params = list(interaction_types) + [cutoff, decoded_email, like_pattern, decoded_email]
 
         interactions = []
         total_interactions = 0
