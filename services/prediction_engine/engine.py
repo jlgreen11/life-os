@@ -72,6 +72,11 @@ class PredictionEngine:
         self._store_failure_count: int = 0
         self._last_store_errors: list[dict] = []
 
+        # Post-store verification flag — set to True if predictions appear to
+        # store successfully but are not found on a subsequent read.  Indicates
+        # a silent persistence failure (e.g. WAL not checkpointed, DB recovery).
+        self._persistence_failure_detected: bool = False
+
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
         self._contact_email_map: dict[str, str] = {}
@@ -239,6 +244,7 @@ class PredictionEngine:
                 "total": self._store_failure_count,
                 "recent_errors": self._last_store_errors,
             },
+            "persistence_failure_detected": self._persistence_failure_detected,
         }
 
     def _has_new_events(self) -> bool:
@@ -541,6 +547,7 @@ class PredictionEngine:
         surfaced_ids = {p.id for p in filtered}
         now = datetime.now(timezone.utc).isoformat()
         run_store_failures = 0  # Per-run counter; resets each cycle
+        stored_count = 0  # Tracks successful store_prediction() calls this run
 
         for pred in predictions:
             pred.was_surfaced = pred.id in surfaced_ids
@@ -558,6 +565,7 @@ class PredictionEngine:
 
             try:
                 self.ums.store_prediction(pred.model_dump())
+                stored_count += 1
             except Exception as e:
                 logger.error("Failed to store prediction %s: %s", pred.id, e)
                 run_store_failures += 1
@@ -580,6 +588,28 @@ class PredictionEngine:
                 run_store_failures,
                 len(predictions),
             )
+
+        # --- Post-store verification ---
+        # Detect the case where store_prediction() appeared to succeed but
+        # data was lost (DB recovery, WAL issue, etc.).  This makes the
+        # critical 'predictions generated but not persisted' anomaly visible
+        # at runtime instead of only in periodic data-quality reports.
+        if stored_count > 0:
+            try:
+                with self.db.get_connection("user_model") as conn:
+                    actual_count = conn.execute(
+                        "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL"
+                    ).fetchone()[0]
+                if actual_count == 0:
+                    logger.critical(
+                        "PREDICTION PERSISTENCE FAILURE: stored %d predictions this run "
+                        "but predictions table has 0 unresolved rows — data is being lost. "
+                        "Check for DB recovery events or WAL checkpoint issues.",
+                        stored_count,
+                    )
+                    self._persistence_failure_detected = True
+            except Exception as e:
+                logger.warning("Post-store verification query failed: %s", e)
 
         # Summary log for zero-prediction debugging: reports total output,
         # per-method breakdown, and signal profile availability so operators
@@ -635,6 +665,7 @@ class PredictionEngine:
             "signal_profiles_available": available_profiles,
             "signal_profiles_total": len(profile_types),
             "triggers": {"has_new_events": has_new_events, "time_based_due": time_based_due},
+            "stored_count": stored_count,
             "store_failures_this_run": run_store_failures,
             "store_failures_total": self._store_failure_count,
         }
@@ -2985,6 +3016,7 @@ class PredictionEngine:
             "total_types": len(diagnostics["prediction_types"]),
             "health": health,
             "blockers": overall_blockers,
+            "persistence_failure_detected": self._persistence_failure_detected,
         }
 
         return diagnostics
