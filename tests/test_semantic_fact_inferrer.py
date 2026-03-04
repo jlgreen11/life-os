@@ -474,3 +474,219 @@ class TestSemanticFactInferrer:
         formal_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
         assert formal_fact is not None
         assert formal_fact["value"] == "formal"
+
+    # -------------------------------------------------------------------
+    # Topic Inference — Multi-Topic and Noise Filter Tests
+    # -------------------------------------------------------------------
+
+    def test_topic_inference_creates_expertise_facts(self, user_model_store):
+        """Multiple high-frequency topics should each produce expertise facts.
+
+        Stores a topic profile with three topics well above the expertise
+        thresholds (count >= 5, frequency > 0.08) and verifies that all
+        three produce expertise_* facts with reasonable confidence.
+        """
+        profile_data = {
+            "topic_counts": {
+                "python": 100,           # 50% frequency
+                "machine_learning": 50,  # 25% frequency
+                "react": 30,            # 15% frequency
+            },
+            "recent_topics": [],
+        }
+        user_model_store.update_signal_profile("topics", profile_data)
+        _set_samples(user_model_store, "topics", 200)
+
+        # Insert an episode so _get_recent_episodes returns data
+        _insert_episode(user_model_store)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+        inferrer.infer_from_topic_profile()
+
+        facts = user_model_store.get_semantic_facts(category="expertise")
+        fact_keys = {f["key"] for f in facts}
+        assert "expertise_python" in fact_keys
+        assert "expertise_machine_learning" in fact_keys
+        assert "expertise_react" in fact_keys
+
+        # All should have confidence > 0.3 (base_confidence=0.5 since samples >= old_threshold)
+        for fact in facts:
+            assert fact["confidence"] > 0.3, f"Fact {fact['key']} has low confidence: {fact['confidence']}"
+
+    def test_topic_inference_filters_noise(self, user_model_store):
+        """Blocklisted noise topics like 'shop' and 'sale' must NOT produce facts.
+
+        Even when noise tokens exceed the expertise threshold, the blocklist
+        should prevent them from being stored as expertise or interest facts.
+        """
+        profile_data = {
+            "topic_counts": {
+                "shop": 80,    # In TOPIC_NOISE_BLOCKLIST — should be filtered
+                "sale": 60,    # In TOPIC_NOISE_BLOCKLIST — should be filtered
+                "python": 50,  # Legitimate topic — should produce a fact
+            },
+        }
+        user_model_store.update_signal_profile("topics", profile_data)
+        _set_samples(user_model_store, "topics", 200)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+        inferrer.infer_from_topic_profile()
+
+        facts = user_model_store.get_semantic_facts()
+        fact_keys = {f["key"] for f in facts}
+        # Noise topics should NOT produce facts
+        assert "expertise_shop" not in fact_keys
+        assert "expertise_sale" not in fact_keys
+        assert "interest_shop" not in fact_keys
+        assert "interest_sale" not in fact_keys
+        # Legitimate topic should produce a fact
+        assert "expertise_python" in fact_keys
+
+    def test_relationship_inference_requires_outbound(self, user_model_store):
+        """Contacts with outbound_count=0 must be skipped (inbound-only filter).
+
+        A contact who only sends inbound messages (newsletters, marketing)
+        should never appear as a high_priority relationship fact.
+        """
+        profile_data = {
+            "contacts": {
+                # Inbound-only contact — high interaction count but no outbound
+                "newsletter@example.com": {
+                    "interaction_count": 100,
+                    "avg_response_time_seconds": 0,
+                    "outbound_count": 0,  # zero outbound → should be filtered
+                },
+                # Bidirectional contact with lower interactions
+                "friend@example.com": {
+                    "interaction_count": 5,
+                    "avg_response_time_seconds": 3600,
+                    "outbound_count": 3,  # has outbound → passes filter
+                },
+            }
+        }
+        user_model_store.update_signal_profile("relationships", profile_data)
+        _set_samples(user_model_store, "relationships", 15)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+        inferrer.infer_from_relationship_profile()
+
+        facts = user_model_store.get_semantic_facts()
+        fact_keys = {f["key"] for f in facts}
+        # Inbound-only contact should NOT get a priority fact
+        assert "relationship_priority_newsletter@example.com" not in fact_keys
+
+    def test_topic_inference_continues_after_db_write_failure(self, user_model_store):
+        """A DB write failure for one topic must not prevent other topics from being stored.
+
+        The try/except wrapper around update_semantic_fact should catch
+        the error for 'bad_topic' and continue processing 'python'.
+        """
+        profile_data = {
+            "topic_counts": {
+                "python": 50,      # 25% frequency — should produce expertise fact
+                "javascript": 40,  # 20% frequency — should produce expertise fact
+            },
+        }
+        user_model_store.update_signal_profile("topics", profile_data)
+        _set_samples(user_model_store, "topics", 200)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+
+        # Patch update_semantic_fact to fail on the first call only
+        original_update = user_model_store.update_semantic_fact
+        call_count = {"n": 0}
+
+        def failing_update(*args, **kwargs):
+            """Fail on the first call, succeed on subsequent calls."""
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("Simulated DB write failure")
+            return original_update(*args, **kwargs)
+
+        with patch.object(user_model_store, "update_semantic_fact", side_effect=failing_update):
+            result = inferrer.infer_from_topic_profile()
+
+        # Method should complete successfully despite one failure
+        assert result["processed"] is True
+        # At least one of the two topics should have been stored
+        facts = user_model_store.get_semantic_facts(category="expertise")
+        assert len(facts) >= 1
+
+    def test_topic_inference_diagnostic_logging(self, user_model_store, caplog):
+        """Verify that topic inference emits diagnostic log messages.
+
+        The added logging should report profile size, noise filtering stats,
+        and facts created/failed counts.
+        """
+        profile_data = {
+            "topic_counts": {
+                "python": 50,
+                "shop": 30,  # Noise — will be filtered
+            },
+        }
+        user_model_store.update_signal_profile("topics", profile_data)
+        _set_samples(user_model_store, "topics", 200)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+        with caplog.at_level(logging.INFO, logger="services.semantic_fact_inferrer.inferrer"):
+            inferrer.infer_from_topic_profile()
+
+        log_messages = [r.message for r in caplog.records]
+        # Should log profile load stats
+        assert any("Topic profile loaded" in m for m in log_messages)
+        # Should log noise filter stats (includes "noise tokens filtered")
+        assert any("noise tokens filtered" in m for m in log_messages)
+        # Should log inference completion stats
+        assert any("Topic inference complete" in m for m in log_messages)
+
+    def test_relationship_inference_diagnostic_logging(self, user_model_store, caplog):
+        """Verify that relationship inference emits diagnostic log messages.
+
+        The added logging should report contact counts at each filtering
+        stage and the high_priority threshold.
+        """
+        profile_data = {
+            "contacts": {
+                "alice@example.com": {
+                    "interaction_count": 10,
+                    "outbound_count": 5,
+                },
+                "bob@example.com": {
+                    "interaction_count": 3,
+                    "outbound_count": 0,  # Will be filtered by bidirectional check
+                },
+            }
+        }
+        user_model_store.update_signal_profile("relationships", profile_data)
+        _set_samples(user_model_store, "relationships", 15)
+
+        inferrer = SemanticFactInferrer(user_model_store)
+        with caplog.at_level(logging.INFO, logger="services.semantic_fact_inferrer.inferrer"):
+            inferrer.infer_from_relationship_profile()
+
+        log_messages = [r.message for r in caplog.records]
+        # Should log total contacts
+        assert any("Relationship profile: 2 total contacts" in m for m in log_messages)
+        # Should log bidirectional filter results
+        assert any("Bidirectional contacts (outbound > 0): 1" in m for m in log_messages)
+
+
+def _insert_episode(ums):
+    """Insert a minimal episode row for tests that need _get_recent_episodes to return data."""
+    import json
+    from datetime import datetime
+
+    with ums.db.get_connection("user_model") as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO episodes (id, timestamp, event_id, interaction_type, "
+            "content_summary, contacts_involved) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "test-episode-001",
+                datetime.now().isoformat(),
+                "evt-001",
+                "email",
+                "Test episode for inference",
+                json.dumps(["test@example.com"]),
+            ),
+        )
