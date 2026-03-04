@@ -6,6 +6,7 @@ signal profiles, triggers a rebuild when events exist, and is safe to call
 repeatedly (idempotent).
 """
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -31,17 +32,27 @@ def _store_test_event(db, event_id, event_type, source, payload, metadata=None, 
     })
 
 
+def _populate_healthy_profile(db, user_model_store, profile_type):
+    """Create a profile with meaningful data and sufficient samples to pass stale detection."""
+    user_model_store.update_signal_profile(profile_type, {"averages": {"value": 0.5}})
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            "UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = ?",
+            (profile_type,),
+        )
+
+
 def test_all_profiles_present_returns_early(db, user_model_store):
     """When all expected profiles exist, method returns early without rebuilding."""
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
-    # Pre-populate every expected profile.
+    # Pre-populate every expected profile with healthy data and sufficient samples.
     expected = [
         "linguistic", "linguistic_inbound", "cadence", "mood_signals",
         "relationships", "topics", "temporal", "spatial", "decision",
     ]
     for profile_type in expected:
-        user_model_store.update_signal_profile(profile_type, {"test": "data"})
+        _populate_healthy_profile(db, user_model_store, profile_type)
 
     # Store an event so the "no events" guard doesn't interfere.
     _store_test_event(db, "e1", "email.received", "test", {
@@ -62,9 +73,9 @@ def test_missing_profiles_with_events_triggers_rebuild(db, user_model_store):
     """When some profiles are missing and events exist, calls rebuild and reports rebuilt profiles."""
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
-    # Pre-populate only relationships — leave all others missing.
-    user_model_store.update_signal_profile("relationships", {"test": "data"})
-    user_model_store.update_signal_profile("linguistic_inbound", {"test": "data"})
+    # Pre-populate only relationships and linguistic_inbound with healthy data.
+    _populate_healthy_profile(db, user_model_store, "relationships")
+    _populate_healthy_profile(db, user_model_store, "linguistic_inbound")
 
     # Store several email events so the pipeline has data to process.
     for i in range(5):
@@ -132,7 +143,7 @@ def test_idempotent_when_profiles_exist(db, user_model_store):
         "relationships", "topics", "temporal", "spatial", "decision",
     ]
     for profile_type in expected:
-        user_model_store.update_signal_profile(profile_type, {"test": "data"})
+        _populate_healthy_profile(db, user_model_store, profile_type)
 
     result1 = pipeline.check_and_rebuild_missing_profiles()
     result2 = pipeline.check_and_rebuild_missing_profiles()
@@ -148,10 +159,10 @@ def test_returns_correct_missing_profile_list(db, user_model_store):
     """Verify that the missing_before list accurately reflects which profiles are absent."""
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
-    # Populate only a subset.
-    user_model_store.update_signal_profile("relationships", {"data": True})
-    user_model_store.update_signal_profile("cadence", {"data": True})
-    user_model_store.update_signal_profile("linguistic", {"data": True})
+    # Populate only a subset with healthy data.
+    _populate_healthy_profile(db, user_model_store, "relationships")
+    _populate_healthy_profile(db, user_model_store, "cadence")
+    _populate_healthy_profile(db, user_model_store, "linguistic")
 
     # No events — so rebuild is skipped, but missing_before should still be correct.
     result = pipeline.check_and_rebuild_missing_profiles()

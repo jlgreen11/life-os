@@ -18,6 +18,16 @@ def pipeline(db, ums):
     return SignalExtractorPipeline(db, ums)
 
 
+def _populate_healthy_profile(db, ums, profile_type):
+    """Create a profile with meaningful data and sufficient samples to pass stale detection."""
+    ums.update_signal_profile(profile_type, {"averages": {"value": 0.5}})
+    with db.get_connection("user_model") as conn:
+        conn.execute(
+            "UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = ?",
+            (profile_type,),
+        )
+
+
 def test_diagnostics_returns_expected_keys(pipeline):
     """get_diagnostics() must return all top-level keys."""
     diag = pipeline.get_diagnostics()
@@ -39,35 +49,32 @@ def test_diagnostics_shows_all_profiles_missing_on_fresh_db(pipeline):
     assert diag["health"] in ("degraded", "partial")
 
 
-def test_diagnostics_shows_profile_present_after_update(ums, pipeline):
-    """After updating a signal profile, diagnostics should reflect it."""
-    ums.update_signal_profile("linguistic_inbound", {
-        "per_contact_averages": {},
-        "total_samples": 10,
-    })
+def test_diagnostics_shows_profile_present_after_update(db, ums, pipeline):
+    """After updating a signal profile with healthy data, diagnostics should reflect it."""
+    _populate_healthy_profile(db, ums, "linguistic_inbound")
     diag = pipeline.get_diagnostics()
     assert diag["profiles"]["linguistic_inbound"]["status"] == "ok"
     assert diag["profiles_present"] >= 1
     assert diag["profiles_missing"] == 8
 
 
-def test_diagnostics_health_partial_with_some_profiles(ums, pipeline):
+def test_diagnostics_health_partial_with_some_profiles(db, ums, pipeline):
     """Health should be 'partial' when at least 2 profiles exist but some are missing."""
-    ums.update_signal_profile("linguistic", {"data": "test"})
-    ums.update_signal_profile("cadence", {"data": "test"})
+    _populate_healthy_profile(db, ums, "linguistic")
+    _populate_healthy_profile(db, ums, "cadence")
     diag = pipeline.get_diagnostics()
     assert diag["profiles_present"] >= 2
     assert diag["health"] == "partial"
 
 
-def test_diagnostics_health_ok_with_all_profiles(ums, pipeline):
-    """Health should be 'ok' when all 9 profiles exist."""
+def test_diagnostics_health_ok_with_all_profiles(db, ums, pipeline):
+    """Health should be 'ok' when all 9 profiles exist with healthy data."""
     expected = [
         "linguistic", "linguistic_inbound", "cadence", "mood_signals",
         "relationships", "topics", "temporal", "spatial", "decision",
     ]
     for pt in expected:
-        ums.update_signal_profile(pt, {"data": "test"})
+        _populate_healthy_profile(db, ums, pt)
     diag = pipeline.get_diagnostics()
     assert diag["profiles_present"] == 9
     assert diag["profiles_missing"] == 0
