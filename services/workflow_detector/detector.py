@@ -653,6 +653,104 @@ class WorkflowDetector:
 
         return workflows
 
+    def get_diagnostics(self, lookback_days: int = 30) -> dict:
+        """Return workflow detector diagnostic information for monitoring.
+
+        Reports data availability, detection thresholds, and per-strategy results
+        so operators can understand why workflows are or aren't being detected.
+        Follows the same pattern as RoutineDetector.get_diagnostics() and
+        PredictionEngine.get_diagnostics().
+
+        Each section is queried independently with try/except so that a single
+        DB failure doesn't prevent the rest of the diagnostics from returning.
+
+        Args:
+            lookback_days: How many days of history to analyze (default 30).
+
+        Returns:
+            Dict with keys: event_counts, thresholds, detection_results,
+            total_detected, data_sufficient.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        result: dict[str, Any] = {}
+
+        # 1. Event counts by type in the lookback window
+        try:
+            with self.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """
+                    SELECT type, COUNT(*) as cnt
+                    FROM events
+                    WHERE julianday(timestamp) > julianday(?)
+                    GROUP BY type
+                    """,
+                    (cutoff.isoformat(),),
+                ).fetchall()
+            result["event_counts"] = {row[0]: row[1] for row in rows}
+        except Exception as e:
+            logger.warning("get_diagnostics: event_counts query failed: %s", e)
+            result["event_counts"] = {"error": str(e)}
+
+        # 2. Detection thresholds
+        try:
+            result["thresholds"] = {
+                "min_occurrences": self.min_occurrences,
+                "max_step_gap_hours": self.max_step_gap_hours,
+                "min_steps": self.min_steps,
+                "success_threshold": self.success_threshold,
+            }
+        except Exception as e:
+            logger.warning("get_diagnostics: thresholds failed: %s", e)
+            result["thresholds"] = {"error": str(e)}
+
+        # 3. Per-strategy detection results (run each strategy, count results)
+        detection_results: dict[str, dict[str, int]] = {}
+        total_detected = 0
+
+        strategies = {
+            "email": self._detect_email_workflows,
+            "task": self._detect_task_workflows,
+            "calendar": self._detect_calendar_workflows,
+            "interaction": self._detect_interaction_workflows,
+        }
+        for name, strategy_fn in strategies.items():
+            try:
+                detected = strategy_fn(lookback_days)
+                detection_results[name] = {"detected": len(detected)}
+                total_detected += len(detected)
+            except Exception as e:
+                logger.warning("get_diagnostics: %s strategy failed: %s", name, e)
+                detection_results[name] = {"detected": 0, "error": str(e)}
+
+        result["detection_results"] = detection_results
+        result["total_detected"] = total_detected
+
+        # 4. Data availability — count key event types for workflow detection
+        try:
+            event_counts = result.get("event_counts", {})
+            if isinstance(event_counts, dict) and "error" not in event_counts:
+                email_count = event_counts.get("email.received", 0) + event_counts.get("email.sent", 0)
+            else:
+                # Re-query if event_counts failed above
+                with self.db.get_connection("events") as conn:
+                    row = conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM events
+                        WHERE julianday(timestamp) > julianday(?)
+                          AND type IN ('email.received', 'email.sent')
+                        """,
+                        (cutoff.isoformat(),),
+                    ).fetchone()
+                email_count = row[0] if row else 0
+            # Need at least 10 email events for meaningful workflow detection
+            result["data_sufficient"] = email_count >= 10
+        except Exception as e:
+            logger.warning("get_diagnostics: data_sufficient check failed: %s", e)
+            result["data_sufficient"] = False
+
+        return result
+
     def store_workflows(self, workflows: list[dict[str, Any]]) -> int:
         """Persist detected workflows to the database.
 
