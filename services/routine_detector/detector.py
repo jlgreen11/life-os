@@ -751,11 +751,16 @@ class RoutineDetector:
         """
         from datetime import datetime as _dt
 
-        # Parse trigger timestamps into (date_str, datetime) pairs for matching
+        # Parse trigger timestamps into (date_str, datetime) pairs for matching.
+        # Normalize all datetimes to UTC-aware to avoid "can't compare
+        # offset-naive and offset-aware datetimes" when timestamps have
+        # mixed tz formats (some with +00:00 suffix, some without).
         trigger_parsed: list[tuple[str, _dt]] = []
         for ts in trigger_timestamps:
             try:
                 dt = _dt.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
                 trigger_parsed.append((ts[:10], dt))
             except (ValueError, TypeError):
                 continue
@@ -765,6 +770,8 @@ class RoutineDetector:
         for itype, ts in all_fallback_rows:
             try:
                 dt = _dt.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
                 all_parsed.append((itype, ts[:10], dt))
             except (ValueError, TypeError):
                 continue
