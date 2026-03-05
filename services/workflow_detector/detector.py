@@ -212,8 +212,22 @@ class WorkflowDetector:
                             is_match = False
 
                             if event_type == 'email.sent':
-                                # For sent emails, check if recipient matches sender
-                                if email_to and sender in email_to:
+                                # For sent emails, check if recipient matches sender.
+                                # email_to is populated from json_extract(payload, '$.to_addresses')
+                                # which stores a JSON array string like '["user@example.com"]'.
+                                # Parse it properly and do case-insensitive exact matching.
+                                try:
+                                    if email_to and email_to.startswith('['):
+                                        recipients = json.loads(email_to)
+                                    elif email_to:
+                                        recipients = [email_to]
+                                    else:
+                                        recipients = []
+                                except (json.JSONDecodeError, TypeError):
+                                    recipients = [email_to] if email_to else []
+
+                                sender_lower = sender.lower()
+                                if any(r and r.lower() == sender_lower for r in recipients):
                                     is_match = True
                             else:
                                 # For task/calendar/message, allow without recipient check
@@ -277,6 +291,15 @@ class WorkflowDetector:
                     }
                     workflows.append(workflow)
                     logger.debug(f"Detected email workflow for {sender}: {len(steps)} steps, {completion_count} completions")
+                else:
+                    # Log why this sender was rejected for debugging workflow detection issues
+                    if not following_actions:
+                        logger.debug("Workflow candidate '%s' rejected: %d receives but 0 following actions", sender, receive_count)
+                    elif completion_count < self.min_completions:
+                        logger.debug(
+                            "Workflow candidate '%s' rejected: %d receives, %d completions < min %d",
+                            sender, receive_count, completion_count, self.min_completions,
+                        )
 
         # Cap at top 20 senders by email volume to keep workflow storage manageable
         # and focus on the most significant communication patterns.  On systems
