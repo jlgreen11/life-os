@@ -10,13 +10,13 @@ from email/message events) and surfaces up to two insight sub-types:
 This test suite validates:
 
 - Returns empty list when topics profile does not exist
-- Returns empty list when samples_count is below MIN_SAMPLES (50)
+- Returns empty list when samples_count is below MIN_SAMPLES (20)
 - Returns empty list when topic_counts is empty despite sufficient samples
 - top_interests fires with correct summary when profile has enough data
 - top_interests includes only topics with count >= MIN_TOP_COUNT (5)
 - top_interests entity fingerprint uses top-3 topic names (re-surfaces on shift)
 - top_interests confidence is capped at 0.80
-- No trending_topic insight when recent_topics has fewer than MIN_RECENT (50) entries
+- No trending_topic insight when recent_topics has fewer than MIN_RECENT (20) entries
 - No trending_topic when no topic meets the TRENDING_RATIO (2.0×) threshold
 - No trending_topic when candidate topic appears fewer than MIN_TRENDING_COUNT (3) times
 - trending_topic fires when one topic is clearly trending (ratio >= 2.0×, count >= 3)
@@ -92,19 +92,19 @@ def test_no_insight_when_profile_absent(db):
 
 
 def test_no_insight_when_below_min_samples(db):
-    """No insights when profile exists but has fewer than MIN_SAMPLES (50) updates."""
+    """No insights when profile exists but has fewer than MIN_SAMPLES (20) updates."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {"work": 100, "email": 80}, samples_count=30)
+    _set_topics_profile(ums, {"work": 100, "email": 80}, samples_count=15)
     insights = engine._topic_interest_insights()
     assert insights == []
 
 
 def test_no_insight_when_topic_counts_empty(db):
-    """No insights when samples_count >= 50 but topic_counts dict is empty."""
+    """No insights when samples_count >= 20 but topic_counts dict is empty."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {}, samples_count=60)
+    _set_topics_profile(ums, {}, samples_count=25)
     insights = engine._topic_interest_insights()
     assert insights == []
 
@@ -115,7 +115,7 @@ def test_no_insight_when_topic_counts_empty(db):
 
 
 def test_top_interests_fires_with_sufficient_data(db):
-    """top_interests insight fires when profile has >= 50 samples and >= 5 counts."""
+    """top_interests insight fires when profile has >= 20 samples and >= 5 counts."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     _set_topics_profile(ums, {
@@ -202,15 +202,15 @@ def test_top_interests_no_insight_when_all_below_min_count(db):
 
 
 def test_no_trending_when_recent_topics_below_min(db):
-    """No trending_topic when fewer than MIN_RECENT (50) ring-buffer entries."""
+    """No trending_topic when fewer than MIN_RECENT (20) ring-buffer entries."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     _set_topics_profile(
         ums,
         {"work": 200, "budget": 10},
-        # Only 30 recent entries — below MIN_RECENT (50)
-        recent_topics=_make_recent_entries(["budget"], 30),
-        samples_count=60,
+        # Only 15 recent entries — below MIN_RECENT (20)
+        recent_topics=_make_recent_entries(["budget"], 15),
+        samples_count=25,
     )
 
     insights = engine._topic_interest_insights()
@@ -222,16 +222,16 @@ def test_no_trending_when_ratio_below_threshold(db):
     """No trending_topic when the best-candidate ratio is below TRENDING_RATIO (2.0)."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    # budget appears 5 times in 50 recent entries (rate=0.10).
-    # All-time: budget=500, total=5000 → historical_rate=0.10.  ratio=1.0 < 2.0.
+    # budget appears 4 times in 20 recent entries (rate=0.20).
+    # All-time: budget=1000, total=5000 → historical_rate=0.20.  ratio=1.0 < 2.0.
     _set_topics_profile(
         ums,
-        {"work": 4500, "budget": 500},
+        {"work": 4000, "budget": 1000},
         recent_topics=(
-            _make_recent_entries(["budget"], 5) +
-            _make_recent_entries(["work"], 45)
+            _make_recent_entries(["work"], 16) +
+            _make_recent_entries(["budget"], 4)
         ),
-        samples_count=60,
+        samples_count=25,
     )
 
     insights = engine._topic_interest_insights()
@@ -244,16 +244,16 @@ def test_no_trending_when_count_below_min_trending_count(db):
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     # budget: historical_rate = 10/1010 ≈ 0.0099.
-    # recent: 2 appearances in 50 entries → rate=0.04.  ratio ≈ 4.0 >= 2.0.
+    # recent: 2 appearances in last 20 entries → rate=0.10.  ratio ≈ 10.1 >= 2.0.
     # But count=2 < MIN_TRENDING_COUNT=3, so it should be skipped.
     _set_topics_profile(
         ums,
         {"work": 1000, "budget": 10},
         recent_topics=(
-            _make_recent_entries(["budget"], 2) +
-            _make_recent_entries(["work"], 48)
+            _make_recent_entries(["work"], 18) +
+            _make_recent_entries(["budget"], 2)
         ),
-        samples_count=60,
+        samples_count=25,
     )
 
     insights = engine._topic_interest_insights()
@@ -266,15 +266,17 @@ def test_trending_topic_fires_when_ratio_exceeds_threshold(db):
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     # budget: historical = 50/2050 ≈ 0.0244.
-    # recent: 15 out of 50 → rate = 0.30.  ratio ≈ 12.3 >= 2.0.  count=15 >= 3.
+    # recent window (last 20): 10 budget + 10 work → rate = 0.50.
+    # ratio ≈ 20.5 >= 2.0.  count=10 >= 3.
     _set_topics_profile(
         ums,
         {"work": 2000, "budget": 50},
         recent_topics=(
-            _make_recent_entries(["budget"], 15) +
-            _make_recent_entries(["work"], 35)
+            _make_recent_entries(["work"], 5) +
+            _make_recent_entries(["budget"], 10) +
+            _make_recent_entries(["work"], 10)
         ),
-        samples_count=60,
+        samples_count=25,
     )
 
     insights = engine._topic_interest_insights()
@@ -293,10 +295,11 @@ def test_trending_topic_entity_is_topic_name(db):
         ums,
         {"work": 1000, "taxes": 20},
         recent_topics=(
-            _make_recent_entries(["taxes"], 20) +
-            _make_recent_entries(["work"], 30)
+            _make_recent_entries(["work"], 5) +
+            _make_recent_entries(["taxes"], 10) +
+            _make_recent_entries(["work"], 10)
         ),
-        samples_count=60,
+        samples_count=25,
     )
 
     insights = engine._topic_interest_insights()
@@ -313,10 +316,11 @@ def test_trending_topic_staleness_ttl_48h(db):
         ums,
         {"work": 1000, "ai": 20},
         recent_topics=(
-            _make_recent_entries(["ai"], 20) +
-            _make_recent_entries(["work"], 30)
+            _make_recent_entries(["work"], 5) +
+            _make_recent_entries(["ai"], 10) +
+            _make_recent_entries(["work"], 10)
         ),
-        samples_count=60,
+        samples_count=25,
     )
 
     insights = engine._topic_interest_insights()
@@ -352,8 +356,9 @@ def test_both_subtypes_can_fire_together(db):
         {"work": 2000, "email": 1000, "team": 500, "project": 400, "meeting": 300,
          "budget": 30},
         recent_topics=(
-            _make_recent_entries(["budget"], 20) +
-            _make_recent_entries(["work"], 30)
+            _make_recent_entries(["work"], 5) +
+            _make_recent_entries(["budget"], 10) +
+            _make_recent_entries(["work"], 10)
         ),
         samples_count=100,
     )
@@ -401,8 +406,9 @@ def test_source_weight_mapping_top_interests(db):
         {"work": 2000, "email": 1000, "team": 500, "project": 400, "meeting": 300,
          "budget": 30},
         recent_topics=(
-            _make_recent_entries(["budget"], 20) +
-            _make_recent_entries(["work"], 30)
+            _make_recent_entries(["work"], 5) +
+            _make_recent_entries(["budget"], 10) +
+            _make_recent_entries(["work"], 10)
         ),
         samples_count=100,
     )
