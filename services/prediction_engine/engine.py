@@ -126,6 +126,12 @@ class PredictionEngine:
         # a silent persistence failure (e.g. WAL not checkpointed, DB recovery).
         self._persistence_failure_detected: bool = False
 
+        # Per-check generation breakdown from the last generate_predictions() run.
+        # Persisted to prediction_engine_state so it survives restarts and is
+        # available in diagnostics for debugging 0-prediction anomalies.
+        self._last_generation_stats: dict[str, Any] = {}
+        self._last_generation_timestamp: Optional[str] = None
+
         # Tracks consecutive prediction cycles where the surfacing rate is 0%.
         # When this exceeds 3, the filtering log is escalated from DEBUG to
         # WARNING so operators notice that no predictions are reaching users.
@@ -183,6 +189,13 @@ class PredictionEngine:
             self._last_event_cursor = int(state["last_event_cursor"])
         if "last_time_based_run" in state:
             self._last_time_based_run = datetime.fromisoformat(state["last_time_based_run"])
+        if "last_generation_stats" in state:
+            try:
+                self._last_generation_stats = json.loads(state["last_generation_stats"])
+            except (json.JSONDecodeError, TypeError):
+                pass  # Corrupt stats are non-fatal; keep empty dict default
+        if "last_generation_timestamp" in state:
+            self._last_generation_timestamp = state["last_generation_timestamp"]
         if "last_run_diagnostics" in state:
             try:
                 self._last_run_diagnostics = json.loads(state["last_run_diagnostics"])
@@ -307,6 +320,8 @@ class PredictionEngine:
             "persistence_failure_detected": self._persistence_failure_detected,
             "zero_surfacing_cycles": self._zero_surfacing_cycles,
             "surfacing": self._surfacing_diagnostics,
+            "last_generation_breakdown": self._last_generation_stats or None,
+            "last_generation_timestamp": self._last_generation_timestamp,
         }
 
     @staticmethod
@@ -844,6 +859,14 @@ class PredictionEngine:
             "surfacing": self._surfacing_diagnostics,
         }
         self._persist_state("last_run_diagnostics", json.dumps(self._last_run_diagnostics))
+
+        # Persist per-check generation breakdown for zero-prediction debugging.
+        # This lets diagnostics show exactly which _check_* methods returned 0
+        # vs errored vs were skipped, even after a restart.
+        self._last_generation_stats = generation_stats
+        self._last_generation_timestamp = datetime.now(timezone.utc).isoformat()
+        self._persist_state("last_generation_stats", json.dumps(generation_stats))
+        self._persist_state("last_generation_timestamp", self._last_generation_timestamp)
 
         # Persist the event cursor AFTER the full pipeline completes
         # successfully. This ensures that if generate_predictions() crashes
