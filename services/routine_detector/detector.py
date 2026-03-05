@@ -150,6 +150,106 @@ class RoutineDetector:
             return "evening"
         return "night"
 
+    def _backfill_stale_interaction_types(self, lookback_days: int) -> None:
+        """Batch-update episodes with stale interaction_type values.
+
+        Episodes created before the granular ``_classify_interaction_type()``
+        logic was deployed have ``interaction_type`` set to NULL, 'unknown',
+        or the generic 'communication'.  These get filtered out by the primary
+        temporal detection query, leaving 0 usable episodes even when thousands
+        exist.
+
+        This method runs a one-time batch backfill at the start of
+        ``detect_routines()`` by:
+        1. Querying stale episode ``event_id`` values from user_model.db
+        2. Looking up corresponding event types from events.db
+        3. Converting dotted event types to underscored interaction types
+           (e.g. 'email.received' → 'email_received')
+        4. Updating the episodes table in user_model.db
+
+        The two databases cannot be JOINed in SQLite, so the work is done
+        in three separate queries with chunked IN-clauses (SQLite variable
+        limit ~999).
+
+        Args:
+            lookback_days: Only backfill episodes within this lookback window.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
+
+        # Step 1: Find stale episodes in user_model.db
+        try:
+            with self.db.get_connection("user_model") as conn:
+                stale_rows = conn.execute(
+                    """SELECT id, event_id FROM episodes
+                       WHERE timestamp > ?
+                         AND (interaction_type IS NULL
+                              OR interaction_type IN ('unknown', 'communication'))
+                         AND event_id IS NOT NULL""",
+                    (cutoff.isoformat(),),
+                ).fetchall()
+        except Exception:
+            logger.warning("Backfill: failed to query stale episodes — skipping")
+            return
+
+        if not stale_rows:
+            return
+
+        logger.info("Backfill: %d episodes with stale interaction_type in lookback window", len(stale_rows))
+
+        # Build mapping: event_id → episode_id(s)
+        event_id_to_episode_ids: dict[str, list[str]] = defaultdict(list)
+        for ep_id, ev_id in stale_rows:
+            event_id_to_episode_ids[ev_id].append(ep_id)
+
+        all_event_ids = list(event_id_to_episode_ids.keys())
+
+        # Step 2: Look up event types from events.db in chunks
+        event_type_map: dict[str, str] = {}  # event_id → event.type
+        chunk_size = 900  # Stay under SQLite's ~999 variable limit
+        try:
+            with self.db.get_connection("events") as conn:
+                for i in range(0, len(all_event_ids), chunk_size):
+                    chunk = all_event_ids[i : i + chunk_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    rows = conn.execute(
+                        f"SELECT id, type FROM events WHERE id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for ev_id, ev_type in rows:
+                        if ev_type:
+                            event_type_map[ev_id] = ev_type
+        except Exception:
+            logger.warning("Backfill: failed to query events.db — skipping")
+            return
+
+        if not event_type_map:
+            logger.info("Backfill: no matching events found in events.db — skipping")
+            return
+
+        # Step 3: Update episodes in user_model.db
+        updates: list[tuple[str, str]] = []  # (interaction_type, episode_id)
+        for ev_id, ev_type in event_type_map.items():
+            derived_type = ev_type.replace(".", "_")
+            for ep_id in event_id_to_episode_ids[ev_id]:
+                updates.append((derived_type, ep_id))
+
+        updated_count = 0
+        try:
+            with self.db.get_connection("user_model") as conn:
+                for i in range(0, len(updates), chunk_size):
+                    chunk = updates[i : i + chunk_size]
+                    conn.executemany(
+                        "UPDATE episodes SET interaction_type = ? WHERE id = ?",
+                        chunk,
+                    )
+                conn.commit()
+                updated_count = len(updates)
+        except Exception:
+            logger.warning("Backfill: failed to update episodes — skipping")
+            return
+
+        logger.info("Backfill: updated %d episodes with derived interaction_type values", updated_count)
+
     def detect_routines(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all routines from recent episodic memory.
 
@@ -164,6 +264,13 @@ class RoutineDetector:
         Returns:
             List of detected routines with metadata
         """
+        # Backfill stale interaction_type values before any detection strategy
+        # runs, so all strategies benefit from properly classified episodes.
+        try:
+            self._backfill_stale_interaction_types(lookback_days)
+        except Exception:
+            logger.exception("Interaction type backfill failed — continuing with detection")
+
         routines = []
 
         # Each strategy is wrapped in try/except so that a failure in one
@@ -1009,8 +1116,10 @@ class RoutineDetector:
                 classified.append((ts, existing_type))
                 continue
 
-            # Look up the event type and map it to an activity
-            activity = self._classify_event_type_to_activity(event_id)
+            # Derive interaction type from the linked event using the same
+            # dot-to-underscore conversion as the primary temporal detection,
+            # NOT the incompatible EVENT_TYPE_TO_ACTIVITY mapping.
+            activity = self._derive_interaction_type_from_event(event_id)
             if activity:
                 classified.append((ts, activity))
 
