@@ -1051,6 +1051,14 @@ class NotificationManager:
             )
 
         diagnostics["recommendations"] = recommendations
+
+        # --- Quiet hours state ---
+        try:
+            diagnostics["quiet_hours_active"] = self._is_quiet_hours(now)
+        except Exception:
+            logger.warning("Diagnostics: failed to check quiet hours", exc_info=True)
+            diagnostics["quiet_hours_active"] = False
+
         return diagnostics
 
     def auto_resolve_filtered_predictions(self, timeout_hours: int = 1) -> int:
