@@ -144,11 +144,11 @@ class InsightEngine:
             ("linguistic", "_communication_style_insights", 10),
             ("linguistic_inbound", "_inbound_style_insights", 5),
             ("cadence", "_cadence_response_insights", 10),
-            ("temporal", "_temporal_pattern_insights", 7),
+            ("temporal", "_temporal_pattern_insights", 50),
             ("mood_signals", "_mood_trend_insights", 5),
-            ("topics", "_topic_interest_insights", 10),
+            ("topics", "_topic_interest_insights", 20),
             ("spatial", "_spatial_insights", 10),
-            ("decision", "_decision_pattern_insights", 20),
+            ("decision", "_decision_pattern_insights", 5),
         ]
         for profile_type, correlator_name, min_samples in profiles_to_check:
             try:
@@ -2837,11 +2837,11 @@ class InsightEngine:
             and pattern strength.
         """
         # Minimum profile updates before we trust the data enough to surface insights.
-        MIN_SAMPLES = 50
+        MIN_SAMPLES = 20
         # The top topic must appear in at least this many messages to be meaningful.
         MIN_TOP_COUNT = 5
         # Minimum recent_topics ring-buffer entries for trending-topic detection.
-        MIN_RECENT = 50
+        MIN_RECENT = 20
         # Recent-rate / historical-rate ratio threshold for "trending" classification.
         TRENDING_RATIO = 2.0
         # A trending topic must appear at least this many times in the recent window.

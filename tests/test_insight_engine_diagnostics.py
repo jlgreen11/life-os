@@ -137,18 +137,18 @@ async def test_sufficiency_reports_ready_when_enough_samples(insight_engine):
 @pytest.mark.asyncio
 async def test_sufficiency_reports_partial_when_below_threshold(insight_engine):
     """Correlator should report 'partial' when some data exists but below threshold."""
-    # _decision_pattern_insights needs 20 samples; insert only 5
+    # _temporal_pattern_insights needs 50 samples; insert only 10
     with insight_engine.db.get_connection("user_model") as conn:
         conn.execute(
             """INSERT OR REPLACE INTO signal_profiles (profile_type, data, samples_count, updated_at)
                VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
-            ("decision", json.dumps({"speed": "moderate"}), 5),
+            ("temporal", json.dumps({"activity_by_hour": {}}), 10),
         )
 
     report = await insight_engine.get_data_sufficiency_report()
-    assert report["_decision_pattern_insights"]["status"] == "partial"
-    assert report["_decision_pattern_insights"]["samples"] == 5
-    assert report["_decision_pattern_insights"]["min_required"] == 20
+    assert report["_temporal_pattern_insights"]["status"] == "partial"
+    assert report["_temporal_pattern_insights"]["samples"] == 10
+    assert report["_temporal_pattern_insights"]["min_required"] == 50
 
 
 @pytest.mark.asyncio
