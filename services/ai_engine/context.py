@@ -315,6 +315,17 @@ class ContextAssembler:
             common = template.get("common_phrases") or []
             if common:
                 parts.append(f"  Common phrases: {', '.join(common[:5])}")
+            # Surface phrases the user avoids so the LLM doesn't accidentally
+            # use language the user has deliberately stopped using.
+            avoids = template.get("avoids_phrases") or []
+            if avoids:
+                parts.append(f"  Avoids phrases: {', '.join(avoids[:5])}")
+            # Tone notes capture stylistic observations like "always leads
+            # with conclusion" or "uses bullet points" — free-text guidance
+            # that can't be expressed as numeric metrics.
+            tone_notes = template.get("tone_notes") or []
+            if tone_notes:
+                parts.append(f"  Tone notes: {'; '.join(tone_notes[:5])}")
 
         # --- Layer 2: Relationship context ---
         # Provides interaction history depth. A contact with 200 interactions
