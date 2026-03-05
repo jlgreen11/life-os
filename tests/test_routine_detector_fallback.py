@@ -223,12 +223,12 @@ class TestEpisodeFallbackDetection:
 class TestFallbackIntegration:
     """Tests that detect_routines() correctly invokes the fallback path."""
 
-    def test_fallback_not_called_when_temporal_has_sufficient_samples(self, db, user_model_store):
-        """Fallback should NOT be called when temporal profile has >= 25 samples.
+    def test_fallback_called_when_temporal_has_sufficient_samples(self, db, user_model_store):
+        """Fallback SHOULD be called when temporal profile has >= 25 samples
+        if primary temporal detection still returns 0 routines.
 
-        Even if temporal detection returns 0 routines, the fallback should be
-        skipped when the profile has enough data — the lack of routines is a
-        genuine result, not a data availability issue.
+        The fallback is cheap and should always run when primary detection
+        finds nothing, regardless of profile sample count.
         """
         detector = RoutineDetector(db, user_model_store, timezone="UTC")
 
@@ -240,9 +240,11 @@ class TestFallbackIntegration:
                 ("temporal", json.dumps({"test": True}), 30, datetime.now(timezone.utc).isoformat()),
             )
 
-        with patch.object(detector, "_detect_routines_from_episodes_fallback") as mock_fallback:
+        with patch.object(
+            detector, "_detect_routines_from_episodes_fallback", return_value=[]
+        ) as mock_fallback:
             detector.detect_routines(lookback_days=30)
-            mock_fallback.assert_not_called()
+            mock_fallback.assert_called_once_with(30)
 
     def test_fallback_called_when_temporal_has_insufficient_samples(self, db, user_model_store):
         """Fallback should be called when temporal profile has < 25 samples
