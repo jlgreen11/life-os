@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
@@ -46,6 +47,9 @@ class SemanticFactInferrer:
                 and writing semantic facts
         """
         self.ums = user_model_store
+        self._last_inference_results: list[dict] = []
+        self._last_inference_time: str | None = None
+        self._total_facts_written_last_cycle: int = 0
 
     def _get_recent_episodes(self, interaction_type: Optional[str] = None,
                             contact: Optional[str] = None,
@@ -1723,4 +1727,85 @@ class SemanticFactInferrer:
                 results.append({"type": name, "processed": False, "reason": "error"})
 
         self._log_inference_summary(results)
+
+        # Cache results for diagnostics
+        self._last_inference_results = results
+        self._last_inference_time = datetime.now(timezone.utc).isoformat()
+        self._total_facts_written_last_cycle = sum(r.get("facts_written", 0) for r in results)
+
         logger.info("Completed semantic fact inference")
+
+    def get_diagnostics(self) -> dict:
+        """Return inference engine diagnostic information.
+
+        Follows the same pattern as PredictionEngine.get_diagnostics()
+        and RoutineDetector.get_diagnostics(). Each query is wrapped in
+        try/except so a single DB failure doesn't prevent other diagnostics
+        from returning.
+
+        Returns:
+            Dict with keys: last_inference_time, total_facts_written_last_cycle,
+            profile_availability, last_cycle, total_facts, health.
+        """
+        result: dict = {
+            "last_inference_time": self._last_inference_time,
+            "total_facts_written_last_cycle": self._total_facts_written_last_cycle,
+        }
+
+        # Profile availability: check which profiles have enough samples
+        profile_availability: dict = {}
+        for ptype in [
+            "linguistic",
+            "linguistic_inbound",
+            "relationships",
+            "topics",
+            "cadence",
+            "mood_signals",
+            "temporal",
+            "spatial",
+            "decision",
+        ]:
+            try:
+                profile = self.ums.get_signal_profile(ptype)
+                if profile:
+                    profile_availability[ptype] = {
+                        "available": True,
+                        "samples": profile.get("samples_count", 0),
+                    }
+                else:
+                    profile_availability[ptype] = {"available": False, "samples": 0}
+            except Exception:
+                profile_availability[ptype] = {"available": False, "samples": 0, "error": True}
+        result["profile_availability"] = profile_availability
+
+        # Last cycle results (processed vs skipped)
+        if self._last_inference_results:
+            result["last_cycle"] = {
+                "processed": [r["type"] for r in self._last_inference_results if r.get("processed")],
+                "skipped": [
+                    {"type": r["type"], "reason": r.get("reason", "unknown")}
+                    for r in self._last_inference_results
+                    if not r.get("processed")
+                ],
+            }
+        else:
+            result["last_cycle"] = None
+
+        # Current fact count from database
+        try:
+            with self.ums.db.get_connection("user_model") as conn:
+                row = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()
+                result["total_facts"] = row[0] if row else 0
+        except Exception:
+            result["total_facts"] = -1
+
+        # Health assessment
+        available_count = sum(1 for v in profile_availability.values() if v.get("available"))
+        if available_count == 0:
+            result["health"] = "no_data"
+        elif result.get("total_facts", 0) == 0 and available_count > 0:
+            result["health"] = "degraded"
+        else:
+            result["health"] = "ok"
+
+        return result
