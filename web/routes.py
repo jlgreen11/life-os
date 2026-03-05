@@ -4025,6 +4025,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         import asyncio
 
+        # Count facts before inference for delta reporting
+        facts_before = len(life_os.user_model_store.get_semantic_facts())
+
         await asyncio.to_thread(life_os.semantic_fact_inferrer.run_all_inference)
 
         # Return count of facts after inference
@@ -4038,8 +4041,98 @@ def register_routes(app: FastAPI, life_os) -> None:
             "status": "success",
             "message": "Semantic fact inference completed",
             "total_facts": len(facts),
+            "facts_before": facts_before,
+            "facts_created": len(facts) - facts_before,
             "facts_by_category": facts_by_category,
         }
+
+    # -------------------------------------------------------------------
+    # Semantic Fact Diagnostics
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/semantic-facts/diagnostics")
+    async def semantic_fact_diagnostics():
+        """Return semantic fact inference diagnostics.
+
+        Reports signal profile readiness, inference thresholds, and fact counts
+        so operators can understand why the intelligence layer may be empty.
+        """
+        import asyncio
+
+        def _gather():
+            result = {}
+
+            # Check each signal profile's readiness for inference
+            profile_status = {}
+            INFERENCE_THRESHOLDS = {
+                "linguistic": 1, "linguistic_inbound": 1,
+                "relationships": 5, "topics": 1,
+                "cadence": 1, "mood_signals": 1,
+                "temporal": 1, "spatial": 1, "decision": 1,
+            }
+            for ptype, threshold in INFERENCE_THRESHOLDS.items():
+                try:
+                    profile = life_os.user_model_store.get_signal_profile(ptype)
+                    if profile:
+                        samples = profile.get("samples_count", 0)
+                        profile_status[ptype] = {
+                            "exists": True,
+                            "samples": samples,
+                            "meets_threshold": samples >= threshold,
+                            "threshold": threshold,
+                        }
+                    else:
+                        profile_status[ptype] = {
+                            "exists": False, "samples": 0,
+                            "meets_threshold": False, "threshold": threshold,
+                        }
+                except Exception as e:
+                    profile_status[ptype] = {"error": str(e)}
+            result["profile_status"] = profile_status
+
+            # Fact counts by category
+            try:
+                with life_os.db.get_connection("user_model") as conn:
+                    total = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+                    categories = conn.execute(
+                        "SELECT category, COUNT(*) as cnt FROM semantic_facts GROUP BY category"
+                    ).fetchall()
+                    result["facts"] = {
+                        "total": total,
+                        "by_category": {row["category"]: row["cnt"] for row in categories},
+                    }
+            except Exception as e:
+                result["facts"] = {"error": str(e)}
+
+            # Try to get inferrer diagnostics if the method exists
+            try:
+                if hasattr(life_os.semantic_fact_inferrer, "get_diagnostics"):
+                    result["inferrer"] = life_os.semantic_fact_inferrer.get_diagnostics()
+                else:
+                    result["inferrer"] = {"note": "get_diagnostics() not yet available"}
+            except Exception as e:
+                result["inferrer"] = {"error": str(e)}
+
+            # Health summary
+            profiles_ready = sum(
+                1 for v in profile_status.values()
+                if isinstance(v, dict) and v.get("meets_threshold")
+            )
+            fact_total = result.get("facts", {}).get("total", 0)
+            if profiles_ready == 0:
+                result["health"] = "blocked"
+                result["health_reason"] = "No signal profiles meet inference thresholds"
+            elif fact_total == 0:
+                result["health"] = "degraded"
+                result["health_reason"] = f"{profiles_ready} profiles ready but 0 facts produced"
+            else:
+                result["health"] = "ok"
+                result["health_reason"] = f"{fact_total} facts from {profiles_ready} profiles"
+
+            result["generated_at"] = datetime.now(timezone.utc).isoformat()
+            return result
+
+        return await asyncio.to_thread(_gather)
 
     # -------------------------------------------------------------------
     # Prediction Diagnostics
