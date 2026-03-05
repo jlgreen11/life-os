@@ -693,7 +693,7 @@ class WorkflowDetector:
 
         Returns:
             Dict with keys: event_counts, thresholds, detection_results,
-            total_detected, data_sufficient.
+            total_detected, episode_interaction_types, data_sufficient.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         result: dict[str, Any] = {}
@@ -749,7 +749,41 @@ class WorkflowDetector:
         result["detection_results"] = detection_results
         result["total_detected"] = total_detected
 
-        # 4. Data availability — count key event types for workflow detection
+        # 4. Episode interaction_type distribution
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """
+                    SELECT interaction_type, COUNT(*) as count
+                    FROM episodes
+                    WHERE timestamp > datetime('now', '-' || ? || ' days')
+                    GROUP BY interaction_type
+                    ORDER BY count DESC
+                    """,
+                    (lookback_days,),
+                ).fetchall()
+            type_counts = {row[0]: row[1] for row in rows}
+            episode_total = sum(type_counts.values())
+            type_diversity = len(type_counts)
+            # At least 3 distinct types with 3+ episodes each matches min_occurrences threshold
+            types_with_enough = sum(1 for c in type_counts.values() if c >= self.min_occurrences)
+            result["episode_interaction_types"] = {
+                "distribution": type_counts,
+                "episode_total": episode_total,
+                "type_diversity": type_diversity,
+                "sufficient_for_interaction_workflows": types_with_enough >= 3,
+            }
+        except Exception as e:
+            logger.warning("get_diagnostics: episode_interaction_types query failed: %s", e)
+            result["episode_interaction_types"] = {
+                "distribution": {},
+                "episode_total": 0,
+                "type_diversity": 0,
+                "sufficient_for_interaction_workflows": False,
+                "error": str(e),
+            }
+
+        # 5. Data availability — count key event types for workflow detection
         try:
             event_counts = result.get("event_counts", {})
             if isinstance(event_counts, dict) and "error" not in event_counts:
