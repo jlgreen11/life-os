@@ -132,6 +132,11 @@ class SignalExtractorPipeline:
         # state updated during extract() is visible to get_current_mood().
         self.mood_engine = next(e for e in self.extractors if isinstance(e, MoodInferenceEngine))
 
+        # Cached results from the last rebuild and profile health check,
+        # accessible by diagnostics endpoints without re-querying.
+        self._last_profile_health: dict | None = None
+        self._last_rebuild_result: dict | None = None
+
     async def process_event(self, event: dict) -> list[dict]:
         """
         Process an event through all applicable extractors.
@@ -160,6 +165,48 @@ class SignalExtractorPipeline:
                     logger.error("Extractor %s error: %s", type(extractor).__name__, e, exc_info=True)
 
         return all_signals
+
+    def get_profile_health(self) -> dict:
+        """Return the health status of each of the 9 expected signal profiles.
+
+        Queries every expected profile from the user model store and classifies
+        it as 'ok', 'stale', or 'missing'. The result is cached on
+        ``self._last_profile_health`` for later access by diagnostics endpoints.
+
+        Returns:
+            A dict mapping profile type names to dicts with keys:
+            - ``status``: 'ok', 'stale', or 'missing'
+            - ``samples``: sample count (0 if missing)
+            - ``data_keys``: first 5 keys from the profile data dict
+        """
+        expected = [
+            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
+            "relationships", "topics", "temporal", "spatial", "decision",
+        ]
+        result = {}
+        for ptype in expected:
+            try:
+                profile = self.ums.get_signal_profile(ptype)
+                if profile is None:
+                    result[ptype] = {"status": "missing", "samples": 0, "data_keys": []}
+                elif _is_profile_stale(profile):
+                    result[ptype] = {
+                        "status": "stale",
+                        "samples": profile.get("samples_count", 0),
+                        "data_keys": list((profile.get("data") or {}).keys())[:5],
+                    }
+                else:
+                    result[ptype] = {
+                        "status": "ok",
+                        "samples": profile.get("samples_count", 0),
+                        "data_keys": list((profile.get("data") or {}).keys())[:5],
+                    }
+            except Exception as e:
+                # Fail-open: a single profile query failure doesn't block the rest.
+                result[ptype] = {"status": "error", "samples": 0, "data_keys": [], "error": str(e)}
+
+        self._last_profile_health = result
+        return result
 
     def check_and_rebuild_missing_profiles(self) -> dict:
         """Check for missing signal profiles and rebuild them from historical events if needed.
@@ -246,6 +293,14 @@ class SignalExtractorPipeline:
                 rebuild_result.get("events_processed", 0),
                 len(rebuild_result.get("errors", [])),
             )
+
+            # Log detailed per-profile health after rebuild for operator visibility.
+            health = self.get_profile_health()
+            for ptype, info in health.items():
+                logger.info(
+                    "  profile %-20s status=%-7s samples=%d keys=%s",
+                    ptype, info["status"], info["samples"], info["data_keys"],
+                )
 
             return {"missing_before": missing, "rebuilt": rebuilt, "skipped": False}
 
@@ -348,6 +403,8 @@ class SignalExtractorPipeline:
         # Track which extractors successfully processed at least one event.
         extractor_hits: dict[str, int] = {}
         errors: list[str] = []
+        # Count errors per extractor class to surface patterns without flooding logs.
+        extractor_error_counts: dict[str, int] = {}
 
         for i, row in enumerate(rows):
             # Deserialize the row into the event dict format extractors expect.
@@ -374,7 +431,11 @@ class SignalExtractorPipeline:
                         extractor_hits[name] = extractor_hits.get(name, 0) + 1
                     except Exception as e:
                         # Fail-open: log and continue with next extractor.
-                        errors.append(f"{type(extractor).__name__} error on event {event.get('id', '?')}: {e}")
+                        ename = type(extractor).__name__
+                        extractor_error_counts[ename] = extractor_error_counts.get(ename, 0) + 1
+                        # Cap detailed error messages to avoid 12K+ entry lists.
+                        if len(errors) < 20:
+                            errors.append(f"{ename} error on event {event.get('id', '?')}: {e}")
 
             events_processed += 1
 
@@ -388,11 +449,21 @@ class SignalExtractorPipeline:
             events_processed, len(profiles_rebuilt), ", ".join(profiles_rebuilt) or "none", len(errors),
         )
 
-        return {
+        # Log per-extractor error counts for operators diagnosing rebuild failures.
+        if extractor_error_counts:
+            logger.info(
+                "rebuild_profiles_from_events: error counts by extractor: %s",
+                ", ".join(f"{k}={v}" for k, v in sorted(extractor_error_counts.items())),
+            )
+
+        result = {
             "events_processed": events_processed,
             "profiles_rebuilt": profiles_rebuilt,
             "errors": errors,
+            "extractor_error_counts": extractor_error_counts,
         }
+        self._last_rebuild_result = result
+        return result
 
     def get_current_mood(self) -> MoodState:
         """Get the current mood estimate and persist it to the mood history.
