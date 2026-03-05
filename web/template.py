@@ -997,6 +997,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         .status-dot.ok { background: var(--accent-green); }
         .status-dot.error { background: var(--accent-red); }
+        .status-separator { color: var(--text-muted); margin: 0 8px; }
+        .status-mode { color: var(--text-secondary); font-size: 11px; }
         .status-items {
             display: flex;
             gap: 16px;
@@ -1500,6 +1502,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <span id="statusText">Connecting...</span>
         </span>
         <div class="status-items">
+            <span id="notifMode"></span>
+            <span class="status-separator" id="notifSep"></span>
             <span id="eventCount"></span>
             <span id="connectorStatus"></span>
         </div>
@@ -3735,6 +3739,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     // --- Status Bar ---
+    var _lastDiagFetch = 0;
     function loadStatus() {
         /* Refresh the bottom status bar with live health and data-freshness info.
          *
@@ -3833,6 +3838,38 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             document.getElementById('statusDot').className = 'status-dot error';
             document.getElementById('statusText').textContent = 'Offline';
         });
+
+        // Fetch notification mode for status bar (cached, ~5 min interval)
+        if (Date.now() - _lastDiagFetch > 290000) {
+            _lastDiagFetch = Date.now();
+            fetch(API + '/api/diagnostics/user-model')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var notifDiag = data.notification_manager || {};
+                var mode = notifDiag.delivery_mode || 'unknown';
+                var quietHours = notifDiag.quiet_hours_active || false;
+                var modeEl = document.getElementById('notifMode');
+                var sepEl = document.getElementById('notifSep');
+                if (modeEl) {
+                    var label;
+                    if (quietHours) {
+                        label = '\uD83C\uDF19 Quiet hours';
+                    } else {
+                        var modeLabels = {
+                            'frequent': '\uD83D\uDD14 All notifications',
+                            'batched': '\uD83D\uDCE6 Batched',
+                            'minimal': '\uD83D\uDD15 Minimal',
+                            'immediate': '\uD83D\uDD14 All notifications'
+                        };
+                        label = modeLabels[mode] || mode;
+                    }
+                    modeEl.textContent = label;
+                    modeEl.className = 'status-mode';
+                    if (sepEl) sepEl.textContent = '|';
+                }
+            })
+            .catch(function() {});
+        }
     }
 
     // --- Data Freshness Warning ---
