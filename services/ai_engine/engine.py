@@ -150,7 +150,7 @@ CONSTRAINTS:
         system_prompt = """You are ghostwriting a reply on behalf of the user. Use the context layers below in priority order.
 
 PRIORITY 1 — Communication template (highest priority):
-If a "Communication style for this context:" section appears, it was built from real examples with this contact on this channel. Use its greeting and closing verbatim; match its formality label exactly; stay within ±20% of its typical word count; include emoji only if "Uses emoji: yes".
+If a "Communication style for this context:" section appears, it was built from real examples with this contact on this channel. Use its greeting and closing verbatim; match its formality label exactly; stay within ±20% of its typical word count; include emoji only if "Uses emoji: yes". If "Avoids phrases:" is listed, never use those phrases. If "Tone notes:" appear, follow those stylistic observations closely.
 
 PRIORITY 2 — Per-contact outbound style:
 If "User's style with this contact (N msgs)" appears, apply its numeric metrics. Formality scale: 0.0–0.3 = very casual, 0.3–0.6 = neutral, 0.6–1.0 = formal. If question_rate > 0.15 the user asks frequent questions — mirror that. If hedge_rate > 0.10 soften statements ("I think…", "maybe…"). Match avg_sentence_length closely.
