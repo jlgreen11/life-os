@@ -87,6 +87,8 @@ class BehavioralAccuracyTracker:
             db: Database manager for accessing events and predictions.
         """
         self.db = db
+        self._last_cycle_stats: dict[str, int] | None = None
+        self._total_cycles: int = 0
         try:
             self._ensure_resolution_reason_column()
         except (sqlite3.DatabaseError, sqlite3.OperationalError):
@@ -502,7 +504,181 @@ class BehavioralAccuracyTracker:
                     stats['marked_inaccurate'] += 1
                 stats['filtered'] += 1
 
+        # Cache cycle stats for diagnostics observability
+        self._last_cycle_stats = dict(stats)
+        self._total_cycles += 1
+
         return stats
+
+    def get_diagnostics(self) -> dict:
+        """Comprehensive prediction resolution diagnostics.
+
+        Returns a detailed snapshot of the behavioral accuracy tracker's health
+        including per-type resolution stats, resolution method breakdown,
+        unresolved prediction details, inference cycle stats, and a health
+        assessment. Follows the same diagnostic pattern used by
+        PredictionEngine.get_diagnostics() and NotificationManager.get_diagnostics().
+
+        Returns:
+            Dictionary with structure:
+            {
+                "per_type_stats": {<prediction_type>: {total, resolved, accurate, inaccurate, unresolved_surfaced}},
+                "resolution_methods": {<user_response>: count},
+                "unresolved_details": [{prediction_type, description, created_at, age_hours, signal_keys, reason}],
+                "inference_cycles": {"total_cycles": int, "last_cycle_stats": dict | None},
+                "health": "healthy" | "degraded" | "stalled",
+                "recommendations": [str]
+            }
+        """
+        diagnostics: dict = {
+            "per_type_stats": {},
+            "resolution_methods": {},
+            "unresolved_details": [],
+            "inference_cycles": {
+                "total_cycles": self._total_cycles,
+                "last_cycle_stats": self._last_cycle_stats,
+            },
+            "health": "healthy",
+            "recommendations": [],
+        }
+
+        # --- Per-type resolution stats (last 7 days) ---
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT prediction_type,
+                              COUNT(*) as total,
+                              SUM(CASE WHEN resolved_at IS NOT NULL THEN 1 ELSE 0 END) as resolved,
+                              SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) as accurate,
+                              SUM(CASE WHEN was_accurate = 0 THEN 1 ELSE 0 END) as inaccurate,
+                              SUM(CASE WHEN resolved_at IS NULL AND was_surfaced = 1 THEN 1 ELSE 0 END) as unresolved_surfaced
+                       FROM predictions
+                       WHERE created_at > datetime('now', '-7 days')
+                       GROUP BY prediction_type"""
+                ).fetchall()
+            diagnostics["per_type_stats"] = {
+                row["prediction_type"]: {
+                    "total": row["total"],
+                    "resolved": row["resolved"],
+                    "accurate": row["accurate"],
+                    "inaccurate": row["inaccurate"],
+                    "unresolved_surfaced": row["unresolved_surfaced"],
+                }
+                for row in rows
+            }
+        except Exception:
+            logger.warning("Diagnostics: failed to query per-type resolution stats", exc_info=True)
+
+        # --- Resolution method breakdown (last 7 days) ---
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT user_response, COUNT(*) as count
+                       FROM predictions
+                       WHERE resolved_at IS NOT NULL AND created_at > datetime('now', '-7 days')
+                       GROUP BY user_response"""
+                ).fetchall()
+            diagnostics["resolution_methods"] = {
+                (row["user_response"] or "unknown"): row["count"] for row in rows
+            }
+        except Exception:
+            logger.warning("Diagnostics: failed to query resolution methods", exc_info=True)
+
+        # --- Unresolved prediction details (limit 10) ---
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT prediction_type, description, created_at, supporting_signals
+                       FROM predictions
+                       WHERE resolved_at IS NULL AND was_surfaced = 1
+                         AND created_at > datetime('now', '-7 days')
+                       ORDER BY created_at DESC
+                       LIMIT 10"""
+                ).fetchall()
+
+            now = datetime.now(timezone.utc)
+            unresolved = []
+            for row in rows:
+                # Parse supporting_signals to extract keys
+                signal_keys: list[str] = []
+                try:
+                    import json as _json
+                    signals = _json.loads(row["supporting_signals"] or "[]")
+                    if isinstance(signals, dict):
+                        signal_keys = list(signals.keys())
+                    elif isinstance(signals, list):
+                        for s in signals:
+                            if isinstance(s, dict):
+                                signal_keys.extend(s.keys())
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+                # Calculate age
+                try:
+                    created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+                    age_hours = round((now - created).total_seconds() / 3600, 1)
+                except (ValueError, TypeError):
+                    age_hours = None
+
+                # Determine why it hasn't been resolved
+                reason = "unknown"
+                if age_hours is not None:
+                    if age_hours < 6:
+                        reason = "within_observation_window"
+                    elif not signal_keys:
+                        reason = "missing_supporting_signals"
+                    else:
+                        reason = "no_matching_behavior_detected"
+
+                unresolved.append({
+                    "prediction_type": row["prediction_type"],
+                    "description": (row["description"] or "")[:100],
+                    "created_at": row["created_at"],
+                    "age_hours": age_hours,
+                    "signal_keys": signal_keys,
+                    "reason": reason,
+                })
+            diagnostics["unresolved_details"] = unresolved
+        except Exception:
+            logger.warning("Diagnostics: failed to query unresolved prediction details", exc_info=True)
+
+        # --- Health assessment ---
+        total_all = 0
+        resolved_all = 0
+        for type_stats in diagnostics["per_type_stats"].values():
+            total_all += type_stats.get("total", 0)
+            resolved_all += type_stats.get("resolved", 0)
+
+        resolution_rate = resolved_all / total_all if total_all > 0 else 0.0
+        recommendations = []
+
+        if total_all == 0:
+            # No predictions at all — healthy by default (nothing to resolve)
+            diagnostics["health"] = "healthy"
+        elif resolution_rate > 0.5:
+            diagnostics["health"] = "healthy"
+        elif resolution_rate >= 0.1:
+            diagnostics["health"] = "degraded"
+            recommendations.append(
+                f"Resolution rate is {resolution_rate:.0%} ({resolved_all}/{total_all} predictions resolved in 7d). "
+                "Check if supporting_signals contain expected_actions for unresolved prediction types."
+            )
+        else:
+            diagnostics["health"] = "stalled"
+            recommendations.append(
+                f"Resolution rate is {resolution_rate:.0%} ({resolved_all}/{total_all} predictions resolved in 7d). "
+                "Behavioral inference is not resolving predictions — check strategy matching and event ingestion."
+            )
+
+        # Check for missing inference cycles
+        if self._total_cycles == 0:
+            recommendations.append(
+                "No inference cycles have run yet. Ensure the background loop is calling run_inference_cycle()."
+            )
+
+        diagnostics["recommendations"] = recommendations
+
+        return diagnostics
 
     def _get_resolution_reason(self, prediction: dict, was_accurate: bool) -> Optional[str]:
         """Determine the machine-readable reason a prediction was resolved.
