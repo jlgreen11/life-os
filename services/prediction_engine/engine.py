@@ -471,6 +471,49 @@ class PredictionEngine:
         # default to True rather than aborting the entire pipeline.
         generation_stats = {}
 
+        # --- Persistence failure recovery ---
+        # If the previous cycle detected that predictions were lost after storage
+        # (e.g., due to DB corruption recovery dropping the table), perform
+        # corrective actions to ensure this cycle's predictions actually persist.
+        if self._persistence_failure_detected:
+            logger.warning(
+                'Prediction persistence failure detected in previous cycle — '
+                'running recovery: verifying DB, clearing pre-filter cache'
+            )
+            try:
+                test_id = '__persistence_test__'
+                with self.db.get_connection('user_model') as conn:
+                    conn.execute(
+                        'INSERT OR REPLACE INTO predictions '
+                        '(id, prediction_type, description, confidence, confidence_gate, '
+                        'resolved_at, user_response) '
+                        'VALUES (?, ?, ?, ?, ?, datetime("now"), ?)',
+                        (test_id, 'test', 'persistence_check', 0.0, 'OBSERVE', 'filtered'),
+                    )
+                with self.db.get_connection('user_model') as conn:
+                    row = conn.execute(
+                        'SELECT id FROM predictions WHERE id = ?', (test_id,)
+                    ).fetchone()
+                    if row:
+                        conn.execute('DELETE FROM predictions WHERE id = ?', (test_id,))
+                        logger.info('Persistence recovery: DB write test PASSED — clearing failure flag')
+                        self._persistence_failure_detected = False
+                    else:
+                        logger.critical(
+                            'Persistence recovery: DB write test FAILED — predictions '
+                            'table is not persisting writes. Skipping this cycle.'
+                        )
+                        return []
+            except Exception as e:
+                logger.critical(
+                    'Persistence recovery: DB write test raised %s: %s — '
+                    'skipping this cycle', type(e).__name__, e
+                )
+                return []
+
+            # Mark this cycle as running in recovery mode for diagnostics
+            generation_stats['recovery_mode'] = True
+
         try:
             has_new_events = self._has_new_events()
         except Exception as e:
@@ -515,6 +558,17 @@ class PredictionEngine:
                 )
         except Exception as e:
             logger.warning('Pre-filter query failed (proceeding without filter): %s', e)
+
+        # Proactive persistence failure detection: if the table is empty
+        # but we've had store failures, flag for recovery on next cycle.
+        if not existing_predictions and self._store_failure_count > 0:
+            if not self._persistence_failure_detected:
+                logger.warning(
+                    'Predictions table is empty but %d store failures recorded — '
+                    'flagging for persistence recovery on next cycle',
+                    self._store_failure_count,
+                )
+                self._persistence_failure_detected = True
 
         predictions = []
 
