@@ -61,6 +61,19 @@ class RoutineDetector:
     - Arrive home: turn on lights → check mail → change clothes
     """
 
+    # Prefixes that identify internal telemetry episode types (not real user
+    # activity).  These dominate episode counts and skew consistency scores
+    # if not excluded from routine detection queries.
+    INTERNAL_TYPE_PREFIXES = ("usermodel_", "system_", "test")
+
+    # SQL WHERE clause fragment to exclude internal telemetry types from
+    # routine detection queries.  Append after existing NOT IN filters.
+    INTERNAL_TYPE_SQL_FILTER = (
+        "AND interaction_type NOT LIKE 'usermodel_%' "
+        "AND interaction_type NOT LIKE 'system_%' "
+        "AND interaction_type NOT LIKE 'test%'"
+    )
+
     def __init__(self, db: DatabaseManager, user_model_store: UserModelStore, timezone: str = "UTC"):
         """Initialize the routine detector.
 
@@ -465,7 +478,11 @@ class RoutineDetector:
         try:
             with self.db.get_connection("user_model") as conn:
                 row = conn.execute(
-                    "SELECT COUNT(DISTINCT DATE(timestamp)) FROM episodes WHERE timestamp > ?",
+                    f"""SELECT COUNT(DISTINCT DATE(timestamp)) FROM episodes
+                        WHERE timestamp > ?
+                          AND interaction_type IS NOT NULL
+                          AND interaction_type NOT IN ('unknown', 'communication')
+                          {self.INTERNAL_TYPE_SQL_FILTER}""",
                     (cutoff.isoformat(),),
                 ).fetchone()
             return max(1, row[0] if row and row[0] else 1)
@@ -604,11 +621,14 @@ class RoutineDetector:
         for ts, event_id, existing_type in rows:
             # Use existing type if it's non-null and not a useless placeholder
             if existing_type and existing_type not in (None, "unknown", "communication"):
+                # Skip internal telemetry types
+                if any(existing_type.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
+                    continue
                 results.append((ts, existing_type))
                 continue
             # Otherwise derive from the linked event
             derived = self._derive_interaction_type_from_event(event_id)
-            if derived:
+            if derived and not any(derived.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
                 results.append((ts, derived))
 
         logger.info(
@@ -658,11 +678,14 @@ class RoutineDetector:
         for location, existing_type, event_id, ts in rows:
             # Use existing type if it's non-null and not a useless placeholder
             if existing_type and existing_type not in (None, "unknown", "communication"):
+                # Skip internal telemetry types
+                if any(existing_type.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
+                    continue
                 results.append((location, existing_type, ts))
                 continue
             # Otherwise derive from the linked event
             derived = self._derive_interaction_type_from_event(event_id)
-            if derived:
+            if derived and not any(derived.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
                 results.append((location, derived, ts))
 
         logger.info(
@@ -710,11 +733,14 @@ class RoutineDetector:
         for existing_type, event_id, ts in rows:
             # Use existing type if it's non-null and not a useless placeholder
             if existing_type and existing_type not in (None, "unknown", "communication"):
+                # Skip internal telemetry types
+                if any(existing_type.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
+                    continue
                 results.append((existing_type, ts))
                 continue
             # Otherwise derive from the linked event
             derived = self._derive_interaction_type_from_event(event_id)
-            if derived:
+            if derived and not any(derived.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
                 results.append((derived, ts))
 
         logger.info(
@@ -854,12 +880,13 @@ class RoutineDetector:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    """
+                    f"""
                     SELECT timestamp, interaction_type
                     FROM episodes
                     WHERE timestamp > ?
                       AND interaction_type IS NOT NULL
                       AND interaction_type NOT IN ('unknown', 'communication')
+                      {self.INTERNAL_TYPE_SQL_FILTER}
                     ORDER BY timestamp
                 """,
                     (cutoff.isoformat(),),
@@ -1118,8 +1145,10 @@ class RoutineDetector:
         # to EVENT_TYPE_TO_ACTIVITY mapping via the linked event's type field.
         classified: list[tuple[str, str]] = []  # (timestamp, activity_type)
         for ts, event_id, existing_type in rows:
-            # Use existing type if it's meaningful
+            # Use existing type if it's meaningful and not internal telemetry
             if existing_type and existing_type not in (None, "unknown", "communication"):
+                if any(existing_type.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
+                    continue
                 classified.append((ts, existing_type))
                 continue
 
@@ -1330,7 +1359,7 @@ class RoutineDetector:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    """
+                    f"""
                     SELECT
                         location,
                         interaction_type,
@@ -1340,6 +1369,7 @@ class RoutineDetector:
                       AND location IS NOT NULL
                       AND interaction_type IS NOT NULL
                       AND interaction_type NOT IN ('unknown', 'communication')
+                      {self.INTERNAL_TYPE_SQL_FILTER}
                     GROUP BY location, interaction_type
                     HAVING day_count >= ?
                     ORDER BY location, day_count DESC
@@ -1508,7 +1538,7 @@ class RoutineDetector:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    """
+                    f"""
                     SELECT
                         interaction_type,
                         COUNT(DISTINCT DATE(timestamp)) as days_occurred
@@ -1516,6 +1546,7 @@ class RoutineDetector:
                     WHERE timestamp > ?
                       AND interaction_type IS NOT NULL
                       AND interaction_type NOT IN ('unknown', 'communication')
+                      {self.INTERNAL_TYPE_SQL_FILTER}
                     GROUP BY interaction_type
                     HAVING days_occurred >= ?
                     ORDER BY days_occurred DESC
