@@ -57,6 +57,35 @@ PROFILE_EVENT_TYPES: dict[str, list[str]] = {
 }
 
 
+# Maps profile names to the extractor class names that write them.
+# Used by write verification to correlate extractor_hits with profile persistence.
+_PROFILE_TO_EXTRACTOR: dict[str, list[str]] = {
+    "linguistic": ["LinguisticExtractor"],
+    "linguistic_inbound": ["LinguisticExtractor"],
+    "cadence": ["CadenceExtractor"],
+    "mood_signals": ["MoodInferenceEngine"],
+    "relationships": ["RelationshipExtractor"],
+    "topics": ["TopicExtractor"],
+    "temporal": ["TemporalExtractor"],
+    "spatial": ["SpatialExtractor"],
+    "decision": ["DecisionExtractor"],
+}
+
+
+def _profile_extractor_hits(profile_name: str, extractor_hits: dict[str, int]) -> int:
+    """Sum extractor hit counts for extractors that write the given profile.
+
+    Args:
+        profile_name: The signal profile name (e.g. 'linguistic').
+        extractor_hits: Dict mapping extractor class names to hit counts.
+
+    Returns:
+        Total number of extractor hits relevant to this profile.
+    """
+    extractors = _PROFILE_TO_EXTRACTOR.get(profile_name, [])
+    return sum(extractor_hits.get(ext, 0) for ext in extractors)
+
+
 def _is_profile_stale(profile: dict) -> bool:
     """Determine whether an existing signal profile row has no useful data.
 
@@ -208,6 +237,25 @@ class SignalExtractorPipeline:
         self._last_profile_health = result
         return result
 
+    def get_rebuild_diagnostics(self) -> dict:
+        """Return the result of the last profile rebuild, including write failures.
+
+        Returns the cached ``_last_rebuild_result`` dict from the most recent
+        call to ``rebuild_profiles_from_events()``.  This includes:
+        - ``events_processed``: number of events replayed
+        - ``profiles_rebuilt``: list of extractor names that processed events
+        - ``errors``: list of error description strings
+        - ``write_failures``: dict of profiles where extractors ran but
+          persistence failed (the key diagnostic for silent write failures)
+
+        Returns:
+            The last rebuild result dict, or a dict indicating no rebuild
+            has been performed yet.
+        """
+        if self._last_rebuild_result is None:
+            return {"status": "no_rebuild_performed"}
+        return self._last_rebuild_result
+
     def check_and_rebuild_missing_profiles(self) -> dict:
         """Check for missing signal profiles and rebuild them from historical events if needed.
 
@@ -293,6 +341,21 @@ class SignalExtractorPipeline:
                 rebuild_result.get("events_processed", 0),
                 len(rebuild_result.get("errors", [])),
             )
+
+            # Check for silent write failures: profiles where extractors ran
+            # but update_signal_profile() silently failed to persist data.
+            write_failures = rebuild_result.get("write_failures", {})
+            if write_failures:
+                logger.critical(
+                    "check_and_rebuild_missing_profiles: %d profiles had extractor hits but FAILED "
+                    "to persist — this indicates update_signal_profile() is silently failing. "
+                    "Profiles: %s",
+                    len(write_failures),
+                    ", ".join(
+                        f"{name} ({info['extractor_hits']} hits)"
+                        for name, info in write_failures.items()
+                    ),
+                )
 
             # Log detailed per-profile health after rebuild for operator visibility.
             health = self.get_profile_health()
@@ -456,11 +519,56 @@ class SignalExtractorPipeline:
                 ", ".join(f"{k}={v}" for k, v in sorted(extractor_error_counts.items())),
             )
 
+        # -- Write verification phase --
+        # Check that profiles which had extractor hits were actually persisted.
+        # update_signal_profile() wraps its INSERT in try/except and silently
+        # logs a warning on failure, so extractor_hits can show thousands of
+        # "processed" events while zero data actually reached the DB.
+        write_failures: dict[str, dict] = {}
+        for profile_name in PROFILE_EVENT_TYPES:
+            if missing_profiles and profile_name not in missing_profiles:
+                continue
+            # Check if any extractor that writes this profile had hits.
+            # Use the extractor→profile mapping to correlate.
+            profile_extractor_hits = _profile_extractor_hits(profile_name, extractor_hits)
+            if profile_extractor_hits == 0:
+                continue
+            # Verify the profile was actually written to the DB.
+            try:
+                profile = self.ums.get_signal_profile(profile_name)
+                profile_exists = profile is not None
+                samples_count = profile.get("samples_count", 0) if profile else 0
+                if not profile_exists or samples_count == 0:
+                    write_failures[profile_name] = {
+                        "extractor_hits": profile_extractor_hits,
+                        "profile_exists": profile_exists,
+                        "samples_count": samples_count,
+                    }
+            except Exception as e:
+                write_failures[profile_name] = {
+                    "extractor_hits": profile_extractor_hits,
+                    "profile_exists": False,
+                    "samples_count": 0,
+                    "error": str(e),
+                }
+
+        if write_failures:
+            logger.critical(
+                "rebuild_profiles_from_events: WRITE FAILURES DETECTED — %d profiles had extractor hits "
+                "but no data persisted: %s",
+                len(write_failures),
+                ", ".join(
+                    f"{name} ({info['extractor_hits']} hits, exists={info['profile_exists']})"
+                    for name, info in write_failures.items()
+                ),
+            )
+
         result = {
             "events_processed": events_processed,
             "profiles_rebuilt": profiles_rebuilt,
             "errors": errors,
             "extractor_error_counts": extractor_error_counts,
+            "write_failures": write_failures,
         }
         self._last_rebuild_result = result
         return result
