@@ -458,6 +458,18 @@ class SemanticFactInferrer:
             len(human_contacts), len(bidirectional_contacts),
         )
 
+        # Log the complete filter funnel for zero-fact diagnosis
+        logger.info(
+            "Relationship inference funnel: total_contacts=%d, "
+            "bidirectional=%d, human_bidirectional=%d, "
+            "inbound_only_total=%d",
+            len(contacts),
+            len(bidirectional_contacts),
+            len(human_contacts),
+            sum(1 for c in contacts.values()
+                if isinstance(c, dict) and c.get("outbound_count", 0) == 0),
+        )
+
         if not human_contacts:
             logger.info("No human bidirectional contacts found after marketing filter — trying inbound-only fallback")
             return self._infer_from_inbound_only_contacts(contacts, base_confidence)
@@ -567,9 +579,19 @@ class SemanticFactInferrer:
             and not is_marketing_or_noreply(contact_id)
         }
 
-        if len(inbound_only) < 5:
+        # Log the filter funnel for diagnostics
+        logger.info(
+            "Inbound-only inference: total_contacts=%d, inbound_only_raw=%d, "
+            "after_marketing_filter=%d, threshold=2",
+            len(contacts),
+            sum(1 for c in contacts.values()
+                if isinstance(c, dict) and c.get("outbound_count", 0) == 0),
+            len(inbound_only),
+        )
+
+        if len(inbound_only) < 2:
             logger.info(
-                "Only %d inbound-only human contacts (need 5+), skipping inbound-only inference",
+                "Only %d inbound-only human contacts (need 2+), skipping inbound-only inference",
                 len(inbound_only),
             )
             return {"type": "relationship", "processed": True, "reason": "too_few_inbound_only"}
@@ -594,15 +616,19 @@ class SemanticFactInferrer:
         )
         facts_stored += 1
 
-        # --- Top 5 frequent senders ---
+        # --- Top frequent personal senders ---
+        # Even without outbound messages, contacts who send frequently
+        # represent important relationships the user should be aware of.
         sorted_contacts = sorted(
             inbound_only.items(),
-            key=lambda item: item[1].get("interaction_count", 0),
+            key=lambda x: x[1].get("inbound_count", 0) if isinstance(x[1], dict) else 0,
             reverse=True,
         )
         for contact_id, contact_data in sorted_contacts[:5]:
-            interaction_count = contact_data.get("interaction_count", 0)
-            if interaction_count < 1:
+            if not isinstance(contact_data, dict):
+                continue
+            inbound_count = contact_data.get("inbound_count", 0)
+            if inbound_count < 3:
                 continue
             # Link to recent episodes with this contact for provenance
             contact_episodes = self._get_recent_episodes(contact=contact_id, limit=1)
@@ -611,8 +637,8 @@ class SemanticFactInferrer:
             self.ums.update_semantic_fact(
                 key=f"frequent_sender_{contact_id}",
                 category="implicit_preference",
-                value=f"inbound_sender_count_{interaction_count}",
-                confidence=min(0.9, base_confidence + min(0.3, interaction_count / 100)),
+                value="frequent_personal_sender",
+                confidence=min(0.8, base_confidence + min(0.3, inbound_count / 50)),
                 episode_id=episode_id,
             )
             facts_stored += 1
@@ -621,7 +647,16 @@ class SemanticFactInferrer:
             "Inferred %d facts from %d inbound-only human contacts (fallback path)",
             facts_stored, len(inbound_only),
         )
-        return {"type": "relationship", "processed": True, "facts_stored": facts_stored}
+        return {
+            "type": "relationship",
+            "processed": True,
+            "reason": None,
+            "facts_stored": facts_stored,
+            "funnel": {
+                "total_contacts": len(contacts),
+                "inbound_only_after_filter": len(inbound_only),
+            },
+        }
 
     def _purge_noise_topic_facts(self, noise_blocklist: set) -> int:
         """
