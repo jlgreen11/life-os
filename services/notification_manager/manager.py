@@ -750,6 +750,25 @@ class NotificationManager:
                 fresh_batch.append(item)
 
         digest = list(fresh_batch)
+        already_ids = {item["id"] for item in digest}
+
+        # Also pick up any DB-persisted pending notifications not in memory.
+        # This covers notifications lost during a service restart where
+        # _recover_pending_batch() in __init__ may have partially failed,
+        # or where a notification was persisted to DB but the process crashed
+        # before it was appended to _pending_batch.
+        try:
+            with self.db.get_connection("state") as conn:
+                db_pending = conn.execute(
+                    "SELECT id, title, body, priority, domain, source_event_id, action_url "
+                    "FROM notifications WHERE status = 'pending' ORDER BY created_at"
+                ).fetchall()
+            for row in db_pending:
+                if row["id"] not in already_ids:
+                    digest.append(dict(row))
+        except Exception:
+            logger.warning("Failed to recover DB-persisted pending notifications in get_digest", exc_info=True)
+
         for item in digest:
             self._mark_status(item["id"], "delivered")
             # Mark prediction as surfaced when batched notification is delivered.
