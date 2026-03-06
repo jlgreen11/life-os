@@ -173,6 +173,47 @@ class NotificationManager:
             # The notifications are still in the DB and can be recovered later.
             logger.warning("Failed to recover pending batch notifications", exc_info=True)
 
+    def _check_dismissal_suppression(self, domain: Optional[str]) -> bool:
+        """Check if notifications from this domain have been frequently dismissed.
+
+        Returns True if the notification should be suppressed based on
+        recent dismissal patterns (70%+ dismissal rate with 3+ data points).
+        """
+        if not domain:
+            return False
+
+        try:
+            with self.db.get_connection("preferences") as conn:
+                stats = conn.execute(
+                    """SELECT
+                           SUM(CASE WHEN feedback_type = 'dismissed' THEN 1 ELSE 0 END) as dismissed,
+                           COUNT(*) as total
+                       FROM feedback_log
+                       WHERE action_type = 'notification'
+                         AND json_extract(context, '$.domain') = ?
+                         AND timestamp > datetime('now', '-7 days')""",
+                    (domain,),
+                ).fetchone()
+
+                if not stats or not stats["total"]:
+                    return False
+
+                dismissed = stats["dismissed"] or 0
+                total = stats["total"]
+
+                # Suppress if 70%+ of recent notifications from this domain were dismissed
+                # AND at least 3 data points exist (avoid suppressing on sparse data)
+                if total >= 3 and dismissed / total >= 0.7:
+                    logger.info(
+                        "Suppressing notification for domain %s: %d/%d dismissed (%.0f%%)",
+                        domain, dismissed, total, 100 * dismissed / total,
+                    )
+                    return True
+        except Exception:
+            pass  # Fail-open: if the check fails, don't suppress
+
+        return False
+
     def _log_automatic_feedback(self, action_id: str, action_type: str,
                                  feedback_type: str, context: Optional[dict] = None):
         """
@@ -296,6 +337,17 @@ class NotificationManager:
                     return recent["id"]
         except Exception:
             pass  # Fail-open: if the dedup check fails, create the notification anyway
+
+        # --- Step 4: Dismissal pattern suppression ---
+        # If the user has been consistently dismissing notifications from this
+        # domain, don't even bother creating one. Critical notifications always
+        # get through regardless of dismissal history.
+        if priority != "critical" and self._check_dismissal_suppression(domain):
+            logger.debug(
+                "Notification suppressed by dismissal pattern: %s (domain=%s)",
+                title, domain,
+            )
+            return None
 
         notif_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)
@@ -692,6 +744,18 @@ class NotificationManager:
         self._mark_status(notif_id, "dismissed")
         self._update_linked_prediction(notif_id, was_accurate=False)
 
+        # Look up the notification's domain so we can include it in feedback.
+        # This allows _check_dismissal_suppression() to query by domain later.
+        notif_domain = None
+        try:
+            with self.db.get_connection("state") as conn:
+                notif = conn.execute(
+                    "SELECT domain FROM notifications WHERE id = ?", (notif_id,)
+                ).fetchone()
+                notif_domain = notif["domain"] if notif else None
+        except Exception:
+            pass  # Fail-open: missing domain won't break the dismissal log
+
         # Log explicit user dismissal directly to feedback_log. This ensures
         # the feedback loop works even if the event bus handler fails or if
         # events aren't being stored. Direct logging provides a reliable path
@@ -700,7 +764,7 @@ class NotificationManager:
             action_id=notif_id,
             action_type="notification",
             feedback_type="dismissed",
-            context={"explicit_user_action": True, "action": "dismissed"}
+            context={"explicit_user_action": True, "action": "dismissed", "domain": notif_domain},
         )
 
         if self.bus and self.bus.is_connected:
