@@ -496,6 +496,26 @@ class PredictionEngine:
             )
             return []
 
+        # Pre-load existing unresolved predictions to skip regenerating them.
+        # This reduces the 16x dedup waste where identical predictions are
+        # generated, processed through filtering, then discarded at storage time.
+        existing_predictions: set[tuple[str, str]] = set()
+        try:
+            with self.db.get_connection('user_model') as conn:
+                rows = conn.execute(
+                    """SELECT prediction_type, description FROM predictions
+                       WHERE resolved_at IS NULL
+                          OR datetime(resolved_at) > datetime('now', '-24 hours')"""
+                ).fetchall()
+                existing_predictions = {(r[0], r[1]) for r in rows}
+            if existing_predictions:
+                logger.debug(
+                    'Pre-filter: %d existing predictions will be skipped',
+                    len(existing_predictions),
+                )
+        except Exception as e:
+            logger.warning('Pre-filter query failed (proceeding without filter): %s', e)
+
         predictions = []
 
         # --- Prediction generation pipeline ---
@@ -595,6 +615,20 @@ class PredictionEngine:
         else:
             # Skip event-based predictions, mark as not run
             generation_stats['spending_patterns'] = '(skipped: no new events)'
+
+        # Filter out predictions that match existing unresolved ones.
+        # This mirrors the dedup check in store_prediction() but avoids
+        # the overhead of per-prediction DB queries and telemetry events.
+        if existing_predictions:
+            before_count = len(predictions)
+            predictions = [
+                p for p in predictions
+                if (p.prediction_type, p.description) not in existing_predictions
+            ]
+            skipped = before_count - len(predictions)
+            if skipped:
+                generation_stats['pre_filtered'] = skipped
+                logger.debug('Pre-filter: skipped %d duplicate predictions', skipped)
 
         logger.info(
             "Generated predictions by type: %s (total=%d) [triggers: events=%s, time=%s]",
