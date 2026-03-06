@@ -232,6 +232,42 @@ class PredictionEngine:
         except Exception as e:
             logger.warning("_persist_state(%s) failed (non-fatal, will retry next cycle): %s", key, e)
 
+    def reset_state(self) -> None:
+        """Reset in-memory state after DB recovery.
+
+        Called by _db_health_loop after user_model.db rebuild wipes the
+        prediction_engine_state table. Without this, in-memory cursors
+        and counters retain stale values that prevent event-based
+        predictions from regenerating.
+
+        Thread safety: both the prediction loop and _db_health_loop are
+        coroutines in the same asyncio event loop, so there is no true
+        concurrency issue — no lock is needed.
+        """
+        logger.info(
+            "PredictionEngine: resetting state (was: cursor=%d, last_run=%s, "
+            "total_runs=%d, consecutive_zero=%d)",
+            self._last_event_cursor,
+            self._last_time_based_run,
+            self._total_runs,
+            self._consecutive_zero_runs,
+        )
+        self._last_event_cursor = 0
+        self._last_time_based_run = None
+        self._first_follow_up_run = True
+        self._total_runs = 0
+        self._total_predictions_generated = 0
+        self._total_predictions_surfaced = 0
+        self._consecutive_zero_runs = 0
+        self._store_failure_count = 0
+        self._persistence_failure_detected = False
+        self._last_store_errors = []
+        self._last_generation_stats = {}
+        self._last_generation_timestamp = None
+        self._last_run_diagnostics = {}
+        self._zero_surfacing_cycles = 0
+        self._surfacing_diagnostics = self._empty_surfacing_diagnostics()
+
     def _load_contact_email_map(self) -> None:
         """Lazily build a mapping from lowercase email addresses to contact names.
 
