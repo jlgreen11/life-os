@@ -4129,6 +4129,12 @@ class LifeOS:
                         except Exception:
                             pass
                         await self._verify_and_retry_backfills()
+                        # Reset prediction engine's in-memory state so it doesn't retain
+                        # stale cursors from before the rebuild.
+                        try:
+                            self.prediction_engine.reset_state()
+                        except Exception:
+                            pass
                         self._runtime_db_rebuilds = 0
                     else:
                         logger.error(
@@ -4183,6 +4189,14 @@ class LifeOS:
                 )
 
                 await self._verify_and_retry_backfills()
+                # Reset prediction engine's in-memory state so it doesn't retain
+                # stale cursors from before the rebuild.  Without this, _has_new_events()
+                # returns False (cursor > MAX(rowid)) and event-based predictions stop.
+                try:
+                    self.prediction_engine.reset_state()
+                    logger.info("DB health check: prediction engine state reset after rebuild")
+                except Exception as e:
+                    logger.warning("DB health check: prediction engine reset failed (non-fatal): %s", e)
                 logger.info("DB health check: backfill verification completed after rebuild")
 
                 # Notify the user that the database was repaired successfully.
