@@ -261,66 +261,71 @@ class UserModelStore:
         """
         is_new = False
         existing = None
-        with self.db.get_connection("user_model") as conn:
-            # Check whether this fact already exists in semantic memory.
-            existing = conn.execute(
-                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-            ).fetchone()
+        final_confidence = confidence
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # Check whether this fact already exists in semantic memory.
+                existing = conn.execute(
+                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
+                ).fetchone()
 
-            if existing:
-                # --- Guard: never overwrite a user-corrected fact ---
-                # When is_user_corrected = 1, the user has explicitly told the
-                # system that the inferred value is wrong.  Honoring that flag
-                # is critical: without this guard, every SemanticFactInferrer
-                # run would silently restore the incorrect inferred value,
-                # making user corrections completely ineffective.
-                if existing["is_user_corrected"]:
-                    logger.debug(
-                        "Skipping update for user-corrected fact '%s' "
-                        "(inference cannot overwrite explicit user corrections)",
-                        key,
+                if existing:
+                    # --- Guard: never overwrite a user-corrected fact ---
+                    # When is_user_corrected = 1, the user has explicitly told the
+                    # system that the inferred value is wrong.  Honoring that flag
+                    # is critical: without this guard, every SemanticFactInferrer
+                    # run would silently restore the incorrect inferred value,
+                    # making user corrections completely ineffective.
+                    if existing["is_user_corrected"]:
+                        logger.debug(
+                            "Skipping update for user-corrected fact '%s' "
+                            "(inference cannot overwrite explicit user corrections)",
+                            key,
+                        )
+                        return
+
+                    # --- Existing fact: increment confidence and append the source episode ---
+                    episodes = json.loads(existing["source_episodes"])
+                    if episode_id and episode_id not in episodes:
+                        episodes.append(episode_id)
+
+                    # Confidence grows by 0.05 per re-confirmation, but never exceeds 1.0.
+                    # This slow ramp prevents a single burst of duplicate signals from
+                    # immediately maxing out confidence.
+                    final_confidence = min(1.0, existing["confidence"] + 0.05)
+
+                    conn.execute(
+                        """UPDATE semantic_facts
+                           SET value = ?, confidence = ?, source_episodes = ?,
+                               last_confirmed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                               times_confirmed = times_confirmed + 1
+                           WHERE key = ?""",
+                        (json.dumps(value), final_confidence, json.dumps(episodes), key),
                     )
-                    return
+                else:
+                    # --- New fact: insert with the initial confidence from the caller ---
+                    is_new = True
+                    episodes = [episode_id] if episode_id else []
+                    conn.execute(
+                        """INSERT INTO semantic_facts (key, category, value, confidence, source_episodes)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (key, category, json.dumps(value), confidence, json.dumps(episodes)),
+                    )
 
-                # --- Existing fact: increment confidence and append the source episode ---
-                episodes = json.loads(existing["source_episodes"])
-                if episode_id and episode_id not in episodes:
-                    episodes.append(episode_id)
-
-                # Confidence grows by 0.05 per re-confirmation, but never exceeds 1.0.
-                # This slow ramp prevents a single burst of duplicate signals from
-                # immediately maxing out confidence.
-                new_confidence = min(1.0, existing["confidence"] + 0.05)
-
-                conn.execute(
-                    """UPDATE semantic_facts
-                       SET value = ?, confidence = ?, source_episodes = ?,
-                           last_confirmed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                           times_confirmed = times_confirmed + 1
-                       WHERE key = ?""",
-                    (json.dumps(value), new_confidence, json.dumps(episodes), key),
-                )
-            else:
-                # --- New fact: insert with the initial confidence from the caller ---
-                is_new = True
-                episodes = [episode_id] if episode_id else []
-                conn.execute(
-                    """INSERT INTO semantic_facts (key, category, value, confidence, source_episodes)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (key, category, json.dumps(value), confidence, json.dumps(episodes)),
-                )
-
-            # Telemetry fires inside the `with` block so it only executes after
-            # a successful DB write.  Previously this was outside the block,
-            # causing phantom telemetry when the DB write raised an exception.
+            # Telemetry fires AFTER the `with` block exits (after commit succeeds).
+            # Previously this was inside the block, causing phantom telemetry when
+            # the transaction rolled back — telemetry wrote to events.db via a
+            # separate connection that committed independently.
             self._emit_telemetry("usermodel.fact.learned", {
                 "key": key,
                 "category": category,
-                "confidence": confidence if is_new else min(1.0, (existing["confidence"] if existing else confidence) + 0.05),
+                "confidence": final_confidence,
                 "is_new": is_new,
                 "episode_id": episode_id,
                 "learned_at": datetime.now(timezone.utc).isoformat(),
             })
+        except Exception as e:
+            logger.warning("update_semantic_fact failed: %s", e)
 
     def get_semantic_fact(self, key: str) -> Optional[dict]:
         """
