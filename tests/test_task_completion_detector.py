@@ -320,6 +320,60 @@ class TestStaleTaskCleanup:
         assert completed >= 0  # Non-negative result
 
 
+class TestUpdateEpisodeOutcome:
+    """Tests for linking task completion to episodic memory."""
+
+    def test_noop_without_user_model_store(self, detector):
+        """Should silently return when user_model_store is None."""
+        # detector fixture has user_model_store=None by default
+        detector._update_episode_outcome("some-source", "activity_match")
+        # No error raised
+
+    def test_noop_without_task_source(self, detector):
+        """Should silently return when task_source is None."""
+        detector._update_episode_outcome(None, "activity_match")
+        # No error raised
+
+    def test_updates_episode_when_found(self, db, event_bus, user_model_store):
+        """When an episode exists for the source event, its outcome should be updated."""
+        task_manager = MagicMock()
+        task_manager.complete_task = AsyncMock()
+        det = TaskCompletionDetector(db, task_manager, event_bus,
+                                     user_model_store=user_model_store)
+
+        # Insert an episode linked to an event_id
+        event_id = str(uuid.uuid4())
+        episode_id = str(uuid.uuid4())
+        with db.get_connection("user_model") as conn:
+            conn.execute(
+                "INSERT INTO episodes (id, event_id, interaction_type, timestamp, content_summary) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (episode_id, event_id, "email",
+                 datetime.now(timezone.utc).isoformat(), "Test episode"),
+            )
+
+        det._update_episode_outcome(event_id, "activity_match")
+
+        # Verify the outcome was updated
+        with db.get_connection("user_model") as conn:
+            row = conn.execute(
+                "SELECT outcome FROM episodes WHERE id = ?", (episode_id,)
+            ).fetchone()
+        assert row is not None
+        assert row["outcome"] == "activity_match"
+
+    def test_handles_missing_episode_gracefully(self, db, event_bus, user_model_store):
+        """Should not raise when no episode matches the source event."""
+        task_manager = MagicMock()
+        task_manager.complete_task = AsyncMock()
+        det = TaskCompletionDetector(db, task_manager, event_bus,
+                                     user_model_store=user_model_store)
+
+        # Call with an event_id that has no matching episode
+        det._update_episode_outcome(str(uuid.uuid4()), "inactivity")
+        # No error raised
+
+
 class TestTextExtraction:
     """Test text content extraction from event payloads."""
 
@@ -361,6 +415,16 @@ class TestTextExtraction:
         assert "team meeting" in text.lower()
         assert "q4 goals" in text.lower()
 
+    def test_extracts_snippet_and_title_fields(self, detector):
+        """Should also extract snippet and title fields from payloads."""
+        payload = {
+            "snippet": "Quick preview text",
+            "title": "Event title",
+        }
+        text = detector._extract_text_content(payload)
+        assert "Quick preview text" in text
+        assert "Event title" in text
+
     def test_handles_missing_fields(self, detector):
         """Should handle payloads with missing text fields."""
         payload = {"id": "123", "timestamp": "2024-01-01T00:00:00Z"}
@@ -368,6 +432,67 @@ class TestTextExtraction:
         text = detector._extract_text_content(payload)
 
         assert text == ""  # No text content available
+
+
+class TestDirectStrategyMethods:
+    """Test individual detection strategies called directly (not via detect_completions).
+
+    Calling the private methods directly avoids cross-strategy interference
+    and gives clearer boundary testing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_activity_detection_returns_count(self, detector, db, base_time):
+        """_detect_activity_based_completion() should return its own count."""
+        task_id = str(uuid.uuid4())
+        create_task(db, task_id, "Send quarterly report manager",
+                    created_at=base_time - timedelta(hours=3))
+        create_event(db, "email.sent", {
+            "subject": "Quarterly report",
+            "body_plain": "The quarterly report for the manager is done and sent.",
+        }, timestamp=base_time - timedelta(minutes=30))
+
+        count = await detector._detect_activity_based_completion()
+        assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_inactivity_detection_directly(self, detector, db, base_time):
+        """_detect_inactivity_based_completion() called directly."""
+        task_id = str(uuid.uuid4())
+        create_task(db, task_id, "Old task", created_at=base_time - timedelta(days=8))
+
+        count = await detector._detect_inactivity_based_completion()
+        assert count == 1
+        detector.task_manager.complete_task.assert_called_with(task_id)
+
+    @pytest.mark.asyncio
+    async def test_inactivity_detection_skips_recent(self, detector, db, base_time):
+        """_detect_inactivity_based_completion() should skip 3-day-old tasks."""
+        create_task(db, str(uuid.uuid4()), "Recent task",
+                    created_at=base_time - timedelta(days=3))
+
+        count = await detector._detect_inactivity_based_completion()
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_stale_detection_directly(self, detector, db, base_time):
+        """_detect_stale_tasks() called directly on 35-day-old task."""
+        task_id = str(uuid.uuid4())
+        create_task(db, task_id, "Ancient task",
+                    created_at=base_time - timedelta(days=35))
+
+        count = await detector._detect_stale_tasks()
+        assert count == 1
+        detector.task_manager.complete_task.assert_called_with(task_id)
+
+    @pytest.mark.asyncio
+    async def test_stale_detection_skips_20_day_task(self, detector, db, base_time):
+        """_detect_stale_tasks() should NOT archive a 20-day-old task."""
+        create_task(db, str(uuid.uuid4()), "Not yet stale",
+                    created_at=base_time - timedelta(days=20))
+
+        count = await detector._detect_stale_tasks()
+        assert count == 0
 
 
 class TestIntegration:
