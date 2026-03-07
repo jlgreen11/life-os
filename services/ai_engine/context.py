@@ -85,7 +85,15 @@ class ContextAssembler:
         if predictions_context:
             parts.append(predictions_context)
 
-        # Section 7: Cross-signal insights discovered by the InsightEngine.
+        # Section 7: Relationship highlights from the contacts table.
+        # Surfaces overdue and priority contacts so the LLM can weave
+        # relationship maintenance reminders into the briefing narrative
+        # without depending on the prediction pipeline.
+        relationship_context = self._get_relationship_highlights_context()
+        if relationship_context:
+            parts.append(relationship_context)
+
+        # Section 8: Cross-signal insights discovered by the InsightEngine.
         # Insights are pattern discoveries surfaced by correlating multiple
         # signal profiles (cadence, mood, spatial, linguistic, topics, etc.).
         # Unlike predictions (which say "do X soon"), insights say "you
@@ -96,7 +104,7 @@ class ContextAssembler:
         if insights_context:
             parts.append(insights_context)
 
-        # Section 8: Tasks completed in the last 24 hours.
+        # Section 9: Tasks completed in the last 24 hours.
         # Surfaces recent wins so the LLM can acknowledge accomplishments and
         # distinguish work-in-progress from already-finished items. Without
         # this, the LLM has no visibility into what the user finished yesterday
@@ -105,7 +113,7 @@ class ContextAssembler:
         if completions_context:
             parts.append(completions_context)
 
-        # Section 9: Recent episodic memories (Layer 1 of the user model).
+        # Section 10: Recent episodic memories (Layer 1 of the user model).
         # Each episode records a specific interaction (email read, message sent,
         # calendar event attended) with a content summary, contacts involved,
         # topics discussed, and inferred domain. Including recent episodes gives
@@ -126,7 +134,7 @@ class ContextAssembler:
             if activity_summary:
                 parts.append(activity_summary)
 
-        # Section 10: Semantic facts (Layer 2 — Semantic Memory) learned about
+        # Section 11: Semantic facts (Layer 2 — Semantic Memory) learned about
         # the user, organized into human-readable categories: values, behavioral
         # patterns, and preferences.  The helper method filters out low-signal
         # noise (generic topic words, per-contact relationship entries already
@@ -144,7 +152,7 @@ class ContextAssembler:
             if contact_summary:
                 parts.append(contact_summary)
 
-        # Section 11: Habitual behavioral routines (Layer 3 Procedural Memory).
+        # Section 12: Habitual behavioral routines (Layer 3 Procedural Memory).
         # Routines are time- or location-triggered behavioral patterns detected
         # by the RoutineDetector (e.g., "morning email review", "evening wind-down").
         # Including them here lets the LLM give time-appropriate advice, reference
@@ -155,7 +163,7 @@ class ContextAssembler:
         if routines_context:
             parts.append(routines_context)
 
-        # Section 12: Computed mood snapshot from mood_history.  Using the
+        # Section 13: Computed mood snapshot from mood_history.  Using the
         # pre-aggregated row from mood_history (written every 15 min by
         # SignalExtractorPipeline.get_current_mood) is far more useful than
         # the raw recent_signals array: the LLM receives human-readable
@@ -623,6 +631,71 @@ class ContextAssembler:
             logger.warning("Search context: failed to load mood profile", exc_info=True)
 
         return "\n\n---\n\n".join(parts)
+
+    def _get_relationship_highlights_context(self) -> str:
+        """Fetch relationship highlights from the contacts table in entities.db.
+
+        Queries contacts that have ``contact_frequency_days`` and
+        ``last_contact`` set, then computes how overdue or on-track each
+        relationship is.  A contact is considered "overdue" when the days
+        since last contact exceeds 1.5x their typical contact frequency.
+
+        Results are sorted by priority first, then by the ratio of
+        days-since-contact to expected frequency (most overdue first),
+        capped at 8 contacts to respect the token budget.
+
+        Returns an empty string when no contacts have relationship metrics,
+        causing the caller to skip this section entirely.
+
+        Example output::
+
+            Relationship highlights:
+            - Alice Smith: last contact 15 days ago (typical: every 5 days) -- overdue
+            - Bob Jones: last contact 3 days ago (typical: every 7 days) -- on track
+        """
+        try:
+            with self.db.get_connection("entities") as conn:
+                rows = conn.execute(
+                    """SELECT name, last_contact, contact_frequency_days, is_priority
+                       FROM contacts
+                       WHERE contact_frequency_days IS NOT NULL
+                         AND last_contact IS NOT NULL
+                       ORDER BY is_priority DESC,
+                                (julianday('now') - julianday(last_contact))
+                                    / NULLIF(contact_frequency_days, 0) DESC
+                       LIMIT 8"""
+                ).fetchall()
+        except Exception as e:
+            logger.debug("context: _get_relationship_highlights_context unavailable, skipping: %s", e)
+            return ""
+
+        if not rows:
+            return ""
+
+        now = datetime.now(timezone.utc)
+        lines = []
+        for row in rows:
+            try:
+                last_dt = datetime.fromisoformat(row["last_contact"])
+                # Ensure timezone-aware comparison
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                days_since = (now - last_dt).days
+            except (ValueError, TypeError):
+                continue
+
+            freq = row["contact_frequency_days"]
+            status = "overdue" if days_since > freq * 1.5 else "on track"
+            freq_int = int(freq)
+            lines.append(
+                f"- {row['name']}: last contact {days_since} days ago "
+                f"(typical: every {freq_int} days) -- {status}"
+            )
+
+        if not lines:
+            return ""
+
+        return "Relationship highlights:\n" + "\n".join(lines)
 
     def _get_predictions_context(self) -> str:
         """Fetch active, surfaced predictions to surface in the briefing.
