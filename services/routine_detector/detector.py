@@ -365,7 +365,9 @@ class RoutineDetector:
         Returns:
             Dict with keys: episode_count, active_days, effective_consistency_threshold,
             distinct_interaction_types, episodes_per_day, time_bucket_distribution,
-            stored_routines_count, last_detection_count, last_detection_time, health.
+            usable_episode_count, interaction_type_counts, candidate_pairs_count,
+            pairs_meeting_min_occurrences, stored_routines_count,
+            last_detection_count, last_detection_time, health.
         """
         cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
         result: dict = {}
@@ -441,7 +443,72 @@ class RoutineDetector:
             logger.warning("get_diagnostics: time_bucket_distribution query failed: %s", e)
             result["time_bucket_distribution"] = {"error": str(e)}
 
-        # 7. Stored routines count
+        # 7. Usable episode count (episodes surviving the internal-type filter)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    f"""SELECT COUNT(*) FROM episodes
+                        WHERE timestamp >= ?
+                          AND interaction_type IS NOT NULL
+                          AND interaction_type NOT IN ('unknown', 'communication')
+                          {self.INTERNAL_TYPE_SQL_FILTER}""",
+                    (cutoff.isoformat(),),
+                ).fetchone()
+            result["usable_episode_count"] = row[0] if row else 0
+        except Exception as e:
+            logger.warning("get_diagnostics: usable_episode_count query failed: %s", e)
+            result["usable_episode_count"] = {"error": str(e)}
+
+        # 8. Top interaction types by count
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT interaction_type, COUNT(*) as cnt FROM episodes
+                       WHERE timestamp >= ?
+                         AND interaction_type IS NOT NULL
+                       GROUP BY interaction_type
+                       ORDER BY cnt DESC
+                       LIMIT 20""",
+                    (cutoff.isoformat(),),
+                ).fetchall()
+            result["interaction_type_counts"] = {row[0]: row[1] for row in rows}
+        except Exception as e:
+            logger.warning("get_diagnostics: interaction_type_counts query failed: %s", e)
+            result["interaction_type_counts"] = {"error": str(e)}
+
+        # 9. Candidate pairs and pairs meeting min_occurrences
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    f"""SELECT timestamp, interaction_type FROM episodes
+                        WHERE timestamp >= ?
+                          AND interaction_type IS NOT NULL
+                          AND interaction_type NOT IN ('unknown', 'communication')
+                          {self.INTERNAL_TYPE_SQL_FILTER}""",
+                    (cutoff.isoformat(),),
+                ).fetchall()
+            bucket_day_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
+            for ts_str, interaction_type in rows:
+                try:
+                    dt_utc = datetime.fromisoformat(ts_str)
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=UTC)
+                    dt_local = dt_utc.astimezone(self._tz)
+                    bucket = self._hour_to_bucket(dt_local.hour)
+                    local_date = dt_local.strftime("%Y-%m-%d")
+                    bucket_day_sets[(bucket, interaction_type)].add(local_date)
+                except (ValueError, TypeError):
+                    continue
+            result["candidate_pairs_count"] = len(bucket_day_sets)
+            result["pairs_meeting_min_occurrences"] = sum(
+                1 for days in bucket_day_sets.values() if len(days) >= self.min_occurrences
+            )
+        except Exception as e:
+            logger.warning("get_diagnostics: candidate_pairs query failed: %s", e)
+            result["candidate_pairs_count"] = {"error": str(e)}
+            result["pairs_meeting_min_occurrences"] = {"error": str(e)}
+
+        # 10. Stored routines count
         try:
             with self.db.get_connection("user_model") as conn:
                 row = conn.execute("SELECT COUNT(*) FROM routines").fetchone()
