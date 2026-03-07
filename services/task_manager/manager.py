@@ -693,6 +693,112 @@ class TaskManager:
             "by_domain": {row["domain"] or "unassigned": row["cnt"] for row in by_domain},
         }
 
+    def get_diagnostics(self) -> dict:
+        """Comprehensive task pipeline diagnostics for observability.
+
+        Returns a snapshot of task system health including status counts,
+        due-soon tasks, stale pending detection, completion rates, and
+        domain breakdown. Each field is independently wrapped in try/except
+        following the project's fail-open pattern.
+
+        Returns:
+            Dictionary with structure:
+            {
+                "total_tasks": int,
+                "by_status": {"pending": int, "completed": int, ...},
+                "tasks_due_soon_24h": int,
+                "tasks_due_soon_72h": int,
+                "stale_pending_count": int,
+                "recent_completions_24h": int,
+                "top_domains": {"work": int, "health": int, ...},
+                "ai_extraction_available": bool,
+                "health": "healthy" | "degraded"
+            }
+        """
+        diagnostics: dict = {
+            "total_tasks": 0,
+            "by_status": {},
+            "tasks_due_soon_24h": 0,
+            "tasks_due_soon_72h": 0,
+            "stale_pending_count": 0,
+            "recent_completions_24h": 0,
+            "top_domains": {},
+            "ai_extraction_available": self.ai_engine is not None,
+            "health": "healthy",
+        }
+
+        # --- Total tasks ---
+        try:
+            with self.db.get_connection("state") as conn:
+                row = conn.execute("SELECT COUNT(*) as cnt FROM tasks").fetchone()
+            diagnostics["total_tasks"] = row["cnt"]
+        except Exception:
+            logger.warning("Diagnostics: failed to query total tasks", exc_info=True)
+
+        # --- Tasks by status ---
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    "SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status"
+                ).fetchall()
+            diagnostics["by_status"] = {row["status"]: row["cnt"] for row in rows}
+        except Exception:
+            logger.warning("Diagnostics: failed to query tasks by status", exc_info=True)
+
+        # --- Tasks due soon (24h and 72h) ---
+        try:
+            diagnostics["tasks_due_soon_24h"] = len(self.get_tasks_due_soon(24))
+        except Exception:
+            logger.warning("Diagnostics: failed to query tasks due in 24h", exc_info=True)
+
+        try:
+            diagnostics["tasks_due_soon_72h"] = len(self.get_tasks_due_soon(72))
+        except Exception:
+            logger.warning("Diagnostics: failed to query tasks due in 72h", exc_info=True)
+
+        # --- Stale pending tasks (older than 7 days) ---
+        try:
+            with self.db.get_connection("state") as conn:
+                row = conn.execute(
+                    """SELECT COUNT(*) as cnt FROM tasks
+                       WHERE status = 'pending'
+                       AND created_at < datetime('now', '-7 days')"""
+                ).fetchone()
+            diagnostics["stale_pending_count"] = row["cnt"]
+        except Exception:
+            logger.warning("Diagnostics: failed to query stale pending tasks", exc_info=True)
+
+        # --- Recent completions (24h) ---
+        try:
+            with self.db.get_connection("state") as conn:
+                row = conn.execute(
+                    """SELECT COUNT(*) as cnt FROM tasks
+                       WHERE status = 'completed'
+                       AND completed_at > datetime('now', '-24 hours')"""
+                ).fetchone()
+            diagnostics["recent_completions_24h"] = row["cnt"]
+        except Exception:
+            logger.warning("Diagnostics: failed to query recent completions", exc_info=True)
+
+        # --- Top domains ---
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    """SELECT domain, COUNT(*) as cnt FROM tasks
+                       WHERE domain IS NOT NULL
+                       GROUP BY domain ORDER BY cnt DESC LIMIT 5"""
+                ).fetchall()
+            diagnostics["top_domains"] = {row["domain"]: row["cnt"] for row in rows}
+        except Exception:
+            logger.warning("Diagnostics: failed to query top domains", exc_info=True)
+
+        # --- Health assessment ---
+        stale = diagnostics["stale_pending_count"]
+        if stale >= 20:
+            diagnostics["health"] = "degraded"
+
+        return diagnostics
+
     @staticmethod
     def _is_marketing_email(payload: dict) -> bool:
         """Delegate to the shared marketing filter module.
