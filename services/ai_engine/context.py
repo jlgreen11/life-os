@@ -409,7 +409,52 @@ class ContextAssembler:
                 # Typical sentence length guides draft verbosity.
                 style_parts.append(f"avg_sentence_length={avg_sentence_length:.0f}w")
 
+            # Extended style signals — these feed from the linguistic extractor's
+            # pattern banks (humor, greeting, closing, Oxford comma, capitalization)
+            # and give the LLM concrete stylistic cues beyond basic metrics.
+
+            assertion_rate = avg.get("assertion_rate", 0.0)
+            if assertion_rate > 0.05:
+                # High assertion_rate means the user states things confidently
+                # — the LLM should mirror this direct tone.
+                style_parts.append(f"assertion_rate={assertion_rate:.2f}")
+
+            avg_word_length = avg.get("avg_word_length", 0.0)
+            if avg_word_length > 0:
+                # Guides vocabulary sophistication — longer words suggest
+                # a more academic/professional register.
+                style_parts.append(f"avg_word_length={avg_word_length:.1f}")
+
             parts.append(style_label + ": " + ", ".join(style_parts))
+
+            # Greeting and closing conventions — the LLM should mirror these.
+            greeting = avg.get("top_greeting") or avg.get("greeting_detected")
+            if greeting:
+                parts.append(f'Preferred greeting: "{greeting}"')
+
+            closing = avg.get("top_closing") or avg.get("closing_detected")
+            if closing:
+                parts.append(f'Preferred closing: "{closing}"')
+
+            # Humor markers — if the user frequently uses humor words, guide
+            # the LLM to maintain a light, conversational tone.
+            humor_rate = avg.get("humor_rate", 0.0)
+            if humor_rate > 0.02:
+                humor_type = avg.get("top_humor_marker", "")
+                humor_note = f"Uses humor frequently (rate={humor_rate:.2f})"
+                if humor_type:
+                    humor_note += f' — common marker: "{humor_type}"'
+                parts.append(humor_note)
+
+            # Oxford comma preference — guide list formatting.
+            oxford = avg.get("oxford_comma_preference")
+            if oxford is not None:
+                parts.append(f'Oxford comma: {"yes" if oxford else "no"}')
+
+            # Capitalization style — guide casing conventions.
+            cap_style = avg.get("capitalization_style")
+            if cap_style and cap_style != "unknown":
+                parts.append(f"Capitalization style: {cap_style}")
 
             # If per-contact style is notably different from the global baseline
             # (formality delta > 0.15), surface the comparison so the LLM knows
