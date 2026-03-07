@@ -489,6 +489,8 @@ def register_routes(app: FastAPI, life_os) -> None:
             "routine_detector": getattr(life_os, "routine_detector", None),
             "workflow_detector": getattr(life_os, "workflow_detector", None),
             "semantic_fact_inferrer": getattr(life_os, "semantic_fact_inferrer", None),
+            "insight_engine": getattr(life_os, "insight_engine", None),
+            "behavioral_tracker": getattr(life_os, "behavioral_tracker", None),
         }
         for name, service in services.items():
             if service is None:
@@ -536,6 +538,15 @@ def register_routes(app: FastAPI, life_os) -> None:
                 issues.append("Semantic facts empty despite sufficient episodes — check inferrer logs")
             if db_counts.get("episodes", 0) > 100 and db_counts.get("routines", 0) == 0:
                 issues.append("No routines detected despite sufficient episodes — check routine detector")
+        # Check insight engine health
+        ie_diag = diagnostics.get("insight_engine", {})
+        if isinstance(ie_diag, dict) and ie_diag.get("health") in ("no_data", "degraded"):
+            issues.append(f"Insight engine health is '{ie_diag['health']}' — insights may not be generating")
+        # Check behavioral tracker health
+        bt_diag = diagnostics.get("behavioral_tracker", {})
+        if isinstance(bt_diag, dict) and bt_diag.get("health") in ("stalled", "degraded"):
+            issues.append(f"Behavioral tracker health is '{bt_diag['health']}' — prediction accuracy tracking impaired")
+
         sp = diagnostics.get("signal_profiles", {})
         if isinstance(sp, dict) and len(sp.get("missing", [])) > 3:
             issues.append(f"Multiple signal profiles missing: {sp['missing']}")

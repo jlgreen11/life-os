@@ -130,6 +130,8 @@ def _make_life_os(
     life_os.routine_detector = _make_service("routine_detector")
     life_os.workflow_detector = _make_service("workflow_detector")
     life_os.semantic_fact_inferrer = _make_service("semantic_fact_inferrer")
+    life_os.insight_engine = _make_service("insight_engine")
+    life_os.behavioral_tracker = _make_service("behavioral_tracker")
 
     # --- Other stubs needed by route registration ---
     life_os.feedback_collector = Mock()
@@ -293,3 +295,132 @@ def test_diagnostics_handles_missing_diagnostics_method():
     # (only db_counts, signal_profiles, health, issues are guaranteed)
     assert "db_counts" in data
     assert "health" in data
+
+
+def test_diagnostics_includes_insight_engine():
+    """When insight_engine has get_diagnostics(), its output appears in the response."""
+    service_diags = {
+        "insight_engine": {
+            "total_runs": 12,
+            "last_run_at": "2026-03-06T10:00:00Z",
+            "last_correlator_stats": {"mood_productivity": 3},
+            "total_insights_stored": 45,
+            "insights_by_type": {"correlation": 30, "trend": 15},
+            "health": "ok",
+        },
+    }
+    life_os = _make_life_os(service_diagnostics=service_diags)
+    app = create_web_app(life_os)
+    client = TestClient(app)
+
+    resp = client.get("/api/diagnostics/user-model")
+    data = resp.json()
+
+    assert "insight_engine" in data
+    assert data["insight_engine"]["total_runs"] == 12
+    assert data["insight_engine"]["health"] == "ok"
+    assert data["insight_engine"]["total_insights_stored"] == 45
+
+
+def test_diagnostics_includes_behavioral_tracker():
+    """When behavioral_tracker has get_diagnostics(), its output appears in the response."""
+    service_diags = {
+        "behavioral_tracker": {
+            "per_type_stats": {"NEED": {"total": 10, "resolved": 8}},
+            "resolution_methods": {"acted_on": 5, "dismissed": 3},
+            "unresolved_details": [],
+            "inference_cycles": {"total_cycles": 20, "last_cycle_stats": None},
+            "health": "healthy",
+            "recommendations": [],
+        },
+    }
+    life_os = _make_life_os(service_diagnostics=service_diags)
+    app = create_web_app(life_os)
+    client = TestClient(app)
+
+    resp = client.get("/api/diagnostics/user-model")
+    data = resp.json()
+
+    assert "behavioral_tracker" in data
+    assert data["behavioral_tracker"]["health"] == "healthy"
+    assert data["behavioral_tracker"]["per_type_stats"]["NEED"]["total"] == 10
+
+
+def test_diagnostics_degraded_when_insight_engine_no_data():
+    """Health is degraded when insight_engine reports 'no_data'."""
+    conn = _make_mock_conn({
+        "episodes": (50,),
+        "semantic_facts": (10,),
+        "routines": (3,),
+        "predictions": (20,),
+    })
+    all_profiles = {
+        ptype: {"samples_count": 10}
+        for ptype in [
+            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
+            "relationships", "topics", "temporal", "spatial", "decision",
+        ]
+    }
+    service_diags = {
+        "insight_engine": {
+            "total_runs": 0,
+            "last_run_at": None,
+            "last_correlator_stats": {},
+            "total_insights_stored": 0,
+            "insights_by_type": {},
+            "health": "no_data",
+        },
+    }
+    life_os = _make_life_os(
+        user_model_conn=conn,
+        signal_profiles=all_profiles,
+        service_diagnostics=service_diags,
+    )
+    app = create_web_app(life_os)
+    client = TestClient(app)
+
+    resp = client.get("/api/diagnostics/user-model")
+    data = resp.json()
+
+    assert data["health"] == "degraded"
+    assert any("Insight engine" in issue for issue in data["issues"])
+
+
+def test_diagnostics_degraded_when_behavioral_tracker_stalled():
+    """Health is degraded when behavioral_tracker reports 'stalled'."""
+    conn = _make_mock_conn({
+        "episodes": (50,),
+        "semantic_facts": (10,),
+        "routines": (3,),
+        "predictions": (20,),
+    })
+    all_profiles = {
+        ptype: {"samples_count": 10}
+        for ptype in [
+            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
+            "relationships", "topics", "temporal", "spatial", "decision",
+        ]
+    }
+    service_diags = {
+        "behavioral_tracker": {
+            "per_type_stats": {},
+            "resolution_methods": {},
+            "unresolved_details": [],
+            "inference_cycles": {"total_cycles": 0, "last_cycle_stats": None},
+            "health": "stalled",
+            "recommendations": ["No predictions resolved in 7 days"],
+        },
+    }
+    life_os = _make_life_os(
+        user_model_conn=conn,
+        signal_profiles=all_profiles,
+        service_diagnostics=service_diags,
+    )
+    app = create_web_app(life_os)
+    client = TestClient(app)
+
+    resp = client.get("/api/diagnostics/user-model")
+    data = resp.json()
+
+    assert data["health"] == "degraded"
+    assert any("Behavioral tracker" in issue for issue in data["issues"])
