@@ -2520,6 +2520,24 @@ class LifeOS:
             except Exception as e:
                 logger.error("Feedback collector error (event_id=%s): %s", event.get("id"), e)
 
+            # Stage 1.2b — Source Weight Feedback: wire notification engagement
+            # and dismissal signals into the source weight drift algorithm.
+            # When a user acts on or dismisses a notification, we trace back to
+            # the originating event, classify its source_key, and nudge the
+            # AI drift so future content from that source is weighted accordingly.
+            try:
+                if event_type in ("notification.acted_on", "notification.dismissed"):
+                    notif_id = event.get("payload", {}).get("notification_id")
+                    if notif_id:
+                        source_key = self._resolve_notification_source_key(notif_id)
+                        if source_key:
+                            if event_type == "notification.acted_on":
+                                self.source_weight_manager.record_engagement(source_key)
+                            else:
+                                self.source_weight_manager.record_dismissal(source_key)
+            except Exception as e:
+                logger.error("Source weight feedback error (event_id=%s): %s", event.get("id"), e)
+
             # Stage 1.3 — Source Weight Tracking: classify the event into a
             # source_key and increment its interaction counter.  This builds
             # the data the AI drift algorithm needs to learn which sources
@@ -2637,6 +2655,54 @@ class LifeOS:
         except Exception:
             pass  # Fall back to 0 if lookup fails
         return 0.0
+
+    def _resolve_notification_source_key(self, notif_id: str) -> str | None:
+        """Trace a notification back to its originating event and classify it.
+
+        Looks up the notification in state.db to find its ``source_event_id``,
+        then fetches the original event from events.db, and classifies it via
+        ``SourceWeightManager.classify_event()`` to produce a source_key like
+        ``"email.personal"`` or ``"messaging.direct"``.
+
+        Returns ``None`` if the notification has no source event or the lookup
+        fails, so callers can safely skip source weight updates.
+        """
+        try:
+            # Step 1: Get the notification's source_event_id
+            with self.db.get_connection("state") as conn:
+                notif = conn.execute(
+                    "SELECT source_event_id FROM notifications WHERE id = ?",
+                    (notif_id,),
+                ).fetchone()
+
+            if not notif or not notif["source_event_id"]:
+                return None
+
+            source_event_id = notif["source_event_id"]
+
+            # Step 2: Look up the original event to get its type and payload
+            with self.db.get_connection("events") as conn:
+                evt_row = conn.execute(
+                    "SELECT type, source, payload, metadata FROM events WHERE id = ?",
+                    (source_event_id,),
+                ).fetchone()
+
+            if not evt_row:
+                return None
+
+            # Step 3: Reconstruct a minimal event dict for classification
+            event_dict = {
+                "id": source_event_id,
+                "type": evt_row["type"],
+                "source": evt_row["source"],
+                "payload": json.loads(evt_row["payload"]) if evt_row["payload"] else {},
+                "metadata": json.loads(evt_row["metadata"]) if evt_row["metadata"] else {},
+            }
+
+            return self.source_weight_manager.classify_event(event_dict)
+        except Exception as e:
+            logger.error("Failed to resolve source_key for notification %s: %s", notif_id, e)
+            return None
 
     def _infer_domain_from_event_type(self, event_type: str) -> str:
         """Infer notification domain from event type.
