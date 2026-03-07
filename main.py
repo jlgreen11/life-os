@@ -3396,7 +3396,7 @@ class LifeOS:
             await asyncio.sleep(900)  # 15 minutes
 
     async def _connector_health_monitor_loop(self):
-        """Monitor connector health and notify users of degraded connectors.
+        """Monitor connector health, notify on degradation, and auto-retry failed connectors.
 
         Checks the ``connector_state`` table in state.db every hour for:
         1. Connectors with ``status='error'`` (auth failures, sync crashes)
@@ -3407,8 +3407,17 @@ class LifeOS:
         notification.  Tracks already-alerted connectors to avoid duplicate
         alerts, and clears the alert when a connector recovers so it can
         re-fire if the connector degrades again later.
+
+        After alerting, attempts auto-retry for connectors in error state by
+        calling ``start()`` on the connector instance.  Uses exponential backoff
+        (1h, 2h, 4h, 8h, capped at 24h) to avoid hammering connectors that
+        need manual intervention (e.g. revoked OAuth tokens) while still
+        recovering from transient failures (network blips, API outages).
         """
         alerted_connectors: set[str] = set()
+        # Auto-retry tracking: exponential backoff per connector
+        retry_counts: dict[str, int] = {}
+        last_retry: dict[str, float] = {}
         while not self.shutdown_event.is_set():
             try:
                 with self.db.get_connection("state") as conn:
@@ -3418,6 +3427,7 @@ class LifeOS:
                     rows = cursor.fetchall()
 
                 now = datetime.now(timezone.utc)
+                now_ts = now.timestamp()
                 for row in rows:
                     connector_id = row["connector_id"]
                     is_degraded = False
@@ -3459,12 +3469,82 @@ class LifeOS:
                         alerted_connectors.add(connector_id)
                         logger.info("Connector %s degraded: %s", connector_id, reason)
                     elif not is_degraded and connector_id in alerted_connectors:
-                        # Connector recovered — clear alert so it can re-fire
+                        # Connector recovered — clear alert and reset retry state
                         alerted_connectors.discard(connector_id)
+                        retry_counts.pop(connector_id, None)
+                        last_retry.pop(connector_id, None)
                         logger.info("Connector %s recovered", connector_id)
+
+                    # Auto-retry: attempt start() for error-state connectors
+                    if row["status"] == "error":
+                        await self._maybe_retry_connector(
+                            connector_id, retry_counts, last_retry, now_ts
+                        )
             except Exception as e:
                 logger.error("Connector health monitor error: %s", e)
             await asyncio.sleep(3600)  # check every hour
+
+    async def _maybe_retry_connector(
+        self,
+        connector_id: str,
+        retry_counts: dict[str, int],
+        last_retry: dict[str, float],
+        now_ts: float,
+    ):
+        """Attempt auto-retry for a degraded connector with exponential backoff.
+
+        Backoff schedule: 1h, 2h, 4h, 8h, capped at 24h.  Only retries if
+        enough time has elapsed since the last attempt.  Skips connectors
+        not present in ``connector_map`` or already running a reconnect loop.
+
+        Args:
+            connector_id: The degraded connector's identifier.
+            retry_counts: Mutable dict tracking retry attempts per connector.
+            last_retry: Mutable dict tracking last retry timestamp per connector.
+            now_ts: Current time as a Unix timestamp.
+        """
+        connector = self.connector_map.get(connector_id)
+        if connector is None:
+            return
+
+        # Skip if the connector already has its own reconnect loop running
+        reconnect_task = getattr(connector, "_reconnect_task", None)
+        if reconnect_task is not None and not reconnect_task.done():
+            return
+
+        # Calculate exponential backoff: 1h, 2h, 4h, 8h, capped at 24h
+        attempt = retry_counts.get(connector_id, 0)
+        backoff_hours = min(1 * (2 ** attempt), 24)
+        backoff_seconds = backoff_hours * 3600
+
+        # Check if enough time has elapsed since last retry
+        prev_retry_ts = last_retry.get(connector_id, 0)
+        if (now_ts - prev_retry_ts) < backoff_seconds:
+            return
+
+        logger.info(
+            "Attempting auto-retry for degraded connector %s (attempt %d, backoff %dh)",
+            connector_id,
+            attempt + 1,
+            backoff_hours,
+        )
+
+        try:
+            await connector.start()
+            # If start() succeeded and connector is now running, reset retry state
+            if getattr(connector, "_running", False):
+                retry_counts.pop(connector_id, None)
+                last_retry.pop(connector_id, None)
+                logger.info("Connector %s auto-retry succeeded", connector_id)
+            else:
+                # start() didn't crash but connector isn't running (auth failed)
+                retry_counts[connector_id] = attempt + 1
+                last_retry[connector_id] = now_ts
+        except Exception as e:
+            # Fail-open: never let a retry crash the health monitor loop
+            retry_counts[connector_id] = attempt + 1
+            last_retry[connector_id] = now_ts
+            logger.error("Auto-retry failed for connector %s: %s", connector_id, e)
 
     async def _insight_loop(self):
         """Run the insight engine every 15 minutes.
