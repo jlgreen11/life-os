@@ -1671,18 +1671,25 @@ class LifeOS:
           time-of-day and day-of-week)
         - Insights tab's behavioral pattern cards
 
-        The temporal backfill processes user-initiated events:
-        ``email.sent``, ``message.sent``, ``calendar.event.created``, ``task.created``,
-        ``task.completed``, and ``system.user.command``.
+        The temporal backfill processes user-initiated and inbound events:
+        ``email.sent``, ``message.sent``, ``email.received``, ``message.received``,
+        ``calendar.event.created``, ``task.created``, ``task.completed``, and
+        ``system.user.command``.
 
         Uses the same idempotent guard and background-thread pattern as the other
         backfill methods in this startup sequence.
         """
         try:
-            # Guard: skip if temporal profile already populated.
+            # Guard: skip if temporal profile already populated WITH inbound events.
             profile = self.user_model_store.get_signal_profile("temporal")
             if profile and profile.get("samples_count", 0) >= 5:
-                return
+                # Check whether inbound events have been backfilled (added in PR #635).
+                # If the profile predates inbound support, fall through to re-run.
+                data = profile.get("data", {})
+                activity_types = data.get("activity_by_type", {})
+                if activity_types.get("email_inbound", 0) > 0 or activity_types.get("message_inbound", 0) > 0:
+                    return
+                # else: inbound data missing — re-run backfill to include it
 
             # Confirm there are user-initiated events to analyze.
             with self.db.get_connection("events") as conn:
@@ -1690,6 +1697,7 @@ class LifeOS:
                     """SELECT COUNT(*) FROM events
                        WHERE type IN (
                            'email.sent', 'message.sent',
+                           'email.received', 'message.received',
                            'calendar.event.created', 'calendar.event.updated',
                            'task.created', 'task.completed', 'task.updated',
                            'system.user.command'
@@ -4314,6 +4322,10 @@ class LifeOS:
                         # stale cursors from before the rebuild.
                         try:
                             self.prediction_engine.reset_state()
+                            # After a full DB rebuild, predictions table is wiped.
+                            # Set the persistence failure flag so the next prediction
+                            # cycle runs the write-test recovery logic.
+                            self.prediction_engine._persistence_failure_detected = True
                         except Exception:
                             pass
                         self._runtime_db_rebuilds = 0
@@ -4375,6 +4387,9 @@ class LifeOS:
                 # returns False (cursor > MAX(rowid)) and event-based predictions stop.
                 try:
                     self.prediction_engine.reset_state()
+                    # After rebuild, predictions table is wiped. Set the persistence
+                    # failure flag so the next cycle runs write-test recovery.
+                    self.prediction_engine._persistence_failure_detected = True
                     logger.info("DB health check: prediction engine state reset after rebuild")
                 except Exception as e:
                     logger.warning("DB health check: prediction engine reset failed (non-fatal): %s", e)
