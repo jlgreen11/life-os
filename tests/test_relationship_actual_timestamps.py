@@ -389,12 +389,11 @@ def test_relationship_maintenance_predictions_after_fix(
     assert pred.confidence > 0.3, \
         f"Confidence should be > 0.3 for 2x overdue contact, got {pred.confidence:.2f}"
 
-    # The description should mention how many days since last contact.
-    # The prediction engine computes days_since_last_contact from datetime.now(),
-    # so we can't assert an exact number — instead, verify "days" is in the
-    # description and the supporting_signals carry the correct field.
-    assert "days" in pred.description, \
-        f"Description should mention days since last contact, got: {pred.description}"
+    # The description should mention a humanized duration since last contact.
+    # The prediction engine uses _humanize_duration() for coarse time buckets
+    # to enable dedup stability.
+    assert "It's been" in pred.description, \
+        f"Description should mention time since last contact, got: {pred.description}"
     assert pred.supporting_signals.get("days_since_last_contact", 0) > 0, \
         "Supporting signals should include positive days_since_last_contact"
 

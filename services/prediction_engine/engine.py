@@ -89,6 +89,30 @@ def _parse_penalty_frequency(
         pass  # Non-fatal; penalty tracking is best-effort
 
 
+def _humanize_duration(days: float) -> str:
+    """Convert a day count to a coarse, stable human-readable duration.
+
+    Returns bucketed strings like "about a week" or "about 2 months" so that
+    prediction descriptions remain stable across consecutive days, enabling
+    effective deduplication by the in-memory pre-filter and DB-level dedup.
+    """
+    if days < 7:
+        return f"{int(days)} days"
+    elif days < 14:
+        return "about a week"
+    elif days < 21:
+        return "about 2 weeks"
+    elif days < 35:
+        return "about a month"
+    elif days < 60:
+        return "about 6 weeks"
+    elif days < 90:
+        return "about 2 months"
+    else:
+        months = int(days / 30)
+        return f"about {months} months"
+
+
 class PredictionEngine:
     """
     Generates predictions about user needs by combining:
@@ -2007,8 +2031,8 @@ class PredictionEngine:
                     predictions.append(Prediction(
                         prediction_type="opportunity",
                         description=(
-                            f"It's been {days_since} days since you last "
-                            f"contacted {resolved_name} (you usually connect every ~{int(avg_gap)} days)"
+                            f"It's been {_humanize_duration(days_since)} since you last "
+                            f"contacted {resolved_name} (you usually connect every ~{_humanize_duration(avg_gap)})"
                         ),
                         confidence=confidence,
                         confidence_gate=self._gate_from_confidence(confidence),
@@ -2488,7 +2512,7 @@ class PredictionEngine:
             error_count = row["error_count"] or 0
 
             if days_stale > 0:
-                desc = f"{connector_id} connector has been failing for {days_stale} day{'s' if days_stale != 1 else ''} — {last_error}"
+                desc = f"{connector_id} connector has been failing for {_humanize_duration(days_stale)} — {last_error}"
             else:
                 desc = f"{connector_id} connector is in error state — {last_error}"
 
