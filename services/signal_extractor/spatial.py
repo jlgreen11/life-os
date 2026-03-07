@@ -34,9 +34,10 @@ class SpatialExtractor(BaseExtractor):
       - Location transition patterns (home → work commute times, etc.)
 
     Data sources:
-      - calendar.event.created (location field)
+      - calendar.event.created / calendar.event.updated (location field)
       - ios.context.update (device proximity, geolocation)
       - system.user.location_update (explicit location changes)
+      - email.received (timezone/location hints — low confidence)
     """
 
     def can_process(self, event: dict) -> bool:
@@ -50,8 +51,8 @@ class SpatialExtractor(BaseExtractor):
         """
         event_type = event.get("type", "")
 
-        # Calendar events with location field
-        if event_type == "calendar.event.created":
+        # Calendar events with location field (created or updated)
+        if event_type in ("calendar.event.created", "calendar.event.updated"):
             location = event.get("payload", {}).get("location")
             return bool(location and location.strip())
 
@@ -63,6 +64,15 @@ class SpatialExtractor(BaseExtractor):
         # Explicit location updates
         if event_type == "system.user.location_update":
             return True
+
+        # Email events with timezone or location metadata (weak spatial signals)
+        if event_type == "email.received":
+            payload = event.get("payload", {})
+            return bool(
+                payload.get("timezone")
+                or payload.get("sender_timezone")
+                or payload.get("location")
+            )
 
         return False
 
@@ -99,7 +109,7 @@ class SpatialExtractor(BaseExtractor):
         activity_type = None
         domain = "personal"  # Default assumption
 
-        if event_type == "calendar.event.created":
+        if event_type in ("calendar.event.created", "calendar.event.updated"):
             location = payload.get("location", "").strip()
 
             # Estimate duration from calendar event start/end times
@@ -133,6 +143,10 @@ class SpatialExtractor(BaseExtractor):
             domain = payload.get("domain", "personal")
             activity_type = "explicit_update"
 
+        elif event_type == "email.received":
+            # Extract low-confidence location hints from email metadata
+            return self._extract_email_location_hint(event)
+
         # Skip if we couldn't extract a meaningful location
         if not location:
             return []
@@ -156,6 +170,147 @@ class SpatialExtractor(BaseExtractor):
         self._update_spatial_profile(location, duration_minutes, domain, activity_type, timestamp)
 
         return signals
+
+    # Common timezone prefixes → approximate region labels.
+    # Kept intentionally coarse: the goal is directional signal, not GPS accuracy.
+    TIMEZONE_REGION_MAP: dict[str, str] = {
+        "America/New_York": "East Coast US",
+        "America/Chicago": "Central US",
+        "America/Denver": "Mountain US",
+        "America/Los_Angeles": "West Coast US",
+        "America/Phoenix": "Arizona US",
+        "America/Anchorage": "Alaska US",
+        "Pacific/Honolulu": "Hawaii US",
+        "America/Toronto": "Eastern Canada",
+        "America/Vancouver": "Western Canada",
+        "Europe/London": "London UK",
+        "Europe/Paris": "Western Europe",
+        "Europe/Berlin": "Central Europe",
+        "Europe/Amsterdam": "Western Europe",
+        "Europe/Rome": "Southern Europe",
+        "Europe/Madrid": "Southern Europe",
+        "Europe/Moscow": "Russia",
+        "Asia/Tokyo": "Japan",
+        "Asia/Shanghai": "China",
+        "Asia/Kolkata": "India",
+        "Asia/Dubai": "Middle East",
+        "Asia/Singapore": "Southeast Asia",
+        "Australia/Sydney": "Eastern Australia",
+        "Australia/Melbourne": "Eastern Australia",
+        "Australia/Perth": "Western Australia",
+    }
+
+    def _extract_email_location_hint(self, event: dict) -> list[dict]:
+        """Extract a low-confidence location hint from email timezone/location metadata.
+
+        Email headers and connector metadata often carry timezone information
+        that reveals the approximate region where the sender (or recipient) is
+        active. These signals are intentionally low-confidence (0.3) so they
+        contribute to time-of-day-by-location patterns without overriding
+        high-confidence GPS or calendar location data.
+
+        Args:
+            event: An email.received event dictionary.
+
+        Returns:
+            List containing zero or one location_hint signal dicts.
+        """
+        payload = event.get("payload", {})
+        timestamp = event.get("timestamp", datetime.now(timezone.utc).isoformat())
+
+        if isinstance(timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except Exception:
+                timestamp = datetime.now(timezone.utc)
+
+        # Try explicit location first (highest value), then timezone fields
+        location_str = payload.get("location")
+        source_field = "email_location"
+
+        if not location_str:
+            tz_value = payload.get("timezone") or payload.get("sender_timezone") or ""
+            location_str = self.TIMEZONE_REGION_MAP.get(tz_value)
+            source_field = "email_timezone"
+
+        if not location_str:
+            return []
+
+        location_str = self._normalize_location(location_str)
+
+        signal = {
+            "signal_type": "spatial",
+            "type": "location_hint",
+            "location": location_str,
+            "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp,
+            "duration_minutes": None,
+            "activity_type": "email_hint",
+            "domain": "personal",
+            "source": event.get("source", "unknown"),
+            "confidence": 0.3,
+        }
+
+        # Update inferred locations in the spatial profile
+        self._update_inferred_location(location_str, source_field, timestamp)
+
+        return [signal]
+
+    def _update_inferred_location(
+        self, location: str, source_field: str, timestamp: datetime
+    ):
+        """Store a low-confidence inferred location separately from known places.
+
+        Inferred locations (from email timezone headers, etc.) are kept in a
+        dedicated 'inferred_locations' dict within the spatial profile so they
+        do not pollute the high-confidence 'place_behaviors' data used for
+        routine detection and notification routing.
+
+        Args:
+            location: Normalized location/region string.
+            source_field: How the location was derived (e.g. 'email_timezone').
+            timestamp: When this observation occurred.
+        """
+        profile = self.ums.get_signal_profile("spatial")
+        if not profile:
+            inferred = {}
+        else:
+            data = profile.get("data", {})
+            inferred_raw = data.get("inferred_locations", {})
+            if isinstance(inferred_raw, str):
+                inferred = json.loads(inferred_raw)
+            else:
+                inferred = inferred_raw if inferred_raw else {}
+
+        if location not in inferred:
+            inferred[location] = {
+                "observation_count": 0,
+                "sources": {},
+                "first_seen": timestamp.isoformat(),
+                "last_seen": timestamp.isoformat(),
+            }
+
+        entry = inferred[location]
+        entry["observation_count"] = entry.get("observation_count", 0) + 1
+        entry["last_seen"] = timestamp.isoformat()
+
+        # Track which source types contribute to this inferred location
+        sources = entry.get("sources", {})
+        sources[source_field] = sources.get(source_field, 0) + 1
+        entry["sources"] = sources
+
+        # Build updated profile data — preserve existing place_behaviors
+        profile_data = {}
+        if profile:
+            existing_data = profile.get("data", {})
+            if "place_behaviors" in existing_data:
+                profile_data["place_behaviors"] = existing_data["place_behaviors"]
+
+        profile_data["inferred_locations"] = json.dumps(inferred)
+
+        self.ums.update_signal_profile(
+            profile_type="spatial",
+            data=profile_data,
+        )
 
     def _normalize_location(self, location: str) -> str:
         """Normalize location strings to group similar places.
