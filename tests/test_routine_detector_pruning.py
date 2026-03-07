@@ -208,13 +208,19 @@ class TestRoutineDetectorPruning:
         assert "Old Routine" not in names
         assert "Fresh Routine" in names
 
-    def test_detect_routines_calls_prune(self, db, user_model_store):
-        """detect_routines() should automatically call prune_stale_routines()."""
+    def test_detect_routines_skips_prune_when_zero_detected(self, db, user_model_store):
+        """detect_routines() should skip prune_stale_routines() when 0 routines
+        are detected, to prevent a transient detection failure from nuking all
+        stored routines."""
         detector = RoutineDetector(db, user_model_store)
 
         with patch.object(detector, "prune_stale_routines", return_value=0) as mock_prune:
-            detector.detect_routines(lookback_days=30)
-            mock_prune.assert_called_once()
-            # The argument should be the list of detected routines (possibly empty)
-            call_args = mock_prune.call_args
-            assert isinstance(call_args[0][0], list)
+            routines = detector.detect_routines(lookback_days=30)
+            if not routines:
+                # When 0 routines detected, prune must NOT be called
+                mock_prune.assert_not_called()
+            else:
+                # When routines are detected, prune should be called
+                mock_prune.assert_called_once()
+                call_args = mock_prune.call_args
+                assert isinstance(call_args[0][0], list)

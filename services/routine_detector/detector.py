@@ -335,7 +335,12 @@ class RoutineDetector:
         # Prune stored routines that are no longer being detected.
         # This prevents abandoned patterns from accumulating and generating
         # false routine_deviation predictions in the prediction engine.
-        self.prune_stale_routines(routines)
+        # Guard: skip pruning when detection returned 0 routines to avoid
+        # nuking all stored routines due to a transient detection failure.
+        if routines:
+            self.prune_stale_routines(routines)
+        else:
+            logger.info("Skipping prune: 0 routines detected (preserving existing routines)")
 
         # Cache result for diagnostics observability
         self._last_detection_count = len(routines)
@@ -541,31 +546,46 @@ class RoutineDetector:
         try:
             with self.db.get_connection("user_model") as conn:
                 rows = conn.execute(
-                    """
-                    WITH ranked AS (
-                        SELECT
-                            interaction_type,
-                            DATE(timestamp) as day,
-                            datetime(timestamp) as ts,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY DATE(timestamp)
-                                ORDER BY datetime(timestamp)
-                            ) as rn
-                        FROM episodes
-                        WHERE timestamp > ? AND interaction_type IS NOT NULL
-                    )
-                    SELECT
-                        a.interaction_type,
-                        AVG(
-                            (JULIANDAY(b.ts) - JULIANDAY(a.ts)) * 24 * 60
-                        ) as avg_gap_minutes
-                    FROM ranked a
-                    JOIN ranked b ON a.day = b.day AND b.rn = a.rn + 1
-                    GROUP BY a.interaction_type
-                """,
+                    """SELECT interaction_type, timestamp
+                       FROM episodes
+                       WHERE timestamp > ? AND interaction_type IS NOT NULL
+                       ORDER BY timestamp""",
                     (cutoff.isoformat(),),
                 ).fetchall()
-            return {row[0]: row[1] for row in rows if row[1] is not None}
+
+            # Group episodes by local date (using self._tz) instead of
+            # SQL-level DATE() which operates in UTC.  Same fix as
+            # _count_active_days() — episodes near the UTC midnight boundary
+            # were grouped into the wrong day, corrupting gap calculations.
+            day_episodes: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
+            for row in rows:
+                itype, ts_str = row[0], row[1]
+                try:
+                    dt_utc = datetime.fromisoformat(ts_str)
+                    if dt_utc.tzinfo is None:
+                        dt_utc = dt_utc.replace(tzinfo=UTC)
+                    dt_local = dt_utc.astimezone(self._tz)
+                    local_date = dt_local.strftime("%Y-%m-%d")
+                    day_episodes[local_date].append((itype, dt_utc))
+                except (ValueError, TypeError):
+                    continue
+
+            # Compute average gap from each interaction type to the next
+            # episode on the same local day.
+            gap_sums: dict[str, float] = defaultdict(float)
+            gap_counts: dict[str, int] = defaultdict(int)
+            for _day, episodes in day_episodes.items():
+                # Episodes are already sorted by timestamp from the SQL query
+                for i in range(len(episodes) - 1):
+                    itype = episodes[i][0]
+                    gap_minutes = (episodes[i + 1][1] - episodes[i][1]).total_seconds() / 60.0
+                    gap_sums[itype] += gap_minutes
+                    gap_counts[itype] += 1
+
+            return {
+                itype: gap_sums[itype] / gap_counts[itype]
+                for itype in gap_counts
+            }
         except sqlite3.DatabaseError as e:
             logger.warning("_compute_step_duration_map: user_model.db query failed: %s", e)
             return {}
@@ -1174,6 +1194,9 @@ class RoutineDetector:
             # NOT the incompatible EVENT_TYPE_TO_ACTIVITY mapping.
             activity = self._derive_interaction_type_from_event(event_id)
             if activity:
+                # Apply the same internal-type filter as the existing-type path
+                if any(activity.startswith(p) for p in self.INTERNAL_TYPE_PREFIXES):
+                    continue
                 classified.append((ts, activity))
 
         if not classified:
