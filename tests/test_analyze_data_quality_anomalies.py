@@ -54,6 +54,12 @@ def _healthy_sections():
             },
         },
         "notifications": {"pending": 5, "read": 20, "dismissed": 3},
+        "source_weights": {
+            "email.personal": {"weight": 0.8, "drift": 0.0, "updated_at": None, "interactions": 100, "engagements": 10, "dismissals": 5},
+        },
+        "feedback": [
+            {"action_type": "notification", "feedback_type": "dismissed", "count": 5},
+        ],
     }
 
 

@@ -172,7 +172,10 @@ def _create_minimal_preferences_db(tmp_path):
             label TEXT NOT NULL DEFAULT '',
             user_weight REAL NOT NULL DEFAULT 0.5,
             ai_drift REAL NOT NULL DEFAULT 0.0,
-            ai_updated_at TEXT
+            ai_updated_at TEXT,
+            interactions INTEGER DEFAULT 0,
+            engagements INTEGER DEFAULT 0,
+            dismissals INTEGER DEFAULT 0
         )
     """)
     conn.commit()
@@ -609,7 +612,10 @@ def test_source_weights_uses_correct_column_names(tmp_path):
             label TEXT NOT NULL,
             user_weight REAL NOT NULL DEFAULT 0.5,
             ai_drift REAL NOT NULL DEFAULT 0.0,
-            ai_updated_at TEXT
+            ai_updated_at TEXT,
+            interactions INTEGER DEFAULT 0,
+            engagements INTEGER DEFAULT 0,
+            dismissals INTEGER DEFAULT 0
         )
     """)
     conn.execute("""
