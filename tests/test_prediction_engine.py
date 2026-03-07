@@ -431,7 +431,7 @@ async def test_relationship_maintenance_detects_cold_contacts(db, user_model_sto
     assert rel_pred.prediction_type == "opportunity"
     # Description now uses resolved contact name (email prefix as fallback)
     assert "old-friend" in rel_pred.description
-    assert "45 days" in rel_pred.description
+    assert "about 6 weeks" in rel_pred.description
 
 
 @pytest.mark.asyncio
