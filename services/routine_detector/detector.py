@@ -1460,8 +1460,9 @@ class RoutineDetector:
         STEP_DURATION_FALLBACK = 5.0
 
         # Fetch recurring (location, interaction_type) pairs.
-        # day_count = distinct days where this action occurred at this location,
-        # which is the correct denominator for the consistency fraction.
+        # day_count = distinct local-timezone days where this action occurred at
+        # this location.  We fetch raw timestamps and group by local date in
+        # Python to avoid the DATE() UTC-midnight bug (see PR #640).
         try:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
@@ -1470,24 +1471,40 @@ class RoutineDetector:
                     SELECT
                         location,
                         interaction_type,
-                        COUNT(DISTINCT DATE(timestamp)) as day_count
+                        timestamp
                     FROM episodes
                     WHERE timestamp > ?
                       AND location IS NOT NULL
                       AND interaction_type IS NOT NULL
                       AND interaction_type NOT IN ('unknown', 'communication')
                       {self.INTERNAL_TYPE_SQL_FILTER}
-                    GROUP BY location, interaction_type
-                    HAVING day_count >= ?
-                    ORDER BY location, day_count DESC
                 """,
-                    (cutoff.isoformat(), self.min_occurrences),
+                    (cutoff.isoformat(),),
                 )
-
-                location_actions = cursor.fetchall()
+                raw_rows = cursor.fetchall()
         except sqlite3.DatabaseError as e:
             logger.warning("_detect_location_routines: user_model.db query failed: %s", e)
             return []
+
+        # Group by (location, interaction_type) and count distinct local days.
+        loc_type_days: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for location, itype, ts in raw_rows:
+            try:
+                dt_utc = datetime.fromisoformat(ts)
+                if dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=UTC)
+                dt_local = dt_utc.astimezone(self._tz)
+                loc_type_days[(location, itype)].add(dt_local.strftime("%Y-%m-%d"))
+            except (ValueError, TypeError):
+                continue
+
+        # Apply min_occurrences threshold and build result tuples.
+        location_actions = [
+            (loc, itype, len(days))
+            for (loc, itype), days in loc_type_days.items()
+            if len(days) >= self.min_occurrences
+        ]
+        location_actions.sort(key=lambda x: (x[0], -x[2]))
 
         logger.info(
             "Location detection: %d (location, type) pairs meet min_occurrences=%d",
@@ -1511,13 +1528,17 @@ class RoutineDetector:
                         fallback_reason,
                         len(fallback_rows),
                     )
-                    # Re-aggregate by (location, interaction_type) with day counts
+                    # Re-aggregate by (location, interaction_type) with local-tz day counts.
+                    # Convert timestamps to local dates to avoid UTC-midnight grouping bug.
                     loc_type_days: dict[tuple[str, str], set[str]] = defaultdict(set)
                     for location, itype, ts in fallback_rows:
                         try:
-                            date_str = ts[:10]  # Extract YYYY-MM-DD from ISO timestamp
-                            loc_type_days[(location, itype)].add(date_str)
-                        except (TypeError, IndexError):
+                            dt_utc = datetime.fromisoformat(ts)
+                            if dt_utc.tzinfo is None:
+                                dt_utc = dt_utc.replace(tzinfo=UTC)
+                            dt_local = dt_utc.astimezone(self._tz)
+                            loc_type_days[(location, itype)].add(dt_local.strftime("%Y-%m-%d"))
+                        except (ValueError, TypeError):
                             continue
                     # Build fallback actions and merge with primary
                     fallback_actions = [
@@ -1639,8 +1660,10 @@ class RoutineDetector:
         routines = []
         cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
-        # Look for interaction types that occur on enough distinct days to be
-        # candidates for routine triggers.
+        # Look for interaction types that occur on enough distinct local-tz days
+        # to be candidates for routine triggers.  We fetch raw timestamps and
+        # group by local date in Python to avoid the DATE() UTC-midnight bug
+        # (see PR #640).
         try:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
@@ -1648,23 +1671,39 @@ class RoutineDetector:
                     f"""
                     SELECT
                         interaction_type,
-                        COUNT(DISTINCT DATE(timestamp)) as days_occurred
+                        timestamp
                     FROM episodes
                     WHERE timestamp > ?
                       AND interaction_type IS NOT NULL
                       AND interaction_type NOT IN ('unknown', 'communication')
                       {self.INTERNAL_TYPE_SQL_FILTER}
-                    GROUP BY interaction_type
-                    HAVING days_occurred >= ?
-                    ORDER BY days_occurred DESC
                 """,
-                    (cutoff.isoformat(), self.min_occurrences),
+                    (cutoff.isoformat(),),
                 )
-
-                trigger_events = cursor.fetchall()
+                trigger_raw_rows = cursor.fetchall()
         except sqlite3.DatabaseError as e:
             logger.warning("_detect_event_triggered_routines: user_model.db trigger query failed: %s", e)
             return []
+
+        # Group by interaction_type and count distinct local days.
+        trigger_type_days: dict[str, set[str]] = defaultdict(set)
+        for itype, ts in trigger_raw_rows:
+            try:
+                dt_utc = datetime.fromisoformat(ts)
+                if dt_utc.tzinfo is None:
+                    dt_utc = dt_utc.replace(tzinfo=UTC)
+                dt_local = dt_utc.astimezone(self._tz)
+                trigger_type_days[itype].add(dt_local.strftime("%Y-%m-%d"))
+            except (ValueError, TypeError):
+                continue
+
+        # Apply min_occurrences threshold and build result tuples.
+        trigger_events = [
+            (itype, len(days))
+            for itype, days in trigger_type_days.items()
+            if len(days) >= self.min_occurrences
+        ]
+        trigger_events.sort(key=lambda x: -x[1])
 
         logger.info(
             "Event-triggered detection: %d candidate trigger types meet min_occurrences=%d",
@@ -1696,16 +1735,20 @@ class RoutineDetector:
                         fallback_reason,
                         len(all_fallback_rows),
                     )
-                    # Re-aggregate by interaction_type with day counts, and
-                    # also store timestamps per type for the follow-up query.
+                    # Re-aggregate by interaction_type with local-tz day counts,
+                    # and also store timestamps per type for the follow-up query.
+                    # Convert timestamps to local dates to avoid UTC-midnight grouping bug.
                     type_days: dict[str, set[str]] = defaultdict(set)
                     type_timestamps: dict[str, list[str]] = defaultdict(list)
                     for itype, ts in all_fallback_rows:
                         try:
-                            date_str = ts[:10]  # Extract YYYY-MM-DD from ISO timestamp
-                            type_days[itype].add(date_str)
+                            dt_utc = datetime.fromisoformat(ts)
+                            if dt_utc.tzinfo is None:
+                                dt_utc = dt_utc.replace(tzinfo=UTC)
+                            dt_local = dt_utc.astimezone(self._tz)
+                            type_days[itype].add(dt_local.strftime("%Y-%m-%d"))
                             type_timestamps[itype].append(ts)
-                        except (TypeError, IndexError):
+                        except (ValueError, TypeError):
                             continue
                     # Build fallback trigger events and merge with primary
                     fallback_triggers = [
@@ -1765,28 +1808,79 @@ class RoutineDetector:
                         all_fallback_rows,
                     )
                 else:
+                    # Fetch all trigger episodes and potential follow-up episodes,
+                    # then pair them in Python using local-timezone dates to avoid
+                    # the DATE() UTC-midnight bug (see PR #640).
                     with self.db.get_connection("user_model") as conn:
                         cursor = conn.cursor()
+                        # Get trigger episodes
                         cursor.execute(
                             """
-                            SELECT
-                                e2.interaction_type,
-                                COUNT(DISTINCT DATE(e1.timestamp)) as day_count
-                            FROM episodes e1
-                            JOIN episodes e2 ON DATE(e1.timestamp) = DATE(e2.timestamp)
-                                AND datetime(e2.timestamp) > datetime(e1.timestamp)
-                                AND datetime(e2.timestamp) < datetime(e1.timestamp, '+2 hours')
-                                AND e1.interaction_type != e2.interaction_type
-                            WHERE e1.interaction_type = ?
-                              AND e1.timestamp > ?
-                            GROUP BY e2.interaction_type
-                            HAVING day_count >= ?
-                            ORDER BY day_count DESC
-                        """,
-                            (interaction_type, cutoff.isoformat(), self.min_occurrences),
+                            SELECT timestamp
+                            FROM episodes
+                            WHERE interaction_type = ?
+                              AND timestamp > ?
+                            """,
+                            (interaction_type, cutoff.isoformat()),
                         )
+                        trigger_rows = cursor.fetchall()
 
-                        following_actions = cursor.fetchall()
+                        # Get all candidate follow-up episodes in the lookback window
+                        cursor.execute(
+                            """
+                            SELECT interaction_type, timestamp
+                            FROM episodes
+                            WHERE interaction_type IS NOT NULL
+                              AND interaction_type != ?
+                              AND timestamp > ?
+                            """,
+                            (interaction_type, cutoff.isoformat()),
+                        )
+                        followup_rows = cursor.fetchall()
+
+                    # Parse trigger timestamps and group by local date.
+                    trigger_by_local_date: dict[str, list[datetime]] = defaultdict(list)
+                    for (ts,) in trigger_rows:
+                        try:
+                            dt = datetime.fromisoformat(ts)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=UTC)
+                            local_date = dt.astimezone(self._tz).strftime("%Y-%m-%d")
+                            trigger_by_local_date[local_date].append(dt)
+                        except (ValueError, TypeError):
+                            continue
+
+                    # Parse follow-up timestamps and group by local date.
+                    followup_by_local_date: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
+                    for f_itype, f_ts in followup_rows:
+                        try:
+                            dt = datetime.fromisoformat(f_ts)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=UTC)
+                            local_date = dt.astimezone(self._tz).strftime("%Y-%m-%d")
+                            followup_by_local_date[local_date].append((f_itype, dt))
+                        except (ValueError, TypeError):
+                            continue
+
+                    # For each follow-up type, count distinct local days where
+                    # it occurred within 2 hours after a trigger on the same day.
+                    followup_type_days: dict[str, set[str]] = defaultdict(set)
+                    two_hours = timedelta(hours=2)
+                    for local_date, triggers in trigger_by_local_date.items():
+                        followups = followup_by_local_date.get(local_date, [])
+                        for f_itype, f_dt in followups:
+                            for t_dt in triggers:
+                                if t_dt < f_dt <= t_dt + two_hours:
+                                    followup_type_days[f_itype].add(local_date)
+                                    break  # One match per follow-up per day is enough
+
+                    # Apply min_occurrences threshold and build result tuples.
+                    following_actions = [
+                        (f_itype, len(days))
+                        for f_itype, days in followup_type_days.items()
+                        if len(days) >= self.min_occurrences
+                    ]
+                    following_actions.sort(key=lambda x: -x[1])
             except sqlite3.DatabaseError as e:
                 logger.warning(
                     "_detect_event_triggered_routines: user_model.db follow-up query failed for %s: %s",
