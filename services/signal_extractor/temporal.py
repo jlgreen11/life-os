@@ -37,10 +37,11 @@ class TemporalExtractor(BaseExtractor):
 
     def can_process(self, event: dict) -> bool:
         """
-        Process all user-initiated events that have timestamps.
+        Process events that carry temporal signals.
 
         We track:
-        - Communication events (email, messages) — shows active engagement
+        - Outbound communication (email, messages) — shows active engagement
+        - Inbound communication (email, messages) — shows when user is contacted
         - Calendar events — shows scheduled commitments and planning horizon
         - Task events — shows when work gets done
         - System commands — shows direct user interaction
@@ -49,6 +50,9 @@ class TemporalExtractor(BaseExtractor):
             # User-initiated communication (outbound = active engagement)
             EventType.EMAIL_SENT.value,
             EventType.MESSAGE_SENT.value,
+            # Inbound communication (shows when the user is receiving and reading)
+            EventType.EMAIL_RECEIVED.value,
+            EventType.MESSAGE_RECEIVED.value,
             # Calendar events (shows planning and commitments)
             EventType.CALENDAR_EVENT_CREATED.value,
             EventType.CALENDAR_EVENT_UPDATED.value,
@@ -121,13 +125,19 @@ class TemporalExtractor(BaseExtractor):
         Classify the activity type for better temporal pattern detection.
 
         Returns:
-            "communication" — active engagement with others
+            "communication" — outbound active engagement with others
+            "email_inbound" — received email (shows when user is being contacted)
+            "message_inbound" — received message (shows when user is being contacted)
             "planning" — calendar/task management
             "work" — task completion
             "command" — direct system interaction
         """
         if event_type in [EventType.EMAIL_SENT.value, EventType.MESSAGE_SENT.value]:
             return "communication"
+        elif event_type == EventType.EMAIL_RECEIVED.value:
+            return "email_inbound"
+        elif event_type == EventType.MESSAGE_RECEIVED.value:
+            return "message_inbound"
         elif event_type in [EventType.CALENDAR_EVENT_CREATED.value, EventType.CALENDAR_EVENT_UPDATED.value,
                            EventType.TASK_CREATED.value]:
             return "planning"
