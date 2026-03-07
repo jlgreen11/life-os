@@ -71,6 +71,7 @@ class TestResolveNotificationSourceKey:
         stub = MagicMock(spec=LifeOS)
         stub.db = db
         stub.source_weight_manager = source_weight_manager
+        stub._DOMAIN_TO_SOURCE = LifeOS._DOMAIN_TO_SOURCE
         # Bind the real method to our stub
         stub._resolve_notification_source_key = LifeOS._resolve_notification_source_key.__get__(stub)
         return stub
@@ -93,13 +94,13 @@ class TestResolveNotificationSourceKey:
         result = stub._resolve_notification_source_key("notif-101")
         assert result == "messaging.group"
 
-    def test_returns_none_without_source_event_id(self, db, source_weight_manager):
-        """Notifications without source_event_id return None."""
+    def test_falls_back_to_domain_without_source_event_id(self, db, source_weight_manager):
+        """Notifications without source_event_id fall back to domain-based classification."""
         _insert_notification(db, "notif-102", source_event_id=None, domain="email")
 
         stub = self._make_lifeos_stub(db, source_weight_manager)
         result = stub._resolve_notification_source_key("notif-102")
-        assert result is None
+        assert result == "email.work"
 
     def test_returns_none_for_missing_notification(self, db, source_weight_manager):
         """Non-existent notification returns None."""
@@ -107,13 +108,13 @@ class TestResolveNotificationSourceKey:
         result = stub._resolve_notification_source_key("nonexistent")
         assert result is None
 
-    def test_returns_none_when_source_event_missing(self, db, source_weight_manager):
-        """Notification with source_event_id pointing to missing event returns None."""
+    def test_falls_back_to_domain_when_source_event_missing(self, db, source_weight_manager):
+        """Notification with source_event_id pointing to missing event falls back to domain."""
         _insert_notification(db, "notif-103", source_event_id="missing-evt", domain="email")
 
         stub = self._make_lifeos_stub(db, source_weight_manager)
         result = stub._resolve_notification_source_key("notif-103")
-        assert result is None
+        assert result == "email.work"
 
     def test_handles_db_error_gracefully(self, db, source_weight_manager):
         """Database errors return None (fail-open)."""
@@ -144,6 +145,7 @@ class TestPipelineSourceWeightFeedback:
         stub = MagicMock(spec=LifeOS)
         stub.db = db
         stub.source_weight_manager = swm
+        stub._DOMAIN_TO_SOURCE = LifeOS._DOMAIN_TO_SOURCE
         stub._resolve_notification_source_key = LifeOS._resolve_notification_source_key.__get__(stub)
         return stub
 
@@ -239,15 +241,11 @@ class TestPipelineSourceWeightFeedback:
 
         # Test passes if we get here without raising
 
-    def test_notification_without_source_skips_weight_update(self, db, source_weight_manager):
-        """Notifications without source_event_id produce no weight update."""
+    def test_notification_without_source_uses_domain_fallback(self, db, source_weight_manager):
+        """Notifications without source_event_id use domain fallback for weight updates."""
         _insert_notification(db, "notif-400", source_event_id=None, domain="email")
 
         stub = self._make_lifeos_stub(db, source_weight_manager)
         source_key = stub._resolve_notification_source_key("notif-400")
-        assert source_key is None
-
-        # Verify no weight changes happened
-        weight = _get_weight(db, "email.personal")
-        assert weight["engagements"] == 0
-        assert weight["dismissals"] == 0
+        # Domain fallback maps "email" -> "email.work"
+        assert source_key == "email.work"

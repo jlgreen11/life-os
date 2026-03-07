@@ -2656,6 +2656,18 @@ class LifeOS:
             pass  # Fall back to 0 if lookup fails
         return 0.0
 
+    # Domain-to-source fallback mapping for notifications without a source_event_id.
+    # Shared with web/routes.py:_classify_notification_source() to keep parity.
+    _DOMAIN_TO_SOURCE = {
+        "email": "email.work",
+        "messaging": "messaging.direct",
+        "calendar": "calendar.meetings",
+        "finance": "finance.transactions",
+        "health": "health.activity",
+        "location": "location.visits",
+        "home": "home.devices",
+    }
+
     def _resolve_notification_source_key(self, notif_id: str) -> str | None:
         """Trace a notification back to its originating event and classify it.
 
@@ -2664,42 +2676,54 @@ class LifeOS:
         ``SourceWeightManager.classify_event()`` to produce a source_key like
         ``"email.personal"`` or ``"messaging.direct"``.
 
-        Returns ``None`` if the notification has no source event or the lookup
-        fails, so callers can safely skip source weight updates.
+        When the notification has no ``source_event_id`` (common for prediction-
+        domain or auto-generated notifications), falls back to domain-based
+        classification using ``_DOMAIN_TO_SOURCE``.
+
+        Returns ``None`` if classification is not possible, so callers can
+        safely skip source weight updates.
         """
         try:
-            # Step 1: Get the notification's source_event_id
+            # Step 1: Get the notification's source_event_id and domain
             with self.db.get_connection("state") as conn:
                 notif = conn.execute(
-                    "SELECT source_event_id FROM notifications WHERE id = ?",
+                    "SELECT source_event_id, domain FROM notifications WHERE id = ?",
                     (notif_id,),
                 ).fetchone()
 
-            if not notif or not notif["source_event_id"]:
+            if not notif:
                 return None
 
             source_event_id = notif["source_event_id"]
 
-            # Step 2: Look up the original event to get its type and payload
-            with self.db.get_connection("events") as conn:
-                evt_row = conn.execute(
-                    "SELECT type, source, payload, metadata FROM events WHERE id = ?",
-                    (source_event_id,),
-                ).fetchone()
+            # Step 2: If there's a source event, look it up and classify it
+            if source_event_id:
+                with self.db.get_connection("events") as conn:
+                    evt_row = conn.execute(
+                        "SELECT type, source, payload, metadata FROM events WHERE id = ?",
+                        (source_event_id,),
+                    ).fetchone()
 
-            if not evt_row:
-                return None
+                if evt_row:
+                    event_dict = {
+                        "id": source_event_id,
+                        "type": evt_row["type"],
+                        "source": evt_row["source"],
+                        "payload": json.loads(evt_row["payload"]) if evt_row["payload"] else {},
+                        "metadata": json.loads(evt_row["metadata"]) if evt_row["metadata"] else {},
+                    }
+                    source_key = self.source_weight_manager.classify_event(event_dict)
+                    if source_key:
+                        return source_key
 
-            # Step 3: Reconstruct a minimal event dict for classification
-            event_dict = {
-                "id": source_event_id,
-                "type": evt_row["type"],
-                "source": evt_row["source"],
-                "payload": json.loads(evt_row["payload"]) if evt_row["payload"] else {},
-                "metadata": json.loads(evt_row["metadata"]) if evt_row["metadata"] else {},
-            }
+            # Step 3: Fallback — map the notification's domain to a source_key.
+            # Cross-domain origins like "prediction" are not in the map and
+            # correctly return None to avoid misattributing weight updates.
+            domain = notif["domain"]
+            if domain:
+                return self._DOMAIN_TO_SOURCE.get(domain)
 
-            return self.source_weight_manager.classify_event(event_dict)
+            return None
         except Exception as e:
             logger.error("Failed to resolve source_key for notification %s: %s", notif_id, e)
             return None
