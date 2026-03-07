@@ -2675,6 +2675,7 @@ class LifeOS:
         "health": "health.activity",
         "location": "location.visits",
         "home": "home.devices",
+        "prediction": "email.work",  # Generic fallback; refined by _classify_prediction_source
     }
 
     def _resolve_notification_source_key(self, notif_id: str) -> str | None:
@@ -2725,16 +2726,60 @@ class LifeOS:
                     if source_key:
                         return source_key
 
-            # Step 3: Fallback — map the notification's domain to a source_key.
-            # Cross-domain origins like "prediction" are not in the map and
-            # correctly return None to avoid misattributing weight updates.
+            # Step 2.5: For prediction notifications, look up the prediction
+            # in user_model.db to classify by prediction_type.
             domain = notif["domain"]
+            if domain == "prediction" and source_event_id:
+                prediction_source = self._classify_prediction_source(source_event_id)
+                if prediction_source:
+                    return prediction_source
+
+            # Step 3: Fallback — map the notification's domain to a source_key.
             if domain:
                 return self._DOMAIN_TO_SOURCE.get(domain)
 
             return None
         except Exception as e:
             logger.error("Failed to resolve source_key for notification %s: %s", notif_id, e)
+            return None
+
+    # Mapping from prediction_type to source_key for source weight tracking.
+    _PREDICTION_TYPE_TO_SOURCE = {
+        "REMINDER": "calendar.reminders",
+        "CONFLICT": "calendar.meetings",
+        "NEED": "email.work",
+        "OPPORTUNITY": "email.work",
+        "RISK": "email.work",
+    }
+
+    def _classify_prediction_source(self, prediction_id: str) -> str | None:
+        """Look up a prediction by ID and return the appropriate source_key.
+
+        Queries the predictions table in user_model.db to find the
+        prediction_type, then maps it to a source_key so that dismissals
+        of prediction notifications correctly update source weights.
+
+        Args:
+            prediction_id: The UUID of the prediction (stored as
+                source_event_id on the notification).
+
+        Returns:
+            A source_key string (e.g. ``"calendar.reminders"``) or ``None``
+            if the prediction cannot be found.
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT prediction_type FROM predictions WHERE id = ?",
+                    (prediction_id,),
+                ).fetchone()
+            if not row:
+                return None
+            return self._PREDICTION_TYPE_TO_SOURCE.get(
+                row["prediction_type"].upper(), "email.work"
+            )
+        except Exception as e:
+            logger.debug("Failed to classify prediction source for %s: %s", prediction_id, e)
             return None
 
     def _infer_domain_from_event_type(self, event_type: str) -> str:
