@@ -45,6 +45,19 @@ class WorkflowDetector:
     - Handle invoice: receive → review → approve → forward to accounting
     """
 
+    # Prefixes that identify internal telemetry episode types (not real user
+    # activity).  These dominate episode counts and create false workflow
+    # patterns if not excluded from detection queries.
+    INTERNAL_TYPE_PREFIXES = ("usermodel_", "system_", "test")
+
+    # SQL WHERE clause fragment to exclude internal telemetry types from
+    # workflow detection queries.  Append after existing WHERE conditions.
+    INTERNAL_TYPE_SQL_FILTER = (
+        "AND interaction_type NOT LIKE 'usermodel_%' "
+        "AND interaction_type NOT LIKE 'system_%' "
+        "AND interaction_type NOT LIKE 'test%'"
+    )
+
     def __init__(self, db: DatabaseManager, user_model_store: UserModelStore):
         """Initialize the workflow detector.
 
@@ -704,11 +717,13 @@ class WorkflowDetector:
         try:
             with self.db.get_connection("user_model") as conn:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT id, interaction_type, timestamp
                     FROM episodes
                     WHERE julianday(timestamp) > julianday(?)
                       AND interaction_type IS NOT NULL
+                      AND interaction_type NOT IN ('unknown', 'communication')
+                      {self.INTERNAL_TYPE_SQL_FILTER}
                     ORDER BY timestamp ASC
                 """, (cutoff.isoformat(),))
 
@@ -858,10 +873,13 @@ class WorkflowDetector:
         try:
             with self.db.get_connection("user_model") as conn:
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT interaction_type, COUNT(*) as count
                     FROM episodes
                     WHERE timestamp > datetime('now', '-' || ? || ' days')
+                      AND interaction_type IS NOT NULL
+                      AND interaction_type NOT IN ('unknown', 'communication')
+                      {self.INTERNAL_TYPE_SQL_FILTER}
                     GROUP BY interaction_type
                     ORDER BY count DESC
                     """,
