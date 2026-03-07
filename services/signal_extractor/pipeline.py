@@ -47,13 +47,14 @@ PROFILE_EVENT_TYPES: dict[str, list[str]] = {
     "relationships": ["email.received", "email.sent", "message.received", "message.sent"],
     "temporal": [
         "email.sent", "message.sent",
+        "email.received", "message.received",
         "calendar.event.created", "calendar.event.updated",
         "task.created", "task.completed", "task.updated",
         "system.user.command",
     ],
     "topics": ["email.received", "email.sent", "message.received", "message.sent", "system.user.command"],
-    "spatial": ["calendar.event.created", "ios.context.update", "system.user.location_update"],
-    "decision": ["task.completed", "task.created", "email.sent", "message.sent", "calendar.event.created"],
+    "spatial": ["calendar.event.created", "calendar.event.updated", "ios.context.update", "system.user.location_update", "email.received"],
+    "decision": ["task.completed", "task.created", "email.sent", "message.sent", "calendar.event.created", "calendar.event.updated", "finance.transaction.new"],
 }
 
 
