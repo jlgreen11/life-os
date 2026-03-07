@@ -2668,6 +2668,7 @@ class LifeOS:
     # Shared with web/routes.py:_classify_notification_source() to keep parity.
     _DOMAIN_TO_SOURCE = {
         "email": "email.work",
+        "message": "messaging.direct",
         "messaging": "messaging.direct",
         "calendar": "calendar.meetings",
         "finance": "finance.transactions",
