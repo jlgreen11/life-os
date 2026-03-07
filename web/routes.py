@@ -491,6 +491,8 @@ def register_routes(app: FastAPI, life_os) -> None:
             "semantic_fact_inferrer": getattr(life_os, "semantic_fact_inferrer", None),
             "insight_engine": getattr(life_os, "insight_engine", None),
             "behavioral_tracker": getattr(life_os, "behavioral_tracker", None),
+            "ai_engine": getattr(life_os, "ai_engine", None),
+            "task_completion_detector": getattr(life_os, "task_completion_detector", None),
         }
         for name, service in services.items():
             if service is None:
@@ -1541,6 +1543,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             if domain:
                 domain_to_source = {
                     "email": "email.work",
+                    "message": "messaging.direct",
                     "messaging": "messaging.direct",
                     "calendar": "calendar.meetings",
                     "finance": "finance.transactions",
