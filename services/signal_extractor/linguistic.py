@@ -894,6 +894,13 @@ class LinguisticExtractor(BaseExtractor):
             if avgs.get("exclamation_rate", 0) > 0.15:
                 tone_notes.append("uses exclamations frequently")
 
+            # Preserve phrase data that the relationship extractor may have
+            # previously computed for this contact.  The linguistic extractor
+            # does not analyse phrases itself, so without this merge the
+            # INSERT OR REPLACE would overwrite common_phrases / avoids_phrases
+            # with empty arrays, destroying the relationship extractor's work.
+            existing_phrases = self._get_existing_phrase_data(contact_id, channel)
+
             template = {
                 "id": template_id,
                 "context": "linguistic_outbound",
@@ -904,8 +911,8 @@ class LinguisticExtractor(BaseExtractor):
                 "formality": avgs.get("formality", 0.5),
                 "typical_length": round(avg_word_count),
                 "uses_emoji": avgs.get("emoji_rate", 0) > 0.01,
-                "common_phrases": [],
-                "avoids_phrases": [],
+                "common_phrases": existing_phrases.get("common_phrases", []),
+                "avoids_phrases": existing_phrases.get("avoids_phrases", []),
                 "tone_notes": tone_notes,
                 "example_message_ids": [],
                 "samples_analyzed": samples_count,
@@ -915,3 +922,36 @@ class LinguisticExtractor(BaseExtractor):
                 self.ums.store_communication_template(template)
             except Exception as e:
                 logger.warning("Failed to store linguistic template for %s: %s", contact_id, e)
+
+    def _get_existing_phrase_data(self, contact_id: str, channel: str) -> dict:
+        """Retrieve phrase data from existing templates for this contact.
+
+        The relationship extractor computes common_phrases and avoids_phrases
+        using exponential moving averages across messages.  This method looks
+        up those values so the linguistic extractor can carry them forward
+        rather than overwriting them with empty arrays.
+
+        Checks both the linguistic extractor's own template (in case it was
+        previously populated) and any relationship extractor templates for
+        the same contact.
+
+        Returns:
+            Dict with ``common_phrases`` and ``avoids_phrases`` lists.
+            Empty lists if no prior phrase data exists.
+        """
+        result: dict = {"common_phrases": [], "avoids_phrases": []}
+        try:
+            templates = self.ums.get_communication_templates(
+                contact_id=contact_id, limit=10
+            )
+            for tmpl in templates:
+                # Prefer the first template with non-empty phrase data
+                if tmpl.get("common_phrases") and not result["common_phrases"]:
+                    result["common_phrases"] = tmpl["common_phrases"]
+                if tmpl.get("avoids_phrases") and not result["avoids_phrases"]:
+                    result["avoids_phrases"] = tmpl["avoids_phrases"]
+                if result["common_phrases"] and result["avoids_phrases"]:
+                    break
+        except Exception:
+            logger.debug("Could not retrieve existing phrase data for %s", contact_id)
+        return result
