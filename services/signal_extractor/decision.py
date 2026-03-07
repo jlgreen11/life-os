@@ -61,6 +61,10 @@ class DecisionExtractor(BaseExtractor):
             EventType.MESSAGE_SENT.value,
             # Calendar commitments are decisions
             EventType.CALENDAR_EVENT_CREATED.value,
+            # Calendar updates indicate decision revisions
+            EventType.CALENDAR_EVENT_UPDATED.value,
+            # Financial transactions are purchase decisions
+            EventType.TRANSACTION_NEW.value,
         ]
 
     def extract(self, event: dict) -> list[dict]:
@@ -104,6 +108,18 @@ class DecisionExtractor(BaseExtractor):
                 commitment_signal = self._track_commitment_patterns(payload, dt)
                 if commitment_signal:
                     signals.append(commitment_signal)
+
+            # Track calendar event updates as decision revisions
+            if event_type == EventType.CALENDAR_EVENT_UPDATED.value:
+                revision_signal = self._track_decision_revision(payload, dt)
+                if revision_signal:
+                    signals.append(revision_signal)
+
+            # Track financial transactions as purchase decisions
+            if event_type == EventType.TRANSACTION_NEW.value:
+                purchase_signal = self._track_purchase_decision(payload, dt)
+                if purchase_signal:
+                    signals.append(purchase_signal)
 
             # Update the profile with aggregated signals (including the internal
             # outbound_nondelegation accounting token when present)
@@ -266,6 +282,84 @@ class DecisionExtractor(BaseExtractor):
             "event_summary": summary,
             "timestamp": created_at.isoformat(),
         }
+
+    def _track_purchase_decision(self, payload: dict, transaction_at: datetime) -> Optional[dict]:
+        """
+        Track financial transactions as purchase decisions.
+
+        Reveals spending decision patterns:
+        - Amount relative to historical average indicates risk tolerance
+        - Merchant category maps to decision domains (dining, shopping, etc.)
+        """
+        amount = payload.get("amount")
+        if amount is None:
+            return None
+
+        try:
+            amount = float(amount)
+        except (ValueError, TypeError):
+            return None
+
+        merchant = payload.get("merchant_name") or payload.get("description") or "unknown"
+        domain = self._classify_merchant_domain(merchant)
+
+        return {
+            "type": "purchase_decision",
+            "domain": domain,
+            "amount": amount,
+            "merchant": merchant,
+            "timestamp": transaction_at.isoformat(),
+        }
+
+    def _track_decision_revision(self, payload: dict, updated_at: datetime) -> Optional[dict]:
+        """
+        Track calendar event updates as decision revisions.
+
+        Changing a calendar event (time, location, cancellation) indicates
+        the user reversed or refined a previous decision. Frequent revisions
+        suggest lower confidence in initial decisions.
+        """
+        # Determine what kind of change was made
+        changes = payload.get("changes", {})
+        summary = payload.get("summary", "") or payload.get("title", "")
+
+        # Classify the revision type from available change data
+        revision_type = "general"
+        if isinstance(changes, dict):
+            if "start_time" in changes or "end_time" in changes or "time" in changes:
+                revision_type = "time_change"
+            elif "location" in changes:
+                revision_type = "location_change"
+            elif "status" in changes and changes.get("status") == "cancelled":
+                revision_type = "cancellation"
+
+        return {
+            "type": "decision_revision",
+            "revision_type": revision_type,
+            "event_summary": summary,
+            "timestamp": updated_at.isoformat(),
+        }
+
+    def _classify_merchant_domain(self, merchant: str) -> str:
+        """
+        Classify a merchant/transaction description into a decision domain.
+
+        Maps common merchant categories to domains for risk tolerance tracking.
+        """
+        merchant_lower = merchant.lower()
+
+        if any(word in merchant_lower for word in ["restaurant", "cafe", "coffee", "pizza", "food", "dining", "eat"]):
+            return "dining"
+        elif any(word in merchant_lower for word in ["amazon", "walmart", "target", "shop", "store", "buy"]):
+            return "shopping"
+        elif any(word in merchant_lower for word in ["netflix", "spotify", "subscription", "membership"]):
+            return "subscriptions"
+        elif any(word in merchant_lower for word in ["uber", "lyft", "gas", "fuel", "transit", "airline", "travel"]):
+            return "transport"
+        elif any(word in merchant_lower for word in ["rent", "mortgage", "insurance", "utility", "bill"]):
+            return "housing"
+        else:
+            return "general"
 
     def _classify_event_domain(self, summary: str) -> str:
         """
@@ -445,6 +539,37 @@ class DecisionExtractor(BaseExtractor):
                 else:
                     current_risk[domain] = risk_score
                 profile_dict["risk_tolerance_by_domain"] = current_risk
+
+            elif signal["type"] == "purchase_decision":
+                # ----------------------------------------------------------------
+                # Update risk_tolerance_by_domain based on transaction amounts.
+                # Higher amounts relative to a $100 baseline indicate higher risk
+                # tolerance in the merchant's domain.
+                # ----------------------------------------------------------------
+                domain = signal["domain"]
+                amount = signal["amount"]
+
+                # Map amount to risk score: $0=0.0, $200+=1.0
+                risk_score = min(amount / 200.0, 1.0)
+
+                current_risk = profile_dict.get("risk_tolerance_by_domain", {})
+                if domain in current_risk:
+                    current_risk[domain] = round(0.7 * current_risk[domain] + 0.3 * risk_score, 4)
+                else:
+                    current_risk[domain] = round(risk_score, 4)
+                profile_dict["risk_tolerance_by_domain"] = current_risk
+
+            elif signal["type"] == "decision_revision":
+                # ----------------------------------------------------------------
+                # Increment mind_change_frequency using EMA.
+                # Each revision nudges the frequency toward 1.0 (frequent changes).
+                # The absence of revisions is handled implicitly: as more non-revision
+                # events arrive, commitment_pattern signals dilute the score.
+                # ----------------------------------------------------------------
+                current_freq = profile_dict.get("mind_change_frequency", 0.1)
+                profile_dict["mind_change_frequency"] = round(
+                    0.7 * current_freq + 0.3 * 1.0, 4
+                )
 
         # Update timestamp
         profile_dict["last_updated"] = timestamp.isoformat()
