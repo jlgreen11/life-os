@@ -779,12 +779,19 @@ def test_can_process_unrecognized_event_type(db, user_model_store):
     """Verify unrecognized event types are rejected by can_process."""
     extractor = SpatialExtractor(db, user_model_store)
 
-    for event_type in ["email.received", "task.created", "notification.sent", "finance.transaction"]:
+    for event_type in ["task.created", "notification.sent", "finance.transaction"]:
         event = {
             "type": event_type,
             "payload": {"location": "Somewhere"},
         }
         assert extractor.can_process(event) is False, f"Should reject {event_type}"
+
+    # email.received without timezone/location metadata is also rejected
+    email_no_tz = {
+        "type": "email.received",
+        "payload": {"subject": "Hello", "body": "World"},
+    }
+    assert extractor.can_process(email_no_tz) is False, "Should reject email without timezone/location"
 
 
 def test_extract_with_missing_timestamp_uses_now(db, user_model_store):
