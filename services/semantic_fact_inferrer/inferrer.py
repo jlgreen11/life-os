@@ -495,6 +495,7 @@ class SemanticFactInferrer:
             avg_interactions, high_priority_threshold, high_priority_count,
         )
 
+        facts_written = 0
         for contact_id, contact_data in human_contacts.items():
             interaction_count = contact_data.get("interaction_count", 0)
             if interaction_count < 3:
@@ -513,6 +514,7 @@ class SemanticFactInferrer:
                     confidence=min(0.9, base_confidence + 0.1 + min(0.3, (interaction_count / avg_interactions - 2) * 0.1)),
                     episode_id=episode_id,
                 )
+                facts_written += 1
 
             # --- Multi-channel relationship (communication versatility) ---
             channels_used = contact_data.get("channels_used", [])
@@ -524,6 +526,7 @@ class SemanticFactInferrer:
                     confidence=min(0.85, base_confidence + len(channels_used) * 0.15),
                     episode_id=episode_id,
                 )
+                facts_written += 1
 
             # --- Relationship balance (mutual vs. one-sided) ---
             inbound_count = contact_data.get("inbound_count", 0)
@@ -541,6 +544,7 @@ class SemanticFactInferrer:
                         confidence=min(0.85, base_confidence + balance_ratio),
                         episode_id=episode_id,
                     )
+                    facts_written += 1
                 elif outbound_count > inbound_count * 3:  # User initiates 3x more
                     self.ums.update_semantic_fact(
                         key=f"relationship_balance_{contact_id}",
@@ -549,9 +553,31 @@ class SemanticFactInferrer:
                         confidence=min(0.8, 0.5 + (outbound_count / total_count - 0.5)),
                         episode_id=episode_id,
                     )
+                    facts_written += 1
 
-        logger.info(f"Inferred semantic facts from relationship profile (samples={profile.get('samples_count')})")
-        return {"type": "relationship", "processed": True, "reason": None}
+        # Supplementary fallback: if the main bidirectional path produced 0 facts
+        # (e.g., contacts have outbound_count=1 but don't meet interaction thresholds),
+        # also run inbound-only inference to ensure at least basic relationship facts
+        # are generated from the much larger pool of inbound-only contacts.
+        if facts_written == 0:
+            inbound_only_contacts = {
+                cid: cdata for cid, cdata in contacts.items()
+                if isinstance(cdata, dict) and cdata.get("outbound_count", 0) == 0
+            }
+            if len(inbound_only_contacts) >= 2:
+                logger.info(
+                    "Main relationship path produced 0 facts — running supplementary "
+                    "inbound-only fallback (%d inbound-only contacts available)",
+                    len(inbound_only_contacts),
+                )
+                fallback_result = self._infer_from_inbound_only_contacts(contacts, base_confidence)
+                facts_written += fallback_result.get("facts_stored", 0)
+
+        logger.info(
+            "Inferred %d semantic facts from relationship profile (samples=%s)",
+            facts_written, profile.get("samples_count"),
+        )
+        return {"type": "relationship", "processed": True, "reason": None, "facts_written": facts_written}
 
     def _infer_from_inbound_only_contacts(self, contacts: dict, base_confidence: float) -> dict:
         """
