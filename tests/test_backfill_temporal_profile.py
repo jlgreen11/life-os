@@ -610,10 +610,10 @@ def test_backfill_temporal_profile_dry_run_mode(db, user_model_store):
     assert profile is None
 
 
-def test_backfill_temporal_profile_ignores_inbound_events(db, user_model_store):
-    """Backfill should ignore inbound/passive events that don't represent user activity."""
+def test_backfill_temporal_profile_includes_inbound_events(db, user_model_store):
+    """Backfill should include inbound events (email.received, message.received) but ignore system events."""
     events = [
-        # User-initiated (should process)
+        # User-initiated outbound (should process)
         {
             "id": "evt-sent",
             "type": EventType.EMAIL_SENT.value,
@@ -623,7 +623,7 @@ def test_backfill_temporal_profile_ignores_inbound_events(db, user_model_store):
             "payload": {},
             "metadata": {},
         },
-        # Inbound/passive (should ignore)
+        # Inbound events (should process — added in PR #635)
         {
             "id": "evt-received",
             "type": EventType.EMAIL_RECEIVED.value,
@@ -642,6 +642,7 @@ def test_backfill_temporal_profile_ignores_inbound_events(db, user_model_store):
             "payload": {},
             "metadata": {},
         },
+        # System events (should still ignore)
         {
             "id": "evt-sync",
             "type": EventType.CONNECTOR_SYNC_COMPLETE.value,
@@ -673,6 +674,89 @@ def test_backfill_temporal_profile_ignores_inbound_events(db, user_model_store):
     # Run backfill
     result = backfill_temporal_profile(data_dir=db.data_dir)
 
-    # Should only process the email.sent event (1 event)
-    assert result["events_processed"] == 1
-    assert result["signals_extracted"] >= 1
+    # Should process outbound + inbound events (3), but not system events
+    assert result["events_processed"] == 3
+    assert result["signals_extracted"] >= 3
+
+    # Verify inbound activity types are present in the profile
+    profile = user_model_store.get_signal_profile("temporal")
+    activity_by_type = profile["data"]["activity_by_type"]
+    assert "email_inbound" in activity_by_type
+    assert activity_by_type["email_inbound"] == 1
+    assert "message_inbound" in activity_by_type
+    assert activity_by_type["message_inbound"] == 1
+    assert "communication" in activity_by_type
+    assert activity_by_type["communication"] == 1
+
+
+def test_backfill_inbound_events_dominate_count(db, user_model_store):
+    """With many inbound events, events_processed should reflect the larger pool."""
+    events = []
+
+    # 2 outbound emails
+    for i in range(2):
+        events.append({
+            "id": f"evt-sent-{i}",
+            "type": EventType.EMAIL_SENT.value,
+            "source": "gmail",
+            "timestamp": f"2026-02-10T{10+i:02d}:00:00Z",
+            "priority": "normal",
+            "payload": {},
+            "metadata": {},
+        })
+
+    # 20 inbound emails (simulating the 99%+ ratio seen in production)
+    for i in range(20):
+        events.append({
+            "id": f"evt-recv-{i}",
+            "type": EventType.EMAIL_RECEIVED.value,
+            "source": "gmail",
+            "timestamp": f"2026-02-{10 + i // 24:02d}T{i % 24:02d}:30:00Z",
+            "priority": "normal",
+            "payload": {},
+            "metadata": {},
+        })
+
+    # 5 inbound messages
+    for i in range(5):
+        events.append({
+            "id": f"evt-msg-recv-{i}",
+            "type": EventType.MESSAGE_RECEIVED.value,
+            "source": "imessage",
+            "timestamp": f"2026-02-10T{14+i:02d}:15:00Z",
+            "priority": "normal",
+            "payload": {},
+            "metadata": {},
+        })
+
+    # Insert events
+    with db.get_connection("events") as conn:
+        for event in events:
+            conn.execute(
+                """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event["id"],
+                    event["type"],
+                    event["source"],
+                    event["timestamp"],
+                    event["priority"],
+                    json.dumps(event["payload"]),
+                    json.dumps(event["metadata"]),
+                ),
+            )
+
+    # Run backfill
+    result = backfill_temporal_profile(data_dir=db.data_dir)
+
+    # All 27 events should be processed (2 sent + 20 received + 5 messages)
+    assert result["events_processed"] == 27
+    assert result["signals_extracted"] >= 27
+    assert result["errors"] == 0
+
+    # Verify profile reflects both inbound and outbound
+    profile = user_model_store.get_signal_profile("temporal")
+    activity_by_type = profile["data"]["activity_by_type"]
+    assert activity_by_type.get("email_inbound", 0) == 20
+    assert activity_by_type.get("message_inbound", 0) == 5
+    assert activity_by_type.get("communication", 0) == 2

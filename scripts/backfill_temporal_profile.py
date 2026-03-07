@@ -4,13 +4,15 @@ Backfill temporal profile from historical events.
 
 The TemporalExtractor was added in PR #148 but only processes new events
 going forward. This script backfills the temporal profile from all historical
-user-initiated events (emails sent, tasks created, calendar events, etc.) so
-the system immediately has rich temporal pattern data.
+events — both outbound (emails sent, tasks created, calendar events, etc.) and
+inbound (emails received, messages received) — so the system immediately has
+rich temporal pattern data.
 
 Why backfill matters:
 - TemporalProfile is a core Layer 1 (Episodic Memory) feature that's 100% empty
-- 3,505+ historical events (2,573 calendar + 371 tasks + 329 emails + more)
-  contain rich temporal signals (energy rhythms, productive hours, planning horizon)
+- 15,000+ historical events (12,429 email.received + 2,573 calendar + 371 tasks
+  + 329 emails sent + messages) contain rich temporal signals (energy rhythms,
+  productive hours, planning horizon, inbound communication patterns)
 - Enables time-aware predictions today (best meeting times, energy warnings)
 - Without backfill, the profile will take weeks/months to build from new events only
 
@@ -48,10 +50,12 @@ def backfill_temporal_profile(
     limit: int | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """Backfill temporal profile from all historical user-initiated events.
+    """Backfill temporal profile from all historical events (outbound and inbound).
 
     Processes events through the TemporalExtractor to build activity patterns
-    by hour, day of week, and activity type. Also tracks scheduling preferences
+    by hour, day of week, and activity type. Includes both user-initiated events
+    (emails sent, tasks, calendar) and inbound events (emails received, messages
+    received) for complete temporal coverage. Also tracks scheduling preferences
     and advance planning horizons from calendar events.
 
     Args:
@@ -77,7 +81,7 @@ def backfill_temporal_profile(
     # Initialize temporal extractor
     extractor = TemporalExtractor(db, ums)
 
-    # Query all user-initiated events that trigger temporal extraction
+    # Query all events that trigger temporal extraction (outbound + inbound)
     # Order by timestamp to build the profile chronologically (earliest to latest)
     # This ensures patterns evolve naturally over time
     query = """
@@ -85,7 +89,9 @@ def backfill_temporal_profile(
         FROM events
         WHERE type IN (
             'email.sent',
+            'email.received',
             'message.sent',
+            'message.received',
             'calendar.event.created',
             'calendar.event.updated',
             'task.created',
