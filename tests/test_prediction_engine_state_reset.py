@@ -22,8 +22,10 @@ class TestResetStateFieldValues:
     """Verify reset_state() sets all fields back to initial defaults."""
 
     def test_reset_clears_cursor_and_counters(self, prediction_engine):
-        """After mutating state, reset_state() should restore all fields to
-        their initial (fresh-start) values."""
+        """After mutating state, reset_state() should restore operational fields
+        to their initial (fresh-start) values, while preserving persistence
+        failure diagnostic fields (_store_failure_count, _persistence_failure_detected,
+        _last_store_errors) so that recovery logic can trigger after DB corruption."""
         pe = prediction_engine
 
         # Mutate all in-memory state to simulate a long-running engine
@@ -44,6 +46,7 @@ class TestResetStateFieldValues:
 
         pe.reset_state()
 
+        # Operational fields are cleared
         assert pe._last_event_cursor == 0
         assert pe._last_time_based_run is None
         assert pe._first_follow_up_run is True
@@ -51,14 +54,17 @@ class TestResetStateFieldValues:
         assert pe._total_predictions_generated == 0
         assert pe._total_predictions_surfaced == 0
         assert pe._consecutive_zero_runs == 0
-        assert pe._store_failure_count == 0
-        assert pe._persistence_failure_detected is False
-        assert pe._last_store_errors == []
         assert pe._last_generation_stats == {}
         assert pe._last_generation_timestamp is None
         assert pe._last_run_diagnostics == {}
         assert pe._zero_surfacing_cycles == 0
         assert pe._surfacing_diagnostics == pe._empty_surfacing_diagnostics()
+
+        # Persistence failure fields are PRESERVED across reset so that
+        # recovery logic can detect and correct data loss after DB corruption
+        assert pe._store_failure_count == 5
+        assert pe._persistence_failure_detected is True
+        assert pe._last_store_errors == [{"error": "test"}]
 
     def test_reset_does_not_clear_injected_dependencies(self, prediction_engine):
         """reset_state() must NOT touch db, ums, or timezone config."""

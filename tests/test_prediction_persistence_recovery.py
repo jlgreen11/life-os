@@ -6,8 +6,9 @@ When the prediction engine detects that predictions were lost after storage
 on the next cycle: verify the DB is writable, clear the flag, and proceed
 with generation. If the DB write test fails, the cycle should be skipped.
 
-Also tests proactive detection: when the predictions table is empty but
-_store_failure_count > 0, the engine flags for recovery on the next cycle.
+Also tests proactive detection: when the predictions table is empty and either
+_store_failure_count > 0 or _total_runs > 0, the engine flags for recovery.
+Additionally verifies that reset_state() preserves persistence failure flags.
 """
 
 import uuid
@@ -209,20 +210,61 @@ class TestPersistenceRecovery:
         assert row is None, "Test prediction row should be cleaned up after recovery"
 
     @pytest.mark.asyncio
-    async def test_no_proactive_detection_when_no_store_failures(self, db, event_store, user_model_store):
-        """When predictions table is empty but _store_failure_count is 0,
-        no persistence failure is flagged (fresh engine, no history)."""
+    async def test_no_proactive_detection_when_fresh_engine(self, db, event_store, user_model_store):
+        """When predictions table is empty on a fresh engine (_store_failure_count == 0
+        and _total_runs == 0), no persistence failure is flagged."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)
 
         assert engine._store_failure_count == 0
+        assert engine._total_runs == 0
         assert engine._persistence_failure_detected is False
 
         preds = [_make_prediction(confidence=0.7, confidence_gate=ConfidenceGate.DEFAULT)]
         await _run_engine_with_fake_predictions(engine, preds)
 
-        # With 0 store failures, proactive detection should NOT trigger
+        # With 0 store failures and 0 total runs, proactive detection should NOT trigger
         # (the flag may be set by post-store verification if something else goes wrong,
         # but not by the proactive check)
         # Verify at least that the engine ran normally
         assert len(engine._last_run_diagnostics) > 0
+
+    @pytest.mark.asyncio
+    async def test_reset_state_preserves_persistence_failure_flags(self, db, event_store, user_model_store):
+        """After reset_state(), _persistence_failure_detected, _store_failure_count,
+        and _last_store_errors retain their values. These diagnostic fields must
+        survive resets so that recovery logic can trigger after DB corruption."""
+        engine = PredictionEngine(db=db, ums=user_model_store)
+
+        # Set up failure state
+        engine._persistence_failure_detected = True
+        engine._store_failure_count = 5
+        engine._last_store_errors = [{"error": "test", "timestamp": "2026-01-01T00:00:00Z"}]
+
+        engine.reset_state()
+
+        # These must NOT be cleared by reset_state()
+        assert engine._persistence_failure_detected is True
+        assert engine._store_failure_count == 5
+        assert len(engine._last_store_errors) == 1
+
+    @pytest.mark.asyncio
+    async def test_proactive_detection_empty_table_with_prior_runs(self, db, event_store, user_model_store):
+        """When predictions table is empty and _total_runs > 0 (but
+        _store_failure_count == 0), proactive detection triggers. This handles
+        the post-DB-recovery case where failures were never counted but data
+        is clearly missing."""
+        engine = PredictionEngine(db=db, ums=user_model_store)
+        _insert_event(event_store)
+
+        # Simulate: previous runs completed but store failures were not counted
+        # (e.g. reset_state() was called in older code, or DB recovery wiped data)
+        engine._total_runs = 3
+        engine._store_failure_count = 0
+        assert engine._persistence_failure_detected is False
+
+        preds = [_make_prediction(confidence=0.7, confidence_gate=ConfidenceGate.DEFAULT)]
+        await _run_engine_with_fake_predictions(engine, preds)
+
+        # Proactive detection should trigger because _total_runs > 0
+        assert engine._persistence_failure_detected is True

@@ -259,9 +259,11 @@ class PredictionEngine:
         self._total_predictions_generated = 0
         self._total_predictions_surfaced = 0
         self._consecutive_zero_runs = 0
-        self._store_failure_count = 0
-        self._persistence_failure_detected = False
-        self._last_store_errors = []
+        # NOTE: Do NOT reset _store_failure_count, _persistence_failure_detected,
+        # or _last_store_errors here. These are diagnostic/recovery fields that
+        # must survive across resets — clearing them after DB corruption recovery
+        # prevents the proactive detection logic from triggering, causing
+        # predictions to be generated but silently lost (0 rows persisted).
         self._last_generation_stats = {}
         self._last_generation_timestamp = None
         self._last_run_diagnostics = {}
@@ -560,13 +562,19 @@ class PredictionEngine:
             logger.warning('Pre-filter query failed (proceeding without filter): %s', e)
 
         # Proactive persistence failure detection: if the table is empty
-        # but we've had store failures, flag for recovery on next cycle.
-        if not existing_predictions and self._store_failure_count > 0:
+        # and either (a) we've had store failures, or (b) at least one
+        # generation cycle has already completed (meaning predictions were
+        # generated but are now missing), flag for recovery on next cycle.
+        # Condition (b) handles the case after DB recovery where
+        # _store_failure_count was never incremented but data is clearly lost.
+        if not existing_predictions and (self._store_failure_count > 0 or self._total_runs > 0):
             if not self._persistence_failure_detected:
                 logger.warning(
-                    'Predictions table is empty but %d store failures recorded — '
+                    'Predictions table is empty but generation history exists '
+                    '(store_failures=%d, total_runs=%d) — '
                     'flagging for persistence recovery on next cycle',
                     self._store_failure_count,
+                    self._total_runs,
                 )
                 self._persistence_failure_detected = True
 
