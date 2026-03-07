@@ -558,3 +558,66 @@ class FeedbackCollector:
                 summary[key] = row["cnt"]
 
             return summary
+
+    def get_diagnostics(self) -> dict:
+        """Return operational diagnostics for the feedback pipeline.
+
+        Provides richer health information than get_feedback_summary(),
+        including breakdowns by feedback_type and action_type, top dismissed
+        domains, recency metrics, and cross-DB semantic fact counts.
+        """
+        result = {}
+        try:
+            with self.db.get_connection("preferences") as conn:
+                # Total feedback entries
+                total = conn.execute("SELECT COUNT(*) as c FROM feedback_log").fetchone()["c"]
+                result["total_feedback_entries"] = total
+
+                # Breakdown by feedback_type
+                type_rows = conn.execute(
+                    "SELECT feedback_type, COUNT(*) as c FROM feedback_log GROUP BY feedback_type ORDER BY c DESC"
+                ).fetchall()
+                result["by_feedback_type"] = {row["feedback_type"]: row["c"] for row in type_rows}
+
+                # Breakdown by action_type
+                action_rows = conn.execute(
+                    "SELECT action_type, COUNT(*) as c FROM feedback_log GROUP BY action_type ORDER BY c DESC"
+                ).fetchall()
+                result["by_action_type"] = {row["action_type"]: row["c"] for row in action_rows}
+
+                # Most-dismissed domains (top 5) — critical for debugging notification suppression
+                domain_rows = conn.execute(
+                    """SELECT json_extract(context, '$.domain') as domain, COUNT(*) as c
+                       FROM feedback_log
+                       WHERE feedback_type = 'dismissed'
+                         AND json_extract(context, '$.domain') IS NOT NULL
+                       GROUP BY domain ORDER BY c DESC LIMIT 5"""
+                ).fetchall()
+                result["top_dismissed_domains"] = {row["domain"]: row["c"] for row in domain_rows}
+
+                # Recent feedback (last 24h count)
+                recent = conn.execute(
+                    "SELECT COUNT(*) as c FROM feedback_log WHERE timestamp > datetime('now', '-1 day')"
+                ).fetchone()["c"]
+                result["feedback_last_24h"] = recent
+
+                # Most recent feedback timestamp
+                latest = conn.execute(
+                    "SELECT MAX(timestamp) as ts FROM feedback_log"
+                ).fetchone()["ts"]
+                result["last_feedback_at"] = latest
+
+                # Semantic facts created from feedback (notification_preference category)
+                fact_count = 0
+                try:
+                    with self.db.get_connection("user_model") as um_conn:
+                        fact_count = um_conn.execute(
+                            "SELECT COUNT(*) as c FROM semantic_facts WHERE category = 'notification_preference'"
+                        ).fetchone()["c"]
+                except Exception:
+                    pass
+                result["semantic_facts_from_feedback"] = fact_count
+
+        except Exception as e:
+            result["error"] = str(e)
+        return result
