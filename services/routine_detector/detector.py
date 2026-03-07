@@ -477,15 +477,32 @@ class RoutineDetector:
         """
         try:
             with self.db.get_connection("user_model") as conn:
-                row = conn.execute(
-                    f"""SELECT COUNT(DISTINCT DATE(timestamp)) FROM episodes
+                # Fetch raw timestamps and convert to local timezone before
+                # extracting dates.  This matches the bucketing logic in
+                # _detect_temporal_routines() which converts to self._tz
+                # before computing local dates.  The old approach used
+                # DATE(timestamp) which operates in UTC and miscounts days
+                # near the UTC midnight boundary for non-UTC timezones.
+                rows = conn.execute(
+                    f"""SELECT DISTINCT timestamp FROM episodes
                         WHERE timestamp > ?
                           AND interaction_type IS NOT NULL
                           AND interaction_type NOT IN ('unknown', 'communication')
                           {self.INTERNAL_TYPE_SQL_FILTER}""",
                     (cutoff.isoformat(),),
-                ).fetchone()
-            return max(1, row[0] if row and row[0] else 1)
+                ).fetchall()
+            local_dates: set[str] = set()
+            for row in rows:
+                if row[0]:
+                    try:
+                        dt_utc = datetime.fromisoformat(row[0])
+                        if dt_utc.tzinfo is None:
+                            dt_utc = dt_utc.replace(tzinfo=UTC)
+                        dt_local = dt_utc.astimezone(self._tz)
+                        local_dates.add(dt_local.strftime("%Y-%m-%d"))
+                    except (ValueError, TypeError):
+                        continue
+            return max(1, len(local_dates))
         except sqlite3.DatabaseError as e:
             logger.warning("_count_active_days: user_model.db query failed: %s", e)
             return 1
