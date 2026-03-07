@@ -114,6 +114,73 @@ class NotificationManager:
             logger.warning("Failed to expire stale notifications", exc_info=True)
             return 0, []
 
+    async def auto_deliver_stale_batch(self, max_pending_hours: int = 6) -> int:
+        """Auto-deliver pending notifications older than max_pending_hours.
+
+        Batched notifications sit in 'pending' status until the user visits a
+        digest endpoint.  If the user doesn't check the dashboard, they expire
+        after 48 hours and are never seen (77% expiry rate in practice).
+
+        This method bridges the gap: it finds pending notifications that have
+        been waiting longer than *max_pending_hours* and delivers them
+        proactively, so they appear on the user's next dashboard visit rather
+        than silently expiring.
+
+        Called periodically from the _notification_expiry_loop in main.py,
+        BEFORE the expiry step, so notifications get a chance at delivery
+        before they age out.
+
+        Args:
+            max_pending_hours: Deliver pending notifications older than this
+                               many hours.  Default 6 hours — well before the
+                               48-hour expiry cutoff.
+
+        Returns:
+            Count of notifications auto-delivered.
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_pending_hours)).strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z"
+            )
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    "SELECT id, title, body, priority, domain, source_event_id "
+                    "FROM notifications "
+                    "WHERE status = 'pending' AND created_at < ? "
+                    "ORDER BY created_at",
+                    (cutoff,),
+                ).fetchall()
+
+            delivered = 0
+            for row in rows:
+                try:
+                    await self._deliver_notification(
+                        row["id"], row["title"], row["body"], row["priority"]
+                    )
+                    # Mark prediction as surfaced so accuracy tracking works.
+                    if row["domain"] == "prediction" and row["source_event_id"]:
+                        self._mark_prediction_surfaced(row["source_event_id"])
+                    delivered += 1
+                except Exception:
+                    logger.warning(
+                        "Failed to auto-deliver notification %s", row["id"], exc_info=True
+                    )
+
+            # Clear auto-delivered items from the in-memory batch to avoid
+            # duplicate delivery on the next get_digest() call.
+            if delivered > 0:
+                delivered_ids = {row["id"] for row in rows}
+                self._pending_batch = [
+                    item for item in self._pending_batch
+                    if item["id"] not in delivered_ids
+                ]
+
+            return delivered
+        except Exception:
+            # Fail-open: auto-delivery failures must never crash the expiry loop.
+            logger.warning("Failed to auto-deliver stale batched notifications", exc_info=True)
+            return 0
+
     def _recover_pending_batch(self):
         """Recover batched notifications from the database after a restart.
 

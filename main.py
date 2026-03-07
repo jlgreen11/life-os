@@ -4144,6 +4144,17 @@ class LifeOS:
 
         while not self.shutdown_event.is_set():
             try:
+                # Auto-deliver pending batched notifications before they expire.
+                # Notifications older than 6 hours are delivered proactively so
+                # the user sees them on the next dashboard visit instead of them
+                # silently expiring at the 48-hour mark.
+                auto_delivered = await self.notification_manager.auto_deliver_stale_batch(max_pending_hours=6)
+                if auto_delivered > 0:
+                    logger.info("NotificationExpiryLoop: auto-delivered %d stale batched notifications", auto_delivered)
+            except Exception as e:
+                logger.error("NotificationExpiryLoop auto-deliver error: %s", e)
+
+            try:
                 count, _expired_ids = self.notification_manager.expire_stale_notifications()
                 if count > 0:
                     logger.info("NotificationExpiryLoop: expired %d stale notifications", count)
