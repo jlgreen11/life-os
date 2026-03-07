@@ -31,9 +31,9 @@ def test_temporal_extractor_can_process_relevant_events(db, user_model_store):
     # Should process: direct user commands
     assert extractor.can_process({"type": EventType.USER_COMMAND.value})
 
-    # Should NOT process: inbound communication (passive)
-    assert not extractor.can_process({"type": EventType.EMAIL_RECEIVED.value})
-    assert not extractor.can_process({"type": EventType.MESSAGE_RECEIVED.value})
+    # Should process: inbound communication (temporal pattern signal)
+    assert extractor.can_process({"type": EventType.EMAIL_RECEIVED.value})
+    assert extractor.can_process({"type": EventType.MESSAGE_RECEIVED.value})
 
     # Should NOT process: system events
     assert not extractor.can_process({"type": EventType.CONNECTOR_SYNC_COMPLETE.value})
