@@ -494,7 +494,8 @@ def analyze(data_dir: str = "./data") -> dict:
             # confidence in some data sources
             source_weights = _query(
                 pref_conn,
-                """SELECT source_key, user_weight, ai_drift, ai_updated_at
+                """SELECT source_key, user_weight, ai_drift, ai_updated_at,
+                          interactions, engagements, dismissals
                    FROM source_weights ORDER BY ai_drift DESC""",
                 [],
             )
@@ -504,6 +505,9 @@ def analyze(data_dir: str = "./data") -> dict:
                         "weight": r["user_weight"],
                         "drift": r["ai_drift"],
                         "updated_at": r["ai_updated_at"],
+                        "interactions": r["interactions"],
+                        "engagements": r["engagements"],
+                        "dismissals": r["dismissals"],
                     }
                     for r in source_weights
                 }
@@ -668,6 +672,51 @@ def detect_anomalies(sections: dict) -> list[dict]:
                     "or adjusting notification thresholds"
                 ),
             })
+
+    # --- (i) Source weight learning activity ---
+    sw_section = sections.get("source_weights", {})
+    if isinstance(sw_section, dict) and "error" not in sw_section:
+        total_interactions = sum(v.get("interactions", 0) for v in sw_section.values())
+        total_dismissals = sum(v.get("dismissals", 0) for v in sw_section.values())
+        total_engagements = sum(v.get("engagements", 0) for v in sw_section.values())
+        event_total = events.get("total", 0) if isinstance(events, dict) else 0
+
+        if total_interactions == 0 and event_total > 100:
+            anomalies.append({
+                "severity": "warning",
+                "category": "source_weight_learning",
+                "message": (
+                    f"Source weights have 0 interactions despite {event_total} events "
+                    "— event classification may not be reaching source_weights"
+                ),
+                "recommendation": (
+                    "Check that SourceWeightManager.record_interaction() is being called "
+                    "in master_event_handler and that classify_event() returns keys "
+                    "matching source_weights table rows"
+                ),
+            })
+        elif total_interactions > 0 and total_dismissals == 0:
+            feedback_list = sections.get("feedback", [])
+            if isinstance(feedback_list, list):
+                feedback_dismissals = sum(
+                    f.get("count", 0) for f in feedback_list
+                    if f.get("feedback_type") == "dismissed"
+                )
+                if feedback_dismissals > 5:
+                    anomalies.append({
+                        "severity": "warning",
+                        "category": "source_weight_feedback",
+                        "message": (
+                            f"Source weights recorded {total_interactions} interactions "
+                            f"but 0 dismissals despite {feedback_dismissals} notification "
+                            "dismissals — feedback-to-weight wiring may be broken"
+                        ),
+                        "recommendation": (
+                            "Check _classify_notification_source() in web/routes.py "
+                            "— dismissed notifications may lack source_event_id or "
+                            "map to unknown source_keys"
+                        ),
+                    })
 
     return anomalies
 
