@@ -866,6 +866,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             font-family: var(--font-stack);
         }
         .sidebar-title button:hover { color: var(--accent-blue); }
+        .sidebar-chevron {
+            font-size: 8px;
+            display: inline-block;
+            transition: transform 0.15s;
+            margin-right: 2px;
+        }
+        .sidebar-chevron.collapsed { transform: rotate(-90deg); }
+        .sidebar-section.section-collapsed .sidebar-content { display: none; }
         .sidebar-content {
             font-size: 13px;
             color: var(--text-secondary);
@@ -1239,6 +1247,100 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             margin-left: 2px;
         }
 
+        /* --- Toast Notifications --- */
+        .toast-container {
+            position: fixed;
+            bottom: 40px;
+            right: 20px;
+            z-index: 3000;
+            display: flex;
+            flex-direction: column-reverse;
+            gap: 8px;
+            pointer-events: none;
+        }
+        .toast {
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #fff;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            pointer-events: auto;
+            animation: toastIn 0.25s ease-out;
+            max-width: 340px;
+        }
+        .toast.toast-success { border-left: 3px solid var(--accent-green); }
+        .toast.toast-error { border-left: 3px solid var(--accent-red); }
+        .toast.toast-info { border-left: 3px solid var(--accent-blue); }
+        .toast.toast-out {
+            animation: toastOut 0.2s ease-in forwards;
+        }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(12px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateY(0) scale(1); }
+            to { opacity: 0; transform: translateY(12px) scale(0.95); }
+        }
+
+        /* --- Card removal animation --- */
+        .card.removing {
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: opacity 0.3s, transform 0.3s;
+        }
+
+        /* --- Keyboard help overlay --- */
+        .kbd-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 4000;
+            align-items: center;
+            justify-content: center;
+        }
+        .kbd-overlay.visible { display: flex; }
+        .kbd-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px 28px;
+            max-width: 380px;
+            width: 90%;
+        }
+        .kbd-box h3 {
+            margin: 0 0 16px;
+            font-size: 16px;
+            color: #fff;
+        }
+        .kbd-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .kbd-key {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+            color: var(--text-primary);
+        }
+
+        /* --- Button loading state --- */
+        button.btn-loading {
+            opacity: 0.6;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
         /* --- Animations --- */
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(8px); }
@@ -1441,10 +1543,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
             <div class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9664;</div>
 
-            <div class="sidebar-section">
-                <div class="sidebar-title">
-                    Daily Briefing
-                    <button onclick="loadBriefing()">&#8635; refresh</button>
+            <div class="sidebar-section" data-section="briefing">
+                <div class="sidebar-title" onclick="toggleSidebarSection('briefing')" style="cursor:pointer">
+                    <span><span class="sidebar-chevron" id="chev-briefing">&#9660;</span> Daily Briefing</span>
+                    <button onclick="event.stopPropagation();loadBriefing()">&#8635; refresh</button>
                 </div>
                 <div class="sidebar-content" id="briefingContent">
                     <div class="skeleton skeleton-line"></div>
@@ -1452,22 +1554,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 </div>
             </div>
 
-            <div class="sidebar-section">
-                <div class="sidebar-title">Predictions</div>
+            <div class="sidebar-section" data-section="predictions">
+                <div class="sidebar-title" onclick="toggleSidebarSection('predictions')" style="cursor:pointer">
+                    <span><span class="sidebar-chevron" id="chev-predictions">&#9660;</span> Predictions</span>
+                </div>
                 <div class="sidebar-content" id="predictionsContent">
                     <div class="skeleton skeleton-line"></div>
                 </div>
             </div>
 
-            <div class="sidebar-section">
-                <div class="sidebar-title">People Radar</div>
+            <div class="sidebar-section" data-section="people">
+                <div class="sidebar-title" onclick="toggleSidebarSection('people')" style="cursor:pointer">
+                    <span><span class="sidebar-chevron" id="chev-people">&#9660;</span> People Radar</span>
+                </div>
                 <div class="sidebar-content" id="peopleContent">
                     <div class="skeleton skeleton-line"></div>
                 </div>
             </div>
 
-            <div class="sidebar-section">
-                <div class="sidebar-title">Mood</div>
+            <div class="sidebar-section" data-section="mood">
+                <div class="sidebar-title" onclick="toggleSidebarSection('mood')" style="cursor:pointer">
+                    <span><span class="sidebar-chevron" id="chev-mood">&#9660;</span> Mood</span>
+                </div>
                 <div class="sidebar-content" id="moodSnapshot">
                     <div class="mood-snapshot">
                         <div class="mood-row">
@@ -1486,8 +1594,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 </div>
             </div>
 
-            <div class="sidebar-section">
-                <div class="sidebar-title">System Status</div>
+            <div class="sidebar-section" data-section="sysstatus">
+                <div class="sidebar-title" onclick="toggleSidebarSection('sysstatus')" style="cursor:pointer">
+                    <span><span class="sidebar-chevron" id="chev-sysstatus">&#9660;</span> System Status</span>
+                </div>
                 <div class="sidebar-content" id="systemStatusContent">
                     <div style="color:var(--text-muted);font-size:12px">Loading...</div>
                 </div>
@@ -1526,6 +1636,32 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     function escAttr(s) {
         return escHtml(String(s || '').replace(/'/g, '&#39;'));
+    }
+
+    // --- Toast Notifications ---
+    function showToast(message, type) {
+        type = type || 'info';
+        var container = document.getElementById('toastContainer');
+        var toast = document.createElement('div');
+        toast.className = 'toast toast-' + type;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(function() {
+            toast.classList.add('toast-out');
+            setTimeout(function() { toast.remove(); }, 200);
+        }, 3500);
+    }
+
+    // --- Button Loading Helper ---
+    function withLoading(btn, promise) {
+        if (!btn) return promise;
+        var origText = btn.textContent;
+        btn.classList.add('btn-loading');
+        btn.textContent = origText + '...';
+        return promise.finally(function() {
+            btn.classList.remove('btn-loading');
+            btn.textContent = origText;
+        });
     }
 
     // --- Configuration ---
@@ -1608,15 +1744,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     function timeAgo(ts) {
         if (!ts) return '';
-        var now = Date.now();
-        var t = new Date(ts).getTime();
+        var d = new Date(ts);
+        var t = d.getTime();
         if (isNaN(t)) return '';
-        var diff = Math.floor((now - t) / 1000);
-        if (diff < 60) return 'now';
+        var now = new Date();
+        var diff = Math.floor((now.getTime() - t) / 1000);
+        if (diff < 60) return 'just now';
         if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
         if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-        if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
-        return new Date(ts).toLocaleDateString();
+        // Check if yesterday
+        var yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (d.toDateString() === yesterday.toDateString()) return 'yesterday';
+        // Within a week: show day name
+        if (diff < 604800) {
+            var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+            return days[d.getDay()];
+        }
+        // Older: short date
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return months[d.getMonth()] + ' ' + d.getDate();
     }
 
     function formatTime(ts) {
@@ -1794,6 +1941,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         return html;
     }
 
+    // --- Empty State Messages ---
+    function emptyStateFor(topic) {
+        var states = {
+            inbox: {icon: '\u2630', title: 'Your inbox is empty', body: 'Connect email or messaging in Admin to start seeing items here.'},
+            messages: {icon: '\uD83D\uDCAC', title: 'No messages yet', body: 'Configure Signal, iMessage, or WhatsApp in Admin to sync your conversations.'},
+            email: {icon: '\u2709', title: 'No emails yet', body: 'Connect Gmail or ProtonMail in Admin to see your emails here.'},
+            tasks: {icon: '\u2611', title: 'All caught up!', body: 'Type "create task ..." in the command bar, or tasks will be extracted from your messages automatically.'},
+            calendar: {icon: '\uD83D\uDCC5', title: 'No calendar events', body: 'Connect a CalDAV or Google Calendar in Admin to see your schedule.'},
+            insights: {icon: '\u2605', title: 'No insights yet', body: 'Use Life OS for a few days and behavioral patterns will emerge here.'},
+            system: {icon: '\u2699', title: 'System status loading...', body: 'Check the Admin page if connectors need configuration.'}
+        };
+        var s = states[topic] || {icon: '\u2022', title: 'Nothing here yet', body: 'Check back later or configure connectors in Admin.'};
+        return '<div class="card" style="text-align:center;padding:32px 20px">' +
+            '<div style="font-size:36px;margin-bottom:12px;opacity:0.5">' + s.icon + '</div>' +
+            '<div class="card-title" style="margin-bottom:6px;font-size:15px">' + escHtml(s.title) + '</div>' +
+            '<div class="card-meta" style="margin-bottom:14px;line-height:1.5">' + escHtml(s.body) + '</div>' +
+            (topic !== 'tasks' && topic !== 'insights' ? '<a href="/admin" style="font-size:13px;color:var(--accent-blue)">Go to Admin \u2192</a>' : '') +
+            '</div>';
+    }
+
     // --- Feed Loading ---
     function loadFeed() {
         if (currentTopic === 'calendar') { loadCalendarView(); return; }
@@ -1809,7 +1976,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .then(function(data) {
             feedItems = data.items || [];
             if (feedItems.length === 0) {
-                safeSetContent(el, '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No items in this topic</div></div>');
+                safeSetContent(el, emptyStateFor(currentTopic));
                 return;
             }
             var html = '';
@@ -2494,7 +2661,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     if (fact.is_user_corrected) html += ' &middot; <span style="color:var(--accent-yellow,#f0a020);font-weight:600">CORRECTED</span>';
                     html += '</div>';
                     html += '<div class="card-actions" style="margin-top:4px;display:flex;gap:4px">';
-                    html += '<button class="btn-small btn-confirm" onclick="event.stopPropagation();confirmFact(\'' + escAttr(fact.key) + '\')">Confirm</button>';
+                    html += '<button class="btn-small btn-confirm" onclick="event.stopPropagation();confirmFact(\'' + escAttr(fact.key) + '\',this)">Confirm</button>';
                     html += '<button class="btn-small" onclick="event.stopPropagation();correctFact(\'' + escAttr(fact.key) + '\')">Correct</button>';
                     html += '<button class="btn-small btn-danger" onclick="event.stopPropagation();deleteFact(\'' + escAttr(fact.key) + '\')">Delete</button>';
                     html += '<button class="btn-small btn-warn" onclick="event.stopPropagation();notAboutMeFact(\'' + escAttr(fact.key) + '\')">Not About Me</button>';
@@ -2519,8 +2686,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      *
      * @param {string} key - The fact key to confirm (e.g. "preferred_language").
      */
-    function confirmFact(key) {
-        fetch(API + '/api/user-model/facts/' + encodeURIComponent(key) + '/confirm', {
+    function confirmFact(key, btn) {
+        var p = fetch(API + '/api/user-model/facts/' + encodeURIComponent(key) + '/confirm', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({})
@@ -2530,13 +2697,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             return res.json();
         })
         .then(function(data) {
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = 'Fact confirmed \u2014 confidence now ' + Math.round((data.new_confidence || 0) * 100) + '%';
-            setTimeout(function() { resp.className = ''; }, 3000);
+            showToast('Fact confirmed \u2014 confidence now ' + Math.round((data.new_confidence || 0) * 100) + '%', 'success');
             loadFactsFeed();
         })
         .catch(function(err) { console.error('Confirm fact failed:', err); });
+        if (btn) withLoading(btn, p);
     }
 
     /**
@@ -2558,10 +2723,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     if (!res.ok) throw new Error('Failed');
                     var card = document.getElementById('fact-' + key);
                     if (card) card.style.display = 'none';
-                    var resp = document.getElementById('response');
-                    resp.className = 'visible';
-                    resp.textContent = 'Fact deleted';
-                    setTimeout(function() { resp.className = ''; }, 3000);
+                    showToast('Fact deleted', 'success');
                 })
                 .catch(function(err) { console.error('Delete fact failed:', err); });
             },
@@ -2590,10 +2752,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 })
                 .then(function(res) {
                     if (!res.ok) throw new Error('Failed');
-                    var resp = document.getElementById('response');
-                    resp.className = 'visible';
-                    resp.textContent = 'Fact corrected \u2014 confidence reduced';
-                    setTimeout(function() { resp.className = ''; }, 3000);
+                    showToast('Fact corrected \u2014 confidence reduced', 'info');
                     loadFactsFeed(); // Refresh to show updated confidence
                 })
                 .catch(function(err) { console.error('Correct fact failed:', err); });
@@ -2614,10 +2773,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         .then(function() {
             var card = document.getElementById('fact-' + key);
             if (card) card.style.display = 'none';
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = 'Marked as not about you — fact removed';
-            setTimeout(function() { resp.className = ''; }, 3000);
+            showToast('Marked as not about you \u2014 fact removed', 'info');
         })
         .catch(function(err) { console.error('Not about me failed:', err); });
     }
@@ -3006,40 +3162,53 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         });
     }
 
+    // --- Animate card removal then run callback ---
+    function animateCardOut(id, callback) {
+        var card = document.querySelector('[data-id="' + id + '"]');
+        if (card) {
+            card.classList.add('removing');
+            setTimeout(function() { callback(); }, 300);
+        } else {
+            callback();
+        }
+    }
+
     function completeTask(id) {
-        fetch(API + '/api/tasks/' + encodeURIComponent(id) + '/complete', {method: 'POST'})
-        .then(function() { loadFeed(); loadBadges(); })
-        .catch(function(err) { console.error('Failed to complete task:', err); });
+        animateCardOut(id, function() {
+            fetch(API + '/api/tasks/' + encodeURIComponent(id) + '/complete', {method: 'POST'})
+            .then(function() { showToast('Task completed', 'success'); loadFeed(); loadBadges(); })
+            .catch(function(err) { console.error('Failed to complete task:', err); });
+        });
     }
 
     function actOnNotification(id) {
-        // Mark notification as acted on (positive feedback signal).
-        // For prediction notifications, this sets was_accurate=True
-        // in the prediction feedback loop, allowing the system to
-        // learn which predictions are helpful.
-        fetch(API + '/api/notifications/' + encodeURIComponent(id) + '/act', {method: 'POST'})
-        .then(function() { loadFeed(); loadBadges(); })
-        .catch(function(err) { console.error('Failed to act on notification:', err); });
+        animateCardOut(id, function() {
+            fetch(API + '/api/notifications/' + encodeURIComponent(id) + '/act', {method: 'POST'})
+            .then(function() { showToast('Marked as acted on', 'success'); loadFeed(); loadBadges(); })
+            .catch(function(err) { console.error('Failed to act on notification:', err); });
+        });
     }
 
     function dismissCard(id, kind) {
-        if (kind === 'notification') {
-            fetch(API + '/api/notifications/' + encodeURIComponent(id) + '/dismiss', {method: 'POST'})
-            .then(function() { loadFeed(); loadBadges(); })
-            .catch(function(err) { console.error('Failed to dismiss:', err); });
-        } else if (kind === 'task') {
-            completeTask(id);
-        } else {
-            // Remove from local state
-            feedItems = feedItems.filter(function(item) { return item.id !== id; });
-            expandedCardId = null;
-            var el = document.getElementById('feedContent');
-            var html = '';
-            for (var i = 0; i < feedItems.length; i++) {
-                html += renderCard(feedItems[i]);
+        animateCardOut(id, function() {
+            if (kind === 'notification') {
+                fetch(API + '/api/notifications/' + encodeURIComponent(id) + '/dismiss', {method: 'POST'})
+                .then(function() { showToast('Dismissed', 'info'); loadFeed(); loadBadges(); })
+                .catch(function(err) { console.error('Failed to dismiss:', err); });
+            } else if (kind === 'task') {
+                completeTask(id);
+            } else {
+                feedItems = feedItems.filter(function(item) { return item.id !== id; });
+                expandedCardId = null;
+                var el = document.getElementById('feedContent');
+                var html = '';
+                for (var i = 0; i < feedItems.length; i++) {
+                    html += renderCard(feedItems[i]);
+                }
+                safeSetContent(el, html || emptyStateFor(currentTopic));
+                showToast('Item removed', 'info');
             }
-            safeSetContent(el, html || '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No items in this topic</div></div>');
-        }
+        });
     }
 
     function insightFeedback(id, feedback) {
@@ -3048,10 +3217,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             if (!res.ok) throw new Error('Failed');
             var card = document.getElementById('insight-' + id);
             if (card) card.style.display = 'none';
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = feedback === 'useful' ? 'Marked as useful' : feedback === 'not_relevant' ? 'Marked as not about you' : 'Insight dismissed';
-            setTimeout(function() { resp.className = ''; }, 3000);
+            showToast(feedback === 'useful' ? 'Marked as useful' : feedback === 'not_relevant' ? 'Marked as not about you' : 'Insight dismissed', 'success');
         })
         .catch(function(err) { console.error('Insight feedback failed:', err); });
     }
@@ -3230,25 +3396,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var resp = document.getElementById('response');
             if (data.status === 'sent') {
                 textarea.value = '';
-                resp.className = 'visible';
-                resp.textContent = 'Message sent via ' + (data.connector || channel);
+                showToast('Message sent via ' + (data.connector || channel), 'success');
             } else if (data.status === 'no_connector') {
-                resp.className = 'visible';
-                resp.textContent = 'No messaging connector active. Configure iMessage or Signal in Admin.';
+                showToast('No messaging connector active. Configure iMessage or Signal in Admin.', 'error');
             } else {
-                resp.className = 'visible';
-                resp.textContent = 'Send failed: ' + (data.details || 'Unknown error');
+                showToast('Send failed: ' + (data.details || 'Unknown error'), 'error');
             }
-            setTimeout(function() { resp.className = ''; }, 4000);
         })
         .catch(function(err) {
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = 'Send failed: ' + err.message;
-            setTimeout(function() { resp.className = ''; }, 4000);
+            showToast('Send failed: ' + err.message, 'error');
         })
         .finally(function() {
             textarea.disabled = false;
@@ -3264,10 +3422,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = 'Task created: ' + (data.title || title);
-            setTimeout(function() { resp.className = ''; }, 3000);
+            showToast('Task created: ' + (data.title || title), 'success');
             loadBadges();
         })
         .catch(function(err) { console.error('Failed to create task:', err); });
@@ -3310,8 +3465,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             }
         })
         .catch(function(err) {
-            resp.className = 'visible';
-            resp.textContent = 'Error: ' + err.message;
+            resp.className = '';
+            showToast('Error: ' + err.message, 'error');
         });
     });
 
@@ -3396,10 +3551,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             if (!res.ok) throw new Error('Failed');
             var card = document.getElementById('pred-' + id);
             if (card) card.style.display = 'none';
-            var resp = document.getElementById('response');
-            resp.className = 'visible';
-            resp.textContent = wasAccurate ? 'Marked as accurate' : userResponse === 'not_relevant' ? 'Marked as not about you' : 'Marked as inaccurate';
-            setTimeout(function() { resp.className = ''; }, 3000);
+            showToast(wasAccurate ? 'Marked as accurate' : userResponse === 'not_relevant' ? 'Marked as not about you' : 'Marked as inaccurate', wasAccurate ? 'success' : 'info');
         })
         .catch(function(err) { console.error('Prediction feedback failed:', err); });
     }
@@ -3540,6 +3692,37 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             document.getElementById('miniStress').style.width = '0%';
         });
     }
+
+    // --- Sidebar Section Collapse ---
+    function toggleSidebarSection(sectionId) {
+        var section = document.querySelector('[data-section="' + sectionId + '"]');
+        var chev = document.getElementById('chev-' + sectionId);
+        if (!section) return;
+        var isCollapsed = section.classList.toggle('section-collapsed');
+        if (chev) chev.classList.toggle('collapsed', isCollapsed);
+        // Persist state
+        try {
+            var state = JSON.parse(localStorage.getItem('sidebar-collapsed') || '{}');
+            state[sectionId] = isCollapsed;
+            localStorage.setItem('sidebar-collapsed', JSON.stringify(state));
+        } catch(e) {}
+    }
+
+    // Restore sidebar collapse state from localStorage
+    (function restoreSidebarState() {
+        try {
+            var state = JSON.parse(localStorage.getItem('sidebar-collapsed') || '{}');
+            var keys = Object.keys(state);
+            for (var i = 0; i < keys.length; i++) {
+                if (state[keys[i]]) {
+                    var section = document.querySelector('[data-section="' + keys[i] + '"]');
+                    var chev = document.getElementById('chev-' + keys[i]);
+                    if (section) section.classList.add('section-collapsed');
+                    if (chev) chev.classList.add('collapsed');
+                }
+            }
+        } catch(e) {}
+    })();
 
     function toggleSidebar() {
         var sidebar = document.getElementById('aiSidebar');
@@ -3962,15 +4145,32 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         };
     }
 
-    // --- Escape key: collapse expanded card ---
+    // --- Keyboard Shortcuts ---
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && expandedCardId) {
-            // Use targeted class removal — same pattern as toggleCard() — to
-            // avoid the full feed re-render and its associated scroll-position loss.
-            var card = document.querySelector('[data-id="' + expandedCardId + '"]');
-            if (card) card.classList.remove('expanded');
-            expandedCardId = null;
+        // Close overlays first
+        if (e.key === 'Escape') {
+            var kbd = document.getElementById('kbdOverlay');
+            if (kbd && kbd.classList.contains('visible')) {
+                kbd.classList.remove('visible');
+                return;
+            }
+            if (expandedCardId) {
+                var card = document.querySelector('[data-id="' + expandedCardId + '"]');
+                if (card) card.classList.remove('expanded');
+                expandedCardId = null;
+                return;
+            }
         }
+        // Skip shortcuts when typing in inputs
+        var tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        var topicKeys = {'1':'inbox','2':'messages','3':'email','4':'calendar','5':'tasks','6':'insights','7':'profile','8':'system'};
+        if (topicKeys[e.key]) { switchTopic(topicKeys[e.key]); e.preventDefault(); return; }
+        if (e.key === 'r') { refreshAll(); e.preventDefault(); return; }
+        if (e.key === '/') { document.getElementById('commandInput').focus(); e.preventDefault(); return; }
+        if (e.key === '?') { document.getElementById('kbdOverlay').classList.add('visible'); e.preventDefault(); return; }
     });
 
     // --- Mobile Tabs ---
@@ -4022,6 +4222,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
      small screens (< 900px). Hidden via CSS on wide screens. -->
 <button class="mobile-sidebar-fab" id="mobileSidebarFab"
         onclick="toggleMobileSidebar()" aria-label="Open AI sidebar">AI</button>
+
+<!-- Toast notification container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- Keyboard shortcuts help overlay -->
+<div class="kbd-overlay" id="kbdOverlay" onclick="this.classList.remove('visible')">
+    <div class="kbd-box" onclick="event.stopPropagation()">
+        <h3>Keyboard Shortcuts</h3>
+        <div class="kbd-row"><span>Refresh all</span><span class="kbd-key">r</span></div>
+        <div class="kbd-row"><span>Focus command bar</span><span class="kbd-key">/</span></div>
+        <div class="kbd-row"><span>Inbox</span><span class="kbd-key">1</span></div>
+        <div class="kbd-row"><span>Messages</span><span class="kbd-key">2</span></div>
+        <div class="kbd-row"><span>Email</span><span class="kbd-key">3</span></div>
+        <div class="kbd-row"><span>Calendar</span><span class="kbd-key">4</span></div>
+        <div class="kbd-row"><span>Tasks</span><span class="kbd-key">5</span></div>
+        <div class="kbd-row"><span>Insights</span><span class="kbd-key">6</span></div>
+        <div class="kbd-row"><span>My Profile</span><span class="kbd-key">7</span></div>
+        <div class="kbd-row"><span>System</span><span class="kbd-key">8</span></div>
+        <div class="kbd-row"><span>Close / collapse</span><span class="kbd-key">Esc</span></div>
+        <div class="kbd-row"><span>This help</span><span class="kbd-key">?</span></div>
+    </div>
+</div>
 
 <!-- Inline modal overlay: replaces native confirm()/prompt() dialogs.
      Clicking the backdrop or the Cancel button closes the modal.
