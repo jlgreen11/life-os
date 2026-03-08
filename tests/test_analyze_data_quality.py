@@ -34,6 +34,8 @@ _mod = importlib.util.module_from_spec(_mod_spec)
 _mod_spec.loader.exec_module(_mod)
 
 analyze = _mod.analyze
+detect_anomalies = _mod.detect_anomalies
+compute_health_score = _mod.compute_health_score
 _connect = _mod._connect
 _query = _mod._query
 _query_one = _mod._query_one
@@ -133,7 +135,8 @@ def _create_minimal_state_db(tmp_path):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS notifications (
             id TEXT PRIMARY KEY,
-            status TEXT DEFAULT 'pending'
+            status TEXT DEFAULT 'pending',
+            domain TEXT
         )
     """)
     conn.execute("""
@@ -1161,3 +1164,233 @@ class TestEventSourcedPredictionActivity:
 
         assert len(pp["event_activity"]) == 1
         assert pp["event_activity"]["usermodel.prediction.generated"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Notification delivery rate tests
+# ---------------------------------------------------------------------------
+
+
+def _create_state_db_with_domain(tmp_path):
+    """Create state.db with domain column on notifications table."""
+    conn = sqlite3.connect(str(tmp_path / "state.db"))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'pending',
+            domain TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'pending',
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS connector_state (
+            connector_id TEXT PRIMARY KEY,
+            status TEXT DEFAULT 'inactive',
+            last_sync TEXT,
+            last_error TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+class TestNotificationDeliveryRate:
+    """Tests for notification delivery rate, expired_by_domain, and health score penalty."""
+
+    def test_delivery_rate_computed_correctly(self, tmp_path):
+        """delivery_rate is computed as delivered / (delivered + expired)."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_state_db_with_domain(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "state.db"))
+        # 3 delivered, 7 expired → delivery_rate = 0.3
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'delivered')",
+                (f"d-{i}",),
+            )
+        for i in range(7):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'expired')",
+                (f"e-{i}",),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        notif = report["sections"]["notifications"]
+
+        assert notif["delivery_rate"] == 0.3
+        assert notif["delivered"] == 3
+        assert notif["expired"] == 7
+
+    def test_delivery_rate_none_when_no_delivered_or_expired(self, tmp_path):
+        """delivery_rate is None when there are zero delivered and expired notifications."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_state_db_with_domain(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        # Only pending notifications — no delivered or expired
+        conn = sqlite3.connect(str(tmp_path / "state.db"))
+        conn.execute("INSERT INTO notifications (id, status) VALUES ('p1', 'pending')")
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        notif = report["sections"]["notifications"]
+
+        assert notif["delivery_rate"] is None
+
+    def test_expired_by_domain_populated(self, tmp_path):
+        """expired_by_domain groups expired notifications by domain."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_state_db_with_domain(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "state.db"))
+        conn.execute("INSERT INTO notifications (id, status, domain) VALUES ('e1', 'expired', 'email')")
+        conn.execute("INSERT INTO notifications (id, status, domain) VALUES ('e2', 'expired', 'email')")
+        conn.execute("INSERT INTO notifications (id, status, domain) VALUES ('e3', 'expired', 'calendar')")
+        conn.execute("INSERT INTO notifications (id, status, domain) VALUES ('d1', 'delivered', 'email')")
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        notif = report["sections"]["notifications"]
+
+        assert notif["expired_by_domain"]["email"] == 2
+        assert notif["expired_by_domain"]["calendar"] == 1
+        assert "delivered" not in notif["expired_by_domain"]  # only expired are counted
+
+    def test_anomaly_fires_for_high_expiry_rate(self, tmp_path):
+        """Anomaly fires when delivery rate < 0.5 with >= 10 notifications."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_state_db_with_domain(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "state.db"))
+        # 1 delivered, 9 expired → rate = 0.1 (critical)
+        conn.execute("INSERT INTO notifications (id, status) VALUES ('d1', 'delivered')")
+        for i in range(9):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'expired')",
+                (f"e-{i}",),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        delivery_anomalies = [
+            a for a in report["anomalies"] if a["category"] == "notification_delivery"
+        ]
+
+        assert len(delivery_anomalies) == 1
+        assert delivery_anomalies[0]["severity"] == "critical"
+        assert "10%" in delivery_anomalies[0]["message"]
+
+    def test_anomaly_warning_for_moderate_expiry_rate(self, tmp_path):
+        """Anomaly is warning (not critical) when delivery rate is between 0.2 and 0.5."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_state_db_with_domain(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "state.db"))
+        # 3 delivered, 7 expired → rate = 0.3 (warning, not critical)
+        for i in range(3):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'delivered')",
+                (f"d-{i}",),
+            )
+        for i in range(7):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'expired')",
+                (f"e-{i}",),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        delivery_anomalies = [
+            a for a in report["anomalies"] if a["category"] == "notification_delivery"
+        ]
+
+        assert len(delivery_anomalies) == 1
+        assert delivery_anomalies[0]["severity"] == "warning"
+
+    def test_no_anomaly_when_delivery_rate_above_half(self, tmp_path):
+        """No notification_delivery anomaly when delivery rate >= 0.5."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_user_model_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_state_db_with_domain(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        conn = sqlite3.connect(str(tmp_path / "state.db"))
+        # 6 delivered, 4 expired → rate = 0.6
+        for i in range(6):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'delivered')",
+                (f"d-{i}",),
+            )
+        for i in range(4):
+            conn.execute(
+                "INSERT INTO notifications (id, status) VALUES (?, 'expired')",
+                (f"e-{i}",),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        delivery_anomalies = [
+            a for a in report["anomalies"] if a["category"] == "notification_delivery"
+        ]
+
+        assert len(delivery_anomalies) == 0
+
+    def test_health_score_penalty_for_low_delivery_rate(self, tmp_path):
+        """Health score gets an extra penalty when delivery rate < 0.3."""
+        # delivery_rate < 0.3 should subtract 10 from health score (on top of anomaly penalty)
+        sections = {
+            "notifications": {"delivered": 1, "expired": 9, "delivery_rate": 0.1},
+        }
+        anomalies = []  # No anomalies — isolate the delivery rate penalty
+        score_with_penalty = compute_health_score(anomalies, sections)
+        score_without = compute_health_score(anomalies, None)
+
+        assert score_without == 100
+        assert score_with_penalty == 90  # -10 for delivery_rate < 0.3
+
+    def test_health_score_penalty_moderate_delivery_rate(self, tmp_path):
+        """Health score subtracts 5 when delivery rate is between 0.3 and 0.5."""
+        sections = {
+            "notifications": {"delivered": 4, "expired": 6, "delivery_rate": 0.4},
+        }
+        score = compute_health_score([], sections)
+
+        assert score == 95  # -5 for delivery_rate < 0.5
+
+    def test_no_health_penalty_when_delivery_rate_good(self, tmp_path):
+        """No health score penalty when delivery rate >= 0.5."""
+        sections = {
+            "notifications": {"delivered": 7, "expired": 3, "delivery_rate": 0.7},
+        }
+        score = compute_health_score([], sections)
+
+        assert score == 100

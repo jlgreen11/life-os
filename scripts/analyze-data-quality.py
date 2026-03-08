@@ -427,7 +427,25 @@ def analyze(data_dir: str = "./data") -> dict:
     if state_conn:
         try:
             notif_stats = _query(state_conn, "SELECT status, COUNT(*) as c FROM notifications GROUP BY status", [])
-            report["sections"]["notifications"] = {r["status"]: r["c"] for r in notif_stats}
+            notif_section = {r["status"]: r["c"] for r in notif_stats}
+
+            # Delivery rate — what fraction of notifications actually reach the user
+            delivered = notif_section.get("delivered", 0)
+            expired = notif_section.get("expired", 0)
+            notif_total = delivered + expired
+            notif_section["delivery_rate"] = round(delivered / notif_total, 4) if notif_total > 0 else None
+
+            # Expired notifications broken down by domain for diagnostics
+            expired_by_domain = _query(
+                state_conn,
+                "SELECT domain, COUNT(*) as c FROM notifications WHERE status = 'expired' GROUP BY domain",
+                [],
+            )
+            notif_section["expired_by_domain"] = (
+                {r["domain"]: r["c"] for r in expired_by_domain} if expired_by_domain else {}
+            )
+
+            report["sections"]["notifications"] = notif_section
 
             # Task pipeline health
             task_stats = _query(state_conn, "SELECT status, COUNT(*) as c FROM tasks GROUP BY status", [])
@@ -528,7 +546,7 @@ def analyze(data_dir: str = "./data") -> dict:
     # Anomaly detection and health scoring
     anomalies = detect_anomalies(report["sections"])
     report["anomalies"] = anomalies
-    report["health_score"] = compute_health_score(anomalies)
+    report["health_score"] = compute_health_score(anomalies, report["sections"])
 
     return report
 
@@ -673,6 +691,27 @@ def detect_anomalies(sections: dict) -> list[dict]:
                 ),
             })
 
+    # --- (h2) Notification delivery rate ---
+    if isinstance(notifications, dict) and "error" not in notifications:
+        delivery_rate = notifications.get("delivery_rate")
+        n_delivered = notifications.get("delivered", 0)
+        n_expired = notifications.get("expired", 0)
+        n_total = n_delivered + n_expired
+        if delivery_rate is not None and delivery_rate < 0.5 and n_total >= 10:
+            severity = "critical" if delivery_rate < 0.2 else "warning"
+            anomalies.append({
+                "severity": severity,
+                "category": "notification_delivery",
+                "message": (
+                    f"Notification delivery rate is {delivery_rate:.0%} — "
+                    f"{n_expired} of {n_total} notifications expired without being seen"
+                ),
+                "recommendation": (
+                    "Check if notification_mode is set to batched without a digest schedule, "
+                    "or if notifications are generated during quiet hours when the user is inactive"
+                ),
+            })
+
     # --- (i) Source weight learning activity ---
     sw_section = sections.get("source_weights", {})
     if isinstance(sw_section, dict) and "error" not in sw_section:
@@ -721,13 +760,15 @@ def detect_anomalies(sections: dict) -> list[dict]:
     return anomalies
 
 
-def compute_health_score(anomalies: list[dict]) -> int:
-    """Compute a health score (0-100) based on anomaly count and severity.
+def compute_health_score(anomalies: list[dict], sections: dict | None = None) -> int:
+    """Compute a health score (0-100) based on anomaly count, severity, and key metrics.
 
     Starts at 100 and subtracts:
       - 20 per critical anomaly
       - 10 per warning anomaly
       - 2 per info anomaly
+      - 10 if notification delivery rate < 0.3
+      - 5 if notification delivery rate < 0.5 (but >= 0.3)
 
     Score is clamped to [0, 100].
     """
@@ -740,6 +781,18 @@ def compute_health_score(anomalies: list[dict]) -> int:
             score -= 10
         else:
             score -= 2
+
+    # Notification delivery rate penalty
+    if sections:
+        notifications = sections.get("notifications", {})
+        if isinstance(notifications, dict) and "error" not in notifications:
+            delivery_rate = notifications.get("delivery_rate")
+            if delivery_rate is not None:
+                if delivery_rate < 0.3:
+                    score -= 10
+                elif delivery_rate < 0.5:
+                    score -= 5
+
     return max(0, min(100, score))
 
 
