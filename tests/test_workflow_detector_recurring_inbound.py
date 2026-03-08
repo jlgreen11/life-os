@@ -177,36 +177,41 @@ class TestIrregularSenderRejection:
 
 
 class TestHighVolumeSenderRejection:
-    """Test that high-volume automated senders (>50) are filtered out."""
+    """Test that extreme-volume senders are filtered by the dynamic threshold.
 
-    def test_rejects_marketing_sender(self, detector, db):
-        """A sender with >50 emails in lookback window is filtered as marketing."""
+    The dynamic threshold is max(200, total_emails // 5), so only senders
+    exceeding that ceiling are excluded.
+    """
+
+    def test_rejects_extreme_volume_sender(self, detector, db):
+        """A sender exceeding the dynamic threshold is filtered out."""
         now = datetime.now(timezone.utc)
-        sender = "promo@marketing-spam.com"
+        spam_sender = "promo@marketing-spam.com"
 
         with db.get_connection("events") as conn:
-            # 51 emails — exceeds the 50 threshold
-            for i in range(51):
-                ts = now - timedelta(hours=i * 12)  # Regular but high-volume
-                _insert_event(conn, "email.received", ts, email_from=sender)
+            # 201 emails from the spam sender — only sender, so
+            # max_volume = max(200, 201 // 5) = 200, and 201 > 200.
+            for i in range(201):
+                ts = now - timedelta(hours=i * 3)
+                _insert_event(conn, "email.received", ts, email_from=spam_sender)
 
         workflows = detector._detect_recurring_inbound_patterns(lookback_days=30)
 
-        matching = [w for w in workflows if sender in w["name"]]
+        matching = [w for w in workflows if spam_sender in w["name"]]
         assert len(matching) == 0
 
-    def test_accepts_sender_at_threshold(self, detector, db):
-        """A sender with exactly 50 emails is still accepted (boundary check)."""
+    def test_accepts_sender_at_dynamic_threshold(self, detector, db):
+        """A sender with 100 emails is accepted (well below 200 floor)."""
         now = datetime.now(timezone.utc)
         sender = "borderline@reports.com"
 
         with db.get_connection("events") as conn:
-            # Exactly 50 emails, daily cadence
-            for i in range(50):
-                ts = now.replace(hour=8, minute=0, second=0) - timedelta(days=50 - i)
+            # 100 emails, daily cadence — below the 200 floor threshold
+            for i in range(100):
+                ts = now.replace(hour=8, minute=0, second=0) - timedelta(days=100 - i)
                 _insert_event(conn, "email.received", ts, email_from=sender)
 
-        workflows = detector._detect_recurring_inbound_patterns(lookback_days=60)
+        workflows = detector._detect_recurring_inbound_patterns(lookback_days=120)
 
         matching = [w for w in workflows if sender in w["name"]]
         assert len(matching) == 1

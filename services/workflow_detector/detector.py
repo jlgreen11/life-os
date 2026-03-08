@@ -445,12 +445,20 @@ class WorkflowDetector:
         where inbound email vastly outnumbers outbound (e.g. 12,429 received vs
         10 sent), which would otherwise produce 0 email workflows.
 
+        Uses a dynamic volume threshold that scales with total email count to
+        avoid incorrectly filtering legitimate high-volume senders (colleagues,
+        daily reports) in email-heavy environments.  Also excludes senders whose
+        events are majority-tagged as 'marketing' or 'system:suppressed'.
+
         Detection criteria:
         1. Group email.received events by sender (email_from)
         2. For senders with >= min_occurrences emails, check temporal regularity
-        3. Filter out high-volume senders (>50 in lookback) as marketing/automated
-        4. Detect cadence: daily (same hour ±2h), weekly (same day of week),
-           or consistent interval (within 20% variance)
+        3. Filter out senders tagged as marketing via event_tags
+        4. Filter out extreme-volume senders using a dynamic threshold that
+           scales with total email volume (prevents excluding legitimate
+           high-traffic senders in email-heavy environments)
+        5. Detect cadence: daily (same hour ±2h, including weekday-only),
+           weekly (same day of week), or consistent interval (within 20% variance)
 
         Args:
             lookback_days: Days of history to analyze
@@ -460,15 +468,16 @@ class WorkflowDetector:
         """
         workflows = []
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-        max_volume = 50  # Filter out marketing/automated senders
 
         # Query all received emails grouped by sender within the lookback window
         sender_timestamps: dict[str, list[datetime]] = defaultdict(list)
+        # Also track event IDs per sender for marketing tag lookup
+        sender_event_ids: dict[str, list[str]] = defaultdict(list)
 
         with self.db.get_connection("events") as conn:
             cursor = conn.execute(
                 """
-                SELECT email_from, timestamp
+                SELECT id, email_from, timestamp
                 FROM events
                 WHERE julianday(timestamp) > julianday(?)
                   AND type = 'email.received'
@@ -477,15 +486,52 @@ class WorkflowDetector:
                 """,
                 (cutoff.isoformat(),),
             )
-            for email_from, timestamp_str in cursor:
+            for event_id, email_from, timestamp_str in cursor:
                 ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
                 sender_timestamps[email_from].append(ts)
+                sender_event_ids[email_from].append(event_id)
+
+            # Build set of event IDs tagged as marketing/suppressed
+            marketing_event_ids: set[str] = set()
+            try:
+                tag_cursor = conn.execute(
+                    """
+                    SELECT DISTINCT event_id FROM event_tags
+                    WHERE tag IN ('marketing', 'system:suppressed')
+                    """,
+                )
+                marketing_event_ids = {row[0] for row in tag_cursor}
+            except Exception:
+                # event_tags table may not exist in older schemas; proceed without
+                pass
+
+        # Dynamic max_volume: scales with total email count to avoid excluding
+        # legitimate senders in email-heavy environments.  Floor of 200 ensures
+        # small-volume mailboxes still filter spam; ceiling of 20% of unique
+        # senders' average handles large-volume cases.
+        total_emails = sum(len(ts) for ts in sender_timestamps.values())
+        num_senders = len(sender_timestamps)
+        if num_senders > 0:
+            max_volume = max(200, total_emails // 5)
+        else:
+            max_volume = 200
 
         for sender, timestamps in sender_timestamps.items():
             count = len(timestamps)
 
-            # Skip senders below threshold or above high-volume marketing filter
-            if count < self.min_occurrences or count > max_volume:
+            # Skip senders below minimum occurrence threshold
+            if count < self.min_occurrences:
+                continue
+
+            # Skip senders where majority of events are tagged as marketing
+            sender_ids = sender_event_ids.get(sender, [])
+            if sender_ids and marketing_event_ids:
+                tagged_count = sum(1 for eid in sender_ids if eid in marketing_event_ids)
+                if tagged_count / len(sender_ids) > 0.5:
+                    continue
+
+            # Skip extreme-volume senders (dynamic threshold)
+            if count > max_volume:
                 continue
 
             cadence = self._detect_cadence(timestamps)
@@ -523,17 +569,19 @@ class WorkflowDetector:
     def _detect_cadence(timestamps: list[datetime]) -> Optional[dict[str, Any]]:
         """Determine if a list of timestamps exhibits a regular cadence.
 
-        Checks for three patterns in order:
+        Checks for four patterns in order:
         1. Daily — emails arrive at roughly the same hour (±2h), on different days
-        2. Weekly — emails arrive on the same day of week
-        3. Consistent interval — intervals between emails have ≤20% coefficient of variation
+        2. Weekday-only — like daily but only Mon-Fri (avg interval ~33.6h due to
+           weekend gaps)
+        3. Weekly — emails arrive on the same day of week
+        4. Consistent interval — intervals between emails have ≤20% coefficient of variation
 
         Args:
             timestamps: Sorted list of email timestamps for a single sender
 
         Returns:
-            Dict with 'type' key ('daily', 'weekly', 'interval') and details,
-            or None if no regular pattern is found.
+            Dict with 'type' key ('daily', 'weekday_daily', 'weekly', 'interval')
+            and details, or None if no regular pattern is found.
         """
         if len(timestamps) < 3:
             return None
@@ -554,9 +602,23 @@ class WorkflowDetector:
         hours = [ts.hour for ts in timestamps]
         median_hour = sorted(hours)[len(hours) // 2]
         within_window = sum(1 for h in hours if abs(h - median_hour) <= 2 or abs(h - median_hour) >= 22)
-        if within_window / len(hours) >= 0.7 and 18 <= avg_interval <= 30:
+        hour_consistent = within_window / len(hours) >= 0.7
+
+        if hour_consistent and 18 <= avg_interval <= 30:
             return {
                 "type": "daily",
+                "hour": median_hour,
+                "avg_interval_hours": round(avg_interval, 1),
+            }
+
+        # Check weekday-only daily pattern: emails arrive Mon-Fri at a similar
+        # hour, with weekend gaps pushing avg_interval to ~33.6h.  Require that
+        # almost all emails land on weekdays (0=Mon .. 4=Fri).
+        weekdays = [ts.weekday() for ts in timestamps]
+        weekday_ratio = sum(1 for d in weekdays if d < 5) / len(weekdays)
+        if hour_consistent and weekday_ratio >= 0.85 and 24 <= avg_interval <= 50:
+            return {
+                "type": "weekday_daily",
                 "hour": median_hour,
                 "avg_interval_hours": round(avg_interval, 1),
             }
