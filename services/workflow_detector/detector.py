@@ -238,10 +238,18 @@ class WorkflowDetector:
         except Exception:
             logger.exception("WorkflowDetector: interaction workflow detection failed")
 
+        recurring_inbound_workflows = []
+        try:
+            recurring_inbound_workflows = self._detect_recurring_inbound_patterns(lookback_days)
+            workflows.extend(recurring_inbound_workflows)
+        except Exception:
+            logger.exception("WorkflowDetector: recurring inbound detection failed")
+
         logger.info(
             f"Detected {len(workflows)} workflows from {lookback_days} days of history "
             f"({len(email_workflows)} email, {len(task_workflows)} task, "
-            f"{len(calendar_workflows)} calendar, {len(interaction_workflows)} interaction)"
+            f"{len(calendar_workflows)} calendar, {len(interaction_workflows)} interaction, "
+            f"{len(recurring_inbound_workflows)} recurring_inbound)"
         )
         return workflows
 
@@ -427,6 +435,156 @@ class WorkflowDetector:
         workflows = workflows[:20]
 
         return workflows
+
+    def _detect_recurring_inbound_patterns(self, lookback_days: int) -> list[dict[str, Any]]:
+        """Detect recurring inbound email patterns without requiring replies.
+
+        Unlike _detect_email_workflows which requires bidirectional communication
+        (receive + reply), this strategy identifies recurring emails from the same
+        sender that arrive on a predictable schedule. This is critical for systems
+        where inbound email vastly outnumbers outbound (e.g. 12,429 received vs
+        10 sent), which would otherwise produce 0 email workflows.
+
+        Detection criteria:
+        1. Group email.received events by sender (email_from)
+        2. For senders with >= min_occurrences emails, check temporal regularity
+        3. Filter out high-volume senders (>50 in lookback) as marketing/automated
+        4. Detect cadence: daily (same hour ±2h), weekly (same day of week),
+           or consistent interval (within 20% variance)
+
+        Args:
+            lookback_days: Days of history to analyze
+
+        Returns:
+            List of recurring inbound email workflows
+        """
+        workflows = []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        max_volume = 50  # Filter out marketing/automated senders
+
+        # Query all received emails grouped by sender within the lookback window
+        sender_timestamps: dict[str, list[datetime]] = defaultdict(list)
+
+        with self.db.get_connection("events") as conn:
+            cursor = conn.execute(
+                """
+                SELECT email_from, timestamp
+                FROM events
+                WHERE julianday(timestamp) > julianday(?)
+                  AND type = 'email.received'
+                  AND email_from IS NOT NULL
+                ORDER BY timestamp ASC
+                """,
+                (cutoff.isoformat(),),
+            )
+            for email_from, timestamp_str in cursor:
+                ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                sender_timestamps[email_from].append(ts)
+
+        for sender, timestamps in sender_timestamps.items():
+            count = len(timestamps)
+
+            # Skip senders below threshold or above high-volume marketing filter
+            if count < self.min_occurrences or count > max_volume:
+                continue
+
+            cadence = self._detect_cadence(timestamps)
+            if cadence is None:
+                continue
+
+            sender_label = sender.replace("@", "_at_").replace(".", "_")
+            workflow = {
+                "name": f"Recurring email from {sender}",
+                "trigger_conditions": [f"email.received.from.{sender}"],
+                "steps": ["email_received"],
+                "typical_duration_minutes": None,
+                "tools_used": ["email"],
+                "success_rate": 1.0,  # Inbound-only; always "completes"
+                "times_observed": count,
+                "metadata": {
+                    "cadence": cadence["type"],
+                    "sender": sender,
+                    "avg_interval_hours": cadence.get("avg_interval_hours"),
+                },
+            }
+            workflows.append(workflow)
+            logger.debug(
+                "Detected recurring inbound pattern from %s: %s cadence, %d occurrences",
+                sender,
+                cadence["type"],
+                count,
+            )
+
+        # Cap at top 20 senders by volume
+        workflows.sort(key=lambda w: w["times_observed"], reverse=True)
+        return workflows[:20]
+
+    @staticmethod
+    def _detect_cadence(timestamps: list[datetime]) -> Optional[dict[str, Any]]:
+        """Determine if a list of timestamps exhibits a regular cadence.
+
+        Checks for three patterns in order:
+        1. Daily — emails arrive at roughly the same hour (±2h), on different days
+        2. Weekly — emails arrive on the same day of week
+        3. Consistent interval — intervals between emails have ≤20% coefficient of variation
+
+        Args:
+            timestamps: Sorted list of email timestamps for a single sender
+
+        Returns:
+            Dict with 'type' key ('daily', 'weekly', 'interval') and details,
+            or None if no regular pattern is found.
+        """
+        if len(timestamps) < 3:
+            return None
+
+        # Calculate intervals in hours between consecutive emails
+        intervals_hours = []
+        for i in range(1, len(timestamps)):
+            delta = (timestamps[i] - timestamps[i - 1]).total_seconds() / 3600
+            if delta > 0:
+                intervals_hours.append(delta)
+
+        if len(intervals_hours) < 2:
+            return None
+
+        avg_interval = sum(intervals_hours) / len(intervals_hours)
+
+        # Check daily pattern: most emails arrive at a similar hour (±2h)
+        hours = [ts.hour for ts in timestamps]
+        median_hour = sorted(hours)[len(hours) // 2]
+        within_window = sum(1 for h in hours if abs(h - median_hour) <= 2 or abs(h - median_hour) >= 22)
+        if within_window / len(hours) >= 0.7 and 18 <= avg_interval <= 30:
+            return {
+                "type": "daily",
+                "hour": median_hour,
+                "avg_interval_hours": round(avg_interval, 1),
+            }
+
+        # Check weekly pattern: most emails arrive on the same day of week
+        weekdays = [ts.weekday() for ts in timestamps]
+        most_common_day = max(set(weekdays), key=weekdays.count)
+        day_match_ratio = weekdays.count(most_common_day) / len(weekdays)
+        if day_match_ratio >= 0.7 and 120 <= avg_interval <= 210:
+            return {
+                "type": "weekly",
+                "day_of_week": most_common_day,
+                "avg_interval_hours": round(avg_interval, 1),
+            }
+
+        # Check consistent interval: coefficient of variation ≤ 20%
+        if avg_interval > 0:
+            variance = sum((x - avg_interval) ** 2 for x in intervals_hours) / len(intervals_hours)
+            std_dev = variance**0.5
+            cv = std_dev / avg_interval
+            if cv <= 0.20:
+                return {
+                    "type": "interval",
+                    "avg_interval_hours": round(avg_interval, 1),
+                    "cv": round(cv, 3),
+                }
+
+        return None
 
     def _detect_task_workflows(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect workflows for task completion patterns using sliding window.
@@ -856,6 +1014,7 @@ class WorkflowDetector:
             "task": self._detect_task_workflows,
             "calendar": self._detect_calendar_workflows,
             "interaction": self._detect_interaction_workflows,
+            "recurring_inbound": self._detect_recurring_inbound_patterns,
         }
         for name, strategy_fn in strategies.items():
             try:
