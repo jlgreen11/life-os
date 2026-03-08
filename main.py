@@ -4233,9 +4233,56 @@ class LifeOS:
                 logger.error("NotificationExpiryLoop auto-deliver error: %s", e)
 
             try:
-                count, _expired_ids = self.notification_manager.expire_stale_notifications()
+                count, expired_ids = self.notification_manager.expire_stale_notifications()
                 if count > 0:
                     logger.info("NotificationExpiryLoop: expired %d stale notifications", count)
+
+                # Feed expired notifications into source weight learning.
+                # Expiry without user interaction is a negative signal — the user
+                # ignored the notification, which is functionally equivalent to a
+                # dismissal for source weight purposes.
+                if expired_ids and hasattr(self, "source_weight_manager"):
+                    for nid in expired_ids:
+                        try:
+                            with self.db.get_connection("state") as conn:
+                                notif = conn.execute(
+                                    "SELECT source_event_id, domain FROM notifications WHERE id = ?",
+                                    (nid,),
+                                ).fetchone()
+                            if not notif:
+                                continue
+                            source_key = None
+                            # Try source_event_id first for precise classification
+                            if notif["source_event_id"]:
+                                with self.db.get_connection("events") as conn:
+                                    event_row = conn.execute(
+                                        "SELECT type, payload, metadata FROM events WHERE id = ?",
+                                        (notif["source_event_id"],),
+                                    ).fetchone()
+                                if event_row:
+                                    event = {
+                                        "type": event_row["type"],
+                                        "payload": json.loads(event_row["payload"] or "{}"),
+                                        "metadata": json.loads(event_row["metadata"] or "{}"),
+                                    }
+                                    source_key = self.source_weight_manager.classify_event(event)
+                            # Fallback to domain-based classification
+                            if not source_key and notif["domain"]:
+                                domain_to_source = {
+                                    "email": "email.work",
+                                    "message": "messaging.direct",
+                                    "messaging": "messaging.direct",
+                                    "calendar": "calendar.meetings",
+                                    "finance": "finance.transactions",
+                                    "health": "health.activity",
+                                    "location": "location.visits",
+                                    "home": "home.devices",
+                                }
+                                source_key = domain_to_source.get(notif["domain"])
+                            if source_key:
+                                self.source_weight_manager.record_dismissal(source_key)
+                        except Exception:
+                            pass  # Fail-open: individual notification errors don't block others
             except Exception as e:
                 logger.error("NotificationExpiryLoop error: %s", e)
 
