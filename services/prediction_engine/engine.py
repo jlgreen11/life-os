@@ -925,6 +925,15 @@ class PredictionEngine:
                 len(predictions),
             )
 
+        # Force WAL checkpoint to prevent prediction data loss from WAL corruption.
+        # Without this, committed predictions can be lost if the WAL file is
+        # truncated or corrupted before automatic checkpointing occurs.
+        if stored_count > 0:
+            try:
+                self.db.checkpoint_wal("user_model")
+            except Exception as e:
+                logger.warning("WAL checkpoint failed after prediction storage: %s", e)
+
         # --- Post-store verification ---
         # Detect the case where store_prediction() appeared to succeed but
         # data was lost (DB recovery, WAL issue, etc.).  This makes the
