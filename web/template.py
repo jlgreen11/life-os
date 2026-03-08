@@ -1332,9 +1332,74 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             .command-bar { max-width: none; }
             .nav-links { display: none; }
         }
+
+        /* --- Notification Toast --- */
+        .toast-container {
+            position: fixed;
+            top: 60px;
+            right: 16px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        .toast {
+            pointer-events: auto;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-left: 4px solid var(--accent-blue);
+            border-radius: 8px;
+            padding: 12px 16px;
+            min-width: 280px;
+            max-width: 380px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            cursor: pointer;
+            animation: toast-slide-in 0.3s ease-out;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        .toast.fade-out {
+            opacity: 0;
+            transform: translateX(40px);
+        }
+        .toast.priority-critical { border-left-color: var(--accent-red); }
+        .toast.priority-high { border-left-color: var(--accent-orange); }
+        .toast.priority-normal { border-left-color: var(--accent-blue); }
+        .toast.priority-low { border-left-color: var(--text-muted); }
+        .toast-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        .toast-body {
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+        @keyframes toast-slide-in {
+            from { opacity: 0; transform: translateX(40px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @media (max-width: 768px) {
+            .toast-container {
+                right: 0;
+                left: 0;
+                top: 50px;
+                align-items: stretch;
+                padding: 0 8px;
+            }
+            .toast {
+                max-width: none;
+                min-width: 0;
+            }
+        }
     </style>
 </head>
 <body>
+
+    <!-- Toast container for real-time notification alerts -->
+    <div class="toast-container" id="toastContainer"></div>
 
     <!-- Top Bar -->
     <div class="top-bar">
@@ -3930,6 +3995,74 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         loadBadges();
     }
 
+    // --- Notification Toasts ---
+    // Maximum number of toasts visible at once; oldest removed first.
+    var MAX_TOASTS = 3;
+    var TOAST_DURATION = 8000; // milliseconds before auto-dismiss
+
+    function showNotificationToast(wsData) {
+        // Fetch the latest notification from the inbox to get title/body/priority.
+        fetch(API + '/api/dashboard/feed?topic=inbox&limit=1')
+        .then(function(r) { return r.json(); })
+        .then(function(feed) {
+            var items = feed.items || [];
+            if (items.length === 0) return;
+            var item = items[0];
+            var priority = (item.priority || 'normal').toLowerCase();
+            var title = item.title || 'New notification';
+            var body = item.body || '';
+            if (body.length > 80) body = body.substring(0, 80) + '\u2026';
+            var itemId = item.id || '';
+
+            var container = document.getElementById('toastContainer');
+            if (!container) return;
+
+            // Enforce max toast limit — remove oldest first.
+            while (container.children.length >= MAX_TOASTS) {
+                container.removeChild(container.firstChild);
+            }
+
+            // Build toast using safe DOM methods (no innerHTML).
+            var toast = document.createElement('div');
+            toast.className = 'toast priority-' + priority;
+            var titleEl = document.createElement('div');
+            titleEl.className = 'toast-title';
+            titleEl.textContent = title;
+            var bodyEl = document.createElement('div');
+            bodyEl.className = 'toast-body';
+            bodyEl.textContent = body;
+            toast.appendChild(titleEl);
+            toast.appendChild(bodyEl);
+
+            // Clicking the toast scrolls to the notification in the feed.
+            toast.onclick = function() {
+                dismissToast(toast);
+                // Switch to inbox topic and scroll to the card if present.
+                if (typeof switchTopic === 'function') switchTopic('inbox');
+                setTimeout(function() {
+                    var card = document.querySelector('[data-id="' + itemId + '"]');
+                    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            };
+
+            container.appendChild(toast);
+
+            // Auto-dismiss after TOAST_DURATION ms with fade-out.
+            setTimeout(function() { dismissToast(toast); }, TOAST_DURATION);
+        })
+        .catch(function(err) {
+            // Non-critical — silently fail if feed fetch errors.
+        });
+    }
+
+    function dismissToast(toast) {
+        if (!toast || !toast.parentNode) return;
+        toast.classList.add('fade-out');
+        setTimeout(function() {
+            if (toast.parentNode) toast.parentNode.removeChild(toast);
+        }, 300);
+    }
+
     // --- WebSocket ---
     function connectWS() {
         var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -3942,6 +4075,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     document.getElementById('newItemsBanner').classList.add('visible');
                     // Also refresh badge counts immediately so the nav dot stays accurate.
                     loadBadges();
+                }
+                // Show a toast for new notification events so the user sees them
+                // immediately without waiting for the 60-second polling interval.
+                if (data.event_type === 'notification.created' || data.event_type === 'notification.delivered') {
+                    showNotificationToast(data);
                 }
                 // Refresh mood bars when a mood_update event is pushed.
                 if (data.type === 'mood_update') {
