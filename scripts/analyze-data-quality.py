@@ -275,6 +275,82 @@ def analyze(data_dir: str = "./data") -> dict:
             report["sections"]["prediction_pipeline"] = {"error": str(e)}
 
         # ---------------------------------------------------------------
+        # Prediction detail diagnostics — confidence distribution, per-type
+        # breakdown, and recent filter reasons for root-cause analysis.
+        # ---------------------------------------------------------------
+        try:
+            pp_section = report["sections"].setdefault("prediction_pipeline", {})
+
+            # 1. Confidence histogram: 10 buckets (0.0-0.1, 0.1-0.2, ..., 0.9-1.0)
+            confidence_buckets = _query(
+                um_conn,
+                """SELECT CAST(confidence * 10 AS INTEGER) as bucket,
+                          COUNT(*) as count
+                   FROM predictions
+                   GROUP BY bucket
+                   ORDER BY bucket""",
+                [],
+            )
+            histogram = {}
+            for r in (confidence_buckets or []):
+                # Bucket 10 means confidence=1.0 exactly; merge into 0.9-1.0
+                b = min(r["bucket"] or 0, 9)
+                label = f"{b / 10:.1f}-{(b + 1) / 10:.1f}"
+                histogram[label] = histogram.get(label, 0) + r["count"]
+
+            # 2. Per-type breakdown: generated vs surfaced per prediction_type
+            type_breakdown = _query(
+                um_conn,
+                """SELECT prediction_type,
+                          COUNT(*) as total,
+                          SUM(CASE WHEN was_surfaced = 1 THEN 1 ELSE 0 END) as surfaced
+                   FROM predictions
+                   GROUP BY prediction_type
+                   ORDER BY total DESC""",
+                [],
+            )
+
+            # 3. Recent filter reasons: last 10 filtered predictions with detail
+            recent_filtered = _query(
+                um_conn,
+                """SELECT prediction_type, confidence, filter_reason, created_at
+                   FROM predictions
+                   WHERE user_response = 'filtered'
+                   ORDER BY created_at DESC
+                   LIMIT 10""",
+                [],
+            )
+
+            # 4. Dedup ratio context: compare generation events to stored predictions
+            stored_count = _query_one(
+                um_conn, "SELECT COUNT(*) as c FROM predictions"
+            )
+
+            pp_section["prediction_detail"] = {
+                "confidence_histogram": histogram,
+                "type_breakdown": {
+                    r["prediction_type"]: {
+                        "total": r["total"],
+                        "surfaced": r["surfaced"],
+                    }
+                    for r in (type_breakdown or [])
+                },
+                "recent_filtered": [
+                    {
+                        "prediction_type": r["prediction_type"],
+                        "confidence": r["confidence"],
+                        "filter_reason": r["filter_reason"],
+                        "created_at": r["created_at"],
+                    }
+                    for r in (recent_filtered or [])
+                ],
+                "stored_prediction_count": stored_count["c"] if stored_count else 0,
+            }
+        except Exception as e:
+            pp_section = report["sections"].setdefault("prediction_pipeline", {})
+            pp_section["prediction_detail"] = {"error": str(e)}
+
+        # ---------------------------------------------------------------
         # Event-sourced prediction activity — cross-reference the events
         # table to detect pipeline activity even when the predictions
         # table is empty (e.g. after cleanup runs).
@@ -671,6 +747,48 @@ def detect_anomalies(sections: dict) -> list[dict]:
                 "Check store_prediction() errors in logs; possible schema mismatch after migration"
             ),
         })
+
+    # --- (a2) All predictions clustered below surfacing threshold ---
+    pred_detail = pipeline.get("prediction_detail", {})
+    if isinstance(pred_detail, dict) and "error" not in pred_detail:
+        histogram = pred_detail.get("confidence_histogram", {})
+        if histogram:
+            total_preds = sum(histogram.values())
+            # Count predictions in buckets below 0.3 (surfacing threshold)
+            below_threshold = sum(
+                count for label, count in histogram.items()
+                if label < "0.3"  # "0.0-0.1", "0.1-0.2", "0.2-0.3" all sort before "0.3"
+            )
+            if total_preds > 5 and below_threshold == total_preds:
+                anomalies.append({
+                    "severity": "warning",
+                    "category": "prediction_low_confidence",
+                    "message": (
+                        f"All {total_preds} predictions have confidence below 0.3 "
+                        "(the surfacing threshold) — none can be surfaced to the user"
+                    ),
+                    "recommendation": (
+                        "Check prediction confidence calibration; accuracy multipliers "
+                        "may be too aggressive, or supporting signal data may be insufficient"
+                    ),
+                })
+
+        # --- (a3) All predictions are the same type ---
+        type_breakdown = pred_detail.get("type_breakdown", {})
+        if len(type_breakdown) == 1 and total_generated > 5:
+            single_type = next(iter(type_breakdown))
+            anomalies.append({
+                "severity": "warning",
+                "category": "prediction_type_monoculture",
+                "message": (
+                    f"All {total_generated} predictions are type '{single_type}' "
+                    "— prediction engine may be stuck on one signal source"
+                ),
+                "recommendation": (
+                    "Review prediction generation triggers; ensure multiple prediction "
+                    "types (NEED, RISK, OPPORTUNITY, REMINDER) are being considered"
+                ),
+            })
 
     # --- (b) High dedup ratio ---
     dedup_events = event_activity.get("usermodel.prediction.deduplicated", 0) if isinstance(event_activity, dict) else 0
