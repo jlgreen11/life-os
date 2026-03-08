@@ -493,6 +493,9 @@ def register_routes(app: FastAPI, life_os) -> None:
             "behavioral_tracker": getattr(life_os, "behavioral_tracker", None),
             "ai_engine": getattr(life_os, "ai_engine", None),
             "task_completion_detector": getattr(life_os, "task_completion_detector", None),
+            "conflict_detector": getattr(life_os, "conflict_detector", None),
+            "task_manager": getattr(life_os, "task_manager", None),
+            "feedback_collector": getattr(life_os, "feedback_collector", None),
         }
         for name, service in services.items():
             if service is None:

@@ -291,6 +291,68 @@ class ConflictDetector:
 
         return published_count
 
+    def get_diagnostics(self) -> dict:
+        """Return conflict detector diagnostic information for monitoring.
+
+        Reports published conflict count, last cleanup time, calendar event
+        counts, and conflict pairs so operators can verify the service is
+        working correctly.
+
+        Each field is queried independently with try/except so that a single
+        DB failure doesn't prevent the rest of the diagnostics from returning.
+
+        Returns:
+            Dict with keys: published_conflicts_count, last_cleanup,
+            calendar_events_in_window, conflict_pairs, state_db_table_exists.
+        """
+        result: dict = {}
+
+        # 1. In-memory published conflicts count
+        try:
+            result["published_conflicts_count"] = len(self._published_conflicts)
+        except Exception as e:
+            logger.warning("get_diagnostics: published_conflicts_count failed: %s", e)
+            result["published_conflicts_count"] = {"error": str(e)}
+
+        # 2. Last cleanup timestamp
+        try:
+            result["last_cleanup"] = self._last_cleanup.isoformat() if self._last_cleanup else None
+        except Exception as e:
+            logger.warning("get_diagnostics: last_cleanup failed: %s", e)
+            result["last_cleanup"] = {"error": str(e)}
+
+        # 3. Calendar events in upcoming 48h window
+        try:
+            now = datetime.now(timezone.utc)
+            window_end = now + timedelta(hours=48)
+            with self.db.get_connection("events") as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE type LIKE 'calendar.event.%' AND timestamp > ? AND timestamp < ?",
+                    (now.isoformat(), window_end.isoformat()),
+                ).fetchone()
+            result["calendar_events_in_window"] = row[0] if row else 0
+        except Exception as e:
+            logger.warning("get_diagnostics: calendar_events_in_window failed: %s", e)
+            result["calendar_events_in_window"] = {"error": str(e)}
+
+        # 4. Published conflict pairs (frozensets converted to sorted lists, capped at 20)
+        try:
+            pairs = [sorted(pair) for pair in self._published_conflicts]
+            result["conflict_pairs"] = pairs[:20]
+        except Exception as e:
+            logger.warning("get_diagnostics: conflict_pairs failed: %s", e)
+            result["conflict_pairs"] = {"error": str(e)}
+
+        # 5. Whether the published_conflicts table exists in state.db
+        try:
+            with self.db.get_connection("state") as conn:
+                conn.execute("SELECT 1 FROM published_conflicts LIMIT 1")
+            result["state_db_table_exists"] = True
+        except Exception:
+            result["state_db_table_exists"] = False
+
+        return result
+
     @staticmethod
     def _parse_datetime(value: str) -> datetime | None:
         """Parse an ISO 8601 timestamp string into a timezone-aware datetime.
