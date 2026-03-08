@@ -185,6 +185,12 @@ class LifeOS:
         # handlers after a NATS restart without requiring a full Life OS restart.
         self._event_handlers_registered = False
 
+        # Startup progress tracking — allows the web UI and /health endpoint
+        # to report how far along initialization is.
+        # States: "starting" → "ready" → "backfilling" → "running"
+        self.startup_state: str = "starting"
+        self.startup_detail: str = ""
+
         # Task IDs that have already been flagged as overdue, preventing
         # duplicate notifications on subsequent loop iterations.
         self._notified_overdue_tasks: set[str] = set()
@@ -300,217 +306,54 @@ class LifeOS:
 
         task.add_done_callback(handle_task_exception)
 
-    async def start(self):
-        """Boot the entire system."""
+    async def start_core(self):
+        """Boot essential services only — gets the web server serving fast.
+
+        This is Phase A of a two-phase startup.  It initialises databases,
+        the vector store, NATS, event handlers, and background loops — everything
+        needed to serve the dashboard.  Heavy backfills, connectors, and
+        verification run later in ``_run_deferred_startup()`` (Phase B).
+        """
         logger.info("=" * 60)
-        logger.info("  Life OS — Starting Up")
+        logger.info("  Life OS — Starting Up (Phase A: core services)")
         logger.info("=" * 60)
 
         # 1. Initialize databases
-        logger.info("[1/7] Initializing databases...")
+        self.startup_detail = "Initializing databases"
+        logger.info("[1/6] Initializing databases...")
         self.db.initialize_all()
 
         # 1.5 — Seed default source weights (no-op if already populated)
         self.source_weight_manager.seed_defaults()
 
-        # 1.54 — Detect and rebuild user_model.db when deep B-tree corruption
-        # affects the episodes table (e.g. content_full overflow pages).  This
-        # is a more comprehensive repair than the signal_profiles-only fix below:
-        # it rebuilds the entire user_model.db from all readable columns, so
-        # ALL signal profile backfills and semantic inference recover correctly.
-        # Must run BEFORE _repair_signal_profiles_if_corrupted so the latter
-        # operates on a healthy (or freshly rebuilt) database.
-        await self._rebuild_user_model_db_if_corrupted()
-
-        # 1.55 — Detect and repair signal_profiles table corruption
-        # SQLite B-tree pages for the signal_profiles.data column can become
-        # corrupted (manifests as "database disk image is malformed" on SELECT).
-        # This repair runs before any backfills so that the existing backfill
-        # guards (which check whether profiles are empty) correctly see an empty
-        # table and trigger full repopulation.
-        await self._repair_signal_profiles_if_corrupted()
-
-        # 1.58 — Backfill episodes from events.db if user_model.db is empty
-        # After a user_model.db rebuild (step 1.54 above), the episodes table is empty
-        # but events.db still has the full event history.  Episodes are the foundation
-        # of the cognitive pipeline: routine detection, semantic fact inference, and
-        # prediction accuracy all depend on episodes existing.  This must run BEFORE
-        # episode classification (1.6) since classification operates on existing episodes.
-        await self._backfill_episodes_from_events_if_needed()
-
-        # 1.6 — Backfill episode classification if needed
-        # This ensures routine and workflow detection have the granular
-        # interaction types they need. Without this, all old episodes would
-        # remain classified as generic "communication" and the detectors
-        # would have no signal to work with.
-        await self._backfill_episode_classification_if_needed()
-
-        # 1.7 — Backfill task completion if needed
-        # This marks historical tasks as completed based on behavioral signals
-        # (sent emails/messages that reference the task). Without this, workflow
-        # detection cannot operate because it needs task.completed events to
-        # identify multi-step task-completion patterns. The backfill is critical
-        # for bootstrapping Layer 3 procedural memory on systems with historical
-        # task data but no completion events.
-        await self._backfill_task_completion_if_needed()
-
-        # 1.5. Backfill communication templates (Layer 3 procedural memory)
-        # Template extraction was added in PR #130 but only processes new events
-        # going forward. This backfill populates writing-style templates from all
-        # historical communication events so the system immediately has rich
-        # communication patterns for every contact.
-        await self._backfill_communication_templates_if_needed()
-
-        # 1.8. Backfill relationship signal profile if empty after migration
-        # The relationship backfill script (scripts/backfill_relationship_profile.py)
-        # was added in PR #313 but had no auto-trigger in main.py.  After Migration
-        # 0→1 wipes signal_profiles, the connector must re-sync to refill it — but if
-        # the Google connector is stale, the table stays empty forever.  This trigger
-        # replays all historical email events through RelationshipExtractor on startup
-        # so the profile is always populated regardless of connector health.
-        await self._backfill_relationship_profile_if_needed()
-
-        # 1.9. Backfill temporal signal profile if empty after migration
-        # Same problem: backfill_temporal_profile.py exists but was never auto-triggered.
-        # The temporal profile drives time-of-day patterns, energy peak detection, and
-        # preparation-needs predictions. Without it, predictions based on calendar events
-        # or task scheduling patterns never fire.
-        await self._backfill_temporal_profile_if_needed()
-
-        # 1.10. Clean marketing contacts from relationships profile
-        # The relationship extractor was filtering marketing emails at extraction time
-        # (PR #143) but this left 469+ marketing contacts from historical data that
-        # were tracked before the filter existed. This cleanup removes them to enable
-        # relationship maintenance predictions (which currently don't generate because
-        # 57% of tracked "contacts" are marketing automations, not humans).
-        await self._clean_relationship_profile_if_needed()
-
-        # 1.11. Backfill topic signal profile if empty after migration
-        # The topic profile drives the semantic inferrer's expertise/interest fact
-        # generation (infer_from_topic_profile() produces expertise_<topic> and
-        # interest_<topic> semantic facts).  After Migration 0→1 wipes signal_profiles,
-        # the topic profile stays empty and no new expertise facts are generated
-        # until the connector re-syncs.  This trigger replays all historical email
-        # events through TopicExtractor to immediately re-populate the profile.
-        await self._backfill_topic_profile_if_needed()
-
-        # 1.12. Backfill linguistic signal profile if empty after migration
-        # The linguistic profile drives the semantic inferrer's communication style
-        # fact generation (infer_from_linguistic_profile() produces facts about
-        # formality, directness, enthusiasm, and emoji usage).  These facts feed
-        # the communication template system and tone-matching in draft replies.
-        # Without this backfill the profile stays empty after a DB reset even though
-        # historical outbound emails are available in events.db.
-        await self._backfill_linguistic_profile_if_needed()
-
-        # 1.13. Backfill cadence signal profile if empty after migration/rebuild
-        # The cadence profile tracks response times (per-contact and per-channel) and
-        # activity-window heatmaps.  It drives response-time priority contact detection
-        # in the prediction engine and peak/quiet hours enforcement.  Without this
-        # backfill, these features are broken after a DB rebuild until enough new
-        # live events accumulate (typically weeks of usage).
-        await self._backfill_cadence_profile_if_needed()
-
-        # 1.14. Backfill mood_signals profile if empty after migration/rebuild
-        # The mood_signals profile powers compute_current_mood() for the dashboard
-        # mood widget and provides energy-level data for episode creation.  After a
-        # DB rebuild, the mood widget shows no data and all episodes have NULL
-        # energy_level until enough new events arrive.  This replays historical
-        # events through the MoodInferenceEngine to immediately re-populate.
-        await self._backfill_mood_signals_profile_if_needed()
-
-        # 1.15. Backfill spatial profile if empty after migration/rebuild
-        # The spatial profile tracks place-based behavior patterns (visit frequency,
-        # duration, dominant domain per location).  It drives the semantic inferrer's
-        # infer_from_spatial_profile() which produces facts like primary_work_location
-        # and frequent_location_{place}.  Without this backfill, the spatial inference
-        # path is permanently blocked (requires >= 10 samples) after a DB rebuild.
-        await self._backfill_spatial_profile_if_needed()
-
-        # 1.16. Backfill decision profile if empty after migration/rebuild
-        # The decision profile tracks decision-making patterns (speed by domain,
-        # delegation comfort, risk tolerance).  It drives the semantic inferrer's
-        # infer_from_decision_profile() which produces facts like decision_speed_{domain}
-        # and risk_tolerance_{domain}.  Without this backfill, the decision inference
-        # path is permanently blocked (requires >= 20 samples) after a DB rebuild.
-        await self._backfill_decision_profile_if_needed()
-
-        # 1.17. Verify all signal profiles are populated, retry failures once
-        # After DB corruption → repair → backfill, some profiles may still be empty
-        # because their backfill silently failed. This verification step catches the
-        # gap and retries once, preventing the cascade: empty profiles → 0 predictions
-        # → no notifications → dead system.
-        await self._verify_and_retry_backfills()
-
-        # 1.18. Auto-rebuild missing signal profiles from historical events.
-        # After all individual backfills (1.8-1.17), run a unified check that
-        # detects ANY missing profiles and rebuilds them in one pass.  Acts as
-        # a final safety net for profiles that slipped through individual
-        # backfills or were added by new extractors without a dedicated backfill.
-        try:
-            rebuild_result = self.signal_extractor.check_and_rebuild_missing_profiles()
-            if rebuild_result.get("rebuilt"):
-                logger.info("startup: rebuilt %d missing signal profiles", len(rebuild_result["rebuilt"]))
-        except Exception as e:
-            logger.warning("startup: signal profile rebuild failed (non-fatal): %s", e)
-
-        # 1.19. Re-infer semantic facts if table is empty after DB recovery.
-        # After a corruption recovery cycle the semantic_facts table may be
-        # wiped while episodes still exist.  The normal inference loop runs
-        # every 6 hours, so facts would stay at 0 for too long.  This check
-        # triggers an immediate re-inference to restore Layer 2 (Semantic
-        # Memory) before the system starts serving briefings and predictions.
-        try:
-            with self.db.get_connection("user_model") as conn:
-                fact_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
-                episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
-            if fact_count == 0 and episode_count > 0:
-                logger.info("startup: 0 semantic facts with %d episodes — running re-inference", episode_count)
-                await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
-                with self.db.get_connection("user_model") as conn:
-                    new_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
-                logger.info("startup: semantic fact re-inference complete, now %d facts", new_count)
-            elif fact_count > 0:
-                logger.info("startup: %d semantic facts exist, skipping re-inference", fact_count)
-        except Exception as e:
-            logger.warning("startup: semantic fact re-inference failed (non-fatal): %s", e)
-
         # 2. Initialize vector store
-        logger.info("[2/7] Initializing vector store...")
-        self.vector_store.initialize()
+        self.startup_detail = "Loading embedding model"
+        logger.info("[2/6] Initializing vector store...")
+        await asyncio.to_thread(self.vector_store.initialize)
 
         # 3. Connect to NATS
-        logger.info("[3/7] Connecting to event bus...")
+        self.startup_detail = "Connecting to event bus"
+        logger.info("[3/6] Connecting to event bus...")
         try:
             await self.event_bus.connect()
             logger.info("       Connected to NATS.")
         except Exception as e:
             logger.error("       NATS connection failed: %s", e)
-            # Degraded mode: the app continues to run without the event bus.
-            # In this mode, connectors cannot publish events, the signal
-            # extractor / rules engine won't fire, and real-time notifications
-            # are unavailable.  The web UI, DB, and prediction engine still
-            # work — so users can still browse history and manage tasks.
             logger.warning("       Running in degraded mode (no event bus).")
 
         # Install default rules (after event bus is available for telemetry)
         await install_default_rules(self.db, event_bus=self.event_bus)
 
         # 4. Register core event handlers
-        logger.info("[4/7] Registering event handlers...")
-        # Only register handlers when the bus is actually connected;
-        # in degraded mode this block is skipped entirely.  The reconnect
-        # loop (started below) will register them later if NATS comes up.
+        self.startup_detail = "Registering event handlers"
+        logger.info("[4/6] Registering event handlers...")
         if self.event_bus.is_connected:
             await self._register_event_handlers()
             self._event_handlers_registered = True
 
-        # 5. Start connectors
-        logger.info("[5/7] Starting connectors...")
-        await self._start_connectors()
-
-        # 6. Start background loops (prediction, insight, semantic inference)
-        logger.info("[6/7] Starting background services...")
+        # 5. Start background loops (prediction, insight, semantic inference)
+        self.startup_detail = "Starting background services"
+        logger.info("[5/6] Starting background services...")
         self._start_background_task("prediction_loop", self._prediction_loop)
         self._start_background_task("insight_loop", self._insight_loop)
         self._start_background_task("semantic_inference_loop", self._semantic_inference_loop)
@@ -525,14 +368,137 @@ class LifeOS:
         self._start_background_task("nats_reconnect_loop", self._nats_reconnect_loop)
         self._start_background_task("notification_expiry_loop", self._notification_expiry_loop)
 
-        # 7. Launch web server
-        logger.info("[7/7] Starting web server...")
+        # 6. Ready for web traffic
+        self.startup_state = "ready"
+        self.startup_detail = "Web server starting"
+        logger.info("[6/6] Core services ready.")
         port = self.config.get('web_port', 8080)
         logger.info("  → Web UI:  http://localhost:%s", port)
         logger.info("  → API:     http://localhost:%s/api", port)
         logger.info("  → Health:  http://localhost:%s/health", port)
-        logger.info("  Life OS is running. Press Ctrl+C to stop.")
+        logger.info("  Phase A complete — dashboard is reachable.")
+        logger.info("  Phase B (backfills, connectors) will run in background.")
         logger.info("=" * 60)
+
+    async def _run_deferred_startup(self):
+        """Phase B: heavy backfills, verification, and connectors.
+
+        Runs as a background task after the web server is already serving.
+        Each step is wrapped in try/except (fail-open) and updates
+        ``startup_detail`` for progress visibility via ``/health``.
+        """
+        logger.info("Phase B — starting deferred startup (backfills, connectors)")
+        self.startup_state = "backfilling"
+
+        # --- Sequential backfills (order matters) ---
+
+        try:
+            self.startup_detail = "Checking user_model.db integrity"
+            await self._rebuild_user_model_db_if_corrupted()
+        except Exception as e:
+            logger.warning("deferred startup: user_model rebuild failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Repairing signal profiles"
+            await self._repair_signal_profiles_if_corrupted()
+        except Exception as e:
+            logger.warning("deferred startup: signal profile repair failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Backfilling episodes from events"
+            await self._backfill_episodes_from_events_if_needed()
+        except Exception as e:
+            logger.warning("deferred startup: episode backfill failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Backfilling episode classification"
+            await self._backfill_episode_classification_if_needed()
+        except Exception as e:
+            logger.warning("deferred startup: episode classification backfill failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Backfilling task completion"
+            await self._backfill_task_completion_if_needed()
+        except Exception as e:
+            logger.warning("deferred startup: task completion backfill failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Backfilling communication templates"
+            await self._backfill_communication_templates_if_needed()
+        except Exception as e:
+            logger.warning("deferred startup: communication template backfill failed (non-fatal): %s", e)
+
+        # --- Concurrent backfills (independent of each other) ---
+
+        self.startup_detail = "Running concurrent profile backfills"
+        concurrent_backfills = [
+            ("relationship", self._backfill_relationship_profile_if_needed),
+            ("temporal", self._backfill_temporal_profile_if_needed),
+            ("clean_relationship", self._clean_relationship_profile_if_needed),
+            ("topic", self._backfill_topic_profile_if_needed),
+            ("linguistic", self._backfill_linguistic_profile_if_needed),
+            ("cadence", self._backfill_cadence_profile_if_needed),
+            ("mood_signals", self._backfill_mood_signals_profile_if_needed),
+            ("spatial", self._backfill_spatial_profile_if_needed),
+            ("decision", self._backfill_decision_profile_if_needed),
+        ]
+
+        async def _safe_backfill(name, coro_fn):
+            try:
+                await coro_fn()
+            except Exception as e:
+                logger.warning("deferred startup: %s backfill failed (non-fatal): %s", name, e)
+
+        await asyncio.gather(
+            *[_safe_backfill(name, fn) for name, fn in concurrent_backfills]
+        )
+
+        # --- Post-backfill verification ---
+
+        try:
+            self.startup_detail = "Verifying backfill completeness"
+            await self._verify_and_retry_backfills()
+        except Exception as e:
+            logger.warning("deferred startup: backfill verification failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Rebuilding missing signal profiles"
+            rebuild_result = self.signal_extractor.check_and_rebuild_missing_profiles()
+            if rebuild_result.get("rebuilt"):
+                logger.info("deferred startup: rebuilt %d missing signal profiles", len(rebuild_result["rebuilt"]))
+        except Exception as e:
+            logger.warning("deferred startup: signal profile rebuild failed (non-fatal): %s", e)
+
+        try:
+            self.startup_detail = "Checking semantic facts"
+            with self.db.get_connection("user_model") as conn:
+                fact_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+                episode_count = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+            if fact_count == 0 and episode_count > 0:
+                logger.info("deferred startup: 0 semantic facts with %d episodes — running re-inference", episode_count)
+                await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
+                with self.db.get_connection("user_model") as conn:
+                    new_count = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
+                logger.info("deferred startup: semantic fact re-inference complete, now %d facts", new_count)
+            elif fact_count > 0:
+                logger.info("deferred startup: %d semantic facts exist, skipping re-inference", fact_count)
+        except Exception as e:
+            logger.warning("deferred startup: semantic fact re-inference failed (non-fatal): %s", e)
+
+        # --- Connectors ---
+
+        try:
+            self.startup_detail = "Starting connectors"
+            logger.info("Phase B — starting connectors...")
+            await self._start_connectors()
+        except Exception as e:
+            logger.warning("deferred startup: connector startup failed (non-fatal): %s", e)
+
+        # --- Done ---
+
+        self.startup_state = "running"
+        self.startup_detail = ""
+        logger.info("Phase B complete — Life OS is fully initialized.")
 
     async def _backfill_episodes_from_events_if_needed(self):
         """Create episodic memory from events.db when user_model.db has no episodes.
@@ -4791,6 +4757,13 @@ class LifeOS:
         # Signal all background loops (_prediction_loop, etc.) to exit
         self.shutdown_event.set()
 
+        # Cancel deferred startup if it's still in progress
+        if "deferred_startup" in self.background_tasks:
+            task_info = self.background_tasks["deferred_startup"]
+            if not task_info["task"].done():
+                task_info["task"].cancel()
+                logger.info("Cancelled in-progress deferred startup.")
+
         # Shutdown order is the reverse of startup:
         # 1. Stop connectors first so no new events are produced.
         for connector in self.connectors:
@@ -4848,8 +4821,11 @@ async def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(life_os.stop()))
 
-    # Boot all subsystems (DB, connectors, event bus, prediction loop, etc.)
-    await life_os.start()
+    # Phase A: boot core services (DB, vector store, NATS, background loops)
+    await life_os.start_core()
+
+    # Phase B: backfills and connectors run in background while web server starts
+    life_os._start_background_task("deferred_startup", life_os._run_deferred_startup, max_restarts=0)
 
     # Run the embedded web server — blocks until shutdown
     from web.app import create_web_app

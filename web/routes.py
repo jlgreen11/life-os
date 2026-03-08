@@ -109,7 +109,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         db_status = "degraded" if corrupted_dbs else "ok"
 
         return {
-            "status": "ok",
+            "status": "ok" if life_os.startup_state == "running" else "starting",
+            "startup_state": life_os.startup_state,
+            "startup_detail": life_os.startup_detail,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_bus": life_os.event_bus.is_connected,
             "events_stored": events_stored,

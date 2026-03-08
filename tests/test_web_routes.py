@@ -40,6 +40,10 @@ def mock_life_os():
         "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
     })
 
+    # Startup state
+    life_os.startup_state = "running"
+    life_os.startup_detail = ""
+
     # Mock event bus
     life_os.event_bus = Mock()
     life_os.event_bus.is_connected = True
