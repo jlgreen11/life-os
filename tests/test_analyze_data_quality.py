@@ -93,7 +93,7 @@ def _create_minimal_user_model_db(tmp_path):
             feedback TEXT
         )
     """)
-    conn.execute("CREATE TABLE IF NOT EXISTS episodes (id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE IF NOT EXISTS episodes (id INTEGER PRIMARY KEY, interaction_type TEXT)")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS semantic_facts (
             id INTEGER PRIMARY KEY,
@@ -226,6 +226,7 @@ class TestHealthyDatabase:
             "connectors",
             "feedback",
             "source_weights",
+            "workflow_diagnostics",
         ]
         for section in expected_sections:
             assert section in report["sections"], f"Missing section: {section}"
@@ -467,7 +468,7 @@ class TestQueryErrorCapture:
             )
         """)
         conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
-        conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, interaction_type TEXT)")
         conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
         conn.execute("CREATE TABLE routines (id INTEGER PRIMARY KEY)")
         # predictions table is missing
@@ -664,7 +665,7 @@ def test_user_model_sections_independent(tmp_path):
         VALUES ('linguistic', 42, '2026-01-01T00:00:00Z')
     """)
     conn.execute("CREATE TABLE insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
-    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, interaction_type TEXT)")
     conn.execute("INSERT INTO episodes (id) VALUES (1)")
     conn.execute("INSERT INTO episodes (id) VALUES (2)")
     conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")
@@ -722,7 +723,7 @@ class TestCorruptDatabase:
         db_path = tmp_path / "user_model.db"
         conn = sqlite3.connect(str(db_path))
         conn.execute("PRAGMA page_size = 512")
-        conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, data TEXT)")
+        conn.execute("CREATE TABLE episodes (id INTEGER PRIMARY KEY, data TEXT, interaction_type TEXT)")
         for i in range(200):
             conn.execute("INSERT INTO episodes (id, data) VALUES (?, ?)", (i, "x" * 200))
         conn.execute("CREATE TABLE semantic_facts (id INTEGER PRIMARY KEY, category TEXT DEFAULT 'general')")

@@ -421,6 +421,115 @@ def analyze(data_dir: str = "./data") -> dict:
         report["sections"]["user_model"] = um_error
 
     # -----------------------------------------------------------------------
+    # Workflow detection diagnostics — data supporting workflow discovery
+    # -----------------------------------------------------------------------
+    ev_conn = _connect(data_path / "events.db")
+    um_conn2 = _connect(data_path / "user_model.db")
+    try:
+        wf_diag: dict = {}
+
+        # Workflow detector thresholds (from WorkflowDetector defaults)
+        wf_diag["thresholds"] = {
+            "min_occurrences": 3,
+            "min_completions": 2,
+            "min_steps": 2,
+            "max_step_gap_hours": 12,
+        }
+
+        # Email workflow data
+        if ev_conn:
+            email_received_30d = _query_one(
+                ev_conn,
+                """SELECT COUNT(*) as c FROM events
+                   WHERE type = 'email.received'
+                     AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
+            )
+            email_sent_30d = _query_one(
+                ev_conn,
+                """SELECT COUNT(*) as c FROM events
+                   WHERE type = 'email.sent'
+                     AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
+            )
+            top_senders = _query(
+                ev_conn,
+                """SELECT json_extract(payload, '$.email_from') as sender, COUNT(*) as c
+                   FROM events
+                   WHERE type = 'email.received'
+                     AND julianday(timestamp) > julianday(datetime('now', '-30 days'))
+                     AND json_extract(payload, '$.email_from') IS NOT NULL
+                   GROUP BY sender ORDER BY c DESC LIMIT 5""",
+                [],
+            )
+            wf_diag["email"] = {
+                "received_30d": email_received_30d["c"] if email_received_30d else 0,
+                "sent_30d": email_sent_30d["c"] if email_sent_30d else 0,
+                "top_senders": {r["sender"]: r["c"] for r in top_senders} if top_senders else {},
+            }
+
+            # Task workflow data
+            tasks_created_30d = _query_one(
+                ev_conn,
+                """SELECT COUNT(*) as c FROM events
+                   WHERE type = 'task.created'
+                     AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
+            )
+            wf_diag["tasks"] = {
+                "created_30d": tasks_created_30d["c"] if tasks_created_30d else 0,
+            }
+
+            # Calendar workflow data
+            calendar_events_30d = _query_one(
+                ev_conn,
+                """SELECT COUNT(*) as c FROM events
+                   WHERE type = 'calendar.event.created'
+                     AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
+            )
+            wf_diag["calendar"] = {
+                "events_created_30d": calendar_events_30d["c"] if calendar_events_30d else 0,
+            }
+        else:
+            wf_diag["email"] = {"error": "could not connect to events.db"}
+            wf_diag["tasks"] = {"error": "could not connect to events.db"}
+            wf_diag["calendar"] = {"error": "could not connect to events.db"}
+
+        # Episode interaction type distribution
+        if um_conn2:
+            interaction_types = _query(
+                um_conn2,
+                """SELECT interaction_type, COUNT(*) as c
+                   FROM episodes
+                   GROUP BY interaction_type
+                   ORDER BY c DESC""",
+                [],
+            )
+            total_episodes = sum(r["c"] for r in interaction_types) if interaction_types else 0
+            type_dist = {}
+            null_unknown_comm = 0
+            for r in (interaction_types or []):
+                itype = r["interaction_type"]
+                type_dist[str(itype)] = r["c"]
+                if itype is None or itype in ("unknown", "communication"):
+                    null_unknown_comm += r["c"]
+
+            wf_diag["episode_interaction_types"] = {
+                "total_episodes": total_episodes,
+                "distribution": type_dist,
+                "null_unknown_communication_count": null_unknown_comm,
+                "null_unknown_communication_pct": round(null_unknown_comm / max(total_episodes, 1), 3),
+            }
+        else:
+            wf_diag["episode_interaction_types"] = {"error": "could not connect to user_model.db"}
+
+        report["sections"]["workflow_diagnostics"] = wf_diag
+    except Exception as e:
+        report["sections"]["workflow_diagnostics"] = {"error": str(e)}
+    finally:
+        if ev_conn:
+            ev_conn.close()
+        if um_conn2:
+            um_conn2.close()
+
+    # -----------------------------------------------------------------------
     # Notification dismissal rate
     # -----------------------------------------------------------------------
     state_conn = _connect(data_path / "state.db")
@@ -600,6 +709,46 @@ def detect_anomalies(sections: dict) -> list[dict]:
             "message": f"No workflows detected despite {episodes} episodes",
             "recommendation": "Check workflow detection logic; ensure episodes have sufficient variety",
         })
+
+    # --- (d2) Workflow diagnostics anomalies ---
+    wf_diag = sections.get("workflow_diagnostics", {})
+    if isinstance(wf_diag, dict) and "error" not in wf_diag:
+        email_data = wf_diag.get("email", {})
+        if isinstance(email_data, dict) and "error" not in email_data:
+            received = email_data.get("received_30d", 0)
+            sent = email_data.get("sent_30d", 0)
+            if received > 100 and sent < 5:
+                anomalies.append({
+                    "severity": "warning",
+                    "category": "workflow_email_imbalance",
+                    "message": (
+                        f"Low outbound email volume ({sent} sent vs {received} received in 30d) "
+                        "limits email workflow detection — workflows require send actions to complete"
+                    ),
+                    "recommendation": (
+                        "Verify email.sent events are being captured by the email connector; "
+                        "check connector sync for outbound mail"
+                    ),
+                })
+
+        ep_types = wf_diag.get("episode_interaction_types", {})
+        if isinstance(ep_types, dict) and "error" not in ep_types:
+            pct = ep_types.get("null_unknown_communication_pct", 0)
+            if pct > 0.5:
+                count = ep_types.get("null_unknown_communication_count", 0)
+                total = ep_types.get("total_episodes", 0)
+                anomalies.append({
+                    "severity": "warning",
+                    "category": "workflow_stale_interaction_types",
+                    "message": (
+                        f"{count}/{total} episodes ({pct:.0%}) have NULL/unknown/communication "
+                        "interaction_type — stale types block interaction-based workflow detection"
+                    ),
+                    "recommendation": (
+                        "Run episode interaction_type backfill to reclassify episodes "
+                        "with specific types (email, task, calendar, etc.)"
+                    ),
+                })
 
     # --- (e) Connector errors ---
     connectors = sections.get("connectors", {})
