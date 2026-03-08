@@ -305,12 +305,15 @@ class FeedbackCollector:
         if domain:
             domain_to_source = {
                 "email": "email.work",
+                "message": "messaging.direct",
                 "messaging": "messaging.direct",
                 "calendar": "calendar.meetings",
                 "finance": "finance.transactions",
                 "health": "health.activity",
                 "location": "location.visits",
                 "home": "home.devices",
+                "prediction": "email.work",
+                "system": "home.devices",
             }
             return domain_to_source.get(domain)
 
