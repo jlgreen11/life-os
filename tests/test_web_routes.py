@@ -1295,20 +1295,25 @@ def test_calendar_events_missing_required_params(client, mock_life_os):
 
 def test_dashboard_feed_calendar_topic(client, mock_life_os):
     """Test dashboard feed topic=calendar returns upcoming calendar events."""
+    # Use a dynamically computed future date so this test doesn't rot
+    now = datetime.now(timezone.utc)
+    future_start = (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    future_end = (now + timedelta(days=2, hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
     # Set up the DB to return one future calendar event
     mock_conn = Mock()
     future_payload = json.dumps({
         "event_id": "cal-1",
         "title": "Sprint Review",
-        "start_time": "2026-03-05T14:00:00+00:00",
-        "end_time": "2026-03-05T15:00:00+00:00",
+        "start_time": future_start,
+        "end_time": future_end,
         "is_all_day": False,
         "description": "Review sprint results",
         "location": "Conference Room A",
         "attendees": [],
     })
     mock_conn.execute.return_value.fetchall.return_value = [
-        {"id": "db-cal-1", "payload": future_payload, "timestamp": "2026-02-28T10:00:00Z"}
+        {"id": "db-cal-1", "payload": future_payload, "timestamp": now.isoformat()}
     ]
     mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
 
