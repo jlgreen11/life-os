@@ -37,7 +37,7 @@ import json
 import logging
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from storage.manager import DatabaseManager
@@ -711,6 +711,105 @@ class SourceWeightManager:
     # ------------------------------------------------------------------
     # Statistics & Debugging
     # ------------------------------------------------------------------
+
+    def get_diagnostics(self) -> dict:
+        """Return diagnostic information about the source weight system.
+
+        Provides observability into the feedback loop health, drift activity,
+        and per-source statistics. Follows the same try/except pattern as
+        other service diagnostics (PredictionEngine, RoutineDetector, etc.)
+        so a single DB failure doesn't prevent other diagnostics from returning.
+
+        Returns:
+            Dict with keys: total_sources, total_interactions, total_engagements,
+            total_dismissals, sources_with_drift, feedback_loop_health,
+            per_source, stale_sources, drift_active.
+        """
+        result: dict = {
+            "total_sources": 0,
+            "total_interactions": 0,
+            "total_engagements": 0,
+            "total_dismissals": 0,
+            "sources_with_drift": 0,
+            "feedback_loop_health": "healthy",
+            "per_source": [],
+            "stale_sources": [],
+            "drift_active": False,
+        }
+
+        # Aggregate counts
+        try:
+            with self.db.get_connection("preferences") as conn:
+                row = conn.execute(
+                    """SELECT
+                           COUNT(*) AS total_sources,
+                           COALESCE(SUM(interactions), 0) AS total_interactions,
+                           COALESCE(SUM(engagements), 0) AS total_engagements,
+                           COALESCE(SUM(dismissals), 0) AS total_dismissals,
+                           COALESCE(SUM(CASE WHEN ai_drift != 0 THEN 1 ELSE 0 END), 0) AS sources_with_drift
+                       FROM source_weights"""
+                ).fetchone()
+
+            result["total_sources"] = row["total_sources"]
+            result["total_interactions"] = row["total_interactions"]
+            result["total_engagements"] = row["total_engagements"]
+            result["total_dismissals"] = row["total_dismissals"]
+            result["sources_with_drift"] = row["sources_with_drift"]
+            result["drift_active"] = row["sources_with_drift"] > 0
+        except Exception:
+            logger.warning("Failed to fetch source weight aggregate counts", exc_info=True)
+
+        # Feedback loop health assessment
+        try:
+            total_feedback = result["total_engagements"] + result["total_dismissals"]
+            if result["total_interactions"] > 100 and total_feedback == 0:
+                result["feedback_loop_health"] = "broken"
+            elif result["total_engagements"] > 0 and result["total_dismissals"] > 0:
+                result["feedback_loop_health"] = "healthy"
+            elif total_feedback > 0:
+                result["feedback_loop_health"] = "partial"
+            else:
+                result["feedback_loop_health"] = "partial"
+        except Exception:
+            logger.warning("Failed to assess feedback loop health", exc_info=True)
+
+        # Per-source details and stale source detection
+        try:
+            with self.db.get_connection("preferences") as conn:
+                rows = conn.execute(
+                    "SELECT * FROM source_weights ORDER BY source_key"
+                ).fetchall()
+
+            stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            per_source = []
+            stale_sources = []
+
+            for row in rows:
+                d = dict(row)
+                effective = max(0.0, min(1.0, d["user_weight"] + d["ai_drift"]))
+                # Use ai_updated_at if available, otherwise fall back to created_at
+                last_updated = d.get("ai_updated_at") or d.get("created_at")
+                per_source.append({
+                    "source_key": d["source_key"],
+                    "interactions": d["interactions"],
+                    "engagements": d["engagements"],
+                    "dismissals": d["dismissals"],
+                    "user_weight": d["user_weight"],
+                    "ai_drift": d["ai_drift"],
+                    "effective_weight": round(effective, 4),
+                    "updated_at": last_updated,
+                })
+
+                # Stale: has interactions but hasn't been updated in 7+ days
+                if d["interactions"] > 0 and last_updated and last_updated < stale_cutoff:
+                    stale_sources.append(d["source_key"])
+
+            result["per_source"] = per_source
+            result["stale_sources"] = stale_sources
+        except Exception:
+            logger.warning("Failed to fetch per-source diagnostics", exc_info=True)
+
+        return result
 
     def get_source_stats(self, source_key: str) -> Optional[dict]:
         """Get detailed statistics for a single source weight."""
