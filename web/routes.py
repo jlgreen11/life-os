@@ -496,6 +496,8 @@ def register_routes(app: FastAPI, life_os) -> None:
             "conflict_detector": getattr(life_os, "conflict_detector", None),
             "task_manager": getattr(life_os, "task_manager", None),
             "feedback_collector": getattr(life_os, "feedback_collector", None),
+            "source_weight_manager": getattr(life_os, "source_weight_manager", None),
+            "rules_engine": getattr(life_os, "rules_engine", None),
         }
         for name, service in services.items():
             if service is None:
@@ -551,6 +553,10 @@ def register_routes(app: FastAPI, life_os) -> None:
         bt_diag = diagnostics.get("behavioral_tracker", {})
         if isinstance(bt_diag, dict) and bt_diag.get("health") in ("stalled", "degraded"):
             issues.append(f"Behavioral tracker health is '{bt_diag['health']}' — prediction accuracy tracking impaired")
+        # Check source weight manager feedback loop health
+        sw_diag = diagnostics.get("source_weight_manager", {})
+        if isinstance(sw_diag, dict) and sw_diag.get("feedback_loop_health") in ("no_feedback", "broken"):
+            issues.append("Source weight feedback loop is not recording dismissals — check domain mapping")
 
         sp = diagnostics.get("signal_profiles", {})
         if isinstance(sp, dict) and len(sp.get("missing", [])) > 3:
