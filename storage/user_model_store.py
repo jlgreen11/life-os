@@ -523,8 +523,11 @@ class UserModelStore:
             "recorded_at": timestamp,
         })
 
-    def store_prediction(self, prediction: dict):
+    def store_prediction(self, prediction: dict) -> bool:
         """Store a prediction for later accuracy evaluation.
+
+        Returns True if the prediction was actually stored, False if it was
+        deduplicated (an identical recent prediction already exists).
 
         Predictions are logged when generated and later resolved (was_accurate
         is updated) to create a feedback loop — the system can measure its own
@@ -578,7 +581,7 @@ class UserModelStore:
                     "attempted_description": prediction["description"][:100],  # Truncate for telemetry
                     "deduplicated_at": datetime.now(timezone.utc).isoformat(),
                 })
-                return  # Skip storage
+                return False  # Skip storage — duplicate exists
 
             # No duplicate found, store the prediction
             conn.execute(
@@ -603,6 +606,7 @@ class UserModelStore:
                 ),
             )
 
+        # Prediction was stored successfully
         # Emit telemetry for successfully stored (non-duplicate) prediction
         self._emit_telemetry("usermodel.prediction.generated", {
             "prediction_id": prediction["id"],
@@ -614,6 +618,7 @@ class UserModelStore:
             "signals_count": len(prediction.get("supporting_signals", [])),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         })
+        return True
 
     def store_communication_template(self, template: dict):
         """Store or update a communication template.

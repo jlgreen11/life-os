@@ -900,8 +900,14 @@ class PredictionEngine:
                     pred.filter_reason = "unknown (should not happen)"
 
             try:
-                self.ums.store_prediction(pred.model_dump())
-                stored_count += 1
+                was_stored = self.ums.store_prediction(pred.model_dump())
+                if was_stored:
+                    stored_count += 1
+                else:
+                    # Prediction was deduplicated — remove from surfaced set
+                    # so it won't be returned to _prediction_loop() and create
+                    # orphaned notifications referencing non-existent DB rows.
+                    surfaced_ids.discard(pred.id)
             except Exception as e:
                 logger.error("Failed to store prediction %s: %s", pred.id, e)
                 run_store_failures += 1
@@ -1038,6 +1044,11 @@ class PredictionEngine:
         # mid-way, the cursor stays at the old persisted value and those
         # events will be reprocessed on the next cycle.
         self._persist_state("last_event_cursor", str(self._last_event_cursor))
+
+        # Rebuild filtered list to exclude deduplicated predictions.
+        # This prevents _prediction_loop() from creating notifications
+        # for predictions that weren't actually stored in the DB.
+        filtered = [p for p in filtered if p.id in surfaced_ids]
 
         return filtered
 
