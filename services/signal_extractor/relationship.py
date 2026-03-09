@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
-from services.signal_extractor.marketing_filter import is_marketing_or_noreply
+from services.signal_extractor.marketing_filter import classify_email_domain, is_marketing_or_noreply
 
 logger = logging.getLogger(__name__)
 
@@ -160,13 +160,18 @@ class RelationshipExtractor(BaseExtractor):
 
         signals = []
 
+        # Build a lookup for display names from payload headers.
+        to_names = payload.get("to_names", {})  # {addr: display_name}
+        from_name = payload.get("from_name", "")
+        from_addr = payload.get("from_address", "")
+
         # Resolve the contact address(es) based on message direction.
         # Outbound: the user wrote to these people.
         # Inbound: someone wrote to the user.
         if "sent" in event_type.lower():
             addresses = payload.get("to_addresses", [])
         else:
-            addresses = [payload.get("from_address")] if payload.get("from_address") else []
+            addresses = [from_addr] if from_addr else []
 
         for address in addresses:
             if not address:
@@ -180,6 +185,12 @@ class RelationshipExtractor(BaseExtractor):
             if is_marketing_or_noreply(address, payload):
                 continue
 
+            # Resolve display name: from_name for the sender, to_names for recipients
+            if address == from_addr and from_name:
+                display_name = from_name
+            else:
+                display_name = to_names.get(address, "")
+
             # Each signal captures a single interaction data point.  Downstream
             # aggregation in _update_contact_profiles turns these into running
             # statistics per contact.
@@ -187,6 +198,7 @@ class RelationshipExtractor(BaseExtractor):
                 "type": "relationship_interaction",
                 "timestamp": actual_timestamp,
                 "contact_address": address,
+                "display_name": display_name,
                 "direction": "outbound" if "sent" in event_type.lower() else "inbound",
                 "channel": payload.get("channel", event.get("source", "unknown")),
                 # Message length as a proxy for investment in the conversation.
@@ -257,6 +269,12 @@ class RelationshipExtractor(BaseExtractor):
                 }
 
             profile = data["contacts"][addr]
+
+            # Capture display name from email headers (sticky — once set, persists)
+            display_name = signal.get("display_name", "")
+            if display_name and display_name != addr:
+                profile["display_name"] = display_name
+
             profile["interaction_count"] += 1
             # Track direction so we can compute reciprocity ratios later.
             if signal["direction"] == "inbound":
@@ -386,16 +404,20 @@ class RelationshipExtractor(BaseExtractor):
                         # duplicate rows even if the contact_identifiers INSERT
                         # races with itself.
                         contact_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"auto:{addr.lower()}"))
-                        name = _name_from_email(addr)
+                        # Prefer display name from email headers over email-derived heuristic
+                        display_name = profile.get("display_name")
+                        name = display_name or _name_from_email(addr)
+                        domain_type = classify_email_domain(addr)
                         conn.execute(
                             """INSERT OR IGNORE INTO contacts
-                                   (id, name, emails, channels, created_at, updated_at)
-                               VALUES (?, ?, ?, ?, ?, ?)""",
+                                   (id, name, emails, channels, domains, created_at, updated_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 contact_id,
                                 name,
                                 json.dumps([addr]),
                                 json.dumps({"email": addr}),
+                                json.dumps([domain_type]),
                                 now,
                                 now,
                             ),

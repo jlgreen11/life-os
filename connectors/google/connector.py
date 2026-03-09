@@ -322,9 +322,11 @@ class GoogleConnector(BaseConnector):
         """Process a single Gmail message and publish an event."""
         headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
 
-        from_addr = self._parse_email_address(headers.get("From", ""))
+        from_name, from_addr = self._parse_email_header(headers.get("From", ""))
         to_addrs = self._parse_email_list(headers.get("To", ""))
+        to_names = self._parse_email_names(headers.get("To", ""))
         cc_addrs = self._parse_email_list(headers.get("Cc", ""))
+        cc_names = self._parse_email_names(headers.get("Cc", ""))
         subject = headers.get("Subject", "")
         message_id = headers.get("Message-ID", msg["id"])
         in_reply_to = headers.get("In-Reply-To", "")
@@ -360,7 +362,9 @@ class GoogleConnector(BaseConnector):
             "channel": "google",
             "direction": "outbound" if is_outbound else "inbound",
             "from_address": from_addr,
+            "from_name": from_name,
             "to_addresses": to_addrs,
+            "to_names": {**to_names, **cc_names},
             "cc_addresses": cc_addrs,
             "subject": subject,
             "body": body_html or body_plain,
@@ -471,6 +475,13 @@ class GoogleConnector(BaseConnector):
         return addr
 
     @staticmethod
+    def _parse_email_header(raw: str) -> tuple[str, str]:
+        """Return (display_name, email_address) from an RFC 2822 header."""
+        from email.utils import parseaddr
+        name, addr = parseaddr(raw)
+        return name, addr
+
+    @staticmethod
     def _parse_email_list(raw: str) -> list[str]:
         """Extract email addresses from a comma-separated list."""
         if not raw:
@@ -478,6 +489,14 @@ class GoogleConnector(BaseConnector):
         from email.utils import getaddresses
         addrs = getaddresses([raw])
         return [addr for _, addr in addrs if addr]
+
+    @staticmethod
+    def _parse_email_names(raw: str) -> dict[str, str]:
+        """Extract a mapping of email address → display name from a header."""
+        if not raw:
+            return {}
+        from email.utils import getaddresses
+        return {addr: name for name, addr in getaddresses([raw]) if name and addr}
 
     # ------------------------------------------------------------------
     # Calendar sync

@@ -389,6 +389,22 @@ class OnboardingManager:
                 domains.append({"name": part.lower(), "boundary": "soft_separation"})
         return domains if domains else [{"name": "personal"}, {"name": "work"}]
 
+    # Relationship phrases to detect (order matters — check longer phrases first)
+    _RELATIONSHIP_PHRASES = [
+        "brother in law", "sister in law", "mother in law", "father in law",
+        "daughter in law", "son in law",
+        "step brother", "step sister", "step mother", "step father",
+        "step daughter", "step son",
+        "best friend", "close friend",
+        "brother", "sister", "mother", "father", "mom", "dad",
+        "daughter", "son", "wife", "husband", "spouse", "partner",
+        "uncle", "aunt", "cousin", "nephew", "niece",
+        "grandmother", "grandfather", "grandma", "grandpa",
+        "boss", "manager", "coworker", "colleague", "teammate",
+        "mentor", "assistant", "client", "contractor",
+        "friend", "neighbor", "roommate",
+    ]
+
     def _parse_contacts(self, text: str) -> list[dict]:
         """
         Parse free-text contact list into structured contacts.
@@ -396,19 +412,78 @@ class OnboardingManager:
         Supports formats like:
             "Sarah - wife, Tom - coworker, Mom"
             "Sarah (wife)\nTom (coworker)\nMom"
+            "Nate my brother in law"
+            "my wife Sarah"
         The relationship is optional; if absent, it's stored as None.
         """
         contacts = []
         for line in text.replace(",", "\n").split("\n"):
             line = line.strip().strip("-\u2022*").strip()
-            if line:
-                # Try to extract name and relationship from "Name - role"
-                # or "Name (role)" format
-                parts = line.split("-", 1) if "-" in line else line.split("(", 1)
+            if not line:
+                continue
+
+            # Try explicit separators first: "Name - role" or "Name (role)"
+            if "-" in line:
+                parts = line.split("-", 1)
+                name = parts[0].strip()
+                relationship = parts[1].strip() if len(parts) > 1 else None
+                contacts.append({"name": name, "relationship": relationship})
+                continue
+            if "(" in line:
+                parts = line.split("(", 1)
                 name = parts[0].strip()
                 relationship = parts[1].strip().strip(")") if len(parts) > 1 else None
                 contacts.append({"name": name, "relationship": relationship})
+                continue
+
+            # Try natural language: "Nate my brother in law" or "my wife Sarah"
+            name, relationship = self._extract_name_and_relationship(line)
+            contacts.append({"name": name, "relationship": relationship})
         return contacts
+
+    def _extract_name_and_relationship(self, text: str) -> tuple[str, str | None]:
+        """Extract a name and relationship from natural language text.
+
+        Handles both orderings:
+          - "Nate my brother in law" → ("Nate", "brother-in-law")
+          - "my brother in law Nate" → ("Nate", "brother-in-law")
+          - "Mom" → ("Mom", None) — the word IS the name, no separate relationship
+        """
+        import re
+
+        lowered = text.lower()
+
+        # Strip leading possessives for phrase matching
+        stripped = lowered
+        for prefix in ("my ", "our "):
+            if stripped.startswith(prefix):
+                stripped = stripped[len(prefix):]
+                break
+
+        # Check if any relationship phrase appears
+        for phrase in self._RELATIONSHIP_PHRASES:
+            if phrase not in stripped:
+                continue
+
+            # Found a phrase — remove it (and possessives) to isolate the name
+            # Work on original text to preserve casing
+            remainder = text
+            for prefix in ("my ", "My ", "our ", "Our "):
+                remainder = remainder.replace(prefix, " ")
+            # Remove the phrase (case-insensitive)
+            remainder = re.sub(re.escape(phrase), "", remainder, count=1, flags=re.IGNORECASE)
+            name = " ".join(remainder.split()).strip()
+
+            # Hyphenate multi-word relationships: "brother in law" → "brother-in-law"
+            relationship = phrase.replace(" ", "-") if " " in phrase else phrase
+
+            if name:
+                return name, relationship
+            # If removing the phrase leaves nothing, the phrase IS the name
+            return text.strip(), None
+
+        # No relationship phrase found
+        return text.strip(), None
 
     def _parse_quiet_hours(self, text: str) -> list[dict]:
         """

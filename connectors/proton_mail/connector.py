@@ -198,9 +198,11 @@ class ProtonMailConnector(BaseConnector):
         msg = email.message_from_bytes(raw_email)
 
         # ---- Header Extraction ----
-        from_addr = self._parse_address(msg.get("From", ""))
+        from_name, from_addr = self._parse_address_with_name(msg.get("From", ""))
         to_addrs = self._parse_address_list(msg.get("To", ""))
+        to_names = self._parse_address_names(msg.get("To", ""))
         cc_addrs = self._parse_address_list(msg.get("Cc", ""))
+        cc_names = self._parse_address_names(msg.get("Cc", ""))
         subject = msg.get("Subject", "")
         message_id = msg.get("Message-ID", "")
         # In-Reply-To links this message to the one it is replying to,
@@ -252,7 +254,9 @@ class ProtonMailConnector(BaseConnector):
             "channel": "proton_mail",
             "direction": "outbound" if is_outbound else "inbound",
             "from_address": from_addr,
+            "from_name": from_name,
             "to_addresses": to_addrs,
+            "to_names": {**to_names, **cc_names},
             "cc_addresses": cc_addrs,
             "subject": subject,
             # Prefer the HTML body for rich display; fall back to plain text.
@@ -418,6 +422,12 @@ class ProtonMailConnector(BaseConnector):
         return addr
 
     @staticmethod
+    def _parse_address_with_name(raw: str) -> tuple[str, str]:
+        """Return (display_name, email_address) from an RFC 2822 header."""
+        name, addr = email.utils.parseaddr(raw)
+        return name, addr
+
+    @staticmethod
     def _parse_address_list(raw: str) -> list[str]:
         """Extract all email addresses from a comma-separated header value.
 
@@ -429,6 +439,13 @@ class ProtonMailConnector(BaseConnector):
             return []
         addrs = email.utils.getaddresses([raw])
         return [addr for _, addr in addrs if addr]
+
+    @staticmethod
+    def _parse_address_names(raw: str) -> dict[str, str]:
+        """Extract a mapping of email address → display name from a header."""
+        if not raw:
+            return {}
+        return {addr: name for name, addr in email.utils.getaddresses([raw]) if name and addr}
 
     @staticmethod
     def _extract_body(msg: email.message.Message) -> tuple[str, str]:

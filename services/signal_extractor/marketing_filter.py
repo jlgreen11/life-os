@@ -51,6 +51,21 @@ Usage:
 """
 from __future__ import annotations
 
+FREEMAIL_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk",
+    "hotmail.com", "outlook.com", "live.com", "msn.com",
+    "aol.com", "icloud.com", "me.com", "mac.com",
+    "protonmail.com", "proton.me", "pm.me",
+    "mail.com", "zoho.com", "yandex.com", "gmx.com",
+    "fastmail.com", "tutanota.com",
+})
+
+
+def classify_email_domain(addr: str) -> str:
+    """Return 'personal' for freemail domains, 'business' for corporate."""
+    domain = addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
+    return "personal" if domain in FREEMAIL_DOMAINS else "business"
+
 
 def is_marketing_or_noreply(
     from_addr: str,
