@@ -17,8 +17,8 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from storage.manager import DatabaseManager
@@ -275,7 +275,7 @@ class WorkflowDetector:
             List of email-triggered workflows
         """
         workflows = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
         max_gap = timedelta(hours=self.max_step_gap_hours)
 
         # Statistics: sender → {receive_count, following_actions → {action_type → [delays]}}
@@ -467,7 +467,7 @@ class WorkflowDetector:
             List of recurring inbound email workflows
         """
         workflows = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Query all received emails grouped by sender within the lookback window
         sender_timestamps: dict[str, list[datetime]] = defaultdict(list)
@@ -566,7 +566,7 @@ class WorkflowDetector:
         return workflows[:20]
 
     @staticmethod
-    def _detect_cadence(timestamps: list[datetime]) -> Optional[dict[str, Any]]:
+    def _detect_cadence(timestamps: list[datetime]) -> dict[str, Any] | None:
         """Determine if a list of timestamps exhibits a regular cadence.
 
         Checks for four patterns in order:
@@ -667,7 +667,7 @@ class WorkflowDetector:
             List of task-completion workflows
         """
         workflows = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
         max_gap = timedelta(hours=self.max_step_gap_hours)
 
         # Statistics: {following_actions → {action_type → [delays]}}
@@ -780,7 +780,7 @@ class WorkflowDetector:
             List of calendar-based workflows
         """
         workflows = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
         max_gap = timedelta(hours=self.max_step_gap_hours)
 
         # Statistics: {event_count, prep_actions, followup_actions}
@@ -922,7 +922,7 @@ class WorkflowDetector:
             List of interaction-based workflows
         """
         workflows = []
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
         max_gap = timedelta(hours=self.max_step_gap_hours)
 
         # Statistics: interaction_type → {following_type → [delays]}
@@ -949,6 +949,12 @@ class WorkflowDetector:
 
                 for episode_id, interaction_type, timestamp_str in cursor:
                     timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    # Episodes may store date-only strings (e.g. "2026-02-16") which
+                    # parse as naive datetimes.  Make them UTC-aware so the sliding
+                    # window subtraction (timestamp - prev_ts) does not raise a
+                    # TypeError when compared against the UTC-aware cutoff.
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=UTC)
 
                     # Track this interaction in the sliding window
                     active_interactions[interaction_type].append((timestamp, episode_id))
@@ -1035,7 +1041,7 @@ class WorkflowDetector:
             Dict with keys: event_counts, thresholds, detection_results,
             total_detected, episode_interaction_types, data_sufficient.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
         result: dict[str, Any] = {}
 
         # 1. Event counts by type in the lookback window
