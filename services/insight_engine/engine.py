@@ -232,6 +232,55 @@ class InsightEngine:
                 "min_required": min_count,
             }
 
+        # Cross-database correlators: check mood_history row count (shared requirement)
+        try:
+            with self.db.get_connection("user_model") as conn:
+                mood_count = conn.execute("SELECT COUNT(*) FROM mood_history").fetchone()[0]
+        except Exception:
+            mood_count = -1
+
+        for correlator_name, min_count in [
+            ("_mood_finance_correlation_insights", 10),
+            ("_stress_trigger_insights", 6),
+            ("_weekly_mood_cycle_insights", 20),
+        ]:
+            report[correlator_name] = {
+                "source": "mood_history",
+                "status": "ready" if mood_count >= min_count else ("error" if mood_count < 0 else ("partial" if mood_count > 0 else "no_data")),
+                "count": mood_count,
+                "min_required": min_count,
+            }
+
+        # Prediction accuracy: needs resolved predictions
+        try:
+            with self.db.get_connection("user_model") as conn:
+                pred_count = conn.execute(
+                    "SELECT COUNT(*) FROM predictions WHERE was_accurate IS NOT NULL"
+                ).fetchone()[0]
+        except Exception:
+            pred_count = -1
+        report["_prediction_accuracy_insights"] = {
+            "source": "predictions",
+            "status": "ready" if pred_count >= 5 else ("error" if pred_count < 0 else ("partial" if pred_count > 0 else "no_data")),
+            "count": pred_count,
+            "min_required": 5,
+        }
+
+        # Episode satisfaction: needs episodes with satisfaction scores
+        try:
+            with self.db.get_connection("user_model") as conn:
+                ep_sat_count = conn.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE user_satisfaction IS NOT NULL AND user_satisfaction > 0"
+                ).fetchone()[0]
+        except Exception:
+            ep_sat_count = -1
+        report["_episode_satisfaction_insights"] = {
+            "source": "episodes(user_satisfaction)",
+            "status": "ready" if ep_sat_count >= 20 else ("error" if ep_sat_count < 0 else ("partial" if ep_sat_count > 0 else "no_data")),
+            "count": ep_sat_count,
+            "min_required": 20,
+        }
+
         return report
 
     async def generate_insights(self) -> list[Insight]:
@@ -273,6 +322,11 @@ class InsightEngine:
             ("spatial", self._spatial_insights),
             ("workflow_pattern", self._workflow_pattern_insights),
             ("connector_health", self._connector_health_insights),
+            ("mood_finance_correlation", self._mood_finance_correlation_insights),
+            ("stress_trigger", self._stress_trigger_insights),
+            ("weekly_mood_cycle", self._weekly_mood_cycle_insights),
+            ("prediction_accuracy", self._prediction_accuracy_insights),
+            ("episode_satisfaction", self._episode_satisfaction_insights),
         ]
 
         for name, method in correlators:
@@ -482,6 +536,21 @@ class InsightEngine:
             "workflow_pattern_task": "email.work",
             "workflow_pattern_calendar": "email.work",
             "workflow_pattern_interaction": "messaging.direct",
+            # Cross-database correlators: mood x finance uses both sources;
+            # finance.transactions is the binding data source.
+            "mood_finance_correlation": "finance.transactions",
+            # Stress trigger analysis derives from mood_history + event types;
+            # messaging.direct is the broadest applicable key (events span all sources).
+            "stress_trigger": "messaging.direct",
+            # Weekly mood cycle derives purely from mood_history.
+            "weekly_mood_cycle": "messaging.direct",
+            # Prediction accuracy insights derive from the predictions table —
+            # not tied to a user-adjustable source, so excluded from weighting.
+            # (no entry → source weight not applied)
+            # Episode satisfaction: relationship-derived, weighted like contact_gap.
+            "high_satisfaction_contact": "messaging.direct",
+            "low_satisfaction_contact": "messaging.direct",
+            "interaction_type_satisfaction": "messaging.direct",
         }
 
         weighted: list[Insight] = []
@@ -3833,6 +3902,577 @@ class InsightEngine:
             "(total_workflows=%d, qualifying=%d)",
             len(insights),
             len(workflows),
+            len(insights),
+        )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Mood × Finance Cross-Database Correlation
+    # ------------------------------------------------------------------
+
+    def _mood_finance_correlation_insights(self) -> list[Insight]:
+        """Detect whether spending spikes when stress is high.
+
+        Joins mood_history (user_model.db) with finance.transaction.new events
+        (events.db) by timestamp proximity.  For each finance event, finds the
+        nearest mood reading within a 3-hour window and computes the average
+        transaction amount during high-stress periods (stress_level > 0.7) vs.
+        low-stress periods (stress_level < 0.4).
+
+        Surfaces an insight if high-stress spending is at least 50% higher than
+        low-stress spending and there are enough data points in each group (≥ 3).
+
+        Minimum data requirements: 10 mood_history rows, 10 finance events.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as mood_conn:
+                mood_rows = mood_conn.execute(
+                    """SELECT timestamp, stress_level, energy_level, emotional_valence
+                       FROM mood_history
+                       ORDER BY timestamp DESC
+                       LIMIT 90"""
+                ).fetchall()
+        except Exception:
+            logger.debug("mood_finance_correlation: could not query mood_history")
+            return []
+
+        if len(mood_rows) < 10:
+            return []
+
+        try:
+            with self.db.get_connection("events") as events_conn:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+                finance_rows = events_conn.execute(
+                    """SELECT timestamp,
+                              CAST(json_extract(payload, '$.amount') AS REAL) AS amount,
+                              json_extract(payload, '$.category') AS category
+                       FROM events
+                       WHERE type = 'finance.transaction.new'
+                         AND timestamp > ?
+                         AND json_extract(payload, '$.amount') IS NOT NULL""",
+                    (cutoff,),
+                ).fetchall()
+        except Exception:
+            logger.debug("mood_finance_correlation: could not query finance events")
+            return []
+
+        if len(finance_rows) < 10:
+            return []
+
+        # Build a sorted list of (timestamp_epoch, stress_level) for binary search
+        mood_timeline: list[tuple[float, float]] = []
+        for row in mood_rows:
+            try:
+                ts = datetime.fromisoformat(
+                    row["timestamp"].replace("Z", "+00:00")
+                ).timestamp()
+                stress = row["stress_level"] if row["stress_level"] is not None else 0.5
+                mood_timeline.append((ts, stress))
+            except (ValueError, TypeError):
+                continue
+
+        mood_timeline.sort(key=lambda x: x[0])
+
+        def _nearest_stress(ts_epoch: float) -> float | None:
+            """Return stress level from the nearest mood reading within 3 hours."""
+            best: tuple[float, float] | None = None
+            for mood_ts, stress in mood_timeline:
+                diff = abs(mood_ts - ts_epoch)
+                if diff <= 10800:  # 3-hour window
+                    if best is None or diff < abs(best[0] - ts_epoch):
+                        best = (mood_ts, stress)
+            return best[1] if best else None
+
+        high_stress_amounts: list[float] = []
+        low_stress_amounts: list[float] = []
+
+        for row in finance_rows:
+            try:
+                ts_epoch = datetime.fromisoformat(
+                    row["timestamp"].replace("Z", "+00:00")
+                ).timestamp()
+                amount = abs(float(row["amount"]))
+                stress = _nearest_stress(ts_epoch)
+                if stress is None:
+                    continue
+                if stress > 0.7:
+                    high_stress_amounts.append(amount)
+                elif stress < 0.4:
+                    low_stress_amounts.append(amount)
+            except (ValueError, TypeError):
+                continue
+
+        if len(high_stress_amounts) < 3 or len(low_stress_amounts) < 3:
+            return []
+
+        avg_high = sum(high_stress_amounts) / len(high_stress_amounts)
+        avg_low = sum(low_stress_amounts) / len(low_stress_amounts)
+
+        if avg_high >= avg_low * 1.5:
+            pct = int((avg_high / max(avg_low, 0.01) - 1) * 100)
+            confidence = min(0.8, 0.45 + min(len(high_stress_amounts), 20) * 0.01)
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"You spend {pct}% more during high-stress periods "
+                    f"(avg ${avg_high:.0f} vs ${avg_low:.0f} when relaxed). "
+                    f"Based on {len(high_stress_amounts)} stressed and "
+                    f"{len(low_stress_amounts)} calm transactions."
+                ),
+                confidence=confidence,
+                evidence=[
+                    f"avg_stressed_spend={avg_high:.2f}",
+                    f"avg_calm_spend={avg_low:.2f}",
+                    f"stressed_txns={len(high_stress_amounts)}",
+                    f"calm_txns={len(low_stress_amounts)}",
+                    f"pct_difference={pct}",
+                ],
+                category="mood_finance_correlation",
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Stress Trigger Analysis
+    # ------------------------------------------------------------------
+
+    def _stress_trigger_insights(self) -> list[Insight]:
+        """Identify event types that consistently precede stress spikes.
+
+        For each stress spike in mood_history (stress_level > 0.7, up from < 0.5),
+        looks back 2 hours in events.db to find what event types arrived just before
+        the spike.  Counts which event types appear most often before stress spikes
+        and surfaces the top trigger if it appears in ≥ 30% of spikes.
+
+        Minimum requirements: 5 stress spikes, 20 total events in the look-back windows.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                mood_rows = conn.execute(
+                    """SELECT timestamp, stress_level
+                       FROM mood_history
+                       ORDER BY timestamp ASC"""
+                ).fetchall()
+        except Exception:
+            logger.debug("stress_trigger: could not query mood_history")
+            return []
+
+        if len(mood_rows) < 6:
+            return []
+
+        # Find stress spikes: transition from < 0.5 to > 0.7
+        spike_timestamps: list[str] = []
+        for i in range(1, len(mood_rows)):
+            prev_stress = mood_rows[i - 1]["stress_level"]
+            curr_stress = mood_rows[i]["stress_level"]
+            if (
+                prev_stress is not None
+                and curr_stress is not None
+                and prev_stress < 0.5
+                and curr_stress > 0.7
+            ):
+                spike_timestamps.append(mood_rows[i]["timestamp"])
+
+        if len(spike_timestamps) < 5:
+            return []
+
+        # For each spike, query events in the 2-hour window before it
+        trigger_counter: Counter = Counter()
+        total_events_scanned = 0
+
+        try:
+            with self.db.get_connection("events") as conn:
+                for spike_ts_str in spike_timestamps:
+                    try:
+                        spike_dt = datetime.fromisoformat(
+                            spike_ts_str.replace("Z", "+00:00")
+                        )
+                        window_start = (spike_dt - timedelta(hours=2)).isoformat()
+                        rows = conn.execute(
+                            """SELECT type FROM events
+                               WHERE timestamp > ? AND timestamp <= ?""",
+                            (window_start, spike_ts_str),
+                        ).fetchall()
+                        for row in rows:
+                            trigger_counter[row["type"]] += 1
+                            total_events_scanned += 1
+                    except (ValueError, TypeError):
+                        continue
+        except Exception:
+            logger.debug("stress_trigger: could not query events")
+            return []
+
+        if total_events_scanned < 20:
+            return []
+
+        if not trigger_counter:
+            return []
+
+        top_type, top_count = trigger_counter.most_common(1)[0]
+        frequency = top_count / len(spike_timestamps)
+
+        if frequency >= 0.30:
+            # Make event type human-readable
+            readable = top_type.replace(".", " → ").replace("_", " ")
+            pct = int(frequency * 100)
+            confidence = min(0.75, 0.40 + frequency * 0.5)
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"'{readable}' events precede {pct}% of your stress spikes. "
+                    f"Detected across {len(spike_timestamps)} stress episodes."
+                ),
+                confidence=confidence,
+                evidence=[
+                    f"trigger_event_type={top_type}",
+                    f"spike_count={len(spike_timestamps)}",
+                    f"trigger_frequency={frequency:.2f}",
+                    f"top_count={top_count}",
+                ],
+                category="stress_trigger",
+                entity=top_type,
+                staleness_ttl_hours=168,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Weekly Mood Cycle
+    # ------------------------------------------------------------------
+
+    def _weekly_mood_cycle_insights(self) -> list[Insight]:
+        """Detect recurring weekly stress patterns in mood_history.
+
+        Groups mood_history rows by day of week and computes average stress_level
+        per day.  Surfaces an insight if one day is significantly more stressful
+        than the weekly average (≥ 0.15 above) and another is notably lower (≤ 0.15
+        below), revealing the user's weekly rhythm.
+
+        Minimum requirements: 20 mood_history rows spanning at least 4 distinct weekdays.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT timestamp, stress_level, energy_level
+                       FROM mood_history
+                       WHERE stress_level IS NOT NULL
+                       ORDER BY timestamp DESC
+                       LIMIT 200"""
+                ).fetchall()
+        except Exception:
+            logger.debug("weekly_mood_cycle: could not query mood_history")
+            return []
+
+        if len(rows) < 20:
+            return []
+
+        day_stress: dict[str, list[float]] = {}
+        day_energy: dict[str, list[float]] = {}
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+        for row in rows:
+            try:
+                dt = datetime.fromisoformat(
+                    row["timestamp"].replace("Z", "+00:00")
+                ).astimezone(self._tz)
+                day = day_names[dt.weekday()]
+                if row["stress_level"] is not None:
+                    day_stress.setdefault(day, []).append(row["stress_level"])
+                if row["energy_level"] is not None:
+                    day_energy.setdefault(day, []).append(row["energy_level"])
+            except (ValueError, TypeError):
+                continue
+
+        # Need at least 4 distinct weekdays with ≥ 2 readings each
+        qualifying_days = {d: v for d, v in day_stress.items() if len(v) >= 2}
+        if len(qualifying_days) < 4:
+            return []
+
+        avg_by_day = {d: sum(v) / len(v) for d, v in qualifying_days.items()}
+        overall_avg = sum(avg_by_day.values()) / len(avg_by_day)
+
+        most_stressed_day = max(avg_by_day, key=lambda d: avg_by_day[d])
+        least_stressed_day = min(avg_by_day, key=lambda d: avg_by_day[d])
+
+        most_stressed_avg = avg_by_day[most_stressed_day]
+        least_stressed_avg = avg_by_day[least_stressed_day]
+
+        if (most_stressed_avg - overall_avg) < 0.15 and (overall_avg - least_stressed_avg) < 0.15:
+            return []
+
+        # Build summary
+        parts = []
+        if most_stressed_avg - overall_avg >= 0.15:
+            parts.append(f"{most_stressed_day}s are your most stressful (avg stress {most_stressed_avg:.2f})")
+        if overall_avg - least_stressed_avg >= 0.15:
+            parts.append(f"{least_stressed_day}s are your most relaxed (avg stress {least_stressed_avg:.2f})")
+
+        if not parts:
+            return []
+
+        summary = "Your week has a clear stress rhythm: " + "; ".join(parts) + "."
+        confidence = min(0.78, 0.45 + len(rows) * 0.002)
+
+        insight = Insight(
+            type="behavioral_pattern",
+            summary=summary,
+            confidence=confidence,
+            evidence=[
+                f"most_stressed_day={most_stressed_day}",
+                f"most_stressed_avg={most_stressed_avg:.2f}",
+                f"least_stressed_day={least_stressed_day}",
+                f"least_stressed_avg={least_stressed_avg:.2f}",
+                f"overall_avg_stress={overall_avg:.2f}",
+                f"mood_rows_analyzed={len(rows)}",
+            ],
+            category="weekly_mood_cycle",
+            staleness_ttl_hours=168,
+        )
+        insight.compute_dedup_key()
+        insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Prediction Accuracy Feedback
+    # ------------------------------------------------------------------
+
+    def _prediction_accuracy_insights(self) -> list[Insight]:
+        """Surface patterns in which prediction types land well vs. generate noise.
+
+        Reads resolved predictions from the predictions table and computes
+        accuracy rates by prediction_type.  If a type has ≥ 5 resolved predictions
+        and an accuracy rate below 40%, surfaces an insight flagging the noise.
+        If a type has ≥ 80% accuracy, surfaces a positive calibration insight.
+
+        This closes the feedback loop: instead of just silently discarding bad
+        predictions, the engine now makes the calibration visible to the user.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT prediction_type,
+                              COUNT(*) AS total,
+                              SUM(CASE WHEN was_accurate = 1 THEN 1 ELSE 0 END) AS accurate,
+                              SUM(CASE WHEN user_response = 'dismissed' THEN 1 ELSE 0 END) AS dismissed
+                       FROM predictions
+                       WHERE was_accurate IS NOT NULL
+                       GROUP BY prediction_type"""
+                ).fetchall()
+        except Exception:
+            logger.debug("prediction_accuracy: could not query predictions table")
+            return []
+
+        for row in rows:
+            total = row["total"]
+            if total < 5:
+                continue
+
+            pred_type = row["prediction_type"]
+            accurate = row["accurate"] or 0
+            dismissed = row["dismissed"] or 0
+            accuracy_rate = accurate / total
+            dismiss_rate = dismissed / total
+
+            if accuracy_rate < 0.40:
+                confidence = min(0.75, 0.40 + (0.40 - accuracy_rate) * 1.5)
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"'{pred_type}' predictions are often off — only {int(accuracy_rate * 100)}% accuracy "
+                        f"across {total} resolved predictions. "
+                        f"{int(dismiss_rate * 100)}% were dismissed."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"prediction_type={pred_type}",
+                        f"accuracy_rate={accuracy_rate:.2f}",
+                        f"dismiss_rate={dismiss_rate:.2f}",
+                        f"total_resolved={total}",
+                    ],
+                    category="prediction_calibration_low",
+                    entity=pred_type,
+                    staleness_ttl_hours=336,  # 2 weeks
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            elif accuracy_rate >= 0.80:
+                confidence = min(0.80, 0.50 + (accuracy_rate - 0.80) * 1.5)
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"'{pred_type}' predictions are highly accurate — {int(accuracy_rate * 100)}% "
+                        f"across {total} resolved predictions."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"prediction_type={pred_type}",
+                        f"accuracy_rate={accuracy_rate:.2f}",
+                        f"total_resolved={total}",
+                    ],
+                    category="prediction_calibration_high",
+                    entity=pred_type,
+                    staleness_ttl_hours=336,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Episode Outcome / Satisfaction Analysis
+    # ------------------------------------------------------------------
+
+    def _episode_satisfaction_insights(self) -> list[Insight]:
+        """Find which contacts and interaction types correlate with satisfaction.
+
+        Reads the episodes table and groups by contacts_involved and
+        interaction_type to compute average user_satisfaction scores.
+        Surfaces insights for contacts consistently above or below the
+        overall average satisfaction baseline.
+
+        Minimum requirements: 20 episodes with user_satisfaction values.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT contacts_involved, interaction_type,
+                              user_satisfaction, outcome
+                       FROM episodes
+                       WHERE user_satisfaction IS NOT NULL
+                         AND user_satisfaction > 0
+                       ORDER BY timestamp DESC
+                       LIMIT 500"""
+                ).fetchall()
+        except Exception:
+            logger.debug("episode_satisfaction: could not query episodes")
+            return []
+
+        if len(rows) < 20:
+            return []
+
+        overall_scores = [row["user_satisfaction"] for row in rows]
+        overall_avg = sum(overall_scores) / len(overall_scores)
+
+        # Group by contact
+        contact_scores: dict[str, list[float]] = {}
+        for row in rows:
+            try:
+                contacts = json.loads(row["contacts_involved"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                contacts = []
+            for contact in contacts:
+                if contact and not is_marketing_or_noreply(contact):
+                    contact_scores.setdefault(contact, []).append(row["user_satisfaction"])
+
+        # Load contact names
+        name_map = self._load_contact_name_map()
+
+        for contact, scores in contact_scores.items():
+            if len(scores) < 5:
+                continue
+            avg = sum(scores) / len(scores)
+            diff = avg - overall_avg
+
+            if diff >= 0.2:
+                display = self._display_name(contact, name_map)
+                confidence = min(0.75, 0.45 + len(scores) * 0.01)
+                insight = Insight(
+                    type="relationship_intelligence",
+                    summary=(
+                        f"Interactions with {display} are consistently satisfying "
+                        f"(avg {avg:.2f} vs overall {overall_avg:.2f}), "
+                        f"based on {len(scores)} episodes."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"contact={contact}",
+                        f"avg_satisfaction={avg:.2f}",
+                        f"overall_avg={overall_avg:.2f}",
+                        f"episodes_count={len(scores)}",
+                    ],
+                    category="high_satisfaction_contact",
+                    entity=contact,
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            elif diff <= -0.2:
+                display = self._display_name(contact, name_map)
+                confidence = min(0.75, 0.45 + len(scores) * 0.01)
+                insight = Insight(
+                    type="relationship_intelligence",
+                    summary=(
+                        f"Interactions with {display} tend to be draining "
+                        f"(avg satisfaction {avg:.2f} vs overall {overall_avg:.2f}), "
+                        f"based on {len(scores)} episodes."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"contact={contact}",
+                        f"avg_satisfaction={avg:.2f}",
+                        f"overall_avg={overall_avg:.2f}",
+                        f"episodes_count={len(scores)}",
+                    ],
+                    category="low_satisfaction_contact",
+                    entity=contact,
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        # Group by interaction_type
+        type_scores: dict[str, list[float]] = {}
+        for row in rows:
+            itype = row["interaction_type"]
+            if itype:
+                type_scores.setdefault(itype, []).append(row["user_satisfaction"])
+
+        for itype, scores in type_scores.items():
+            if len(scores) < 10:
+                continue
+            avg = sum(scores) / len(scores)
+            diff = avg - overall_avg
+
+            if diff >= 0.2:
+                confidence = min(0.72, 0.42 + len(scores) * 0.005)
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"'{itype.replace('_', ' ')}' interactions score highest for satisfaction "
+                        f"(avg {avg:.2f} vs overall {overall_avg:.2f})."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"interaction_type={itype}",
+                        f"avg_satisfaction={avg:.2f}",
+                        f"overall_avg={overall_avg:.2f}",
+                        f"sample_count={len(scores)}",
+                    ],
+                    category="interaction_type_satisfaction",
+                    entity=itype,
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
+        logger.debug(
+            "episode_satisfaction_insights: %d insights (contacts + interaction types)",
             len(insights),
         )
         return insights
