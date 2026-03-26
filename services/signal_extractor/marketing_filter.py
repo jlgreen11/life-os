@@ -336,6 +336,11 @@ def is_marketing_or_noreply(
         "@odysseymail.",   # e.g., @odysseymail.tylertech.cloud
         "@mc.",            # e.g., @mc.ihg.com
         "@eg.",            # e.g., @eg.vrbo.com
+        # E-commerce and brand mailer subdomains observed in production data.
+        "@ecomm.",         # e.g., lenovo@ecomm.lenovo.com (Lenovo e-commerce mailer)
+        "@e1.",            # e.g., AceRewards@e1.acehardware.com (ESP numeric routing)
+        "@mailcenter.",    # e.g., USAA.Customer.Service@mailcenter.usaa.com (bank bulk mailer)
+        "@news.",          # e.g., mr.m@news.monopolygo.com (promotional news subdomain)
         # @mail. subdomain — catches financial/brokerage bulk mailers that use
         # a dedicated "mail." subdomain (mail.fidelity.com, mail.schwab.com,
         # mail.instagram.com).  This does NOT false-positive on gmail.com,
@@ -390,6 +395,8 @@ def is_marketing_or_noreply(
         ".iterable.com",
         ".klaviyo.com",
         # Specific automated domains (iteration 178)
+        "shopifyemail.com",     # e.g., store+...@g.shopifyemail.com (Shopify email delivery)
+        "seatengine.com",       # e.g., venue@seatengine.com (event ticketing platform)
         "proxyvote.com",        # Proxy voting (Broadridge Financial)
         "playatmcd.com",        # McDonald's Monopoly promo
         "facebookmail.com",     # Facebook automated notifications

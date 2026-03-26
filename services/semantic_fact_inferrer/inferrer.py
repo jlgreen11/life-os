@@ -763,25 +763,31 @@ class SemanticFactInferrer:
             # "relationship_balance_store-news@amazon.com", etc.
         """
         deleted = 0
-        # Fetch all relationship_priority_* and relationship_balance_* and
-        # relationship_multichannel_* facts that are not user-corrected.
-        # The contact_id is everything after the first underscore-separated prefix.
+        # Fetch relationship_priority_*, relationship_balance_*,
+        # relationship_multichannel_*, and frequent_sender_* facts that are not
+        # user-corrected.  frequent_sender_* facts are created by
+        # _infer_from_inbound_only_contacts() and must also be purged when the
+        # marketing filter improves and catches previously-missed senders.
         with self.ums.db.get_connection("user_model") as conn:
             rows = conn.execute(
                 "SELECT key FROM semantic_facts "
                 "WHERE (key LIKE 'relationship_priority_%' "
                 "   OR key LIKE 'relationship_balance_%' "
-                "   OR key LIKE 'relationship_multichannel_%') "
+                "   OR key LIKE 'relationship_multichannel_%' "
+                "   OR key LIKE 'frequent_sender_%') "
                 "AND is_user_corrected = 0"
             ).fetchall()
 
             for row in rows:
                 key = row["key"]
-                # Extract contact_id: everything after the prefix and its underscore.
-                # e.g. "relationship_priority_no-reply@accounts.google.com"
-                #        → prefix="relationship_priority", contact_id="no-reply@accounts.google.com"
-                # We split on the second underscore (after "relationship_<type>_").
-                parts = key.split("_", 2)  # ["relationship", "priority", "no-reply@..."]
+                # Extract contact_id: everything after the prefix and its underscore(s).
+                # relationship facts: "relationship_priority_addr@domain.com"
+                #   → split("_", 2) gives ["relationship", "priority", "addr@domain.com"]
+                # frequent_sender facts: "frequent_sender_addr@domain.com"
+                #   → split("_", 1) gives ["frequent", "sender_addr@domain.com"]
+                #   We need the part after "frequent_sender_", i.e. split("_", 2) gives
+                #   ["frequent", "sender", "addr@domain.com"]
+                parts = key.split("_", 2)
                 if len(parts) < 3:
                     continue
                 contact_id = parts[2]
@@ -796,7 +802,7 @@ class SemanticFactInferrer:
         if deleted > 0:
             logger.info(
                 "Purged %d stale marketing relationship facts "
-                "(relationship_priority/balance/multichannel for automated senders)",
+                "(relationship_priority/balance/multichannel/frequent_sender for automated senders)",
                 deleted,
             )
         return deleted

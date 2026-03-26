@@ -26,6 +26,7 @@ EXPECTED_PROFILE_TYPES = [
     "temporal",
     "topics",
     "linguistic",
+    "linguistic_inbound",
     "cadence",
     "mood_signals",
     "spatial",
@@ -125,10 +126,10 @@ async def test_verify_retries_missing_profiles():
 @pytest.mark.asyncio
 async def test_verify_logs_final_status(caplog):
     """Verify the summary log message includes correct populated/missing counts."""
-    # 5 populated, 3 missing (cadence, mood_signals, spatial)
+    # 5 populated, 4 missing (cadence, mood_signals, spatial, linguistic_inbound)
     profile_data = {}
     for pt in EXPECTED_PROFILE_TYPES:
-        if pt not in ("cadence", "mood_signals", "spatial"):
+        if pt not in ("cadence", "mood_signals", "spatial", "linguistic_inbound"):
             profile_data[pt] = {"profile_type": pt, "data": {}, "samples_count": 25}
 
     life_os = _make_life_os_with_mocks(profile_data)
@@ -139,11 +140,11 @@ async def test_verify_logs_final_status(caplog):
     # Check for the initial status log
     status_messages = [r.message for r in caplog.records if "Signal profile status" in r.message]
     assert len(status_messages) >= 1, "Should log initial profile status"
-    assert "5/8" in status_messages[0], f"Expected 5/8 in status message, got: {status_messages[0]}"
+    assert "5/9" in status_messages[0], f"Expected 5/9 in status message, got: {status_messages[0]}"
 
     # Check that retry messages were logged for the missing profiles
     retry_messages = [r.message for r in caplog.records if "Retrying backfill" in r.message]
-    assert len(retry_messages) == 3, f"Expected 3 retry messages, got {len(retry_messages)}"
+    assert len(retry_messages) == 4, f"Expected 4 retry messages, got {len(retry_messages)}"
 
 
 @pytest.mark.asyncio
