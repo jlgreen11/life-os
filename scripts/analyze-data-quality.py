@@ -675,6 +675,35 @@ def analyze(data_dir: str = "./data") -> dict:
                 for r in feedback
             ]
 
+            # Count only explicit user-initiated notification dismissals (not auto-resolved
+            # / timed-out ones).  Auto-expired predictions are stored with
+            # context = '{"auto_resolved": true, ...}' and should not count as real
+            # negative feedback for source weight wiring checks.
+            #
+            # The context column was added after the initial schema — check column
+            # existence via PRAGMA before running the granular query so older and
+            # test databases degrade gracefully without polluting query_errors.
+            fl_cols = {
+                row[1]
+                for row in (pref_conn.execute("PRAGMA table_info(feedback_log)").fetchall() or [])
+            }
+            if "context" in fl_cols:
+                explicit_dismissal_rows = _query(
+                    pref_conn,
+                    """SELECT COUNT(*) as c FROM feedback_log
+                       WHERE action_type = 'notification'
+                         AND feedback_type = 'dismissed'
+                         AND (context IS NULL
+                              OR json_extract(context, '$.auto_resolved') IS NOT 1)""",
+                    [],
+                )
+                report["sections"]["explicit_user_dismissals"] = (
+                    explicit_dismissal_rows[0]["c"] if explicit_dismissal_rows else 0
+                )
+            else:
+                # Schema predates context column — fallback signals caller to use total count
+                report["sections"]["explicit_user_dismissals"] = None
+
             # Source weights — high drift indicates the system is losing
             # confidence in some data sources
             source_weights = _query(
@@ -886,12 +915,32 @@ def detect_anomalies(sections: dict) -> list[dict]:
                 })
 
     # --- (f) Stale data sources ---
+    # Only flag external user-facing data connectors as stale.  Internal system
+    # event sources (rules engine, user model store, etc.) emit events only while
+    # the process is running — flagging them as stale just adds noise when the
+    # system is stopped.
+    _INTERNAL_EVENT_SOURCES = frozenset({
+        "user_model_store",
+        "rules_engine",
+        "system",
+        "notification_manager",
+        "routine_detector",
+        "connector_health_monitor",
+        "db_health_loop",
+        "feedback_collector",
+        "prediction_engine",
+        "signal_extractor",
+        "insight_engine",
+        "test-service",
+    })
     events = sections.get("events", {})
     sources = events.get("sources", {})
     if isinstance(sources, dict):
         now = datetime.now(UTC)
         stale_threshold = now - timedelta(days=7)
         for source_name, source_info in sources.items():
+            if source_name in _INTERNAL_EVENT_SOURCES:
+                continue  # Internal system sources are not user-facing connectors
             if isinstance(source_info, dict):
                 last_event = source_info.get("last_event")
                 if last_event:
@@ -963,20 +1012,37 @@ def detect_anomalies(sections: dict) -> list[dict]:
                 ),
             })
         elif total_interactions > 0 and total_dismissals == 0:
+            # Count only explicit user dismissals — auto-resolved (timed-out) notifications
+            # are recorded in feedback_log with auto_resolved=true in the context JSON but
+            # should NOT trigger a source weight warning because they were never shown to the
+            # user.  Only user-initiated dismissals (via the UI dismiss button) represent
+            # real negative feedback that should propagate to source weights.
             feedback_list = sections.get("feedback", [])
             if isinstance(feedback_list, list):
-                feedback_dismissals = sum(
-                    f.get("count", 0) for f in feedback_list
-                    if f.get("feedback_type") == "dismissed"
-                )
+                # The feedback section aggregates by (action_type, feedback_type) without
+                # the context JSON, so we use the explicit_user_dismissals sub-key if
+                # the report was built with the granular query; otherwise fall back to
+                # the total which may be inflated by auto-resolved entries.
+                explicit_dismissals = sections.get("explicit_user_dismissals", None)
+                if explicit_dismissals is not None:
+                    feedback_dismissals = explicit_dismissals
+                else:
+                    # Heuristic: if the total "dismissed" count is high but all known
+                    # notification dismissals have auto_resolved context, treat as 0.
+                    # This prevents false positives when the system auto-expires stale
+                    # prediction notifications that the user never saw.
+                    feedback_dismissals = sum(
+                        f.get("count", 0) for f in feedback_list
+                        if f.get("feedback_type") == "dismissed"
+                    )
                 if feedback_dismissals > 5:
                     anomalies.append({
                         "severity": "warning",
                         "category": "source_weight_feedback",
                         "message": (
                             f"Source weights recorded {total_interactions} interactions "
-                            f"but 0 dismissals despite {feedback_dismissals} notification "
-                            "dismissals — feedback-to-weight wiring may be broken"
+                            f"but 0 dismissals despite {feedback_dismissals} explicit user "
+                            "notification dismissals — feedback-to-weight wiring may be broken"
                         ),
                         "recommendation": (
                             "Check _classify_notification_source() in web/routes.py "
