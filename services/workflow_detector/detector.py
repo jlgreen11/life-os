@@ -974,10 +974,17 @@ class WorkflowDetector:
                         if not active_interactions[prev_type]:
                             expired_types.append(prev_type)
                         else:
-                            # This interaction follows the previous type
-                            for prev_ts, prev_id in active_interactions[prev_type]:
-                                delay_hours = (timestamp - prev_ts).total_seconds() / 3600
-                                interaction_stats[prev_type][interaction_type].append(delay_hours)
+                            # This interaction follows the previous type.
+                            # Append only ONCE per B-event occurrence, using the most
+                            # recent active A as the delay reference.  Appending once
+                            # per active A (the old behaviour) produces combinatorial
+                            # inflation in email-heavy environments where hundreds of
+                            # email_received episodes can be active simultaneously --
+                            # a single calendar event would then contribute thousands
+                            # of entries, making times_observed meaningless.
+                            most_recent_ts = active_interactions[prev_type][-1][0]
+                            delay_hours = (timestamp - most_recent_ts).total_seconds() / 3600
+                            interaction_stats[prev_type][interaction_type].append(delay_hours)
 
                     for prev_type in expired_types:
                         del active_interactions[prev_type]

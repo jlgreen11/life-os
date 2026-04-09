@@ -3804,8 +3804,11 @@ class LifeOS:
                     if routines:
                         logger.warning("  ⚠ Skipping %d routine event publications (event bus not connected)", len(routines))
 
-                # Detect workflows from last 30 days of event sequences
-                workflows = await asyncio.to_thread(self.workflow_detector.detect_workflows, 30)
+                # Detect workflows from last 90 days of event sequences.
+                # 90 days covers realistic connector outage windows -- a 30-day
+                # cutoff produces 0 results whenever the last sync was > 30 days
+                # ago, erasing all detected patterns from the user model.
+                workflows = await asyncio.to_thread(self.workflow_detector.detect_workflows, 90)
 
                 # Store detected workflows to database
                 workflow_stored = await asyncio.to_thread(self.workflow_detector.store_workflows, workflows)
