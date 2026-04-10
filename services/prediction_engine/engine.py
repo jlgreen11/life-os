@@ -28,14 +28,14 @@ import json
 import logging
 import math
 import uuid
-from datetime import datetime, time, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-from models.core import ConfidenceGate, Priority
-from models.user_model import MoodState, Prediction, ReactionPrediction
+from models.core import ConfidenceGate
+from models.user_model import Prediction, ReactionPrediction
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.database import DatabaseManager, UserModelStore
 
@@ -127,7 +127,7 @@ class PredictionEngine:
         self.ums = ums  # User-model store for signal profiles and semantic memory
         self._tz_name = timezone
         self._last_event_cursor: int = 0  # rowid of last processed event
-        self._last_time_based_run: Optional[datetime] = None  # Last time-based prediction run
+        self._last_time_based_run: datetime | None = None  # Last time-based prediction run
         self._first_follow_up_run: bool = True  # First cycle uses wider lookback (72h vs 24h)
 
         # Diagnostic counters for monitoring prediction pipeline health.
@@ -154,7 +154,7 @@ class PredictionEngine:
         # Persisted to prediction_engine_state so it survives restarts and is
         # available in diagnostics for debugging 0-prediction anomalies.
         self._last_generation_stats: dict[str, Any] = {}
-        self._last_generation_timestamp: Optional[str] = None
+        self._last_generation_timestamp: str | None = None
 
         # Tracks consecutive prediction cycles where the surfacing rate is 0%.
         # When this exceeds 3, the filtering log is escalated from DEBUG to
@@ -170,7 +170,7 @@ class PredictionEngine:
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
         self._contact_email_map: dict[str, str] = {}
-        self._contact_email_map_loaded_at: Optional[datetime] = None
+        self._contact_email_map_loaded_at: datetime | None = None
 
         # Ensure prediction_engine_state table exists and load any persisted state.
         # Both are wrapped in try/except so a corrupted user_model.db doesn't
@@ -251,7 +251,7 @@ class PredictionEngine:
             with self.db.get_connection("user_model") as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO prediction_engine_state (key, value, updated_at) VALUES (?, ?, ?)",
-                    (key, value, datetime.now(timezone.utc).isoformat()),
+                    (key, value, datetime.now(UTC).isoformat()),
                 )
         except Exception as e:
             logger.warning("_persist_state(%s) failed (non-fatal, will retry next cycle): %s", key, e)
@@ -302,7 +302,7 @@ class PredictionEngine:
         and refreshed at most every 30 minutes so that newly-added contacts
         are picked up without requiring a restart.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (
             self._contact_email_map_loaded_at is not None
             and (now - self._contact_email_map_loaded_at).total_seconds() < 1800
@@ -462,7 +462,7 @@ class PredictionEngine:
 
         These run every 15 minutes to detect changes in temporal state.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # First run always executes
         if self._last_time_based_run is None:
@@ -568,15 +568,15 @@ class PredictionEngine:
         # Pre-load existing unresolved predictions to skip regenerating them.
         # This reduces the 16x dedup waste where identical predictions are
         # generated, processed through filtering, then discarded at storage time.
-        existing_predictions: set[tuple[str, str]] = set()
+        existing_predictions: set[tuple[str, str, str | None]] = set()
         try:
             with self.db.get_connection('user_model') as conn:
                 rows = conn.execute(
-                    """SELECT prediction_type, description FROM predictions
+                    """SELECT prediction_type, description, time_horizon FROM predictions
                        WHERE resolved_at IS NULL
                           OR datetime(resolved_at) > datetime('now', '-24 hours')"""
                 ).fetchall()
-                existing_predictions = {(r[0], r[1]) for r in rows}
+                existing_predictions = {(r[0], r[1], r[2]) for r in rows}
             if existing_predictions:
                 logger.debug(
                     'Pre-filter: %d existing predictions will be skipped',
@@ -709,7 +709,7 @@ class PredictionEngine:
             before_count = len(predictions)
             predictions = [
                 p for p in predictions
-                if (p.prediction_type, p.description) not in existing_predictions
+                if (p.prediction_type, p.description, p.time_horizon) not in existing_predictions
             ]
             skipped = before_count - len(predictions)
             if skipped:
@@ -881,7 +881,7 @@ class PredictionEngine:
         # prevents database bloat from hundreds of thousands of unsurfaced
         # predictions that will never be shown to the user.
         surfaced_ids = {p.id for p in filtered}
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         run_store_failures = 0  # Per-run counter; resets each cycle
         stored_count = 0  # Tracks successful store_prediction() calls this run
 
@@ -952,7 +952,7 @@ class PredictionEngine:
         # trigger the alarm.
         if stored_count > 0:
             try:
-                run_start = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+                run_start = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
                 with self.db.get_connection("user_model") as conn:
                     actual_count = conn.execute(
                         "SELECT COUNT(*) FROM predictions WHERE created_at >= ?",
@@ -1010,7 +1010,7 @@ class PredictionEngine:
             )
 
         self._last_run_diagnostics = {
-            "last_run_at": datetime.now(timezone.utc).isoformat(),
+            "last_run_at": datetime.now(UTC).isoformat(),
             "total_runs": self._total_runs,
             "total_generated": self._total_predictions_generated,
             "total_surfaced": self._total_predictions_surfaced,
@@ -1035,7 +1035,7 @@ class PredictionEngine:
         # This lets diagnostics show exactly which _check_* methods returned 0
         # vs errored vs were skipped, even after a restart.
         self._last_generation_stats = generation_stats
-        self._last_generation_timestamp = datetime.now(timezone.utc).isoformat()
+        self._last_generation_timestamp = datetime.now(UTC).isoformat()
         self._persist_state("last_generation_stats", json.dumps(generation_stats))
         self._persist_state("last_generation_timestamp", self._last_generation_timestamp)
 
@@ -1101,7 +1101,7 @@ class PredictionEngine:
             # Fetch calendar events synced in the last 30 days.
             # This captures all events the CalDAV connector has loaded,
             # including future events that were synced recently.
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
 
             events = conn.execute(
                 """SELECT * FROM events
@@ -1120,7 +1120,7 @@ class PredictionEngine:
 
         # Parse event payloads and extract actual start/end times.
         # Filter to events that START in the next 48 hours.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         lookahead = now + timedelta(hours=48)
 
         parsed_events = []
@@ -1147,7 +1147,7 @@ class PredictionEngine:
                     start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
                     # If timezone-naive (all-day events), make it UTC-aware
                     if start_dt.tzinfo is None:
-                        start_dt = start_dt.replace(tzinfo=timezone.utc)
+                        start_dt = start_dt.replace(tzinfo=UTC)
                 except ValueError:
                     # Completely unparseable — skip this event
                     continue
@@ -1156,7 +1156,7 @@ class PredictionEngine:
                     end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
                     # If timezone-naive (all-day events), make it UTC-aware
                     if end_dt.tzinfo is None:
-                        end_dt = end_dt.replace(tzinfo=timezone.utc)
+                        end_dt = end_dt.replace(tzinfo=UTC)
                 except ValueError:
                     # Completely unparseable — skip this event
                     continue
@@ -1199,7 +1199,7 @@ class PredictionEngine:
                         "is_all_day": is_all_day,
                     })
 
-            except Exception as e:
+            except Exception:
                 # Fail-open: skip individual parse errors without breaking
                 # conflict detection for other events.
                 continue
@@ -1329,7 +1329,7 @@ class PredictionEngine:
         - One reminder per event (deduplicated against existing predictions)
         """
         predictions = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         window_start = now + timedelta(hours=2)
         window_end = now + timedelta(hours=24)
 
@@ -1365,7 +1365,7 @@ class PredictionEngine:
 
                 start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
                 if start_dt.tzinfo is None:
-                    start_dt = start_dt.replace(tzinfo=timezone.utc)
+                    start_dt = start_dt.replace(tzinfo=UTC)
 
                 if window_start <= start_dt <= window_end:
                     upcoming.append({
@@ -1537,7 +1537,7 @@ class PredictionEngine:
         # follow-up predictions entirely — better to risk duplicates than silence.
         already_predicted_messages: set[str] = set()
         try:
-            prediction_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+            prediction_cutoff = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
             with self.db.get_connection("user_model") as conn:
                 existing_predictions = conn.execute(
                     """SELECT supporting_signals FROM predictions
@@ -1572,7 +1572,7 @@ class PredictionEngine:
 
         with self.db.get_connection("events") as conn:
             # Inbound messages from the lookback window
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(hours=lookback_hours)).isoformat()
 
             inbound = conn.execute(
                 """SELECT id, payload, timestamp FROM events
@@ -1601,7 +1601,7 @@ class PredictionEngine:
                         latest_ts = datetime.fromisoformat(
                             latest_row["timestamp"].replace("Z", "+00:00")
                         )
-                        staleness = datetime.now(timezone.utc) - latest_ts
+                        staleness = datetime.now(UTC) - latest_ts
                         max_lookback = timedelta(days=14)
 
                         if staleness > timedelta(hours=72):
@@ -1609,7 +1609,7 @@ class PredictionEngine:
                             # active email period, capped at 14 days ago.
                             fallback_start = max(
                                 latest_ts - timedelta(hours=24),
-                                datetime.now(timezone.utc) - max_lookback,
+                                datetime.now(UTC) - max_lookback,
                             )
                             fallback_cutoff = fallback_start.isoformat()
                             days_ago = staleness.days
@@ -1702,7 +1702,7 @@ class PredictionEngine:
             # Calculate how long it's been
             try:
                 msg_time = datetime.fromisoformat(msg["timestamp"].replace("Z", "+00:00"))
-                hours_ago = (datetime.now(timezone.utc) - msg_time).total_seconds() / 3600
+                hours_ago = (datetime.now(UTC) - msg_time).total_seconds() / 3600
             except (ValueError, TypeError):
                 hours_ago = 24
 
@@ -1797,7 +1797,7 @@ class PredictionEngine:
             logger.info("routine_deviations: 0 routines with consistency_score > 0.6 — skipping")
             return predictions
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Check what routine deviation predictions we've already created today
@@ -1925,7 +1925,7 @@ class PredictionEngine:
                     },
                 ))
 
-            except (json.JSONDecodeError, TypeError, KeyError) as e:
+            except (json.JSONDecodeError, TypeError, KeyError):
                 # Fail-open: skip routines with malformed data
                 continue
 
@@ -1973,7 +1973,7 @@ class PredictionEngine:
                 return predictions
         else:
             contacts = rel_profile["data"].get("contacts", {})
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for addr, data in contacts.items():
             last = data.get("last_interaction")
@@ -2233,7 +2233,7 @@ class PredictionEngine:
             # Fetch calendar events synced in the last 30 days.
             # This captures all events the CalDAV connector has loaded,
             # including future events that were synced recently.
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
 
             events = conn.execute(
                 """SELECT * FROM events
@@ -2248,7 +2248,7 @@ class PredictionEngine:
 
         # Parse event payloads and extract actual start times.
         # Filter to events that START in the 12-48 hour preparation window.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         window_start = now + timedelta(hours=12)
         window_end = now + timedelta(hours=48)
 
@@ -2273,7 +2273,7 @@ class PredictionEngine:
                 # in calendar conflict detection.
                 start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
                 if start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=timezone.utc)
+                    start_time = start_time.replace(tzinfo=UTC)
 
                 is_all_day = payload.get("is_all_day", False)
                 in_window = False
@@ -2384,7 +2384,7 @@ class PredictionEngine:
 
         with self.db.get_connection("events") as conn:
             # Transactions in the last 30 days
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+            cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
 
             transactions = conn.execute(
                 """SELECT payload FROM events
@@ -2463,7 +2463,7 @@ class PredictionEngine:
             List of Prediction objects for connectors that need user attention.
         """
         predictions: list[Prediction] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Query broken connectors from state.db
         try:
@@ -2522,7 +2522,7 @@ class PredictionEngine:
             try:
                 ref_dt = datetime.fromisoformat(reference_time)
                 if ref_dt.tzinfo is None:
-                    ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+                    ref_dt = ref_dt.replace(tzinfo=UTC)
                 staleness = now - ref_dt
                 days_stale = max(1, int(staleness.total_seconds() / 86400))
             except (ValueError, TypeError):
@@ -2599,7 +2599,7 @@ class PredictionEngine:
         recent_dismissals = 0
         try:
             with self.db.get_connection("preferences") as conn:
-                cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+                cutoff = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
                 row = conn.execute(
                     """SELECT COUNT(*) as cnt FROM feedback_log
                        WHERE feedback_type = 'dismissed' AND timestamp > ?""",
@@ -2650,7 +2650,7 @@ class PredictionEngine:
         # when no explicit quiet hours are configured: if the current hour shows
         # very low historical activity (< 5% of peak), treat it as a natural
         # quiet period and apply the same penalty.
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         local_now = now.astimezone(ZoneInfo(self._tz_name))
         in_quiet_hours = self._is_quiet_hours(local_now)
 
@@ -3117,7 +3117,7 @@ class PredictionEngine:
             }
         """
         diagnostics = {"prediction_types": {}, "overall": {}}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         week_ago = (now - timedelta(days=7)).isoformat()
 
         # Get prediction counts for last 7 days

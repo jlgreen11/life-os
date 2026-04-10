@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from storage.manager import DatabaseManager
 
@@ -86,14 +86,14 @@ class UserModelStore:
         if not published_via_bus and self._event_store:
             try:
                 # Create a proper event envelope matching the Event model format
-                from datetime import datetime, timezone
                 import uuid
+                from datetime import datetime
 
                 event = {
                     "id": str(uuid.uuid4()),
                     "type": event_type,
                     "source": "user_model_store",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "priority": "normal",
                     "payload": payload,
                     "metadata": {"telemetry": True},
@@ -239,7 +239,7 @@ class UserModelStore:
         return updated
 
     def update_semantic_fact(self, key: str, category: str, value: Any,
-                            confidence: float, episode_id: Optional[str] = None):
+                            confidence: float, episode_id: str | None = None):
         """Update or create a semantic memory fact.
 
         Confidence increment logic:
@@ -322,12 +322,12 @@ class UserModelStore:
                 "confidence": final_confidence,
                 "is_new": is_new,
                 "episode_id": episode_id,
-                "learned_at": datetime.now(timezone.utc).isoformat(),
+                "learned_at": datetime.now(UTC).isoformat(),
             })
         except Exception as e:
             logger.warning("update_semantic_fact failed: %s", e)
 
-    def get_semantic_fact(self, key: str) -> Optional[dict]:
+    def get_semantic_fact(self, key: str) -> dict | None:
         """
         Retrieve a single semantic memory fact by key.
 
@@ -353,7 +353,7 @@ class UserModelStore:
                 return fact
             return None
 
-    def get_semantic_facts(self, category: Optional[str] = None,
+    def get_semantic_facts(self, category: str | None = None,
                           min_confidence: float = 0.0) -> list[dict]:
         """Retrieve semantic memory facts.
 
@@ -381,7 +381,7 @@ class UserModelStore:
             return facts
 
     def get_high_confidence_facts(self, min_confirmations: int = 3,
-                                  category: Optional[str] = None) -> list[dict]:
+                                  category: str | None = None) -> list[dict]:
         """Retrieve semantic facts that have been confirmed multiple times.
 
         Filters by ``times_confirmed`` to distinguish well-established facts
@@ -444,14 +444,14 @@ class UserModelStore:
             # corrupt (phantom telemetry bug).
             self._emit_telemetry("usermodel.signal_profile.updated", {
                 "profile_type": profile_type,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             })
         except Exception as e:
             logger.warning(
                 "UserModelStore.update_signal_profile failed (user_model.db may be corrupt): %s", e
             )
 
-    def get_signal_profile(self, profile_type: str) -> Optional[dict]:
+    def get_signal_profile(self, profile_type: str) -> dict | None:
         """Retrieve a signal profile.
 
         The ``data`` column is stored as a JSON string in SQLite, so we
@@ -484,7 +484,7 @@ class UserModelStore:
         provided for all dimensions so that partial mood readings (e.g. only
         energy and stress) can still be recorded without raising errors.
         """
-        timestamp = mood.get("timestamp", datetime.now(timezone.utc).isoformat())
+        timestamp = mood.get("timestamp", datetime.now(UTC).isoformat())
         try:
             with self.db.get_connection("user_model") as conn:
                 conn.execute(
@@ -567,9 +567,15 @@ class UserModelStore:
                 """SELECT id FROM predictions
                    WHERE prediction_type = ?
                    AND description = ?
+                   AND (time_horizon = ? OR (time_horizon IS NULL AND ? IS NULL))
                    AND (resolved_at IS NULL OR datetime(resolved_at) > datetime('now', '-24 hours'))
                    LIMIT 1""",
-                (prediction["prediction_type"], prediction["description"]),
+                (
+                    prediction["prediction_type"],
+                    prediction["description"],
+                    prediction.get("time_horizon"),
+                    prediction.get("time_horizon"),
+                ),
             ).fetchone()
 
             # If duplicate exists (either unresolved or recently filtered), skip storage
@@ -579,7 +585,7 @@ class UserModelStore:
                     "existing_prediction_id": existing["id"],
                     "attempted_prediction_type": prediction["prediction_type"],
                     "attempted_description": prediction["description"][:100],  # Truncate for telemetry
-                    "deduplicated_at": datetime.now(timezone.utc).isoformat(),
+                    "deduplicated_at": datetime.now(UTC).isoformat(),
                 })
                 return False  # Skip storage — duplicate exists
 
@@ -616,7 +622,7 @@ class UserModelStore:
             "time_horizon": prediction.get("time_horizon"),
             "was_surfaced": prediction.get("was_surfaced", False),
             "signals_count": len(prediction.get("supporting_signals", [])),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         })
         return True
 
@@ -667,7 +673,7 @@ class UserModelStore:
             "channel": template.get("channel"),
             "formality": template.get("formality", 0.5),
             "samples_analyzed": template.get("samples_analyzed", 0),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         })
 
     def _deserialize_template_row(self, row) -> dict:
@@ -691,7 +697,7 @@ class UserModelStore:
 
     def get_communication_template(
         self, contact_id: str | None = None, channel: str | None = None
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Retrieve the best-matching communication template.
 
         Looks up a template by contact_id and/or channel, returning the one
@@ -788,7 +794,7 @@ class UserModelStore:
         if deleted:
             self._emit_telemetry("usermodel.template.deleted", {
                 "template_id": template_id,
-                "deleted_at": datetime.now(timezone.utc).isoformat(),
+                "deleted_at": datetime.now(UTC).isoformat(),
             })
         return deleted
 
@@ -863,7 +869,7 @@ class UserModelStore:
             self._emit_telemetry("usermodel.template.patched", {
                 "template_id": template_id,
                 "fields_updated": [f for f in updates if f in ALLOWED_FIELDS],
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             })
         return result
 
@@ -910,7 +916,7 @@ class UserModelStore:
             "was_accurate": was_accurate,
             "has_response": bool(user_response),
             "resolution_reason": resolution_reason,
-            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_at": datetime.now(UTC).isoformat(),
         })
 
     def store_routine(self, routine: dict):
@@ -963,10 +969,10 @@ class UserModelStore:
             "steps_count": len(routine.get("steps", [])),
             "consistency_score": routine.get("consistency_score", 0.5),
             "times_observed": routine.get("times_observed", 0),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         })
 
-    def get_routines(self, trigger: Optional[str] = None) -> list[dict]:
+    def get_routines(self, trigger: str | None = None) -> list[dict]:
         """Retrieve stored routines, optionally filtered by trigger.
 
         Args:
@@ -1061,10 +1067,10 @@ class UserModelStore:
             "tools_count": len(workflow.get("tools_used", [])),
             "success_rate": workflow.get("success_rate", 0.5),
             "times_observed": workflow.get("times_observed", 0),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         })
 
-    def get_workflows(self, name_filter: Optional[str] = None) -> list[dict]:
+    def get_workflows(self, name_filter: str | None = None) -> list[dict]:
         """Retrieve stored workflows, optionally filtered by name pattern.
 
         Args:
