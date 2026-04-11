@@ -31,6 +31,39 @@ logger = logging.getLogger(__name__)
 # Consumers can inspect report["query_errors"] to distinguish "no data" from "query failed".
 _errors: list[dict] = []
 
+# Maps each signal profile name to the event types its extractor actually processes.
+# Mirrors the same constant in services/signal_extractor/pipeline.py.
+# Used to distinguish "missing because no qualifying events" from "missing despite having data".
+PROFILE_EVENT_TYPES: dict[str, list[str]] = {
+    "linguistic": ["email.sent", "message.sent", "system.user.command"],
+    "linguistic_inbound": ["email.received", "message.received"],
+    "cadence": ["email.sent", "message.sent", "email.received", "message.received"],
+    "mood_signals": [
+        "email.received", "email.sent", "message.received", "message.sent",
+        "health.metric.updated", "health.sleep.recorded",
+        "calendar.event.created", "finance.transaction.new",
+        "location.changed", "system.user.command",
+    ],
+    "relationships": ["email.received", "email.sent", "message.received", "message.sent"],
+    "temporal": [
+        "email.sent", "message.sent",
+        "email.received", "message.received",
+        "calendar.event.created", "calendar.event.updated",
+        "task.created", "task.completed", "task.updated",
+        "system.user.command",
+    ],
+    "topics": ["email.received", "email.sent", "message.received", "message.sent", "system.user.command"],
+    "spatial": [
+        "calendar.event.created", "calendar.event.updated",
+        "ios.context.update", "system.user.location_update", "email.received",
+    ],
+    "decision": [
+        "task.completed", "task.created", "email.sent", "message.sent",
+        "email.received", "message.received",
+        "calendar.event.created", "calendar.event.updated", "finance.transaction.new",
+    ],
+}
+
 
 def _query(conn, sql, default=None):
     """Execute a query and return results, or default on error."""
@@ -46,6 +79,33 @@ def _query_one(conn, sql, default=None):
     """Execute a query and return first row, or default on error."""
     try:
         return conn.execute(sql).fetchone()
+    except Exception as e:
+        logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
+        _errors.append({"sql": sql[:200], "error": str(e)})
+        return default
+
+
+def _query_params(conn, sql, params=(), default=None):
+    """Execute a parameterized query and return results, or default on error.
+
+    Unlike _query(), this accepts a params tuple for safe SQL parameterization.
+    Use this whenever query values come from runtime data rather than literals.
+    """
+    try:
+        return conn.execute(sql, params).fetchall()
+    except Exception as e:
+        logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
+        _errors.append({"sql": sql[:200], "error": str(e)})
+        return default
+
+
+def _query_one_params(conn, sql, params=(), default=None):
+    """Execute a parameterized query and return first row, or default on error.
+
+    Unlike _query_one(), this accepts a params tuple for safe SQL parameterization.
+    """
+    try:
+        return conn.execute(sql, params).fetchone()
     except Exception as e:
         logger.warning("Query failed: %s — SQL: %s", e, sql[:200])
         _errors.append({"sql": sql[:200], "error": str(e)})
@@ -407,12 +467,46 @@ def analyze(data_dir: str = "./data") -> dict:
             ]
             missing = [t for t in expected_types if t not in existing_types]
 
+            # For each missing profile, cross-reference with events.db to determine
+            # whether the absence is actionable ("qualifying events exist but profile
+            # is still empty") or informational ("no qualifying events can ever populate it").
+            # This prevents false-positive warnings for profiles like 'linguistic' that
+            # only get data from outbound events (email.sent, message.sent) when a
+            # connector is broken or no outbound activity has occurred.
+            missing_profile_detail: dict[str, str] = {}
+            if missing:
+                ev_conn_profiles = _connect(data_path / "events.db")
+                if ev_conn_profiles:
+                    try:
+                        for profile_type in missing:
+                            qualifying_types = PROFILE_EVENT_TYPES.get(profile_type, [])
+                            if not qualifying_types:
+                                # No known qualifying types — treat as informational
+                                missing_profile_detail[profile_type] = "no_qualifying_event_types_defined"
+                                continue
+                            placeholders = ",".join("?" * len(qualifying_types))
+                            row = _query_one_params(
+                                ev_conn_profiles,
+                                f"SELECT COUNT(*) as c FROM events WHERE type IN ({placeholders})",
+                                tuple(qualifying_types),
+                            )
+                            count = row["c"] if row else 0
+                            if count == 0:
+                                # Profile can't be populated — no qualifying events exist
+                                missing_profile_detail[profile_type] = "no_qualifying_events"
+                            else:
+                                # Qualifying events exist but the profile was never written
+                                missing_profile_detail[profile_type] = f"{count}_qualifying_events_exist"
+                    finally:
+                        ev_conn_profiles.close()
+
             report["sections"]["signal_profiles"] = {
                 "profiles": {
                     r["profile_type"]: {"samples": r["samples_count"], "last_updated": r["updated_at"]}
                     for r in profiles
                 },
                 "missing_profiles": missing,
+                "missing_profile_detail": missing_profile_detail,
             }
         except Exception as e:
             report["sections"]["signal_profiles"] = {"error": str(e)}
@@ -1050,6 +1144,101 @@ def detect_anomalies(sections: dict) -> list[dict]:
                             "map to unknown source_keys"
                         ),
                     })
+
+    # --- (j) Missing signal profiles — severity depends on qualifying event availability ---
+    # A profile missing with qualifying events is a pipeline bug (warning).
+    # A profile missing with NO qualifying events is expected/informational (info).
+    signal_profiles = sections.get("signal_profiles", {})
+    if isinstance(signal_profiles, dict) and "error" not in signal_profiles:
+        missing_profiles = signal_profiles.get("missing_profiles", [])
+        missing_detail = signal_profiles.get("missing_profile_detail", {})
+
+        for profile_type in missing_profiles:
+            detail = missing_detail.get(profile_type, "unknown")
+            if detail in ("no_qualifying_events", "no_qualifying_event_types_defined"):
+                # No qualifying events can populate this profile — informational only
+                anomalies.append({
+                    "severity": "info",
+                    "category": "missing_profile",
+                    "message": (
+                        f"Signal profile '{profile_type}' is missing — "
+                        "no qualifying events exist to populate it"
+                    ),
+                    "recommendation": (
+                        f"No action needed unless you expect {profile_type}-related "
+                        "data to be ingested (e.g., check connector status)"
+                    ),
+                })
+            elif "qualifying_events_exist" in detail:
+                # Qualifying events exist but the profile was never written — pipeline issue
+                qualifying_count = detail.split("_qualifying_events_exist")[0]
+                anomalies.append({
+                    "severity": "warning",
+                    "category": "missing_profile",
+                    "message": (
+                        f"Signal profile '{profile_type}' is missing despite "
+                        f"{qualifying_count} qualifying events existing in events.db"
+                    ),
+                    "recommendation": (
+                        f"Check signal extractor pipeline for '{profile_type}'; "
+                        "run profile rebuild from /admin or check for extractor errors in logs"
+                    ),
+                })
+            else:
+                # Unknown detail — report as warning to be safe
+                anomalies.append({
+                    "severity": "warning",
+                    "category": "missing_profile",
+                    "message": f"Signal profile '{profile_type}' is missing",
+                    "recommendation": (
+                        "Check signal extractor pipeline and run profile rebuild if needed"
+                    ),
+                })
+
+    # --- (k) Root-cause annotation: link stale-data anomalies to connector errors ---
+    # When a connector is in error state, many downstream anomalies are symptoms of that
+    # root cause rather than independent problems.  Annotate those anomalies so the analyst
+    # can focus on the real issue (fix the connector) rather than chasing symptoms.
+    connector_errors: dict[str, str] = {}  # connector_id → days_in_error
+    connectors = sections.get("connectors", {})
+    if isinstance(connectors, dict) and "error" not in connectors:
+        now = datetime.now(UTC)
+        for connector_id, info in connectors.items():
+            if isinstance(info, dict) and info.get("status") == "error":
+                last_sync = info.get("last_sync")
+                if last_sync:
+                    try:
+                        last_dt = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
+                        if last_dt.tzinfo is None:
+                            last_dt = last_dt.replace(tzinfo=UTC)
+                        days_down = (now - last_dt).days
+                        connector_errors[connector_id] = f"{days_down} days"
+                    except (ValueError, TypeError):
+                        connector_errors[connector_id] = "unknown duration"
+                else:
+                    connector_errors[connector_id] = "never synced"
+
+    if connector_errors:
+        # Build a human-readable note listing all errored connectors and their downtime
+        error_parts = [f"'{cid}' (down {dur})" for cid, dur in sorted(connector_errors.items())]
+        root_cause_hint = (
+            f"This may be caused by connector(s) in error state: {', '.join(error_parts)}. "
+            "When a connector is down, no new data flows in, so lookback-window checks "
+            "and profile/routine detections will fail."
+        )
+        # Categories whose anomalies are likely downstream effects of connector outage
+        stale_related_categories = {
+            "routine_detection",
+            "workflow_detection",
+            "stale_source",
+            "prediction_persistence",
+            "workflow_email_imbalance",
+            "missing_profile",
+        }
+        for anomaly in anomalies:
+            # Only annotate stale-related anomalies that haven't already been annotated (idempotent).
+            if anomaly.get("category") in stale_related_categories and "root_cause_hint" not in anomaly:
+                anomaly["root_cause_hint"] = root_cause_hint
 
     return anomalies
 
