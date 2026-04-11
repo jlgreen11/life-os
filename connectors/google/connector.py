@@ -86,6 +86,21 @@ class GoogleConnector(BaseConnector):
         if not success:
             error_detail = getattr(self, "_auth_error", None) or "Authentication failed"
             await self._update_state("error", error_detail)
+            # Include structured auth_diagnosis in the error event so the health
+            # monitor and admin UI can surface the root cause immediately, rather
+            # than showing a generic "Authentication failed" message for days.
+            auth_diagnosis = self._compute_auth_diagnosis()
+            await self.bus.publish(
+                "system.connector.error",
+                {
+                    "connector_id": self.CONNECTOR_ID,
+                    "error": error_detail,
+                    "error_type": "authentication",
+                    "display_name": self.DISPLAY_NAME,
+                    "auth_diagnosis": auth_diagnosis,
+                },
+                source=self.CONNECTOR_ID,
+            )
             return
 
         self._running = True
@@ -120,7 +135,10 @@ class GoogleConnector(BaseConnector):
 
             creds = self._load_credentials()
             if not creds:
-                self._auth_error = "No valid token found — complete OAuth via /admin connector panel"
+                self._auth_error = (
+                    f"Token file missing at {self._token_file} — "
+                    "complete initial OAuth setup via /admin connector panel"
+                )
                 logger.warning(self._auth_error)
                 return False
 
@@ -996,7 +1014,85 @@ class GoogleConnector(BaseConnector):
             "token_age_hours": token_age_hours,
             "recovery_hint": recovery_hint,
             "last_sync": last_sync,
+            # Structured root-cause analysis — callers can programmatically
+            # react to auth_diagnosis["root_cause"] rather than parsing strings.
+            "auth_diagnosis": self._compute_auth_diagnosis(),
         }
+
+    def _compute_auth_diagnosis(self) -> dict[str, Any]:
+        """Compute structured auth diagnostics identifying the root cause of auth failure.
+
+        Checks file existence and token state to produce a ``root_cause`` label
+        and an actionable ``action`` string. Called by _build_health_diagnostics()
+        (unauthenticated path) and start() (to enrich the published error event).
+
+        Returns a dict with:
+        - token_file_exists: bool
+        - credentials_file_exists: bool
+        - root_cause: str  (present when auth is broken)
+          one of: missing_credentials | oauth_not_completed |
+                  token_expired_refresh_available | no_refresh_token | token_corrupt
+        - action: str  (present when root_cause is set)
+        - token_valid, token_expired, has_refresh_token: bool
+          (present when token file is readable via the Credentials class)
+        """
+        import os
+
+        auth_diagnosis: dict[str, Any] = {
+            "token_file_exists": os.path.exists(self._token_file),
+            "credentials_file_exists": os.path.exists(self._credentials_file),
+        }
+
+        # Short-circuit: credentials file is a prerequisite for everything else.
+        if not auth_diagnosis["credentials_file_exists"]:
+            auth_diagnosis["root_cause"] = "missing_credentials"
+            auth_diagnosis["action"] = (
+                f"Download OAuth credentials from Google Cloud Console and "
+                f"save to {self._credentials_file}"
+            )
+            return auth_diagnosis
+
+        # No token file means OAuth was never completed.
+        if not auth_diagnosis["token_file_exists"]:
+            auth_diagnosis["root_cause"] = "oauth_not_completed"
+            auth_diagnosis["action"] = (
+                "Complete initial OAuth setup: "
+                "visit /api/admin/connectors/google/auth in your browser"
+            )
+            return auth_diagnosis
+
+        # Both files exist — inspect the token's validity state for a deeper diagnosis.
+        try:
+            from google.oauth2.credentials import Credentials
+
+            creds = Credentials.from_authorized_user_file(self._token_file, SCOPES)
+            auth_diagnosis["token_valid"] = creds.valid
+            auth_diagnosis["token_expired"] = creds.expired
+            auth_diagnosis["has_refresh_token"] = bool(creds.refresh_token)
+
+            if creds.expired and not creds.refresh_token:
+                auth_diagnosis["root_cause"] = "no_refresh_token"
+                auth_diagnosis["action"] = (
+                    "Re-authenticate: visit /api/admin/connectors/google/auth"
+                )
+            elif creds.expired:
+                # Refresh token is present — automatic refresh will fix this on next sync.
+                auth_diagnosis["root_cause"] = "token_expired_refresh_available"
+                auth_diagnosis["action"] = (
+                    "Token refresh should happen automatically on next sync cycle"
+                )
+            # If neither condition applies, the token is valid — no root_cause needed.
+
+        except Exception as e:
+            # File exists but cannot be parsed as valid Credentials JSON.
+            auth_diagnosis["root_cause"] = "token_corrupt"
+            auth_diagnosis["action"] = (
+                f"Token file is corrupt ({e}). "
+                f"Delete {self._token_file} and re-authenticate via "
+                "/api/admin/connectors/google/auth"
+            )
+
+        return auth_diagnosis
 
     @staticmethod
     def _classify_api_error(exc: Exception) -> str:
