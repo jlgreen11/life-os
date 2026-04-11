@@ -167,6 +167,12 @@ class SignalExtractorPipeline:
         self._last_profile_health: dict | None = None
         self._last_rebuild_result: dict | None = None
 
+        # Tracks which profiles were missing on the previous periodic health
+        # check.  Used by periodic_health_check() to detect newly-missing
+        # profiles without triggering redundant rebuilds when the same profiles
+        # have been persistently empty across consecutive checks.
+        self._last_health_check_missing: list[str] = []
+
     async def process_event(self, event: dict) -> list[dict]:
         """
         Process an event through all applicable extractors.
@@ -234,6 +240,19 @@ class SignalExtractorPipeline:
             except Exception as e:
                 # Fail-open: a single profile query failure doesn't block the rest.
                 result[ptype] = {"status": "error", "samples": 0, "data_keys": [], "error": str(e)}
+
+        # Annotate the 'linguistic' profile when it is missing but its
+        # inbound counterpart is healthy.  The outbound linguistic profile
+        # will never populate unless the user has sent email/messages — on
+        # inbound-only setups this is expected and should not trigger alerts.
+        if (
+            result.get("linguistic", {}).get("status") == "missing"
+            and result.get("linguistic_inbound", {}).get("status") == "ok"
+        ):
+            result["linguistic"]["note"] = (
+                "expected: no outbound email/message events; "
+                "linguistic_inbound is healthy"
+            )
 
         self._last_profile_health = result
         return result
@@ -343,6 +362,34 @@ class SignalExtractorPipeline:
                 len(rebuild_result.get("errors", [])),
             )
 
+            # Clear operator-facing summary: total populated vs total expected,
+            # with per-profile annotations explaining why any are still missing.
+            total_expected = len(expected_profiles)
+            total_populated = total_expected - len(still_missing)
+            still_missing_annotations: list[str] = []
+            for pt in still_missing:
+                if pt == "linguistic":
+                    # If inbound linguistic is healthy, missing outbound is expected
+                    # (no outbound email/message events in history).
+                    inbound = self.ums.get_signal_profile("linguistic_inbound")
+                    if inbound and not _is_profile_stale(inbound):
+                        still_missing_annotations.append(
+                            "linguistic (no outbound events — expected)"
+                        )
+                        continue
+                still_missing_annotations.append(pt)
+            missing_suffix = (
+                "; still missing: " + ", ".join(still_missing_annotations)
+                if still_missing_annotations
+                else ""
+            )
+            logger.info(
+                "Rebuild complete: %d/%d profiles populated%s",
+                total_populated,
+                total_expected,
+                missing_suffix,
+            )
+
             # Check for silent write failures: profiles where extractors ran
             # but update_signal_profile() silently failed to persist data.
             write_failures = rebuild_result.get("write_failures", {})
@@ -372,6 +419,71 @@ class SignalExtractorPipeline:
             # Fail-open: never block startup due to profile rebuild failures.
             logger.warning("check_and_rebuild_missing_profiles: failed (non-fatal): %s", e, exc_info=True)
             return {"missing_before": [], "rebuilt": [], "skipped": True}
+
+    def periodic_health_check(self, force_rebuild: bool = False) -> dict:
+        """Check profile health and trigger rebuild if profiles went missing.
+
+        Designed to be called periodically (e.g., every 6 hours) from a
+        background loop.  Only triggers a rebuild when profiles are NEWLY
+        missing (i.e., they were not missing on the previous check) or when
+        ``force_rebuild=True``.  This avoids hammering the rebuild path on
+        every health tick when profiles are persistently empty because there
+        are genuinely no qualifying events (e.g., 'linguistic' on an
+        inbound-only installation).
+
+        After a successful rebuild the missing list is refreshed from the DB
+        so that the next periodic check can distinguish profiles that are still
+        genuinely absent from ones that were just fixed.
+
+        Args:
+            force_rebuild: If ``True``, always triggers
+                ``check_and_rebuild_missing_profiles()`` regardless of whether
+                the missing profiles changed since the last check.  Useful for
+                operator-initiated manual recovery via an admin endpoint.
+
+        Returns:
+            A dict with the following keys:
+
+            - ``status``: one of ``'healthy'``, ``'rebuilt'``, or
+              ``'degraded'``
+            - ``missing``: list of profile names currently classified as
+              missing (stale profiles are not included — they are handled by
+              the normal live-event pipeline)
+            - ``rebuild_result``: present only when ``status='rebuilt'``;
+              the return value from ``check_and_rebuild_missing_profiles()``
+            - ``note``: present only when ``status='degraded'``; a
+              human-readable explanation of why no rebuild was triggered
+        """
+        health = self.get_profile_health()
+        missing = [name for name, info in health.items() if info.get("status") == "missing"]
+
+        if not missing:
+            self._last_health_check_missing = []
+            return {"status": "healthy", "missing": []}
+
+        # Determine which of the current missing profiles are newly missing
+        # (absent from the previous check's missing list).
+        previously_missing = self._last_health_check_missing
+        newly_missing = [p for p in missing if p not in previously_missing]
+
+        if newly_missing or force_rebuild:
+            logger.warning(
+                "Periodic health check: %d profiles missing (%s) — triggering rebuild",
+                len(missing),
+                ", ".join(missing),
+            )
+            result = self.check_and_rebuild_missing_profiles()
+            self._last_health_check_missing = missing
+            return {"status": "rebuilt", "missing": missing, "rebuild_result": result}
+
+        # Same profiles still missing — no action, but flag as degraded so
+        # callers and monitoring dashboards can surface this.
+        self._last_health_check_missing = missing
+        return {
+            "status": "degraded",
+            "missing": missing,
+            "note": "same profiles missing as last check — no redundant rebuild triggered",
+        }
 
     def rebuild_profiles_from_events(
         self,
