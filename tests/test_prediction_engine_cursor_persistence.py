@@ -92,22 +92,37 @@ def test_cursor_advances_in_memory_on_subsequent_events(db, event_store, user_mo
 
 
 def test_time_based_run_persisted(db, user_model_store):
-    """_should_run_time_based_predictions() persists its timestamp and a new engine restores it."""
+    """last_time_based_run is persisted at the END of generate_predictions(), NOT
+    inside _should_run_time_based_predictions().
+
+    This prevents the race condition where the timestamp is 'used up' in the DB
+    before predictions are stored: a crash between the trigger check and the
+    storage loop would leave the DB with the new timestamp, causing restarts to
+    skip time-based predictions for 15 minutes while storing nothing.
+
+    Correct behavior:
+    - _should_run_time_based_predictions() updates in-memory state only.
+    - A fresh engine (simulating a restart mid-pipeline) sees no persisted
+      timestamp and immediately fires time-based predictions again.
+    - After a full generate_predictions() cycle, the timestamp is in the DB
+      and a third engine respects the 15-min cooldown.
+    """
     engine = PredictionEngine(db=db, ums=user_model_store)
 
-    # First call should run (last_time_based_run is None) and persist
+    # First call should run (last_time_based_run is None) and update in-memory
     assert engine._should_run_time_based_predictions() is True
     saved_time = engine._last_time_based_run
     assert saved_time is not None
 
-    # New engine should restore the timestamp
+    # A new engine (simulating a crash before generate_predictions() finishes)
+    # must NOT see the in-memory-only timestamp — it was never written to the DB.
     engine2 = PredictionEngine(db=db, ums=user_model_store)
-    assert engine2._last_time_based_run is not None
-    # Allow 1-second tolerance for rounding
-    assert abs((engine2._last_time_based_run - saved_time).total_seconds()) < 1
-
-    # And the second engine should NOT immediately re-run time-based predictions
-    assert engine2._should_run_time_based_predictions() is False
+    assert engine2._last_time_based_run is None, (
+        "last_time_based_run must not be in the DB until generate_predictions() "
+        "completes — if persisted early, a mid-pipeline crash causes a permanent stall"
+    )
+    # The fresh engine should therefore fire time-based predictions immediately
+    assert engine2._should_run_time_based_predictions() is True
 
 
 def test_time_based_run_respects_15min_interval_after_restore(db, user_model_store):

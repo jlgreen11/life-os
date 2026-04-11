@@ -294,6 +294,21 @@ class PredictionEngine:
         self._zero_surfacing_cycles = 0
         self._surfacing_diagnostics = self._empty_surfacing_diagnostics()
 
+        # Clear the persisted trigger-state keys from the DB so that
+        # _load_persisted_state() doesn't reload stale timestamps after
+        # a DB rebuild.  Without this, the engine could load an old
+        # last_time_based_run and suppress time-based predictions for 15
+        # minutes after recovery — or worse, restore a stale
+        # last_successful_generation that masks the ongoing stall.
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    "DELETE FROM prediction_engine_state "
+                    "WHERE key IN ('last_time_based_run', 'last_successful_generation')"
+                )
+        except Exception as e:
+            logger.warning("reset_state: failed to clear persisted trigger state: %s", e)
+
     def _load_contact_email_map(self) -> None:
         """Lazily build a mapping from lowercase email addresses to contact names.
 
@@ -467,14 +482,20 @@ class PredictionEngine:
         # First run always executes
         if self._last_time_based_run is None:
             self._last_time_based_run = now
-            self._persist_state("last_time_based_run", now.isoformat())
+            # NOTE: do NOT persist here — state is only written to the DB at the
+            # END of generate_predictions() after the pipeline completes successfully.
+            # Persisting before predictions are stored creates a race condition where
+            # the trigger timestamp is 'used up' but nothing was actually stored: if
+            # an exception occurs between this check and the storage loop, the engine
+            # restarts, loads the now-current timestamp from DB, and skips time-based
+            # predictions for 15 minutes — producing 0 predictions indefinitely.
             return True
 
         # Run if 15+ minutes have passed since last time-based check
         time_since_last = (now - self._last_time_based_run).total_seconds() / 60
         if time_since_last >= 15:
             self._last_time_based_run = now
-            self._persist_state("last_time_based_run", now.isoformat())
+            # NOTE: do NOT persist here — see race condition comment above.
             return True
 
         return False
@@ -554,6 +575,37 @@ class PredictionEngine:
             time_based_due = True
             prev = generation_stats.get("trigger_errors", "")
             generation_stats["trigger_errors"] = f"{prev}; time_based: {e}".lstrip("; ")
+
+        # Stale generation recovery: if time_based_due is currently False but
+        # the last_successful_generation timestamp in the DB is >2 hours old,
+        # force time_based_due=True to break a potential permanent stall.
+        #
+        # This covers the scenario where the engine crashed or raised after
+        # setting _last_time_based_run in memory but before storing predictions.
+        # On restart _load_persisted_state() loads the OLD persisted timestamp
+        # (since we no longer persist it in _should_run_time_based_predictions),
+        # so the trigger will naturally fire again — but if the engine is still
+        # running (no restart) and _last_time_based_run is stuck in a stale
+        # in-memory value, this check acts as a safety net.
+        if not time_based_due and self._last_time_based_run is not None:
+            try:
+                with self.db.get_connection("user_model") as conn:
+                    row = conn.execute(
+                        "SELECT value FROM prediction_engine_state "
+                        "WHERE key = 'last_successful_generation'"
+                    ).fetchone()
+                if row:
+                    last_success = datetime.fromisoformat(row["value"])
+                    stale_threshold = datetime.now(UTC) - timedelta(hours=2)
+                    if last_success < stale_threshold:
+                        logger.warning(
+                            "Stale generation recovery: last_successful_generation=%s is "
+                            ">2h old — forcing time_based_due=True to prevent permanent stall",
+                            last_success.isoformat(),
+                        )
+                        time_based_due = True
+            except Exception as e:
+                logger.debug("Stale generation recovery check failed (non-fatal): %s", e)
 
         # Skip entirely if neither trigger is active
         if not has_new_events and not time_based_due:
@@ -940,6 +992,13 @@ class PredictionEngine:
             except Exception as e:
                 logger.warning("WAL checkpoint failed after prediction storage: %s", e)
 
+        # Record that predictions were successfully stored this cycle.
+        # This timestamp is read by the stale generation recovery check in the
+        # NEXT generate_predictions() call — if >2h have elapsed without a
+        # successful store, the check forces time_based_due=True to break stalls.
+        if stored_count > 0:
+            self._persist_state("last_successful_generation", datetime.now(UTC).isoformat())
+
         # --- Post-store verification ---
         # Detect the case where store_prediction() appeared to succeed but
         # data was lost (DB recovery, WAL issue, etc.).  This makes the
@@ -1044,6 +1103,22 @@ class PredictionEngine:
         # mid-way, the cursor stays at the old persisted value and those
         # events will be reprocessed on the next cycle.
         self._persist_state("last_event_cursor", str(self._last_event_cursor))
+
+        # Persist the time-based run timestamp NOW (after the full pipeline
+        # has completed), NOT inside _should_run_time_based_predictions().
+        #
+        # Previously the timestamp was persisted before predictions were stored,
+        # creating this race:
+        #   1. _should_run_time_based_predictions() → writes new timestamp to DB
+        #   2. Exception occurs anywhere between step 1 and the storage loop
+        #   3. Engine restarts → _load_persisted_state() loads the new timestamp
+        #   4. time_based_due = False for 15 more minutes → 0 predictions stored
+        #   5. Repeat indefinitely (stalled loop)
+        #
+        # By moving the persist here, a crash before the storage loop leaves
+        # the OLD timestamp in the DB so the trigger fires again on restart.
+        if time_based_due and self._last_time_based_run is not None:
+            self._persist_state("last_time_based_run", self._last_time_based_run.isoformat())
 
         # Rebuild filtered list to exclude deduplicated predictions.
         # This prevents _prediction_loop() from creating notifications
