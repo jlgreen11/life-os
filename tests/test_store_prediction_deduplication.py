@@ -16,10 +16,7 @@ which tested deduplication at the GENERATION layer (checking before calling
 generate). This tests deduplication at the STORAGE layer (inside store_prediction).
 """
 
-import json
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 
 class TestPredictionStorageDeduplication:
@@ -47,7 +44,7 @@ class TestPredictionStorageDeduplication:
             "description": "Unreplied message from alice@example.com",  # Same description
             "confidence": 0.90,  # Different confidence (shouldn't matter)
             "confidence_gate": "AUTONOMOUS",  # Different gate (shouldn't matter)
-            "time_horizon": "2_hours",  # Different horizon (shouldn't matter)
+            "time_horizon": "24_hours",  # Same horizon (part of dedup key)
             "supporting_signals": {"contact_id": "alice", "extra": "data"},
             "was_surfaced": False,
             "resolved_at": None,  # Unresolved
@@ -79,7 +76,7 @@ class TestPredictionStorageDeduplication:
         ums = user_model_store
 
         # Resolved prediction from 25+ hours ago (outside deduplication window)
-        old_resolved_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        old_resolved_time = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
 
         prediction1 = {
             "id": "pred-1",
@@ -223,7 +220,7 @@ class TestPredictionStorageDeduplication:
         ums = user_model_store
 
         # Filtered prediction from 25+ hours ago (outside deduplication window)
-        old_filtered_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        old_filtered_time = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
 
         prediction1 = {
             "id": "pred-1",

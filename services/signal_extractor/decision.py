@@ -251,7 +251,13 @@ class DecisionExtractor(BaseExtractor):
 
         try:
             start_time = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
-        except (ValueError, AttributeError):
+            # Date-only strings (e.g. '2026-02-15' for all-day events) produce
+            # naive datetimes with no tzinfo.  created_at is always timezone-aware,
+            # so subtracting them would raise TypeError.  Treat date-only times as
+            # midnight UTC so we can still compute a valid planning horizon.
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError, TypeError):
             return None
 
         # Calculate planning horizon (how far in advance they scheduled)
