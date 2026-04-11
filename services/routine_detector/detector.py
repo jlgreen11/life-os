@@ -136,6 +136,99 @@ class RoutineDetector:
         )
         return threshold
 
+    def _compute_adaptive_lookback_days(self, lookback_days: int) -> int:
+        """Compute an adaptive lookback window that extends when recent episodes are sparse.
+
+        When a connector outage moves all episodes outside the default lookback window,
+        routine detection returns 0 results despite thousands of historical episodes.
+        This method detects that scenario and extends the window to cover available data.
+
+        Algorithm:
+        1. Count episodes in the default window.
+        2. If count > 0, the system has recent data — return lookback_days unchanged.
+        3. If count == 0 (connector outage scenario), find the oldest timestamp among
+           the 200 most recent episodes to discover where the data is.
+        4. If that timestamp predates the current cutoff, extend lookback_days to cover
+           it (adding a 1-day buffer), capped at MAX_ADAPTIVE_LOOKBACK_DAYS (180).
+        5. On any DB error, fall back silently to the original lookback_days.
+
+        The extension fires ONLY when the default window is completely empty (0 episodes).
+        Having any recent episodes means the system is still receiving data normally;
+        extending in that case would incorrectly include pre-outage data alongside fresh
+        data and violate the lookback boundary guarantee.
+
+        Args:
+            lookback_days: The requested lookback window in days.
+
+        Returns:
+            Effective lookback window in days (>= lookback_days, <= 180).
+        """
+        MAX_ADAPTIVE_LOOKBACK_DAYS = 180
+        try:
+            now = datetime.now(UTC)
+            cutoff = now - timedelta(days=lookback_days)
+            cutoff_iso = cutoff.isoformat()
+
+            # Step 1: Count episodes in the default window.
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE timestamp > ?",
+                    (cutoff_iso,),
+                ).fetchone()
+            episode_count = row[0] if row else 0
+
+            # Step 2: Episodes exist in the default window — no extension needed.
+            # We only extend when the window is completely empty (count == 0),
+            # which is the connector-outage scenario where ALL data has aged out.
+            # Having even a small number of recent episodes means the system is
+            # still receiving data; extending in that case would incorrectly pull
+            # in pre-outage episodes alongside fresh ones and break the lookback
+            # filtering guarantee that tests like test_lookback_period_filtering
+            # rely on.
+            if episode_count > 0:
+                return lookback_days
+
+            # Step 3: Find the oldest timestamp among the 200 most recent episodes.
+            # This tells us how far back we need to look to get meaningful data.
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute(
+                    """SELECT MIN(timestamp)
+                       FROM (SELECT timestamp FROM episodes ORDER BY timestamp DESC LIMIT 200)""",
+                ).fetchone()
+
+            if not row or not row[0]:
+                # No episodes at all — extension would be pointless.
+                return lookback_days
+
+            try:
+                oldest_dt = datetime.fromisoformat(row[0])
+                if oldest_dt.tzinfo is None:
+                    oldest_dt = oldest_dt.replace(tzinfo=UTC)
+            except (ValueError, TypeError):
+                return lookback_days
+
+            # Step 4: If the oldest recent episode predates the current cutoff,
+            # extend the window to cover it (plus a 1-day safety buffer).
+            if oldest_dt < cutoff:
+                needed_days = int((now - oldest_dt).total_seconds() / 86400) + 1
+                effective_days = min(needed_days, MAX_ADAPTIVE_LOOKBACK_DAYS)
+                logger.info(
+                    "Adaptive lookback: extended from %d to %d days (%d episodes in default window)",
+                    lookback_days,
+                    effective_days,
+                    episode_count,
+                )
+                return effective_days
+
+            return lookback_days
+
+        except Exception:
+            logger.warning(
+                "Adaptive lookback computation failed — falling back to default %d days",
+                lookback_days,
+            )
+            return lookback_days
+
     @staticmethod
     def _hour_to_bucket(hour: int) -> str:
         """Map an hour (0–23) to a time-of-day bucket name.
@@ -277,10 +370,25 @@ class RoutineDetector:
         Returns:
             List of detected routines with metadata
         """
+        # Adaptive lookback: when the default window contains fewer episodes than
+        # the detection minimum (e.g., because a connector outage pushed all
+        # episodes older than 30 days), extend the window to cover the most recent
+        # available data.  This runs BEFORE backfill and detection so every
+        # downstream step benefits from the same extended window.
+        # Wrapped in try/except so a transient DB failure doesn't block detection.
+        try:
+            effective_lookback_days = self._compute_adaptive_lookback_days(lookback_days)
+        except Exception:
+            logger.warning(
+                "Adaptive lookback computation raised unexpectedly — using default %d days",
+                lookback_days,
+            )
+            effective_lookback_days = lookback_days
+
         # Backfill stale interaction_type values before any detection strategy
         # runs, so all strategies benefit from properly classified episodes.
         try:
-            self._backfill_stale_interaction_types(lookback_days)
+            self._backfill_stale_interaction_types(effective_lookback_days)
         except Exception:
             logger.exception("Interaction type backfill failed — continuing with detection")
 
@@ -292,7 +400,7 @@ class RoutineDetector:
         # InsightEngine correlators.
         temporal_routines = []
         try:
-            temporal_routines = self._detect_temporal_routines(lookback_days)
+            temporal_routines = self._detect_temporal_routines(effective_lookback_days)
             routines.extend(temporal_routines)
         except Exception:
             logger.exception("Temporal routine detection failed (possible DB corruption)")
@@ -306,7 +414,7 @@ class RoutineDetector:
                 "Temporal detection returned 0 routines — trying episode-based fallback",
             )
             try:
-                fallback_routines = self._detect_routines_from_episodes_fallback(lookback_days)
+                fallback_routines = self._detect_routines_from_episodes_fallback(effective_lookback_days)
                 temporal_routines = fallback_routines
                 routines.extend(fallback_routines)
             except Exception:
@@ -314,14 +422,14 @@ class RoutineDetector:
 
         location_routines = []
         try:
-            location_routines = self._detect_location_routines(lookback_days)
+            location_routines = self._detect_location_routines(effective_lookback_days)
             routines.extend(location_routines)
         except Exception:
             logger.exception("Location routine detection failed (possible DB corruption)")
 
         event_routines = []
         try:
-            event_routines = self._detect_event_triggered_routines(lookback_days)
+            event_routines = self._detect_event_triggered_routines(effective_lookback_days)
             routines.extend(event_routines)
         except Exception:
             logger.exception("Event-triggered routine detection failed (possible DB corruption)")
