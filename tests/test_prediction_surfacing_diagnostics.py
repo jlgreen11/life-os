@@ -21,11 +21,16 @@ from services.prediction_engine.engine import (
 
 
 def _make_prediction(prediction_type="reminder", confidence=0.5):
-    """Create a minimal Prediction for testing."""
+    """Create a minimal Prediction for testing.
+
+    Each call generates a unique description to prevent intra-batch deduplication
+    from silently discarding predictions when multiple predictions of the same type
+    are created in a single test scenario.
+    """
     return Prediction(
         id=str(uuid.uuid4()),
         prediction_type=prediction_type,
-        description=f"Test {prediction_type} prediction",
+        description=f"Test {prediction_type} prediction {uuid.uuid4().hex[:8]}",
         confidence=confidence,
         confidence_gate="suggest" if confidence >= 0.3 else "observe",
         time_horizon="24_hours",
