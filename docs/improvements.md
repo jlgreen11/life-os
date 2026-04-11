@@ -41,7 +41,14 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- _(empty — will be populated on next wave)_
+- **Fix date-only calendar start_time crash in temporal extractor** · `broken_feature` — Same TypeError as decision extractor but in temporal.py's calendar handling path. Also needs investigation into why email.received events don't persist the temporal profile.
+- **Fix prediction loop stalled since March 6** · `broken_feature` — No predictions generated for 36+ days despite loop running. 0 stored predictions in user_model.db. Investigate why generate_predictions() returns empty or store_prediction() fails silently.
+- **Add email.received support to decision extractor** · `missing_feature` — Decision extractor only triggers on email.sent (11 events), calendar (207), task (0), finance (0). Adding email.received would give it 860+ events for richer decision signal extraction.
+- **Fix Google connector authentication failure** · `broken_feature` — Google connector in error state since Feb 20 (50 days), no new email/calendar data flowing. Likely needs OAuth token refresh or re-authentication.
+- **Wire semantic fact confirmation loop** · `missing_feature` — DB columns `is_user_corrected`, `times_confirmed`, `source_episodes` exist in facts table but are never populated. The +0.05 confidence increment on user correction doesn't work.
+- **Complete linguistic profile field population** · `missing_feature` — ~60% of LinguisticProfile fields populated; hedge_ratio, assertion_ratio, emoji_density, capitalization_style remain empty despite data being available in the extraction pipeline.
+- **Reduce notification expiry rate (96%)** · `broken_feature` — 159 of 160 notifications expire without user interaction. Auto-deliver converts pending→delivered after 6h but users don't see them. Needs email/push fallback when WebSocket not connected.
+- **Fix communication_templates table empty** · `broken_feature` — Data quality reports 0 communication templates despite linguistic and relationship extractors having template extraction code.
 
 ## In Progress
 
@@ -49,7 +56,9 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- _(none)_
+- **Fix routine detection consistency calculation averaging across interaction types** · `broken_feature` (wave 1, slot 1)
+- **Fix decision extractor crash on date-only calendar start_time** · `broken_feature` (wave 1, slot 2)
+- **Fix temporal extractor date-only calendar crash and profile persistence** · `broken_feature` (wave 1, slot 3)
 
 ## Completed
 
