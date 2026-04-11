@@ -1102,11 +1102,18 @@ class RoutineDetector:
                 # Sort by recurrence (most days first)
                 actions.sort(key=lambda x: x[1], reverse=True)
 
-                # Consistency = fraction of active days where this action appeared.
-                # avg_day_count is the mean across all actions in the bucket so
-                # that actions missing on a few days don't dominate the score.
-                avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
-                consistency = min(1.0, avg_day_count / active_days)
+                # Consistency = fraction of active days where the *most consistent*
+                # action in this bucket appeared.  Using the max day_count means
+                # "does the user reliably do SOMETHING in this time bucket?" rather
+                # than "does the user reliably do EVERYTHING in this time bucket?".
+                #
+                # The old avg_day_count approach caused dominant patterns (e.g.
+                # email_received on 39/39 days) to be dragged below the 0.6
+                # threshold by rare co-occurring types (e.g. meeting_scheduled on
+                # 3/39 days): avg=(39+3)/2=21, consistency=21/39=0.54 → FAIL.
+                # With max: max=39, consistency=39/39=1.0 → PASS.
+                max_day_count = max(dc for _, dc, _ in actions)
+                consistency = min(1.0, max_day_count / active_days)
 
                 effective_threshold = self._effective_consistency_threshold(active_days)
                 is_cold_start = effective_threshold < self.consistency_threshold
@@ -1156,7 +1163,7 @@ class RoutineDetector:
                         ],
                         "typical_duration_minutes": total_duration,
                         "consistency_score": confidence,
-                        "times_observed": int(avg_day_count),
+                        "times_observed": int(max_day_count),
                         "variations": [],  # Could add variation detection in future
                         "cold_start": is_cold_start and would_fail_base,
                     }
@@ -1319,8 +1326,13 @@ class RoutineDetector:
             if len(actions) >= 1:
                 actions.sort(key=lambda x: x[1], reverse=True)
 
-                avg_day_count = sum(dc for _, dc, _ in actions) / len(actions)
-                consistency = min(1.0, avg_day_count / active_days)
+                # Consistency = fraction of active days where the *most consistent*
+                # action in this bucket appeared.  Using max day_count answers
+                # "does the user reliably do SOMETHING here?" rather than
+                # "does the user reliably do EVERYTHING here?".
+                # (Same fix as in _detect_temporal_routines — see that docstring.)
+                max_day_count = max(dc for _, dc, _ in actions)
+                consistency = min(1.0, max_day_count / active_days)
 
                 logger.info(
                     "Episode fallback: bucket %s consistency=%.2f (threshold=%.2f) %s",
@@ -1354,7 +1366,7 @@ class RoutineDetector:
                         ],
                         "typical_duration_minutes": total_duration,
                         "consistency_score": confidence,
-                        "times_observed": int(avg_day_count),
+                        "times_observed": int(max_day_count),
                         "variations": [],
                         "cold_start": is_cold_start and would_fail_base,
                         "detection_method": "episode_fallback",
