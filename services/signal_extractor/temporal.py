@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import logging
 import statistics
-from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
@@ -34,6 +32,26 @@ class TemporalExtractor(BaseExtractor):
     - "You're most productive 2-4pm, blocking focus time"
     - "Energy dip detected, suggesting a break"
     """
+
+    def __init__(self, db, user_model_store):
+        """Initialize TemporalExtractor.
+
+        Extends BaseExtractor to add a write-attempt counter used by
+        the defensive health check in _update_profile.  After the first
+        successful persistence call we expect every subsequent call to
+        also write successfully; if the profile disappears mid-stream a
+        CRITICAL is logged immediately so operators are alerted.
+
+        Args:
+            db: DatabaseManager for raw event history.
+            user_model_store: UserModelStore for signal profile persistence.
+        """
+        super().__init__(db, user_model_store)
+        # Counts the number of times _update_profile has been called.
+        # Used to distinguish "first write" (profile doesn't exist yet,
+        # which is normal) from "Nth write" (profile should exist, so
+        # a None result from get_signal_profile is a persistence failure).
+        self._profile_write_count = 0
 
     def can_process(self, event: dict) -> bool:
         """
@@ -84,14 +102,16 @@ class TemporalExtractor(BaseExtractor):
             activity_type = self._classify_activity(event_type, event.get("payload", {}))
 
             # Record the temporal activity signal
-            signals.append({
-                "type": "temporal_activity",
-                "timestamp": timestamp,
-                "hour": dt.hour,
-                "day_of_week": dt.strftime("%A").lower(),
-                "activity_type": activity_type,
-                "event_type": event_type,
-            })
+            signals.append(
+                {
+                    "type": "temporal_activity",
+                    "timestamp": timestamp,
+                    "hour": dt.hour,
+                    "day_of_week": dt.strftime("%A").lower(),
+                    "activity_type": activity_type,
+                    "event_type": event_type,
+                }
+            )
 
             # For calendar events, also track the event's actual start time
             # to understand scheduling preferences (not just when the event was created)
@@ -100,19 +120,30 @@ class TemporalExtractor(BaseExtractor):
                 if payload.get("start_time"):
                     try:
                         event_dt = datetime.fromisoformat(payload["start_time"].replace("Z", "+00:00"))
-                        signals.append({
-                            "type": "temporal_scheduled_event",
-                            "timestamp": timestamp,
-                            "scheduled_hour": event_dt.hour,
-                            "scheduled_day": event_dt.strftime("%A").lower(),
-                            "advance_planning_days": (event_dt.date() - dt.date()).days if event_dt >= dt else 0,
-                        })
-                    except (ValueError, AttributeError) as e:
-                        logger.debug('temporal_extractor: skipping calendar event — malformed start_time: %s', e)
+                        # Normalize: all-day calendar events produce naive datetimes
+                        # (date-only ISO strings like "2026-04-15" have no tzinfo).
+                        # Comparing a naive datetime with timezone-aware dt raises
+                        # TypeError — attach UTC so the comparison is safe.
+                        if event_dt.tzinfo is None:
+                            event_dt = event_dt.replace(tzinfo=UTC)
+                        signals.append(
+                            {
+                                "type": "temporal_scheduled_event",
+                                "timestamp": timestamp,
+                                "scheduled_hour": event_dt.hour,
+                                "scheduled_day": event_dt.strftime("%A").lower(),
+                                "advance_planning_days": (event_dt.date() - dt.date()).days if event_dt >= dt else 0,
+                            }
+                        )
+                    except (ValueError, AttributeError, TypeError) as e:
+                        # TypeError can also occur if start_time contains an unexpected
+                        # type (e.g. int from a malformed payload); treat identically.
+                        logger.debug("temporal_extractor: skipping calendar event — malformed start_time: %s", e)
 
-        except (ValueError, AttributeError) as e:
-            logger.debug('temporal_extractor: skipping event %s — malformed timestamp: %s',
-                         event.get('id', 'unknown'), e)
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug(
+                "temporal_extractor: skipping event %s — malformed timestamp: %s", event.get("id", "unknown"), e
+            )
 
         # Update the temporal profile with these signals
         if signals:
@@ -138,8 +169,11 @@ class TemporalExtractor(BaseExtractor):
             return "email_inbound"
         elif event_type == EventType.MESSAGE_RECEIVED.value:
             return "message_inbound"
-        elif event_type in [EventType.CALENDAR_EVENT_CREATED.value, EventType.CALENDAR_EVENT_UPDATED.value,
-                           EventType.TASK_CREATED.value]:
+        elif event_type in [
+            EventType.CALENDAR_EVENT_CREATED.value,
+            EventType.CALENDAR_EVENT_UPDATED.value,
+            EventType.TASK_CREATED.value,
+        ]:
             return "planning"
         elif event_type in [EventType.TASK_COMPLETED.value, EventType.TASK_UPDATED.value]:
             return "work"
@@ -158,14 +192,18 @@ class TemporalExtractor(BaseExtractor):
         """
         # Load existing profile or initialize with empty structures
         existing = self.ums.get_signal_profile("temporal")
-        data = existing["data"] if existing else {
-            "activity_by_hour": {},  # {hour: count}
-            "activity_by_day": {},   # {day: count}
-            "activity_by_type": {},  # {type: count}
-            "activity_by_day_and_type": {},  # {"monday:communication": count} — for day classification
-            "scheduled_hours": {},   # {hour: count} — when events are scheduled
-            "advance_planning_days": [],  # list of planning horizons
-        }
+        data = (
+            existing["data"]
+            if existing
+            else {
+                "activity_by_hour": {},  # {hour: count}
+                "activity_by_day": {},  # {day: count}
+                "activity_by_type": {},  # {type: count}
+                "activity_by_day_and_type": {},  # {"monday:communication": count} — for day classification
+                "scheduled_hours": {},  # {hour: count} — when events are scheduled
+                "advance_planning_days": [],  # list of planning horizons
+            }
+        )
 
         # Ensure activity_by_day_and_type exists for profiles created before this field was added
         if "activity_by_day_and_type" not in data:
@@ -216,13 +254,56 @@ class TemporalExtractor(BaseExtractor):
                     if len(data["advance_planning_days"]) > 1000:
                         data["advance_planning_days"] = data["advance_planning_days"][-1000:]
 
-        # Derive higher-level behavioral fields from the raw counters
-        data = self._derive_behavioral_fields(data)
+        # Derive higher-level behavioral fields from the raw counters.
+        # Wrapped in try/except so an edge-case exception (e.g. unexpected
+        # data type) doesn't silently swallow the profile write below.
+        try:
+            data = self._derive_behavioral_fields(data)
+        except Exception as e:
+            # Log but do NOT abort — the raw counter data is still useful
+            # even if behavioral derivation fails on an edge case.
+            logger.error(
+                "temporal_extractor: _derive_behavioral_fields raised unexpectedly (raw counters preserved): %s",
+                e,
+                exc_info=True,
+            )
 
-        # Persist the updated profile
-        # Note: update_signal_profile expects just the data dict, and automatically
-        # increments samples_count by 1 per call and updates the timestamp
-        self.ums.update_signal_profile("temporal", data)
+        # Persist the updated profile.
+        # update_signal_profile already wraps its INSERT in try/except and
+        # logs a warning on failure, but we add a second layer here so that:
+        #   1. The calling thread sees a clear ERROR log (not just a warning
+        #      buried in UserModelStore output) that names the temporal extractor.
+        #   2. After the Nth write attempt we verify the profile actually exists
+        #      in the DB; a missing profile at that point indicates update_signal_profile
+        #      is silently failing and warrants a CRITICAL for immediate operator action.
+        self._profile_write_count += 1
+        try:
+            self.ums.update_signal_profile("temporal", data)
+        except Exception as e:
+            logger.error(
+                "temporal_extractor: update_signal_profile raised on write #%d: %s",
+                self._profile_write_count,
+                e,
+                exc_info=True,
+            )
+            return
+
+        # Post-write verification: after the second call (i.e. the profile
+        # should exist from the first write), confirm the row is present.
+        # We only check every 10 writes to avoid a read-per-event overhead
+        # on high-volume rebuilds.
+        if self._profile_write_count > 1 and self._profile_write_count % 10 == 0:
+            try:
+                profile = self.ums.get_signal_profile("temporal")
+                if profile is None:
+                    logger.critical(
+                        "temporal_extractor: profile MISSING after %d writes — "
+                        "update_signal_profile() is silently failing to persist data. "
+                        "Check user_model.db health and disk space.",
+                        self._profile_write_count,
+                    )
+            except Exception as e:
+                logger.warning("temporal_extractor: post-write profile verification failed: %s", e)
 
     def _derive_behavioral_fields(self, data: dict) -> dict:
         """
@@ -244,14 +325,8 @@ class TemporalExtractor(BaseExtractor):
 
         # --- Chronotype (requires 50+ total activities) ---
         if total_activity >= 50:
-            morning_activity = sum(
-                count for hour, count in activity_by_hour.items()
-                if 6 <= int(hour) <= 10
-            )
-            evening_activity = sum(
-                count for hour, count in activity_by_hour.items()
-                if 20 <= int(hour) <= 23
-            )
+            morning_activity = sum(count for hour, count in activity_by_hour.items() if 6 <= int(hour) <= 10)
+            evening_activity = sum(count for hour, count in activity_by_hour.items() if 20 <= int(hour) <= 23)
             morning_ratio = morning_activity / total_activity
             evening_ratio = evening_activity / total_activity
 
@@ -271,20 +346,14 @@ class TemporalExtractor(BaseExtractor):
                 key=lambda kv: kv[1],
                 reverse=True,
             )
-            peak_hours = [
-                int(hour) for hour, count in sorted_hours
-                if count >= threshold
-            ][:3]
+            peak_hours = [int(hour) for hour, count in sorted_hours if count >= threshold][:3]
             if peak_hours:
                 data["peak_hours"] = peak_hours
 
         # --- Typical wake / sleep hours (requires 20+ total activities) ---
         if total_activity >= 20:
             threshold_2pct = total_activity * 0.02
-            active_hours = sorted(
-                int(hour) for hour, count in activity_by_hour.items()
-                if count > threshold_2pct
-            )
+            active_hours = sorted(int(hour) for hour, count in activity_by_hour.items() if count > threshold_2pct)
             if active_hours:
                 data["typical_wake_hour"] = active_hours[0]
                 data["typical_sleep_hour"] = active_hours[-1]
@@ -303,8 +372,7 @@ class TemporalExtractor(BaseExtractor):
                     continue
                 # Count work-oriented activity types for this day
                 work_count = sum(
-                    activity_by_day_and_type.get(f"{day}:{t}", 0)
-                    for t in ("communication", "planning", "work")
+                    activity_by_day_and_type.get(f"{day}:{t}", 0) for t in ("communication", "planning", "work")
                 )
                 work_ratio = work_count / day_total
 
