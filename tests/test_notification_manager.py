@@ -165,14 +165,10 @@ async def test_low_priority_batched_in_frequent_mode(
         priority="low",
     )
 
-    # Should be in pending_batch, not delivered
+    # Should be stored as 'batched' in DB (DB-backed durable batch status)
     with db.get_connection("state") as conn:
         row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
-        assert row["status"] == "pending"  # Not delivered yet
-
-    # Should be in the batch queue
-    assert len(notification_manager._pending_batch) == 1
-    assert notification_manager._pending_batch[0]["id"] == notif_id
+        assert row["status"] == "batched"  # Not delivered yet; durably batched
 
 
 # ============================================================================
@@ -357,9 +353,10 @@ async def test_batched_mode_batches_normal(
         priority="normal",
     )
 
-    # Should be batched, not delivered
-    assert len(notification_manager._pending_batch) == 1
-    assert notification_manager._pending_batch[0]["id"] == notif_id
+    # Should be stored as 'batched' in DB (durable, crash-safe batch status)
+    with db.get_connection("state") as conn:
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
+    assert row["status"] == "batched"
 
 
 @pytest.mark.asyncio
@@ -442,9 +439,6 @@ async def test_get_digest_clears_batch_queue(
     digest = await notification_manager.get_digest()
     assert len(digest) == 2
 
-    # Queue should be empty now
-    assert len(notification_manager._pending_batch) == 0
-
     # Second digest should be empty
     digest2 = await notification_manager.get_digest()
     assert len(digest2) == 0
@@ -459,10 +453,10 @@ async def test_get_digest_marks_notifications_delivered(
 
     notif_id = await notification_manager.create_notification("Batch", priority="normal")
 
-    # Initially pending
+    # Initially batched (durable DB status for batch-routed notifications)
     with db.get_connection("state") as conn:
         row = conn.execute("SELECT status, delivered_at FROM notifications WHERE id = ?", (notif_id,)).fetchone()
-        assert row["status"] == "pending"
+        assert row["status"] == "batched"
 
     # Get digest
     await notification_manager.get_digest()
@@ -885,44 +879,44 @@ def test_get_stats_returns_counts_by_status(notification_manager, db):
 
 
 # ============================================================================
-# Batch Recovery on Restart
+# Batch Durability Across Restarts (DB-backed 'batched' status)
 # ============================================================================
 
 
-def test_batch_recovery_on_init(db, mock_event_bus):
-    """Test that pending normal/low-priority notifications are recovered on init.
+@pytest.mark.asyncio
+async def test_batched_notifications_survive_restart(db, mock_event_bus):
+    """Batch-routed notifications stored as 'batched' survive a restart.
 
-    When the server restarts, the in-memory batch queue is lost. The recovery
-    method should re-populate it from notifications that are still 'pending'
-    with normal or low priority in the database, including action_url.
+    With the DB-backed design, batched notifications persist with
+    status='batched'. A new manager instance reads from the DB directly,
+    so no recovery step is needed.
     """
-    # Pre-populate 3 pending normal-priority notifications BEFORE creating NM
+    # Pre-populate 3 batched notifications BEFORE creating NM
     with db.get_connection("state") as conn:
         for i in range(3):
             conn.execute(
                 "INSERT INTO notifications (id, title, body, priority, domain, status, action_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (f"batch-{i}", f"Batch {i}", f"Body {i}", "normal", "email", "pending", f"https://example.com/action/{i}"),
+                (f"batch-{i}", f"Batch {i}", f"Body {i}", "normal", "email", "batched", f"https://example.com/action/{i}"),
             )
 
-    # Instantiate a NEW NotificationManager — should recover pending batch
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
 
-    assert len(nm._pending_batch) == 3
-    recovered_ids = {item["id"] for item in nm._pending_batch}
-    assert recovered_ids == {"batch-0", "batch-1", "batch-2"}
+    # Verify the notifications will be delivered via get_digest()
+    digest = await nm.get_digest()
+    digest_ids = {item["id"] for item in digest}
+    assert digest_ids == {"batch-0", "batch-1", "batch-2"}
 
-    # Verify action_url is preserved through recovery
-    for item in nm._pending_batch:
+    # Verify action_url is preserved through delivery
+    for item in digest:
         idx = item["id"].split("-")[1]
         assert item["action_url"] == f"https://example.com/action/{idx}"
 
 
-def test_batch_recovery_skips_high_priority(db, mock_event_bus):
-    """Test that high-priority pending notifications are NOT recovered into batch.
+def test_high_priority_not_batched(db, mock_event_bus):
+    """High-priority and critical notifications are not batch-routed.
 
-    High-priority notifications are delivered immediately, not batched.
-    If one is still 'pending' after a restart, it means it was just created
-    and hasn't been processed yet — it should NOT be in the batch queue.
+    Only normal/low priority notifications in 'batched' mode get status='batched'.
+    Critical and high go to 'pending' (immediate delivery queue) or 'delivered'.
     """
     with db.get_connection("state") as conn:
         conn.execute(
@@ -934,56 +928,55 @@ def test_batch_recovery_skips_high_priority(db, mock_event_bus):
             ("crit-1", "Critical", "critical", "pending"),
         )
 
+    # A new manager should see no batched notifications to deliver
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+    # High/critical items have status='pending', not 'batched' — won't appear in digest
+    with db.get_connection("state") as conn:
+        batch_count = conn.execute(
+            "SELECT COUNT(*) as cnt FROM notifications WHERE status = 'batched'"
+        ).fetchone()["cnt"]
+    assert batch_count == 0
 
-    assert len(nm._pending_batch) == 0
 
-
-def test_batch_recovery_skips_delivered(db, mock_event_bus):
-    """Test that already-delivered notifications are NOT recovered into batch.
-
-    Only notifications with status='pending' should be recovered. Delivered
-    notifications have already been shown to the user.
-    """
+def test_delivered_notifications_not_in_digest(db, mock_event_bus):
+    """Already-delivered notifications do not appear in the batch digest."""
     with db.get_connection("state") as conn:
         conn.execute(
             "INSERT INTO notifications (id, title, priority, status) VALUES (?, ?, ?, ?)",
             ("delivered-1", "Already Delivered", "normal", "delivered"),
         )
 
-    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
-
-    assert len(nm._pending_batch) == 0
+    # Delivered items should not be in 'batched' status
+    with db.get_connection("state") as conn:
+        batch_count = conn.execute(
+            "SELECT COUNT(*) as cnt FROM notifications WHERE status = 'batched'"
+        ).fetchone()["cnt"]
+    assert batch_count == 0
 
 
 @pytest.mark.asyncio
-async def test_recovered_batch_delivers_on_digest(db, mock_event_bus):
-    """Test that recovered batch notifications are delivered via get_digest().
-
-    After recovery, calling get_digest() should deliver the recovered
-    notifications and mark them as 'delivered' in the database.
-    """
+async def test_batched_notification_delivers_on_digest(db, mock_event_bus):
+    """Notifications stored with status='batched' are delivered via get_digest()."""
     with db.get_connection("state") as conn:
         conn.execute(
             "INSERT INTO notifications (id, title, body, priority, domain, status) VALUES (?, ?, ?, ?, ?, ?)",
-            ("recover-1", "Recovered", "Body", "normal", "email", "pending"),
+            ("batched-1", "Batched Item", "Body", "normal", "email", "batched"),
         )
 
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
-    assert len(nm._pending_batch) == 1
 
-    # Deliver via digest
     digest = await nm.get_digest()
     assert len(digest) == 1
-    assert digest[0]["id"] == "recover-1"
+    assert digest[0]["id"] == "batched-1"
 
     # Notification should now be marked as delivered in DB
     with db.get_connection("state") as conn:
-        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("recover-1",)).fetchone()
-        assert row["status"] == "delivered"
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("batched-1",)).fetchone()
+    assert row["status"] == "delivered"
 
-    # Batch should be empty after digest
-    assert len(nm._pending_batch) == 0
+    # Second digest should be empty (nothing left as 'batched')
+    digest2 = await nm.get_digest()
+    assert len(digest2) == 0
 
 
 @pytest.mark.asyncio
@@ -1009,9 +1002,13 @@ async def test_batch_queuing_preserves_action_url(
         action_url=action_url,
     )
 
-    # Verify action_url is in the in-memory batch
-    assert len(notification_manager._pending_batch) == 1
-    assert notification_manager._pending_batch[0]["action_url"] == action_url
+    # Verify action_url is preserved in the DB batch record
+    with db.get_connection("state") as conn:
+        row = conn.execute(
+            "SELECT status, action_url FROM notifications WHERE id = ?", (notif_id,)
+        ).fetchone()
+    assert row["status"] == "batched"
+    assert row["action_url"] == action_url
 
     # Verify action_url survives through get_digest()
     digest = await notification_manager.get_digest()
@@ -1022,7 +1019,7 @@ async def test_batch_queuing_preserves_action_url(
 
 @pytest.mark.asyncio
 async def test_batch_queuing_preserves_none_action_url(
-    notification_manager, set_notification_mode
+    notification_manager, set_notification_mode, db
 ):
     """Test that batched notifications without action_url have it set to None."""
     set_notification_mode("batched")
@@ -1032,8 +1029,13 @@ async def test_batch_queuing_preserves_none_action_url(
         priority="normal",
     )
 
-    assert len(notification_manager._pending_batch) == 1
-    assert notification_manager._pending_batch[0]["action_url"] is None
+    # Verify notification is batched in DB and has null action_url
+    with db.get_connection("state") as conn:
+        rows = conn.execute(
+            "SELECT id, status, action_url FROM notifications WHERE status = 'batched'"
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["action_url"] is None
 
 
 @pytest.mark.asyncio
@@ -1047,15 +1049,14 @@ async def test_recovered_prediction_gets_surfaced(db, mock_event_bus, create_pre
     prediction_id = "pred-recovered"
     create_prediction(prediction_id, was_surfaced=0)
 
-    # Create a pending prediction notification in DB before NM init
+    # Create a batched prediction notification in DB before NM init
     with db.get_connection("state") as conn:
         conn.execute(
             "INSERT INTO notifications (id, title, priority, domain, source_event_id, status) VALUES (?, ?, ?, ?, ?, ?)",
-            ("pred-notif-1", "Prediction Alert", "normal", "prediction", prediction_id, "pending"),
+            ("pred-notif-1", "Prediction Alert", "normal", "prediction", prediction_id, "batched"),
         )
 
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
-    assert len(nm._pending_batch) == 1
 
     # Deliver via digest
     await nm.get_digest()
@@ -1195,8 +1196,12 @@ def test_expire_stale_notifications_skips_non_pending(db, mock_event_bus):
         assert row["status"] == "delivered"
 
 
-def test_recover_pending_batch_skips_stale_notifications(db, mock_event_bus):
-    """Only recent pending notifications should be recovered into the batch."""
+def test_expire_stale_notifications_skips_recent_batched(db, mock_event_bus):
+    """expire_stale_notifications() expires old 'batched' items but not recent ones.
+
+    This test verifies that the expiry method correctly handles the 'batched'
+    status (the DB-backed replacement for the old in-memory batch list).
+    """
     now = datetime.now(timezone.utc)
     recent_time = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%fZ")
     stale_time = (now - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%fZ")
@@ -1204,56 +1209,57 @@ def test_recover_pending_batch_skips_stale_notifications(db, mock_event_bus):
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications (id, title, priority, status, created_at)
-               VALUES (?, ?, 'normal', 'pending', ?)""",
+               VALUES (?, ?, 'normal', 'batched', ?)""",
             ("n-recent", "Recent", recent_time),
         )
         conn.execute(
             """INSERT INTO notifications (id, title, priority, status, created_at)
-               VALUES (?, ?, 'normal', 'pending', ?)""",
+               VALUES (?, ?, 'normal', 'batched', ?)""",
             ("n-stale", "Stale", stale_time),
         )
 
-    # Creating the NM triggers _recover_pending_batch which calls expire first
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
 
-    assert len(nm._pending_batch) == 1
-    assert nm._pending_batch[0]["id"] == "n-recent"
+    expired_count, expired_ids = nm.expire_stale_notifications(max_age_hours=48)
 
-    # The stale notification should be expired in DB
+    assert "n-recent" not in expired_ids, "Recent batched notification should not be expired"
+    assert "n-stale" in expired_ids, "Stale batched notification should be expired"
+
+    # Verify DB state
     with db.get_connection("state") as conn:
-        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-stale",)).fetchone()
-        assert row["status"] == "expired"
+        recent_row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-recent",)).fetchone()
+        stale_row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-stale",)).fetchone()
+    assert recent_row["status"] == "batched"
+    assert stale_row["status"] == "expired"
 
 
 @pytest.mark.asyncio
 async def test_get_digest_expires_stale_before_flushing(db, mock_event_bus):
-    """Stale items in _pending_batch should be expired before digest delivery."""
+    """Stale 'batched' notifications should be expired before digest delivery.
+
+    get_digest() calls expire_stale_notifications() before loading the batch,
+    so a batched notification older than 48 hours should be expired and not
+    appear in the digest.
+    """
     now = datetime.now(timezone.utc)
     stale_time = (now - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%fZ")
 
-    # Insert a notification with a very old created_at
+    # Insert a 'batched' notification with a very old created_at
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications (id, title, priority, status, created_at)
-               VALUES (?, ?, 'normal', 'pending', ?)""",
+               VALUES (?, ?, 'normal', 'batched', ?)""",
             ("n-digest-stale", "Stale Digest Item", stale_time),
         )
 
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
 
-    # Manually add the stale item to the in-memory batch (simulating it was
-    # added during a long-running session before expiry existed).
-    nm._pending_batch.append({
-        "id": "n-digest-stale",
-        "title": "Stale Digest Item",
-        "body": None,
-        "priority": "normal",
-        "domain": None,
-        "source_event_id": None,
-        "action_url": None,
-    })
-
     digest = await nm.get_digest()
 
     # The stale item should have been expired and excluded from the digest
     assert len(digest) == 0
+
+    # Verify it was marked expired in the DB
+    with db.get_connection("state") as conn:
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("n-digest-stale",)).fetchone()
+    assert row["status"] == "expired"

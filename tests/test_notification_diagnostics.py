@@ -80,7 +80,7 @@ class TestDiagnosticsEmpty:
         diag = notification_manager.get_diagnostics()
         assert diag["health"] == "ok"
         assert diag["status_counts"] == {}
-        assert diag["in_memory_batch_depth"] == 0
+        assert diag["db_batch_depth"] == 0
         assert diag["oldest_pending_hours"] is None
         assert diag["recommendations"] == []
         assert diag["recent_activity"]["created_24h"] == 0
@@ -158,23 +158,25 @@ class TestDiagnosticsReadRate:
 
 
 class TestDiagnosticsBatchDepth:
-    """In-memory batch queue depth reporting."""
+    """DB batch queue depth reporting (replaced in-memory list with DB-backed status)."""
 
-    def test_batch_depth_reflects_pending_batch(self, notification_manager):
-        """Batch depth should match len(self._pending_batch)."""
-        notification_manager._pending_batch = [
-            {"id": "a", "title": "t1"},
-            {"id": "b", "title": "t2"},
-            {"id": "c", "title": "t3"},
-        ]
+    def test_batch_depth_reflects_db_batched_count(self, notification_manager, db):
+        """Batch depth should match the number of notifications with status='batched' in DB."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        for i in range(3):
+            with db.get_connection("state") as conn:
+                conn.execute(
+                    "INSERT INTO notifications (id, title, body, priority, status, created_at) "
+                    "VALUES (?, ?, ?, 'normal', 'batched', ?)",
+                    (f"batch-{i}", f"Batch item {i}", "Body", now_str),
+                )
         diag = notification_manager.get_diagnostics()
-        assert diag["in_memory_batch_depth"] == 3
+        assert diag["db_batch_depth"] == 3
 
     def test_empty_batch(self, notification_manager):
         """Empty batch should report depth 0."""
-        notification_manager._pending_batch = []
         diag = notification_manager.get_diagnostics()
-        assert diag["in_memory_batch_depth"] == 0
+        assert diag["db_batch_depth"] == 0
 
 
 class TestDiagnosticsHealthNoisy:

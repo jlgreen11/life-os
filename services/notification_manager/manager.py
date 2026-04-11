@@ -16,8 +16,8 @@ import json
 import logging
 import sqlite3
 import uuid
-from datetime import datetime, time, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -34,16 +34,6 @@ class NotificationManager:
         self.config = config   # App-level configuration (not user preferences)
         self._tz = ZoneInfo(timezone)
 
-        # In-memory batch for digest delivery.
-        # Low-priority notifications accumulate here until get_digest() is
-        # called (typically on a schedule — e.g., 9 AM, 1 PM, 6 PM).
-        self._pending_batch: list[dict] = []
-
-        # Recover any batched notifications that were lost during a restart.
-        # Notifications with status='pending' and normal/low priority were
-        # destined for batch delivery but their in-memory references were lost.
-        self._recover_pending_batch()
-
     def expire_stale_notifications(self, max_age_hours: int = 48) -> tuple[int, list[str]]:
         """Expire pending notifications that are older than max_age_hours.
 
@@ -55,8 +45,8 @@ class NotificationManager:
         so the FeedbackCollector can learn from user non-interaction (e.g.,
         reducing notifications the user never reads).
 
-        Only affects notifications with status='pending' — delivered, read,
-        acted-on, and dismissed notifications are left untouched.
+        Only affects notifications with status='pending' or 'batched' —
+        delivered, read, acted-on, and dismissed notifications are left untouched.
 
         Args:
             max_age_hours: Maximum age in hours before a pending notification
@@ -69,15 +59,17 @@ class NotificationManager:
             # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             # where %f = SS.SSS (seconds with 3-digit fractional part).
             # Sub-second precision is irrelevant for a 48-hour cutoff.
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).strftime(
+            cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).strftime(
                 "%Y-%m-%dT%H:%M:%S.000Z"
             )
             with self.db.get_connection("state") as conn:
                 # Collect IDs before the UPDATE so we can log feedback for each.
+                # Include both 'pending' (immediate-delivery queue) and 'batched'
+                # (digest-delivery queue) so all undelivered notifications age out.
                 expired_ids = [
                     row[0]
                     for row in conn.execute(
-                        "SELECT id FROM notifications WHERE status = 'pending' AND created_at < ?",
+                        "SELECT id FROM notifications WHERE status IN ('pending', 'batched') AND created_at < ?",
                         (cutoff,),
                     ).fetchall()
                 ]
@@ -85,7 +77,7 @@ class NotificationManager:
                 result = conn.execute(
                     """UPDATE notifications
                        SET status = 'expired'
-                       WHERE status = 'pending'
+                       WHERE status IN ('pending', 'batched')
                          AND created_at < ?""",
                     (cutoff,),
                 )
@@ -139,14 +131,14 @@ class NotificationManager:
             Count of notifications auto-delivered.
         """
         try:
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_pending_hours)).strftime(
+            cutoff = (datetime.now(UTC) - timedelta(hours=max_pending_hours)).strftime(
                 "%Y-%m-%dT%H:%M:%S.000Z"
             )
             with self.db.get_connection("state") as conn:
                 rows = conn.execute(
                     "SELECT id, title, body, priority, domain, source_event_id "
                     "FROM notifications "
-                    "WHERE status = 'pending' AND created_at < ? "
+                    "WHERE status IN ('pending', 'batched') AND created_at < ? "
                     "ORDER BY created_at",
                     (cutoff,),
                 ).fetchall()
@@ -166,81 +158,13 @@ class NotificationManager:
                         "Failed to auto-deliver notification %s", row["id"], exc_info=True
                     )
 
-            # Clear auto-delivered items from the in-memory batch to avoid
-            # duplicate delivery on the next get_digest() call.
-            if delivered > 0:
-                delivered_ids = {row["id"] for row in rows}
-                self._pending_batch = [
-                    item for item in self._pending_batch
-                    if item["id"] not in delivered_ids
-                ]
-
             return delivered
         except Exception:
             # Fail-open: auto-delivery failures must never crash the expiry loop.
             logger.warning("Failed to auto-deliver stale batched notifications", exc_info=True)
             return 0
 
-    def _recover_pending_batch(self):
-        """Recover batched notifications from the database after a restart.
-
-        When the server restarts, the in-memory _pending_batch list is lost.
-        Notifications that were routed to batch delivery are still in the DB
-        with status='pending'. This method queries for those notifications and
-        re-populates the batch so the next get_digest() call delivers them.
-
-        Only normal/low priority notifications are recovered because those are
-        the ones routed to batch delivery by _decide_delivery(). Critical and
-        high priority notifications are always delivered immediately and would
-        never be in a pending-batch state.
-        """
-        # Expire stale pending notifications before loading, so old items
-        # don't get pulled into the in-memory batch. This is a sync context so
-        # we can only use the direct DB feedback (already handled inside
-        # expire_stale_notifications); bus events are published separately in
-        # async callers like get_digest().
-        try:
-            _expired_count, _expired_ids = self.expire_stale_notifications()
-        except Exception:
-            logger.warning("Failed to expire stale notifications during recovery", exc_info=True)
-
-        try:
-            # Only recover notifications from the last 48 hours as a
-            # belt-and-suspenders safeguard alongside expire_stale_notifications().
-            # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            # where %f = SS.SSS (seconds with 3-digit fractional part).
-            age_cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
-                "%Y-%m-%dT%H:%M:%S.000Z"
-            )
-            with self.db.get_connection("state") as conn:
-                rows = conn.execute(
-                    """SELECT id, title, body, priority, domain, source_event_id, action_url
-                       FROM notifications
-                       WHERE status = 'pending'
-                         AND priority IN ('normal', 'low')
-                         AND created_at > ?""",
-                    (age_cutoff,),
-                ).fetchall()
-
-            for row in rows:
-                self._pending_batch.append({
-                    "id": row["id"],
-                    "title": row["title"],
-                    "body": row["body"],
-                    "priority": row["priority"],
-                    "domain": row["domain"],
-                    "source_event_id": row["source_event_id"],
-                    "action_url": row["action_url"],
-                })
-
-            if self._pending_batch:
-                logger.info("Recovered %d pending batch notifications from database", len(self._pending_batch))
-        except Exception:
-            # Fail-open: if recovery fails, start with an empty batch.
-            # The notifications are still in the DB and can be recovered later.
-            logger.warning("Failed to recover pending batch notifications", exc_info=True)
-
-    def _check_dismissal_suppression(self, domain: Optional[str]) -> bool:
+    def _check_dismissal_suppression(self, domain: str | None) -> bool:
         """Check if notifications from this domain have been frequently dismissed.
 
         Returns True if the notification should be suppressed based on
@@ -282,7 +206,7 @@ class NotificationManager:
         return False
 
     def _log_automatic_feedback(self, action_id: str, action_type: str,
-                                 feedback_type: str, context: Optional[dict] = None):
+                                 feedback_type: str, context: dict | None = None):
         """
         Log automatic feedback to feedback_log without requiring user interaction.
 
@@ -299,7 +223,7 @@ class NotificationManager:
         """
         import uuid
         feedback_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         with self.db.get_connection("preferences") as conn:
             conn.execute(
@@ -341,12 +265,12 @@ class NotificationManager:
     async def create_notification(
         self,
         title: str,
-        body: Optional[str] = None,
+        body: str | None = None,
         priority: str = "normal",
-        source_event_id: Optional[str] = None,
-        domain: Optional[str] = None,
-        action_url: Optional[str] = None,
-    ) -> Optional[str]:
+        source_event_id: str | None = None,
+        domain: str | None = None,
+        action_url: str | None = None,
+    ) -> str | None:
         """
         Create a notification. Doesn't necessarily deliver it immediately.
 
@@ -368,7 +292,7 @@ class NotificationManager:
                     existing = conn.execute(
                         """SELECT id FROM notifications
                            WHERE source_event_id = ?
-                             AND status = 'pending'
+                             AND status IN ('pending', 'batched')
                            LIMIT 1""",
                         (source_event_id,),
                     ).fetchone()
@@ -417,7 +341,7 @@ class NotificationManager:
             return None
 
         notif_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Always persist the notification first, regardless of delivery decision.
         # This ensures we have a complete audit trail even for suppressed items.
@@ -462,13 +386,11 @@ class NotificationManager:
             if domain == "prediction" and source_event_id:
                 self._mark_prediction_surfaced(source_event_id)
         elif delivery == "batch":
-            # Accumulate in the in-memory batch list for later digest delivery
-            self._pending_batch.append({
-                "id": notif_id, "title": title, "body": body,
-                "priority": priority, "domain": domain,
-                "source_event_id": source_event_id,  # Preserve for later surfacing
-                "action_url": action_url,  # Preserve for actionable cards in digest
-            })
+            # Mark as 'batched' in the DB so it persists across restarts and is
+            # picked up by get_digest() when the next digest window fires.
+            # Using a distinct status (rather than 'pending') makes batch-routed
+            # notifications clearly identifiable and durable.
+            self._mark_status(notif_id, "batched")
         elif delivery == "suppress":
             # Mark as suppressed in DB so it shows up in audit logs but is
             # never delivered to the user. Return None to signal suppression.
@@ -480,7 +402,7 @@ class NotificationManager:
 
         return notif_id
 
-    def _decide_delivery(self, priority: str, domain: Optional[str],
+    def _decide_delivery(self, priority: str, domain: str | None,
                          now: datetime) -> str:
         """
         Decide whether to deliver immediately, batch, or suppress.
@@ -633,7 +555,7 @@ class NotificationManager:
         return raw
 
     async def _deliver_notification(self, notif_id: str, title: str,
-                                     body: Optional[str], priority: str):
+                                     body: str | None, priority: str):
         """
         Actually deliver a notification to the user.
 
@@ -667,7 +589,7 @@ class NotificationManager:
         acted_on_at, dismissed_at) so we can measure latency between
         delivery and user action — a key signal for the feedback collector.
         """
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self.db.get_connection("state") as conn:
             if status == "delivered":
                 conn.execute(
@@ -746,7 +668,7 @@ class NotificationManager:
             return
 
         prediction_id = notif["source_event_id"]
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         try:
             with self.db.get_connection("user_model") as conn:
                 conn.execute(
@@ -843,13 +765,12 @@ class NotificationManager:
 
     async def get_digest(self) -> list[dict]:
         """
-        Get the pending batch as a digest and clear the queue.
+        Get the pending batch as a digest and deliver all batched notifications.
 
-        This is the digest/batch mechanism: batched notifications accumulate
-        in self._pending_batch until this method is called (typically on a
+        Batch-routed notifications are stored with status='batched' in the DB
+        (durable across restarts) until this method is called (typically on a
         timer — e.g., morning briefing, lunch digest, evening wrap-up).
-        Each item is marked "delivered" upon retrieval, and the in-memory
-        queue is reset so the next digest starts fresh.
+        Each item is marked "delivered" upon retrieval.
 
         Before flushing, stale notifications are expired so that items that
         aged out during a long-running session don't appear in the digest.
@@ -864,41 +785,20 @@ class NotificationManager:
         except Exception:
             logger.warning("Failed to expire stale notifications during digest", exc_info=True)
 
-        # Filter in-memory batch to exclude items that were just expired in DB.
-        # Check each item's current DB status — if it was expired, skip it.
-        fresh_batch = []
-        for item in self._pending_batch:
-            try:
-                with self.db.get_connection("state") as conn:
-                    row = conn.execute(
-                        "SELECT status FROM notifications WHERE id = ?",
-                        (item["id"],),
-                    ).fetchone()
-                if row and row["status"] == "pending":
-                    fresh_batch.append(item)
-            except Exception:
-                # Fail-open: if we can't check, include the item
-                fresh_batch.append(item)
-
-        digest = list(fresh_batch)
-        already_ids = {item["id"] for item in digest}
-
-        # Also pick up any DB-persisted pending notifications not in memory.
-        # This covers notifications lost during a service restart where
-        # _recover_pending_batch() in __init__ may have partially failed,
-        # or where a notification was persisted to DB but the process crashed
-        # before it was appended to _pending_batch.
+        # Read the digest directly from the DB — all batch-routed notifications
+        # are durably stored with status='batched', so there is no in-memory
+        # list to consult.  This makes the digest crash-safe: a restart between
+        # notification creation and get_digest() call loses nothing.
+        digest = []
         try:
             with self.db.get_connection("state") as conn:
-                db_pending = conn.execute(
+                rows = conn.execute(
                     "SELECT id, title, body, priority, domain, source_event_id, action_url "
-                    "FROM notifications WHERE status = 'pending' ORDER BY created_at"
+                    "FROM notifications WHERE status = 'batched' ORDER BY created_at"
                 ).fetchall()
-            for row in db_pending:
-                if row["id"] not in already_ids:
-                    digest.append(dict(row))
+            digest = [dict(row) for row in rows]
         except Exception:
-            logger.warning("Failed to recover DB-persisted pending notifications in get_digest", exc_info=True)
+            logger.warning("Failed to load batched notifications in get_digest", exc_info=True)
 
         for item in digest:
             self._mark_status(item["id"], "delivered")
@@ -907,7 +807,6 @@ class NotificationManager:
             # actually sees them (either immediate or batched delivery).
             if item.get("domain") == "prediction" and item.get("source_event_id"):
                 self._mark_prediction_surfaced(item["source_event_id"])
-        self._pending_batch = []
         return digest
 
     def get_pending(self, limit: int = 50) -> list[dict]:
@@ -922,7 +821,7 @@ class NotificationManager:
                 # Priority ordering: critical=1, high=2, normal=3, low=4.
                 # Within the same priority, newest notifications come first.
                 """SELECT * FROM notifications
-                   WHERE status IN ('pending', 'delivered')
+                   WHERE status IN ('pending', 'batched', 'delivered')
                    ORDER BY
                        CASE priority
                            WHEN 'critical' THEN 1
@@ -973,7 +872,7 @@ class NotificationManager:
         """
         from datetime import timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = (now - timedelta(hours=timeout_hours)).isoformat()
 
         # Find stale prediction notifications: delivered more than timeout_hours
@@ -1047,7 +946,7 @@ class NotificationManager:
             Dictionary with structure:
             {
                 "status_counts": {"pending": int, "delivered": int, ...},
-                "in_memory_batch_depth": int,
+                "db_batch_depth": int,
                 "delivery_mode": str,
                 "recent_activity": {
                     "created_24h": int,
@@ -1063,7 +962,7 @@ class NotificationManager:
         """
         diagnostics: dict = {
             "status_counts": {},
-            "in_memory_batch_depth": len(self._pending_batch),
+            "db_batch_depth": 0,  # Populated below from DB (replaces in-memory list)
             "delivery_mode": getattr(self, "_delivery_mode", "unknown"),
             "recent_activity": {},
             "domain_breakdown": {},
@@ -1072,7 +971,7 @@ class NotificationManager:
             "recommendations": [],
         }
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         day_ago = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -1083,6 +982,8 @@ class NotificationManager:
                     "SELECT status, COUNT(*) as cnt FROM notifications GROUP BY status"
                 ).fetchall()
             diagnostics["status_counts"] = {row["status"]: row["cnt"] for row in rows}
+            # Derive batch depth from the 'batched' status bucket (DB-backed, crash-safe).
+            diagnostics["db_batch_depth"] = diagnostics["status_counts"].get("batched", 0)
         except Exception:
             logger.warning("Diagnostics: failed to query status counts", exc_info=True)
 
@@ -1240,7 +1141,7 @@ class NotificationManager:
         """
         from datetime import timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = (now - timedelta(hours=timeout_hours)).isoformat()
 
         # Find unsurfaced predictions created more than timeout_hours ago

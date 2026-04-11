@@ -149,18 +149,32 @@ async def test_auto_deliver_does_not_touch_delivered_or_expired(db, notification
 
 
 @pytest.mark.asyncio
-async def test_auto_deliver_clears_in_memory_batch(db, notification_manager):
-    """Auto-delivered notifications are removed from the in-memory _pending_batch."""
-    old_id = _insert_notification(db, title="Old batched", hours_ago=8)
+async def test_auto_deliver_handles_batched_status(db, notification_manager):
+    """Auto-delivered 'batched' notifications are marked 'delivered' in the DB.
 
-    # Simulate the notification being in the in-memory batch.
-    notification_manager._pending_batch = [
-        {"id": old_id, "title": "Old batched", "body": "Body", "priority": "normal"},
-        {"id": "keep-me", "title": "Fresh", "body": "Body", "priority": "normal"},
-    ]
+    Batch-routed notifications are stored with status='batched' (DB-backed).
+    auto_deliver_stale_batch() must handle both 'pending' and 'batched' status
+    so that digest-queued notifications don't expire unseen.
+    """
+    old_batched_id = _insert_notification(
+        db, title="Old batched", hours_ago=8, status="batched"
+    )
+    recent_batched_id = _insert_notification(
+        db, title="Recent batched", hours_ago=2, status="batched"
+    )
 
-    await notification_manager.auto_deliver_stale_batch(max_pending_hours=6)
+    count = await notification_manager.auto_deliver_stale_batch(max_pending_hours=6)
 
-    remaining_ids = [item["id"] for item in notification_manager._pending_batch]
-    assert old_id not in remaining_ids
-    assert "keep-me" in remaining_ids
+    # Only the old batched notification should have been auto-delivered
+    assert count == 1
+
+    with db.get_connection("state") as conn:
+        old_row = conn.execute(
+            "SELECT status FROM notifications WHERE id = ?", (old_batched_id,)
+        ).fetchone()
+        recent_row = conn.execute(
+            "SELECT status FROM notifications WHERE id = ?", (recent_batched_id,)
+        ).fetchone()
+
+    assert old_row["status"] == "delivered", "Old batched notification should be delivered"
+    assert recent_row["status"] == "batched", "Recent batched notification should remain batched"

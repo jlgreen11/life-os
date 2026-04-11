@@ -1,9 +1,12 @@
 """
-Tests for notification batch recovery across service restarts.
+Tests for notification batch durability across service restarts.
 
-Verifies that get_digest() picks up DB-persisted pending notifications
-even when the in-memory _pending_batch is empty (simulating a restart
-where _recover_pending_batch failed or was incomplete).
+With the DB-backed 'batched' status, get_digest() reads directly from the
+database rather than an in-memory list, so there is nothing to recover after
+a restart — batched notifications simply remain in the DB with
+status='batched' until the next digest window.
+
+These tests verify the DB-backed approach is correct end-to-end.
 """
 
 import uuid
@@ -14,49 +17,51 @@ import pytest
 from services.notification_manager.manager import NotificationManager
 
 
-def _insert_pending_notification(db, notif_id=None, title="Test", body="Body",
+def _insert_batched_notification(db, notif_id=None, title="Test", body="Body",
                                   priority="normal", domain=None,
                                   source_event_id=None, action_url=None):
-    """Insert a pending notification directly into the DB (bypassing the manager)."""
+    """Insert a batched notification directly into the DB (bypassing the manager).
+
+    Uses status='batched' to match how create_notification() stores batch-routed
+    notifications after the in-memory list was replaced with a DB-backed status.
+    """
     notif_id = notif_id or str(uuid.uuid4())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications
                (id, title, body, priority, domain, source_event_id, action_url, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'batched', ?)""",
             (notif_id, title, body, priority, domain, source_event_id, action_url, now),
         )
     return notif_id
 
 
 @pytest.mark.asyncio
-async def test_get_digest_recovers_db_pending_when_batch_empty(db, event_bus):
-    """get_digest() returns DB-persisted pending notifications even when
-    _pending_batch is empty (simulating a restart where recovery was skipped)."""
-    # Insert pending notifications directly into DB
-    id1 = _insert_pending_notification(db, title="Meeting reminder")
-    id2 = _insert_pending_notification(db, title="Email summary")
+async def test_get_digest_returns_db_batched_notifications(db, event_bus):
+    """get_digest() returns DB-persisted batched notifications.
 
-    # Create manager with empty _pending_batch (simulating failed recovery)
+    The new DB-backed design reads status='batched' directly from the DB,
+    so there is no in-memory list to lose or recover.
+    """
+    id1 = _insert_batched_notification(db, title="Meeting reminder")
+    id2 = _insert_batched_notification(db, title="Email summary")
+
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
-    # The init recovery may have loaded these — clear it to simulate a fresh state
-    mgr._pending_batch = []
 
     digest = await mgr.get_digest()
     digest_ids = {item["id"] for item in digest}
 
-    assert id1 in digest_ids, "DB-persisted notification should appear in digest"
-    assert id2 in digest_ids, "DB-persisted notification should appear in digest"
+    assert id1 in digest_ids, "DB-persisted batched notification should appear in digest"
+    assert id2 in digest_ids, "DB-persisted batched notification should appear in digest"
 
 
 @pytest.mark.asyncio
-async def test_recovered_notifications_marked_delivered(db, event_bus):
-    """Notifications recovered from DB are marked as 'delivered' after get_digest()."""
-    id1 = _insert_pending_notification(db, title="Recovered item")
+async def test_batched_notifications_marked_delivered(db, event_bus):
+    """Notifications delivered via get_digest() are marked as 'delivered'."""
+    id1 = _insert_batched_notification(db, title="Recovered item")
 
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
-    mgr._pending_batch = []
 
     await mgr.get_digest()
 
@@ -68,21 +73,11 @@ async def test_recovered_notifications_marked_delivered(db, event_bus):
 
 
 @pytest.mark.asyncio
-async def test_no_duplicates_between_memory_and_db(db, event_bus):
-    """Items in _pending_batch are not duplicated by the DB recovery query."""
-    notif_id = _insert_pending_notification(db, title="In both places")
+async def test_no_duplicate_batched_notifications_in_digest(db, event_bus):
+    """Each batched notification appears exactly once in the digest."""
+    notif_id = _insert_batched_notification(db, title="Single notification")
 
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
-    # Simulate the notification being in both _pending_batch and DB
-    mgr._pending_batch = [{
-        "id": notif_id,
-        "title": "In both places",
-        "body": "Body",
-        "priority": "normal",
-        "domain": None,
-        "source_event_id": None,
-        "action_url": None,
-    }]
 
     digest = await mgr.get_digest()
     ids = [item["id"] for item in digest]
@@ -91,10 +86,10 @@ async def test_no_duplicates_between_memory_and_db(db, event_bus):
 
 
 @pytest.mark.asyncio
-async def test_prediction_surfacing_for_recovered_items(db, event_bus):
-    """Prediction notifications recovered from DB trigger _mark_prediction_surfaced."""
+async def test_prediction_surfacing_for_batched_items(db, event_bus):
+    """Prediction notifications delivered via get_digest() trigger _mark_prediction_surfaced."""
     pred_id = "pred-" + str(uuid.uuid4())
-    notif_id = _insert_pending_notification(
+    notif_id = _insert_batched_notification(
         db, title="Prediction alert", domain="prediction",
         source_event_id=pred_id,
     )
@@ -109,7 +104,6 @@ async def test_prediction_surfacing_for_recovered_items(db, event_bus):
         )
 
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
-    mgr._pending_batch = []
 
     digest = await mgr.get_digest()
 
@@ -126,23 +120,29 @@ async def test_prediction_surfacing_for_recovered_items(db, event_bus):
 
 
 @pytest.mark.asyncio
-async def test_init_recovery_loads_pending_from_db(db, event_bus):
-    """_recover_pending_batch on init loads DB-persisted pending notifications."""
-    id1 = _insert_pending_notification(db, title="Pre-existing", priority="normal")
-    id2 = _insert_pending_notification(db, title="Also pre-existing", priority="low")
+async def test_new_manager_instance_delivers_pre_existing_batched(db, event_bus):
+    """A new manager instance delivers notifications batched before it was created.
+
+    With the DB-backed design, batched notifications persist across manager
+    restarts automatically — no recovery step needed.
+    """
+    id1 = _insert_batched_notification(db, title="Pre-existing", priority="normal")
+    id2 = _insert_batched_notification(db, title="Also pre-existing", priority="low")
 
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
-    batch_ids = {item["id"] for item in mgr._pending_batch}
-    assert id1 in batch_ids
-    assert id2 in batch_ids
+    digest = await mgr.get_digest()
+    digest_ids = {item["id"] for item in digest}
+
+    assert id1 in digest_ids, "Pre-existing batched notification should appear in digest"
+    assert id2 in digest_ids, "Pre-existing batched notification should appear in digest"
 
 
 @pytest.mark.asyncio
-async def test_delivered_notifications_not_recovered(db, event_bus):
-    """Notifications already delivered should not appear in digest recovery."""
-    notif_id = _insert_pending_notification(db, title="Already delivered")
-    # Mark it as delivered
+async def test_delivered_notifications_not_included_in_digest(db, event_bus):
+    """Notifications already delivered should not appear in digest."""
+    notif_id = _insert_batched_notification(db, title="Already delivered")
+    # Mark it as delivered (simulating a previous digest call)
     with db.get_connection("state") as conn:
         conn.execute(
             "UPDATE notifications SET status = 'delivered' WHERE id = ?",
@@ -150,7 +150,6 @@ async def test_delivered_notifications_not_recovered(db, event_bus):
         )
 
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
-    mgr._pending_batch = []
 
     digest = await mgr.get_digest()
     digest_ids = {item["id"] for item in digest}
