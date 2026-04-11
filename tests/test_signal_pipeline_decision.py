@@ -147,3 +147,92 @@ async def test_decision_extractor_fail_open_in_pipeline(db, user_model_store):
 
     # Signals list should be returned (even if empty)
     assert isinstance(signals, list)
+
+
+@pytest.mark.asyncio
+async def test_email_received_flows_through_decision_pipeline(db, user_model_store):
+    """email.received events with approval language should produce decision signals via pipeline."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "email",
+        "timestamp": now.isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "colleague@example.com",
+            "body": "Looks good! Go ahead and proceed with the proposal.",
+        },
+        "metadata": {},
+    }
+
+    signals = await pipeline.process_event(event)
+
+    # Should have at least one decision_response signal
+    decision_signals = [s for s in signals if s.get("type") == "decision_response"]
+    assert len(decision_signals) >= 1
+    assert decision_signals[0]["response_type"] == "approval"
+
+
+@pytest.mark.asyncio
+async def test_message_received_input_request_in_decision_pipeline(db, user_model_store):
+    """message.received with input-seeking language should produce input_request signal."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.MESSAGE_RECEIVED.value,
+        "source": "imessage",
+        "timestamp": now.isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "friend@example.com",
+            "body": "Not sure which option is better — your call! What do you think?",
+        },
+        "metadata": {},
+    }
+
+    signals = await pipeline.process_event(event)
+
+    decision_signals = [s for s in signals if s.get("type") == "decision_response"]
+    assert len(decision_signals) >= 1
+    assert decision_signals[0]["response_type"] == "input_request"
+
+
+@pytest.mark.asyncio
+async def test_marketing_email_skipped_in_decision_pipeline(db, user_model_store):
+    """Marketing emails should not produce decision signals in the pipeline."""
+    pipeline = SignalExtractorPipeline(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "source": "email",
+        "timestamp": now.isoformat(),
+        "priority": "normal",
+        "payload": {
+            "from_address": "noreply@marketing.example.com",
+            "body": "Looks good! Approved to proceed. Click here to confirm.",
+        },
+        "metadata": {},
+    }
+
+    signals = await pipeline.process_event(event)
+
+    # No decision signals — sender is automated/marketing
+    decision_signals = [s for s in signals if s.get("type") == "decision_response"]
+    assert len(decision_signals) == 0
+
+
+@pytest.mark.asyncio
+async def test_profile_event_types_includes_email_received_for_decision():
+    """PROFILE_EVENT_TYPES dict should list email.received for the decision profile."""
+    from services.signal_extractor.pipeline import PROFILE_EVENT_TYPES
+
+    decision_types = PROFILE_EVENT_TYPES.get("decision", [])
+    assert "email.received" in decision_types
+    assert "message.received" in decision_types
