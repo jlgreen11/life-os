@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 from models.core import EventType
 from models.user_model import DecisionProfile
 from services.signal_extractor.base import BaseExtractor
+from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 
 
 class DecisionExtractor(BaseExtractor):
@@ -59,6 +60,10 @@ class DecisionExtractor(BaseExtractor):
             # Outbound communication shows decision patterns
             EventType.EMAIL_SENT.value,
             EventType.MESSAGE_SENT.value,
+            # Inbound communication shows decision response patterns
+            # (approvals, rejections, input requests from contacts)
+            EventType.EMAIL_RECEIVED.value,
+            EventType.MESSAGE_RECEIVED.value,
             # Calendar commitments are decisions
             EventType.CALENDAR_EVENT_CREATED.value,
             # Calendar updates indicate decision revisions
@@ -102,6 +107,14 @@ class DecisionExtractor(BaseExtractor):
                         "type": "outbound_nondelegation",
                         "timestamp": dt.isoformat(),
                     })
+
+            # Detect decision response patterns in inbound messages.
+            # Stakeholders may approve/reject the user's proposals or seek
+            # the user's input — both are decision-relevant signals.
+            if event_type in [EventType.EMAIL_RECEIVED.value, EventType.MESSAGE_RECEIVED.value]:
+                response_signal = self._detect_decision_response_patterns(payload, dt)
+                if response_signal:
+                    signals.append(response_signal)
 
             # Track calendar commitment speed (how far in advance they schedule)
             if event_type == EventType.CALENDAR_EVENT_CREATED.value:
@@ -234,6 +247,97 @@ class DecisionExtractor(BaseExtractor):
             "recipient": recipient,
             "hour": sent_at.hour,
             "timestamp": sent_at.isoformat(),
+        }
+
+    def _detect_decision_response_patterns(self, payload: dict, received_at: datetime) -> Optional[dict]:
+        """
+        Detect decision response patterns in inbound messages.
+
+        Analyzes received email/message content for signals about how others
+        respond to the user's decisions or how they seek the user's input:
+        - Approval patterns: stakeholder accepts/endorses the user's proposal
+        - Rejection patterns: stakeholder pushes back on the user's proposal
+        - Input-seeking patterns: contact defers the decision to the user
+
+        Filters out marketing/automated senders to avoid learning decision
+        patterns from newsletters or transactional emails.
+
+        Args:
+            payload: Event payload dict containing message body and sender info.
+            received_at: Timestamp of message receipt.
+
+        Returns:
+            A signal dict with type='decision_response', or None if no
+            decision-relevant pattern is found.
+        """
+        # Skip marketing and automated senders — they never carry genuine
+        # decision responses; filtering prevents profile pollution.
+        from_address = payload.get("from_address", "") or payload.get("from", "")
+        if is_marketing_or_noreply(from_address, payload):
+            return None
+
+        # Use the same body-extraction pattern as linguistic.py (line 228).
+        content = payload.get("body", "") or payload.get("body_plain", "")
+        if not content:
+            return None
+
+        content_lower = content.lower()
+
+        # Patterns indicating a stakeholder approved the user's decision/proposal.
+        # Avoid generic words like "proceed" that can appear in rejection context
+        # (e.g. "reconsider before proceeding") — use unambiguous approval phrases.
+        approval_patterns = [
+            "looks good", "sounds good", "that works", "i agree",
+            "approved", "approve", "go ahead",
+            "great idea", "love it", "perfect", "exactly right",
+            "fully support", "on board", "let's do it", "let's go with",
+            "i'm in", "works for me", "fine with me", "happy with that",
+            "thumbs up", "yes, let's", "yes, please proceed",
+            "please proceed", "go ahead and proceed",
+        ]
+
+        # Patterns indicating a stakeholder rejected or questioned the user's decision
+        rejection_patterns = [
+            "i disagree", "disagree", "i don't think", "not sure about",
+            "concerns about", "concerned about", "reconsider", "think again",
+            "not advisable", "bad idea", "won't work", "doesn't work",
+            "problem with", "issue with", "pushback", "push back",
+            "hold off", "wait on", "let's not", "i'd rather not",
+            "not a good fit", "not the right time",
+        ]
+
+        # Patterns indicating the contact is seeking the user's decision/input
+        input_seeking_patterns = [
+            "what do you think", "your thoughts", "your opinion",
+            "need your input", "need your feedback", "need your approval",
+            "your call", "up to you", "your decision", "you decide",
+            "what would you like", "what's your preference",
+            "let me know what you think", "thoughts?", "opinion?",
+            "can you weigh in", "what do you prefer",
+        ]
+
+        is_approval = any(pattern in content_lower for pattern in approval_patterns)
+        is_rejection = any(pattern in content_lower for pattern in rejection_patterns)
+        is_input_request = any(pattern in content_lower for pattern in input_seeking_patterns)
+
+        if not (is_approval or is_rejection or is_input_request):
+            return None
+
+        # Determine the primary response type (approval takes precedence over
+        # rejection; input_request is a separate decision-involvement signal).
+        if is_input_request:
+            response_type = "input_request"
+        elif is_approval:
+            response_type = "approval"
+        else:
+            response_type = "rejection"
+
+        return {
+            "type": "decision_response",
+            "response_type": response_type,
+            "from_contact": from_address,
+            "hour": received_at.hour,
+            "timestamp": received_at.isoformat(),
         }
 
     def _track_commitment_patterns(self, payload: dict, created_at: datetime) -> Optional[dict]:
@@ -575,6 +679,42 @@ class DecisionExtractor(BaseExtractor):
                 current_freq = profile_dict.get("mind_change_frequency", 0.1)
                 profile_dict["mind_change_frequency"] = round(
                     0.7 * current_freq + 0.3 * 1.0, 4
+                )
+
+            elif signal["type"] == "decision_response":
+                # ----------------------------------------------------------------
+                # Track stakeholder approval rate using EMA (α=0.3).
+                #
+                # approval   → nudge stakeholder_approval_rate toward 1.0
+                # rejection  → nudge toward 0.0
+                # input_request → counts as involvement, but doesn't change
+                #   the approval/rejection ratio; it IS counted in
+                #   _response_total_count so the denominator is accurate.
+                #
+                # Per-contact response counts let the prediction engine surface
+                # insights like "Alice usually approves your proposals".
+                # ----------------------------------------------------------------
+                response_type = signal["response_type"]
+                from_contact = signal.get("from_contact", "")
+
+                # Update per-contact response count regardless of type.
+                if from_contact:
+                    contact_counts = profile_dict.get("_contact_response_counts", {})
+                    contact_counts[from_contact] = contact_counts.get(from_contact, 0) + 1
+                    profile_dict["_contact_response_counts"] = contact_counts
+
+                # Track the approval/rejection ratio via EMA; skip input_request
+                # since it carries no polarity on the user's prior decisions.
+                if response_type in ("approval", "rejection"):
+                    approval_value = 1.0 if response_type == "approval" else 0.0
+                    current_rate = profile_dict.get("stakeholder_approval_rate", 0.5)
+                    profile_dict["stakeholder_approval_rate"] = round(
+                        0.7 * current_rate + 0.3 * approval_value, 4
+                    )
+
+                # Increment total response count for informational use.
+                profile_dict["_response_total_count"] = (
+                    profile_dict.get("_response_total_count", 0) + 1
                 )
 
         # Update timestamp

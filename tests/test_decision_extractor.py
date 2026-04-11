@@ -33,9 +33,9 @@ def test_decision_extractor_processes_relevant_events(db, user_model_store):
     # Should process calendar event creation
     assert extractor.can_process({"type": EventType.CALENDAR_EVENT_CREATED.value})
 
-    # Should NOT process inbound events
-    assert not extractor.can_process({"type": EventType.EMAIL_RECEIVED.value})
-    assert not extractor.can_process({"type": EventType.MESSAGE_RECEIVED.value})
+    # Should process inbound events (decision response signals)
+    assert extractor.can_process({"type": EventType.EMAIL_RECEIVED.value})
+    assert extractor.can_process({"type": EventType.MESSAGE_RECEIVED.value})
 
 
 def test_track_task_decision_speed_immediate(db, user_model_store, event_store):
@@ -466,3 +466,167 @@ def test_extractor_fail_open(db, user_model_store):
     # Should not crash, just return empty signals
     signals = extractor.extract(malformed_event)
     assert signals == []
+
+
+# ---------------------------------------------------------------------------
+# Decision response pattern tests (inbound email/message support)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_approval_pattern_in_received_email(db, user_model_store):
+    """Approval language in a received email should produce a decision_response signal."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": now.isoformat(),
+        "payload": {
+            "from_address": "alice@example.com",
+            "body": "Looks good to me! Go ahead and proceed with the plan.",
+        },
+    }
+
+    signals = extractor.extract(event)
+
+    assert len(signals) == 1
+    assert signals[0]["type"] == "decision_response"
+    assert signals[0]["response_type"] == "approval"
+    assert signals[0]["from_contact"] == "alice@example.com"
+    assert signals[0]["hour"] == now.hour
+
+
+def test_detect_rejection_pattern_in_received_message(db, user_model_store):
+    """Rejection language in a received message should produce a decision_response signal."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.MESSAGE_RECEIVED.value,
+        "timestamp": now.isoformat(),
+        "payload": {
+            "from_address": "bob@example.com",
+            "body": "I have some concerns about this approach. Let's reconsider before proceeding.",
+        },
+    }
+
+    signals = extractor.extract(event)
+
+    assert len(signals) == 1
+    assert signals[0]["type"] == "decision_response"
+    assert signals[0]["response_type"] == "rejection"
+    assert signals[0]["from_contact"] == "bob@example.com"
+
+
+def test_detect_input_request_in_received_email(db, user_model_store):
+    """Input-seeking language in received email should produce an input_request signal."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": now.isoformat(),
+        "payload": {
+            "from_address": "carol@example.com",
+            "body": "We're not sure which option is best — your call. Let us know what you think.",
+        },
+    }
+
+    signals = extractor.extract(event)
+
+    assert len(signals) == 1
+    assert signals[0]["type"] == "decision_response"
+    assert signals[0]["response_type"] == "input_request"
+    assert signals[0]["from_contact"] == "carol@example.com"
+
+
+def test_marketing_emails_skipped_for_decision_response(db, user_model_store):
+    """Marketing/noreply senders should be filtered out and produce no signal."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": now.isoformat(),
+        "payload": {
+            "from_address": "noreply@newsletter.example.com",
+            "body": "Looks good! Go ahead and click the link to proceed with your order.",
+        },
+    }
+
+    signals = extractor.extract(event)
+
+    # No signals — the sender is automated/marketing
+    assert len(signals) == 0
+
+
+def test_inbound_email_no_decision_patterns_produces_no_signal(db, user_model_store):
+    """Inbound emails without decision-response patterns should produce no signal."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": now.isoformat(),
+        "payload": {
+            "from_address": "friend@example.com",
+            "body": "Hey, just wanted to catch up! Hope you are doing well.",
+        },
+    }
+
+    signals = extractor.extract(event)
+
+    assert len(signals) == 0
+
+
+def test_profile_update_with_decision_response_approval(db, user_model_store):
+    """Profile should track stakeholder_approval_rate when approval signals arrive."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    # Two approval events from the same contact
+    for i in range(2):
+        event = {
+            "type": EventType.EMAIL_RECEIVED.value,
+            "timestamp": now.isoformat(),
+            "payload": {
+                "from_address": "manager@example.com",
+                "body": "Approved. Please go ahead and proceed with the plan.",
+            },
+        }
+        extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("decision")
+    assert profile is not None
+    # Approval rate should be above neutral (0.5) after two approvals
+    assert profile["data"]["stakeholder_approval_rate"] > 0.5
+    # Per-contact count should be tracked
+    assert profile["data"]["_contact_response_counts"]["manager@example.com"] == 2
+
+
+def test_profile_update_with_decision_response_rejection(db, user_model_store):
+    """Profile should track stakeholder_approval_rate when rejection signals arrive."""
+    extractor = DecisionExtractor(db, user_model_store)
+
+    now = datetime.now(timezone.utc)
+
+    event = {
+        "type": EventType.EMAIL_RECEIVED.value,
+        "timestamp": now.isoformat(),
+        "payload": {
+            "from_address": "reviewer@example.com",
+            "body": "I disagree with this approach. We should reconsider the whole plan.",
+        },
+    }
+    extractor.extract(event)
+
+    profile = user_model_store.get_signal_profile("decision")
+    assert profile is not None
+    # Approval rate should be below initial 0.5 after a rejection
+    assert profile["data"]["stakeholder_approval_rate"] < 0.5
