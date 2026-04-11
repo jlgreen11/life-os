@@ -41,10 +41,9 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Fix Google connector authentication failure** · `broken_feature` — Google connector in error state since Feb 20 (50 days), no new email/calendar data flowing. Likely needs OAuth token refresh or re-authentication.
-- **Reduce notification expiry rate (96%)** · `broken_feature` — 159 of 160 notifications expire without user interaction. Auto-deliver converts pending→delivered after 6h but users don't see them. Needs email/push fallback when WebSocket not connected.
-- **Fix 0 routines detected despite 869 episodes** · `broken_feature` — Routine detector produces 0 routines. Wave 1 fixed consistency calculation (PR #678), but routine_detector source stopped producing events on March 6. Investigate whether the detection loop crashed or the algorithm still filters everything out.
-- **Reduce prediction deduplication rate (16x)** · `data_quality` — 3882 dedup events vs 243 generation events. Even after the time_horizon dedup fix (April 10), the engine may be generating too many similar predictions. Review generation triggers and dedup window.
+- **Add periodic signal profile rebuild for post-startup recovery** · `missing_feature` — Temporal and decision profiles still missing after extractor fixes (PRs #679, #680) because rebuild only runs at startup. Need periodic health check with auto-rebuild.
+- **Fix data quality analyzer false positives and health score accuracy** · `data_quality` — Health score of 18 is misleadingly low. Analyzer reports 'linguistic' as missing when no outbound events exist. Need connector-aware profile analysis.
+- **Improve semantic fact inference from relationship-heavy datasets** · `data_quality` — Only 9 facts from 55K+ relationship samples and 860+ topic/linguistic samples. Inferrer thresholds may be too conservative for email-dominated data.
 
 ## In Progress
 
@@ -52,9 +51,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Fix prediction engine time-based trigger state persistence race** · `broken_feature` (wave 2, slot 1)
-- **Add email.received support to decision extractor** · `missing_feature` (wave 2, slot 2)
-- **Fix communication templates blocked by over-aggressive marketing filter** · `broken_feature` (wave 2, slot 3)
+- **Fix routine detector: auto-extend lookback when connector outage leaves 0 recent episodes** · `broken_feature` (wave 3, slot 1)
+- **Fix notification batch durability: replace in-memory _pending_batch with DB-backed status** · `broken_feature` (wave 3, slot 2)
+- **Reduce prediction intra-batch duplicates and persist pre-filter across cycles** · `data_quality` (wave 3, slot 3)
+- **Improve Google connector health_check with structured auth diagnosis** · `broken_feature` (wave 3, slot 4)
+- **Add periodic signal profile health check with auto-rebuild** · `missing_feature` (wave 3, slot 5)
+- **Fix data quality analyzer profile expectations and health score accuracy** · `data_quality` (wave 3, slot 6)
+- **Improve semantic fact inferrer for relationship-heavy datasets** · `data_quality` (wave 3, slot 7)
 
 ## Completed
 
@@ -62,6 +65,9 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Fix communication templates blocked by over-aggressive marketing filter** · `broken_feature` — wave 2, PR #682
+- **Add email.received support to decision extractor** · `missing_feature` — wave 2, PR #680
+- **Fix prediction engine time-based trigger state persistence race** · `broken_feature` — wave 2, PR #681
 - **Fix routine detection consistency calculation** · `broken_feature` — wave 1, PR #678
 - **Fix decision extractor crash on date-only calendar start_time** · `broken_feature` — wave 1, PR #677
 - **Fix temporal extractor date-only calendar crash and profile persistence** · `broken_feature` — wave 1, PR #679
