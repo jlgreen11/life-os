@@ -5,8 +5,9 @@ Verifies that marketing emails, no-reply addresses, and automated senders are
 filtered out before being tracked in the relationship graph.
 """
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 
 from services.signal_extractor.relationship import RelationshipExtractor
 
@@ -28,8 +29,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Should filter no-reply address: {addr}"
+            )
 
     def test_bulk_sender_localparts(self):
         """Common bulk sender patterns should be filtered."""
@@ -51,8 +53,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Should filter bulk sender: {addr}"
+            )
 
     def test_bulk_sender_no_false_positives(self):
         """Personal emails containing bulk keywords should NOT be filtered."""
@@ -66,8 +69,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is False, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is False, (
                 f"Should NOT filter personal address: {addr}"
+            )
 
     def test_embedded_notification_patterns(self):
         """Addresses with notification patterns in the middle should be filtered."""
@@ -79,8 +83,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Should filter embedded notification: {addr}"
+            )
 
     def test_marketing_domain_patterns(self):
         """Marketing domain patterns should be filtered."""
@@ -95,8 +100,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Should filter marketing domain: {addr}"
+            )
 
     def test_marketing_service_providers(self):
         """Third-party email marketing platforms should be filtered."""
@@ -109,8 +115,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Should filter marketing service provider: {addr}"
+            )
 
     def test_unsubscribe_detection(self):
         """Emails with unsubscribe links should be filtered."""
@@ -119,18 +126,18 @@ class TestMarketingFilter:
             "snippet": "Special offer...",
         }
 
-        assert RelationshipExtractor._is_marketing_or_noreply(
-            "deals@shop.com", payload_with_unsub
-        ) is True
+        assert RelationshipExtractor._is_marketing_or_noreply("deals@shop.com", payload_with_unsub) is True
 
         # Verify unsubscribe detection works in different payload fields
-        assert RelationshipExtractor._is_marketing_or_noreply(
-            "info@company.com", {"body": "To unsubscribe, click here"}
-        ) is True
+        assert (
+            RelationshipExtractor._is_marketing_or_noreply("info@company.com", {"body": "To unsubscribe, click here"})
+            is True
+        )
 
-        assert RelationshipExtractor._is_marketing_or_noreply(
-            "updates@service.org", {"snippet": "Unsubscribe at bottom"}
-        ) is True
+        assert (
+            RelationshipExtractor._is_marketing_or_noreply("updates@service.org", {"snippet": "Unsubscribe at bottom"})
+            is True
+        )
 
     def test_legitimate_human_contacts(self):
         """Real human email addresses should NOT be filtered."""
@@ -144,8 +151,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is False, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is False, (
                 f"Should NOT filter human contact: {addr}"
+            )
 
     def test_case_insensitivity(self):
         """Filter should work regardless of address case."""
@@ -156,8 +164,9 @@ class TestMarketingFilter:
         ]
 
         for addr in test_cases:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Should filter case-insensitive: {addr}"
+            )
 
 
 class TestRelationshipExtractionFiltering:
@@ -173,7 +182,7 @@ class TestRelationshipExtractionFiltering:
         marketing_event = {
             "id": "evt_001",
             "type": "email.received",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": {
                 "from_address": "newsletter@company.com",
                 "subject": "Weekly updates",
@@ -191,7 +200,7 @@ class TestRelationshipExtractionFiltering:
         human_event = {
             "id": "evt_002",
             "type": "email.received",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": {
                 "from_address": "alice@company.com",
                 "subject": "Project update",
@@ -213,7 +222,7 @@ class TestRelationshipExtractionFiltering:
         outbound_event = {
             "id": "evt_003",
             "type": "email.sent",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": {
                 "to_addresses": ["support@company.com", "alice@company.com"],
                 "subject": "Need help",
@@ -232,7 +241,7 @@ class TestRelationshipExtractionFiltering:
         marketing_event = {
             "id": "evt_004",
             "type": "email.received",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": {
                 "from_address": "deals@shop.com",
                 "subject": "Special offer",
@@ -251,7 +260,7 @@ class TestRelationshipExtractionFiltering:
         marketing_event = {
             "id": "evt_005",
             "type": "email.received",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": {
                 "from_address": "promo@brand.com",
                 "subject": "Sale!",
@@ -267,12 +276,17 @@ class TestRelationshipExtractionFiltering:
             contacts = rel_profile["data"].get("contacts", {})
             assert "promo@brand.com" not in contacts
 
-    def test_communication_template_not_created_for_marketing(self, extractor, db):
-        """Marketing emails should not generate communication templates."""
+    def test_communication_template_not_created_for_inbound_marketing(self, extractor, db):
+        """INBOUND marketing emails should not generate communication templates.
+
+        The marketing filter is applied to inbound messages so that automated bulk
+        senders (newsletters, automated receipts, etc.) do not pollute the
+        communication_templates table with non-human writing patterns.
+        """
         marketing_event = {
             "id": "evt_006",
             "type": "email.received",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "payload": {
                 "from_address": "newsletter@company.com",
                 "subject": "Weekly digest",
@@ -283,14 +297,88 @@ class TestRelationshipExtractionFiltering:
 
         extractor.extract(marketing_event)
 
-        # Check that no template was created for the marketing sender
+        # Check that no template was created for the inbound marketing sender
         with db.get_connection("user_model") as conn:
             templates = conn.execute(
-                "SELECT * FROM communication_templates WHERE contact_id = ?",
-                ("newsletter@company.com",)
+                "SELECT * FROM communication_templates WHERE contact_id = ?", ("newsletter@company.com",)
             ).fetchall()
 
             assert len(templates) == 0
+
+    def test_communication_template_created_for_outbound_to_marketing(self, extractor, db):
+        """OUTBOUND emails to marketing-pattern addresses should generate templates.
+
+        Outbound messages demonstrate the user's writing style regardless of the
+        recipient's address pattern. The marketing filter only applies to inbound
+        messages (to avoid learning from automated bulk senders). A user emailing
+        receipt@chromefile.com or support@company.com reveals their communication
+        style — that style signal should always be captured.
+        """
+        outbound_to_marketing = {
+            "id": "evt_007",
+            "type": "email.sent",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "payload": {
+                "to_addresses": ["receipt@chromefile.com"],
+                "subject": "Order confirmation request",
+                "body_plain": (
+                    "Hello, I am writing to confirm my recent order and request a receipt. "
+                    "The transaction ID is 12345. Please send the receipt to this address. "
+                    "Thank you for your assistance with this matter. Best regards, Jeremy"
+                ),
+                "channel": "email",
+            },
+        }
+
+        extractor.extract(outbound_to_marketing)
+
+        # Template SHOULD be created — outbound bypasses the marketing filter
+        with db.get_connection("user_model") as conn:
+            templates = conn.execute(
+                "SELECT * FROM communication_templates WHERE contact_id = ?", ("receipt@chromefile.com",)
+            ).fetchall()
+
+            assert len(templates) == 1, (
+                "Outbound email to marketing-pattern address must create a template "
+                "so the user's writing style is captured regardless of recipient"
+            )
+
+    def test_communication_template_created_for_outbound_to_noreply(self, extractor, db):
+        """OUTBOUND emails to noreply addresses should generate templates.
+
+        A user emailing noreply@service.com (e.g. to file a complaint or cancel a
+        subscription) demonstrates their formal/professional communication style.
+        That style signal should be captured even though the address is a noreply
+        pattern, because the KEY question is whether the USER authored the message.
+        """
+        outbound_to_noreply = {
+            "id": "evt_008",
+            "type": "email.sent",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "payload": {
+                "to_addresses": ["noreply@service.com"],
+                "subject": "Cancellation request",
+                "body_plain": (
+                    "To Whom It May Concern, I am writing to formally request the "
+                    "cancellation of my subscription. Please process this request and "
+                    "confirm via email. I appreciate your prompt attention. Sincerely, Jeremy"
+                ),
+                "channel": "email",
+            },
+        }
+
+        extractor.extract(outbound_to_noreply)
+
+        # Template SHOULD be created — user's formal style is captured
+        with db.get_connection("user_model") as conn:
+            templates = conn.execute(
+                "SELECT * FROM communication_templates WHERE contact_id = ?", ("noreply@service.com",)
+            ).fetchall()
+
+            assert len(templates) == 1, (
+                "Outbound email to noreply address must create a template "
+                "because the user authored the message and their style should be captured"
+            )
 
 
 class TestRealWorldMarketingExamples:
@@ -309,5 +397,6 @@ class TestRealWorldMarketingExamples:
         ]
 
         for addr in real_marketing_addresses:
-            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, \
+            assert RelationshipExtractor._is_marketing_or_noreply(addr, {}) is True, (
                 f"Real-world marketing address should be filtered: {addr}"
+            )

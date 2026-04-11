@@ -13,7 +13,7 @@ import logging
 import re
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
@@ -83,11 +83,7 @@ def _compute_frequency_days(timestamps: list[str]) -> float | None:
     try:
         # Parse and sort the ring-buffer entries; in practice they arrive
         # in chronological order, but sorting guards against edge cases.
-        parsed = sorted(
-            datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            for ts in timestamps
-            if ts
-        )
+        parsed = sorted(datetime.fromisoformat(ts.replace("Z", "+00:00")) for ts in timestamps if ts)
         if len(parsed) < 2:
             return None
 
@@ -152,10 +148,10 @@ class RelationshipExtractor(BaseExtractor):
         # 2. payload.sent_at / received_at (other connectors)
         # 3. event.timestamp (fallback to sync time if no actual date available)
         actual_timestamp = (
-            payload.get("email_date") or
-            payload.get("sent_at") or
-            payload.get("received_at") or
-            event.get("timestamp", "")
+            payload.get("email_date")
+            or payload.get("sent_at")
+            or payload.get("received_at")
+            or event.get("timestamp", "")
         )
 
         signals = []
@@ -289,8 +285,9 @@ class RelationshipExtractor(BaseExtractor):
                 if profile.get("last_inbound_timestamp") and signal.get("is_reply"):
                     try:
                         from datetime import datetime
-                        inbound_time = datetime.fromisoformat(profile["last_inbound_timestamp"].replace('Z', '+00:00'))
-                        outbound_time = datetime.fromisoformat(signal["timestamp"].replace('Z', '+00:00'))
+
+                        inbound_time = datetime.fromisoformat(profile["last_inbound_timestamp"].replace("Z", "+00:00"))
+                        outbound_time = datetime.fromisoformat(signal["timestamp"].replace("Z", "+00:00"))
                         response_seconds = (outbound_time - inbound_time).total_seconds()
 
                         # Only track positive response times (sanity check)
@@ -305,8 +302,8 @@ class RelationshipExtractor(BaseExtractor):
 
                             # Recompute average response time from the ring buffer
                             if profile["response_times_seconds"]:
-                                profile["avg_response_time_seconds"] = (
-                                    sum(profile["response_times_seconds"]) / len(profile["response_times_seconds"])
+                                profile["avg_response_time_seconds"] = sum(profile["response_times_seconds"]) / len(
+                                    profile["response_times_seconds"]
                                 )
                     except Exception:
                         pass  # Gracefully skip if timestamp parsing fails
@@ -327,9 +324,7 @@ class RelationshipExtractor(BaseExtractor):
             # formula: new_avg = ((old_avg * (n-1)) + new_value) / n
             # to avoid storing all historical message lengths.
             n = profile["interaction_count"]
-            profile["avg_message_length"] = (
-                (profile["avg_message_length"] * (n - 1) + signal["message_length"]) / n
-            )
+            profile["avg_message_length"] = (profile["avg_message_length"] * (n - 1) + signal["message_length"]) / n
 
         self.ums.update_signal_profile("relationships", data)
 
@@ -374,7 +369,7 @@ class RelationshipExtractor(BaseExtractor):
         if not contacts_data:
             return
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         try:
             with self.db.get_connection("entities") as conn:
@@ -385,7 +380,7 @@ class RelationshipExtractor(BaseExtractor):
                           FROM contact_identifiers
                          WHERE identifier_type = 'email'
                            AND lower(identifier) IN ({placeholders})""",
-                    [addr.lower() for addr in contacts_data.keys()],
+                    [addr.lower() for addr in contacts_data],
                 ).fetchall()
 
                 email_to_contact_id = {row[0]: row[1] for row in rows}
@@ -429,9 +424,7 @@ class RelationshipExtractor(BaseExtractor):
                             (addr.lower(), contact_id),
                         )
 
-                    freq_days = _compute_frequency_days(
-                        profile.get("interaction_timestamps", [])
-                    )
+                    freq_days = _compute_frequency_days(profile.get("interaction_timestamps", []))
 
                     conn.execute(
                         """UPDATE contacts
@@ -452,8 +445,7 @@ class RelationshipExtractor(BaseExtractor):
         except Exception:
             # Metric sync is best-effort; never crash the extraction pipeline.
             logger.exception(
-                "Failed to sync relationship metrics to contacts table; "
-                "signal profile remains authoritative"
+                "Failed to sync relationship metrics to contacts table; signal profile remains authoritative"
             )
 
     def _extract_communication_templates(self, event: dict, addresses: list[str], is_outbound: bool):
@@ -497,18 +489,20 @@ class RelationshipExtractor(BaseExtractor):
             if not address:
                 continue
 
-            # Filter out marketing emails — don't learn communication templates
-            # from bulk senders. Templates are only useful for human contacts.
-            if is_marketing_or_noreply(address, payload):
+            # Filter out marketing emails from INBOUND messages only.
+            # Outbound messages demonstrate the user's writing style, so templates
+            # are always extracted regardless of the recipient address pattern.
+            # For example, the user emailing receipt@chromefile.com reveals how
+            # they compose transactional messages — that style signal is valuable
+            # for tone-matching and procedural-layer completeness.
+            if not is_outbound and is_marketing_or_noreply(address, payload):
                 continue
 
             # Generate deterministic template ID from contact + channel + direction
             # Direction is part of the ID so we store separate templates for
             # how the user writes TO a contact vs how the contact writes TO the user
             direction_suffix = "out" if is_outbound else "in"
-            template_id = hashlib.sha256(
-                f"{address}:{channel}:{direction_suffix}".encode()
-            ).hexdigest()[:16]
+            template_id = hashlib.sha256(f"{address}:{channel}:{direction_suffix}".encode()).hexdigest()[:16]
 
             # Load existing template or bootstrap a new one
             existing = self._get_existing_template(template_id)
@@ -520,15 +514,17 @@ class RelationshipExtractor(BaseExtractor):
             formality = self._calculate_formality(body)
             message_length = len(body)
             # Broad emoji detection covering emoticons, symbols, pictographs, etc.
-            uses_emoji = bool(re.search(
-                r'[\U0001F600-\U0001F64F'  # Emoticons
-                r'\U0001F300-\U0001F5FF'    # Symbols & pictographs
-                r'\U0001F680-\U0001F6FF'    # Transport & map symbols
-                r'\U0001F1E0-\U0001F1FF'    # Flags
-                r'\U00002702-\U000027B0'    # Dingbats
-                r'\U000024C2-\U0001F251]',  # Enclosed characters
-                body
-            ))
+            uses_emoji = bool(
+                re.search(
+                    r"[\U0001F600-\U0001F64F"  # Emoticons
+                    r"\U0001F300-\U0001F5FF"  # Symbols & pictographs
+                    r"\U0001F680-\U0001F6FF"  # Transport & map symbols
+                    r"\U0001F1E0-\U0001F1FF"  # Flags
+                    r"\U00002702-\U000027B0"  # Dingbats
+                    r"\U000024C2-\U0001F251]",  # Enclosed characters
+                    body,
+                )
+            )
             words = self._extract_words(body)
 
             # Incremental update: blend new sample with existing template
@@ -555,13 +551,13 @@ class RelationshipExtractor(BaseExtractor):
                 "closing": closing if closing else existing.get("closing"),
                 # Blend formality scores using exponential moving average
                 "formality": (
-                    formality * alpha + existing.get("formality", 0.5) * (1 - alpha)
-                    if samples_count > 0 else formality
+                    formality * alpha + existing.get("formality", 0.5) * (1 - alpha) if samples_count > 0 else formality
                 ),
                 # Blend message length using exponential moving average
                 "typical_length": (
                     message_length * alpha + existing.get("typical_length", 50.0) * (1 - alpha)
-                    if samples_count > 0 else float(message_length)
+                    if samples_count > 0
+                    else float(message_length)
                 ),
                 # Emoji usage: true if used in any recent sample (sticky flag)
                 "uses_emoji": uses_emoji or existing.get("uses_emoji", False),
@@ -570,13 +566,13 @@ class RelationshipExtractor(BaseExtractor):
                 # Phrases commonly used with OTHER contacts but absent from this one.
                 # Only computed after 5+ samples (reliable signal) via cross-contact
                 # comparative analysis against all user_to_contact templates.
-                "avoids_phrases": self._compute_avoids_phrases(
-                    address, merged_phrases
-                ) if is_outbound and samples_count + 1 >= 5 else existing.get("avoids_phrases", []),
+                "avoids_phrases": self._compute_avoids_phrases(address, merged_phrases)
+                if is_outbound and samples_count + 1 >= 5
+                else existing.get("avoids_phrases", []),
                 "tone_notes": self._analyze_tone(body, existing.get("tone_notes", [])),
-                "example_message_ids": (
-                    existing.get("example_message_ids", []) + [event.get("id")]
-                )[-10:],  # Keep last 10 example IDs
+                "example_message_ids": ([*existing.get("example_message_ids", []), event.get("id")])[
+                    -10:
+                ],  # Keep last 10 example IDs
                 "samples_analyzed": samples_count + 1,
             }
 
@@ -588,13 +584,11 @@ class RelationshipExtractor(BaseExtractor):
         """Retrieve existing template from database or return empty dict."""
         try:
             with self.db.get_connection("user_model") as conn:
-                row = conn.execute(
-                    """SELECT * FROM communication_templates WHERE id = ?""",
-                    (template_id,)
-                ).fetchone()
+                row = conn.execute("""SELECT * FROM communication_templates WHERE id = ?""", (template_id,)).fetchone()
 
                 if row:
                     import json
+
                     return {
                         "id": row["id"],
                         "context": row["context"],
@@ -629,13 +623,13 @@ class RelationshipExtractor(BaseExtractor):
         """
         # Check first 100 chars for greeting patterns
         opening = body[:100].strip()
-        lines = opening.split('\n')
+        lines = opening.split("\n")
         first_line = lines[0] if lines else ""
 
         # Common greeting patterns (case-insensitive)
         greeting_patterns = [
-            r'^(Hi|Hey|Hello|Dear|Greetings|Good\s+(?:morning|afternoon|evening))\b',
-            r'^([A-Z][a-z]+),',  # Name with comma
+            r"^(Hi|Hey|Hello|Dear|Greetings|Good\s+(?:morning|afternoon|evening))\b",
+            r"^([A-Z][a-z]+),",  # Name with comma
         ]
 
         for pattern in greeting_patterns:
@@ -659,16 +653,16 @@ class RelationshipExtractor(BaseExtractor):
         """
         # Check last 150 chars for closing patterns
         ending = body[-150:].strip()
-        lines = ending.split('\n')
+        lines = ending.split("\n")
 
         # Common closing patterns (look in last 3 lines, prioritize formal closings)
         # Check patterns from most formal to least to prefer "Best regards" over "Thanks"
         closing_patterns = [
-            r'\b(Best\s+regards|Kind\s+regards|Warm\s+regards)',
-            r'\b(Sincerely|Respectfully)',
-            r'\b(Best|Regards)',
-            r'\b(Cheers|Talk\s+soon|Take\s+care|See\s+you)',
-            r'\b(Thank\s+you(?:\s+(?:so\s+much|very\s+much|again))?|Thanks(?:\s+(?:so\s+much|again))?)',
+            r"\b(Best\s+regards|Kind\s+regards|Warm\s+regards)",
+            r"\b(Sincerely|Respectfully)",
+            r"\b(Best|Regards)",
+            r"\b(Cheers|Talk\s+soon|Take\s+care|See\s+you)",
+            r"\b(Thank\s+you(?:\s+(?:so\s+much|very\s+much|again))?|Thanks(?:\s+(?:so\s+much|again))?)",
         ]
 
         # Look at last 3 lines in reverse order (most recent first)
@@ -698,23 +692,23 @@ class RelationshipExtractor(BaseExtractor):
             score -= 0.2
 
         # Check for formal greetings
-        if re.search(r'\bDear\b', body, re.IGNORECASE):
+        if re.search(r"\bDear\b", body, re.IGNORECASE):
             score += 0.2
 
         # Check for casual greetings
-        if re.search(r'\b(Hey|Yo)\b', body, re.IGNORECASE):
+        if re.search(r"\b(Hey|Yo)\b", body, re.IGNORECASE):
             score -= 0.2
 
         # Check for professional closings
-        if re.search(r'\b(Sincerely|Regards|Respectfully)\b', body, re.IGNORECASE):
+        if re.search(r"\b(Sincerely|Regards|Respectfully)\b", body, re.IGNORECASE):
             score += 0.15
 
         # Check for casual closings
-        if re.search(r'\b(Cheers|Later|xo)\b', body, re.IGNORECASE):
+        if re.search(r"\b(Cheers|Later|xo)\b", body, re.IGNORECASE):
             score -= 0.15
 
         # Sentence length (longer = more formal)
-        sentences = re.split(r'[.!?]+', body)
+        sentences = re.split(r"[.!?]+", body)
         avg_sentence_len = sum(len(s.split()) for s in sentences if s.strip()) / max(len(sentences), 1)
         if avg_sentence_len > 20:
             score += 0.1
@@ -735,22 +729,72 @@ class RelationshipExtractor(BaseExtractor):
         """
         # Common English stop words to exclude
         stop_words = {
-            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-            'of', 'with', 'by', 'from', 'as', 'is', 'was', 'are', 'been', 'be',
-            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-            'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these',
-            'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'my', 'your',
-            'his', 'her', 'its', 'our', 'their', 'me', 'him', 'us', 'them'
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "as",
+            "is",
+            "was",
+            "are",
+            "been",
+            "be",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "can",
+            "this",
+            "that",
+            "these",
+            "those",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
+            "my",
+            "your",
+            "his",
+            "her",
+            "its",
+            "our",
+            "their",
+            "me",
+            "him",
+            "us",
+            "them",
         }
 
         # Extract words (alphabetic only, 3+ chars)
-        words = re.findall(r'\b[a-z]{3,}\b', body.lower())
+        words = re.findall(r"\b[a-z]{3,}\b", body.lower())
 
         # Filter out stop words
         return [w for w in words if w not in stop_words]
 
-    def _merge_phrases(self, existing: list[str], new_words: list[str],
-                       max_phrases: int = 10) -> list[str]:
+    def _merge_phrases(self, existing: list[str], new_words: list[str], max_phrases: int = 10) -> list[str]:
         """Merge new words into existing common phrases list.
 
         Uses word frequency to maintain the top N most common phrases.
@@ -871,13 +915,18 @@ class RelationshipExtractor(BaseExtractor):
 
         # --- Positive sentiment keywords ---
         positive_keywords = {
-            "great", "thanks", "wonderful", "appreciate", "excellent",
-            "happy", "glad", "love", "perfect", "awesome",
+            "great",
+            "thanks",
+            "wonderful",
+            "appreciate",
+            "excellent",
+            "happy",
+            "glad",
+            "love",
+            "perfect",
+            "awesome",
         }
-        positive_hits = sum(
-            1 for w in re.findall(r"\b[a-z]+\b", text.lower())
-            if w in positive_keywords
-        )
+        positive_hits = sum(1 for w in re.findall(r"\b[a-z]+\b", text.lower()) if w in positive_keywords)
         if positive_hits > 2:
             new_notes.append("warm/positive tone")
 
@@ -913,17 +962,27 @@ class RelationshipExtractor(BaseExtractor):
     # false positives on legitimate human addresses like team@small-startup.io or
     # ens@usgs.gov for users who actually work there).
     _EXTRA_LOCALPARTS: tuple[str, ...] = (
-        "emails@",       # Extractor had "emails@" (engine only has "email@")
-        "acerewards@",   # Ace Hardware loyalty — extractor-specific
-        "sales@", "sale@", "shop@", "store@", "merchant@",
+        "emails@",  # Extractor had "emails@" (engine only has "email@")
+        "acerewards@",  # Ace Hardware loyalty — extractor-specific
+        "sales@",
+        "sale@",
+        "shop@",
+        "store@",
+        "merchant@",
         "concierge@",
-        "flyers@", "flyer@",
-        "partners@", "partner@",
-        "team@",         # Generic team addresses (e.g. team@kickstarter)
-        "ens@",          # Emergency Notification System (e.g. ens@usgs.gov)
+        "flyers@",
+        "flyer@",
+        "partners@",
+        "partner@",
+        "team@",  # Generic team addresses (e.g. team@kickstarter)
+        "ens@",  # Emergency Notification System (e.g. ens@usgs.gov)
         "ouch@",
-        "events@", "event@",
-        "uber@", "lyft@", "doordash@", "grubhub@",
+        "events@",
+        "event@",
+        "uber@",
+        "lyft@",
+        "doordash@",
+        "grubhub@",
         "spices@",
     )
     _EXTRA_DOMAIN_PATTERNS: tuple[str, ...] = (
@@ -934,7 +993,9 @@ class RelationshipExtractor(BaseExtractor):
         # mail.schwab.com, mail.instagram.com).
         "@mail.",
         # Extractor-specific e-commerce and connection subdomains
-        "@ecomm.", "@shop.", "@store.",
+        "@ecomm.",
+        "@shop.",
+        "@store.",
         "@iemail.",
         "@webstaurant",
         "@e1.",
