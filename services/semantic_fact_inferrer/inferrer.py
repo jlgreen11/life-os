@@ -533,7 +533,9 @@ class SemanticFactInferrer:
             outbound_count = contact_data.get("outbound_count", 0)
             total_count = inbound_count + outbound_count
 
-            if total_count >= 10:  # Need enough data to assess balance
+            # Threshold lowered from 10 to 5: with many contacts having modest
+            # individual counts, waiting for 10 interactions misses real patterns.
+            if total_count >= 5:  # Need enough data to assess balance
                 balance_ratio = min(inbound_count, outbound_count) / total_count
 
                 if balance_ratio > 0.3:  # Both directions active (30%+ in each direction)
@@ -554,6 +556,19 @@ class SemanticFactInferrer:
                         episode_id=episode_id,
                     )
                     facts_written += 1
+
+        # Always generate aggregate-level relationship facts from the full human
+        # contact network.  Per-contact facts may be sparse when 55K+ samples are
+        # spread across hundreds of contacts whose individual interaction counts
+        # don't exceed the 2x-average high-priority threshold.  Aggregate facts
+        # (network size, activity level, domain breadth) fill this gap and are
+        # reliable at any contact count >= 2.
+        aggregate_count = self._infer_aggregate_relationship_facts(
+            human_contacts=human_contacts,
+            all_contacts=contacts,
+            base_confidence=base_confidence,
+        )
+        facts_written += aggregate_count
 
         # Supplementary fallback: if the main bidirectional path produced 0 facts
         # (e.g., contacts have outbound_count=1 but don't meet interaction thresholds),
@@ -683,6 +698,164 @@ class SemanticFactInferrer:
                 "inbound_only_after_filter": len(inbound_only),
             },
         }
+
+    def _infer_aggregate_relationship_facts(
+        self,
+        human_contacts: dict,
+        all_contacts: dict,
+        base_confidence: float,
+    ) -> int:
+        """
+        Derive aggregate-level semantic facts from the relationship profile.
+
+        Per-contact facts (relationship_priority_*, relationship_balance_*) are
+        sparse when 55K+ samples are spread across hundreds of contacts whose
+        individual interaction counts don't exceed the 2x-average threshold.
+        This method fills that gap by generating facts about the user's
+        *overall* communication network regardless of per-contact thresholds:
+
+          - relationship_network_size: Categorizes the user's active human
+            contact count (extensive / moderate / small).
+          - regular_contact_count: Numeric count fact when 10+ contacts have
+            5+ interactions, confirming a large active network.
+          - communication_activity_level: Overall communication intensity
+            derived from average interactions-per-human-contact.
+          - contact_network_breadth: Domain diversity of the full contact list
+            (distinct email domains after marketing filter).
+
+        Args:
+            human_contacts: Marketing-filtered bidirectional contacts dict
+                (from ``infer_from_relationship_profile``).
+            all_contacts: Complete, unfiltered contacts dict used for domain-
+                diversity analysis (includes inbound-only contacts).
+            base_confidence: Pre-computed confidence from
+                ``_early_inference_confidence``.
+
+        Returns:
+            Number of aggregate facts written to semantic memory.
+        """
+        facts_written = 0
+
+        # --- Regular contact count (human contacts with 5+ interactions) ---
+        # Counts how many distinct people the user regularly communicates with.
+        # A "regular contact" threshold of 5 interactions is deliberate: it
+        # filters one-off exchanges while remaining reachable with modest data.
+        regular_contacts = {
+            cid: cdata
+            for cid, cdata in human_contacts.items()
+            if isinstance(cdata, dict) and cdata.get("interaction_count", 0) >= 5
+        }
+        regular_count = len(regular_contacts)
+
+        if regular_count >= 10:
+            # Large active network — user is highly connected across many people
+            self.ums.update_semantic_fact(
+                key="relationship_network_size",
+                category="implicit_preference",
+                value="extensive_network",
+                confidence=min(0.9, base_confidence + 0.1 + min(0.3, regular_count / 100)),
+                episode_id=None,
+            )
+            facts_written += 1
+            # Precise count fact for downstream use in briefings and predictions
+            self.ums.update_semantic_fact(
+                key="regular_contact_count",
+                category="implicit_preference",
+                value=regular_count,
+                confidence=min(0.85, base_confidence + 0.1),
+                episode_id=None,
+            )
+            facts_written += 1
+        elif regular_count >= 5:
+            # Moderate active network
+            self.ums.update_semantic_fact(
+                key="relationship_network_size",
+                category="implicit_preference",
+                value="moderate_network",
+                confidence=min(0.8, base_confidence + min(0.2, regular_count / 50)),
+                episode_id=None,
+            )
+            facts_written += 1
+        elif regular_count >= 2:
+            # Small but real network (meaningful even at low counts)
+            self.ums.update_semantic_fact(
+                key="relationship_network_size",
+                category="implicit_preference",
+                value="small_network",
+                confidence=min(0.7, base_confidence),
+                episode_id=None,
+            )
+            facts_written += 1
+
+        # --- Communication activity level ---
+        # Derived from average interactions-per-human-contact, indicating
+        # whether the user is a high-volume communicator or more selective.
+        if human_contacts:
+            total_interactions = sum(
+                cdata.get("interaction_count", 0)
+                for cdata in human_contacts.values()
+                if isinstance(cdata, dict)
+            )
+            avg_per_contact = total_interactions / len(human_contacts)
+
+            if avg_per_contact >= 20:
+                activity_value = "highly_active_communicator"
+                activity_confidence = min(0.85, base_confidence + 0.15)
+            elif avg_per_contact >= 10:
+                activity_value = "moderately_active_communicator"
+                activity_confidence = min(0.8, base_confidence + 0.1)
+            elif avg_per_contact >= 5:
+                activity_value = "regular_communicator"
+                activity_confidence = min(0.75, base_confidence + 0.05)
+            else:
+                activity_value = None
+
+            if activity_value is not None:
+                self.ums.update_semantic_fact(
+                    key="communication_activity_level",
+                    category="implicit_preference",
+                    value=activity_value,
+                    confidence=activity_confidence,
+                    episode_id=None,
+                )
+                facts_written += 1
+
+        # --- Contact network breadth (email domain diversity) ---
+        # Counts distinct email domains in the full contact list (after marketing
+        # filter) to determine whether the user's network spans many organisations
+        # (broad) or is concentrated in one or two domains (narrow).
+        domains: set[str] = set()
+        for cid in all_contacts:
+            if "@" in cid and not is_marketing_or_noreply(cid):
+                domain = cid.split("@", 1)[1].lower()
+                domains.add(domain)
+
+        domain_count = len(domains)
+        if domain_count >= 10:
+            self.ums.update_semantic_fact(
+                key="contact_network_breadth",
+                category="implicit_preference",
+                value="diverse_multi_domain_network",
+                confidence=min(0.85, base_confidence + 0.1 + min(0.25, domain_count / 100)),
+                episode_id=None,
+            )
+            facts_written += 1
+        elif domain_count >= 4:
+            self.ums.update_semantic_fact(
+                key="contact_network_breadth",
+                category="implicit_preference",
+                value="moderate_domain_diversity",
+                confidence=min(0.75, base_confidence + min(0.15, domain_count / 40)),
+                episode_id=None,
+            )
+            facts_written += 1
+
+        logger.info(
+            "Aggregate relationship facts: regular_count=%d, domains=%d, "
+            "facts_written=%d",
+            regular_count, domain_count, facts_written,
+        )
+        return facts_written
 
     def _purge_noise_topic_facts(self, noise_blocklist: set) -> int:
         """
