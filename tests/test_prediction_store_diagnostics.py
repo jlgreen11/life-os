@@ -25,11 +25,16 @@ from services.prediction_engine.engine import PredictionEngine
 # ---------------------------------------------------------------------------
 
 def _make_prediction(**overrides) -> Prediction:
-    """Create a minimal Prediction for testing."""
+    """Create a minimal Prediction for testing.
+
+    Each call generates a unique description by default to prevent intra-batch
+    deduplication from silently discarding predictions when multiple identical
+    predictions are created for testing storage failure scenarios.
+    """
     defaults = {
         "id": str(uuid.uuid4()),
         "prediction_type": "need",
-        "description": "Test prediction",
+        "description": f"Test prediction {uuid.uuid4().hex[:8]}",
         "confidence": 0.5,
         "confidence_gate": ConfidenceGate.SUGGEST,
         "time_horizon": "2_hours",

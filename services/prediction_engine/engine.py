@@ -167,6 +167,18 @@ class PredictionEngine:
         # get_runtime_diagnostics() and get_diagnostics().
         self._surfacing_diagnostics: dict[str, Any] = self._empty_surfacing_diagnostics()
 
+        # Pre-filter cache: set of (prediction_type, description, time_horizon) tuples
+        # representing existing unresolved predictions loaded from the DB.  Avoids a
+        # full DB query every 15-minute cycle — refreshed from DB only every 4th cycle
+        # (i.e. roughly once per hour).  Populated after each successful store run
+        # so that within-session duplicates are caught without waiting for the next
+        # refresh cycle.  Reset to empty set on any persistence failure so that the
+        # next cycle performs a forced refresh.
+        self._prefilter_cache: set[tuple[str, str, str | None]] = set()
+        # Counts how many generate_predictions() cycles have run since the last full
+        # DB-based cache refresh.  Resets to 0 after each refresh.
+        self._prefilter_refresh_cycle: int = 0
+
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
         self._contact_email_map: dict[str, str] = {}
@@ -293,6 +305,10 @@ class PredictionEngine:
         self._last_run_diagnostics = {}
         self._zero_surfacing_cycles = 0
         self._surfacing_diagnostics = self._empty_surfacing_diagnostics()
+        # Reset pre-filter cache so the next cycle performs a full DB refresh.
+        # After a DB recovery, any in-memory cache entries are stale.
+        self._prefilter_cache = set()
+        self._prefilter_refresh_cycle = 0
 
         # Clear the persisted trigger-state keys from the DB so that
         # _load_persisted_state() doesn't reload stale timestamps after
@@ -545,6 +561,10 @@ class PredictionEngine:
                         conn.execute('DELETE FROM predictions WHERE id = ?', (test_id,))
                         logger.info('Persistence recovery: DB write test PASSED — clearing failure flag')
                         self._persistence_failure_detected = False
+                        # Reset the pre-filter cache so this cycle does a full DB
+                        # refresh — the table may have changed during DB recovery.
+                        self._prefilter_cache = set()
+                        self._prefilter_refresh_cycle = 0
                     else:
                         logger.critical(
                             'Persistence recovery: DB write test FAILED — predictions '
@@ -620,22 +640,63 @@ class PredictionEngine:
         # Pre-load existing unresolved predictions to skip regenerating them.
         # This reduces the 16x dedup waste where identical predictions are
         # generated, processed through filtering, then discarded at storage time.
+        #
+        # CACHING: The pre-filter set is maintained in-memory (_prefilter_cache) and
+        # refreshed from the DB only every 4th cycle (~once per hour) instead of every
+        # 15-minute cycle.  New predictions stored during each run are appended to the
+        # cache immediately, so the in-memory set stays accurate between DB refreshes.
+        # On any persistence failure (or first run), the cache is rebuilt from DB.
+        _force_refresh = (
+            self._prefilter_refresh_cycle == 0  # First run or post-reset
+            or self._persistence_failure_detected  # DB may have been rebuilt
+        )
+        _periodic_refresh = (self._prefilter_refresh_cycle % 4 == 0) and not _force_refresh
+
         existing_predictions: set[tuple[str, str, str | None]] = set()
-        try:
-            with self.db.get_connection('user_model') as conn:
-                rows = conn.execute(
-                    """SELECT prediction_type, description, time_horizon FROM predictions
-                       WHERE resolved_at IS NULL
-                          OR datetime(resolved_at) > datetime('now', '-24 hours')"""
-                ).fetchall()
-                existing_predictions = {(r[0], r[1], r[2]) for r in rows}
-            if existing_predictions:
+        if _force_refresh or _periodic_refresh:
+            # Rebuild cache from DB
+            try:
+                with self.db.get_connection('user_model') as conn:
+                    rows = conn.execute(
+                        """SELECT prediction_type, description, time_horizon FROM predictions
+                           WHERE resolved_at IS NULL
+                              OR datetime(resolved_at) > datetime('now', '-24 hours')"""
+                    ).fetchall()
+                    existing_predictions = {(r[0], r[1], r[2]) for r in rows}
+                self._prefilter_cache = existing_predictions
+                refresh_reason = "forced" if _force_refresh else "periodic"
                 logger.debug(
-                    'Pre-filter: %d existing predictions will be skipped',
+                    'Pre-filter cache refreshed (%s): %d existing predictions, cycle=%d',
+                    refresh_reason,
                     len(existing_predictions),
+                    self._prefilter_refresh_cycle,
                 )
-        except Exception as e:
-            logger.warning('Pre-filter query failed (proceeding without filter): %s', e)
+            except Exception as e:
+                # On error, fall back to the in-memory cache so we don't lose
+                # cross-cycle dedup.  Log a warning so operators notice the gap.
+                existing_predictions = self._prefilter_cache
+                logger.warning(
+                    'Pre-filter DB refresh failed (using stale in-memory cache, '
+                    '%d entries): %s',
+                    len(existing_predictions),
+                    e,
+                )
+        else:
+            # Use cached set — already up-to-date from the last cycle's store run
+            existing_predictions = self._prefilter_cache
+            logger.debug(
+                'Pre-filter: using cached set (%d entries, cycle=%d)',
+                len(existing_predictions),
+                self._prefilter_refresh_cycle,
+            )
+
+        self._prefilter_refresh_cycle += 1
+
+        if existing_predictions:
+            logger.debug(
+                'Pre-filter: %d existing predictions will be skipped',
+                len(existing_predictions),
+            )
 
         # Proactive persistence failure detection: if the table is empty
         # and either (a) we've had store failures, or (b) at least one
@@ -767,6 +828,25 @@ class PredictionEngine:
             if skipped:
                 generation_stats['pre_filtered'] = skipped
                 logger.debug('Pre-filter: skipped %d duplicate predictions', skipped)
+
+        # Intra-batch dedup: remove duplicate predictions generated within this
+        # cycle by different _check_* methods (e.g. _check_relationship_maintenance
+        # and _check_follow_up_needs both emitting "Reach out to contact X").
+        # These duplicates pass the pre-filter because the set is built before
+        # generation starts, so they would otherwise hit store_prediction()'s dedup
+        # — wasting DB queries and telemetry events.
+        seen_keys: set[tuple[str, str, str | None]] = set()
+        unique_predictions: list[Prediction] = []
+        for p in predictions:
+            key = (p.prediction_type, p.description, p.time_horizon)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique_predictions.append(p)
+        intra_dupes = len(predictions) - len(unique_predictions)
+        if intra_dupes:
+            generation_stats['intra_batch_dedup'] = intra_dupes
+            logger.debug('Intra-batch dedup: removed %d duplicate predictions', intra_dupes)
+        predictions = unique_predictions
 
         logger.info(
             "Generated predictions by type: %s (total=%d) [triggers: events=%s, time=%s]",
@@ -983,6 +1063,19 @@ class PredictionEngine:
                 len(predictions),
             )
 
+        # Update the in-memory pre-filter cache with keys for predictions that were
+        # actually stored this cycle.  This keeps the cache current without waiting
+        # for the next periodic DB refresh, preventing intra-session re-generation
+        # of the same predictions across consecutive 15-minute cycles.
+        # Only add predictions that were truly stored (was_stored returned True),
+        # identified by membership in surfaced_ids plus any non-surfaced that stored.
+        for pred in predictions:
+            key = (pred.prediction_type, pred.description, pred.time_horizon)
+            # We add all predictions to the cache, not just surfaced ones, because
+            # store_prediction() deduplicates by (type, description, time_horizon)
+            # regardless of was_surfaced status.
+            self._prefilter_cache.add(key)
+
         # Force WAL checkpoint to prevent prediction data loss from WAL corruption.
         # Without this, committed predictions can be lost if the WAL file is
         # truncated or corrupted before automatic checkpointing occurs.
@@ -1087,6 +1180,12 @@ class PredictionEngine:
             "store_failures_this_run": run_store_failures,
             "store_failures_total": self._store_failure_count,
             "surfacing": self._surfacing_diagnostics,
+            # Intra-batch dedup counter: how many predictions were removed within
+            # this cycle because two _check_* methods generated the same prediction.
+            "intra_batch_dedup": generation_stats.get("intra_batch_dedup", 0),
+            # Pre-filter cache state for monitoring cache effectiveness.
+            "prefilter_cache_size": len(self._prefilter_cache),
+            "prefilter_refresh_cycle": self._prefilter_refresh_cycle,
         }
         self._persist_state("last_run_diagnostics", json.dumps(self._last_run_diagnostics))
 
