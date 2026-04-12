@@ -45,9 +45,10 @@ Feel free to hand-add items above or below whatever the agent writes._
 - **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
 - **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` — Open PR #701 awaiting merge. Adds freshness/staleness tracking per profile to get_data_sufficiency_report().
 - **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` — Open PR #702 awaiting merge. Adds try/except guards and structured JSON 500 responses.
-- **Add cache_age_seconds to /api/insights/summary response** · `code_quality` — Endpoint returns `generated_at` as current timestamp but doesn't indicate how old the underlying insight data is. Clients can't tell if insights are fresh or days old.
-- **Fix communication template extraction failure during profile rebuild** · `broken_feature` — Returned from wave 5 (no PR). Template extraction fails during signal profile rebuild; needs investigation.
-- **Fix episode creation pipeline for email events producing 0 episodes** · `broken_feature` — Returned from wave 5 (no PR). Episode creation runs but 0 episodes persist to user_model.db despite 1,865 telemetry events.
+- **Add rule-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Task extraction requires Ollama but AI is frequently unavailable. A regex-based fallback would capture obvious action items without AI.
+- **Add system health status card to dashboard** · `missing_feature` — /api/health/summary endpoint exists (PR #698) but dashboard doesn't display it. Users see empty widgets with no explanation.
+- **Add cold-start cycle diagnostics to behavioral accuracy tracker** · `code_quality` — Tracker runs inference cycles but with 0 predictions silently does nothing. No diagnostics to distinguish cold-start from broken.
+- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` — Analyzer reports 0 episodes/templates but doesn't flag ratio to qualifying events or check backfill status.
 
 ## In Progress
 
@@ -55,13 +56,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Fix episode store phantom telemetry and add WAL checkpoint resilience** · `broken_feature` (wave 6, slot 1)
-- **Fix linguistic_inbound profile persistence with write verification and data compaction** · `broken_feature` (wave 6, slot 2)
-- **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` (wave 6, slot 3)
-- **Fix routine detection min_episodes threshold for cold-start email data** · `broken_feature` (wave 6, slot 4)
-- **Fix prediction loop stall — no predictions generated since March 6** · `broken_feature` (wave 6, slot 5)
-- **Fix mood extractor profile persistence root cause** · `broken_feature` (wave 6, slot 6)
-- **Add event-based fallback to semantic fact inferrer for empty episodes table** · `missing_feature` (wave 6, slot 7)
+- **Add cache_age_seconds to /api/insights/summary response** · `code_quality` (wave 7, slot 1)
+- **Fix communication template backfill DB connection reuse and WAL checkpoint** · `broken_feature` (wave 7, slot 2)
+- **Fix episode backfill missing post-write verification and WAL checkpoint** · `broken_feature` (wave 7, slot 3)
+- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 7, slot 4)
+- **Add system health status card to dashboard** · `missing_feature` (wave 7, slot 5)
+- **Add cold-start cycle diagnostics to behavioral accuracy tracker** · `code_quality` (wave 7, slot 6)
+- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` (wave 7, slot 7)
 
 ## Completed
 
@@ -69,6 +70,13 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Fix episode store phantom telemetry and add WAL checkpoint resilience** · `broken_feature` — wave 6, PR #714
+- **Fix linguistic_inbound profile persistence with write verification and data compaction** · `broken_feature` — wave 6, PR #717
+- **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` — wave 6, PR #713
+- **Fix routine detection min_episodes threshold for cold-start email data** · `broken_feature` — wave 6, PR #715
+- **Fix prediction loop stall — no predictions generated since March 6** · `broken_feature` — wave 6, PR #681
+- **Fix mood extractor profile persistence root cause** · `broken_feature` — wave 6, PR #718
+- **Add event-based fallback to semantic fact inferrer for empty episodes table** · `missing_feature` — wave 6, PR #716
 - **Fix cadence extractor defaultdict JSON serialization failure** · `broken_feature` — wave 5, PR #709
 - **Fix spatial extractor double JSON-encoding that corrupts profile data** · `broken_feature` — wave 5, PR #712
 - **Fix mood extractor profile persistence with post-write verification** · `broken_feature` — wave 5, PR #708
