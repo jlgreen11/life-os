@@ -66,6 +66,18 @@ class EventBus:
         # can poll this to detect connectivity blips (resets on read).
         self._reconnected_flag: bool = False
 
+        # --- Throughput metrics ---
+        # All counters live in a single asyncio event loop, so no locking
+        # is needed — only one coroutine can mutate them at a time.
+        self._publish_count: int = 0                  # Total publish() attempts (includes errors)
+        self._publish_error_count: int = 0            # JetStream-level publish failures
+        self._subscribe_count: int = 0                # Number of active subscriptions created
+        self._last_publish_at: Optional[str] = None   # ISO-8601 UTC timestamp of most recent publish
+        # Per-subject publish counts (full subject, e.g. "lifeos.email.received": 142).
+        # Capped at 200 keys to prevent unbounded memory growth in long-running deployments.
+        self._publish_by_subject: dict[str, int] = {}
+        self._started_at: Optional[str] = None        # ISO-8601 UTC timestamp set when connect() succeeds
+
     async def _on_disconnect(self):
         """Called when the NATS client loses its connection.
 
@@ -121,6 +133,10 @@ class EventBus:
         # Obtain the JetStream context for persistent messaging (as opposed
         # to core NATS which is fire-and-forget).
         self._js = self._nc.jetstream()
+        # Record when the bus came online so uptime can be reported in
+        # get_metrics().  Set after a successful jetstream() call to avoid
+        # counting time spent retrying a failed connect.
+        self._started_at = datetime.now(timezone.utc).isoformat()
 
         # --- Idempotent stream creation ---
         # First, check if the stream already exists by looking up a subject.
@@ -203,10 +219,35 @@ class EventBus:
         # e.g., "email.received" -> "lifeos.email.received"
         subject = f"lifeos.{event_type}"
         # Serialize the event envelope to JSON bytes for NATS transport.
+        # json.dumps() raises TypeError for non-serializable values (caller
+        # bug) — let that propagate before touching any counters.
         data = json.dumps(event).encode()
+
+        # --- Throughput instrumentation ---
+        # Increment counters *before* the actual NATS send so that attempted
+        # publishes are counted even when the JetStream call fails.
+        self._publish_count += 1
+        self._publish_by_subject[subject] = self._publish_by_subject.get(subject, 0) + 1
+        self._last_publish_at = datetime.now(timezone.utc).isoformat()
+
+        # Keep the per-subject dict bounded at 200 keys.  When the cap is
+        # exceeded, evict the subject with the lowest lifetime count.  In
+        # practice this retains high-frequency subjects (email.received, etc.)
+        # and drops rare one-offs (test runs, unknown event types).
+        if len(self._publish_by_subject) > 200:
+            least_used = min(self._publish_by_subject, key=self._publish_by_subject.get)
+            del self._publish_by_subject[least_used]
+
         # JetStream publish provides at-least-once delivery: the message is
         # persisted to the stream before the publish ack is returned.
-        await self._js.publish(subject, data)
+        try:
+            await self._js.publish(subject, data)
+        except Exception:
+            # Track JetStream-level failures (connection lost, stream not
+            # found, timeout, etc.) separately from total publish attempts so
+            # callers can compute an error rate.
+            self._publish_error_count += 1
+            raise
 
         return event_id
 
@@ -271,6 +312,8 @@ class EventBus:
         )
         # Track the subscription handle for cleanup during disconnect().
         self._subscriptions.append(sub)
+        # Count active subscriptions so get_metrics() can report them.
+        self._subscribe_count += 1
 
     async def subscribe_all(self, handler: Callable[[dict], Coroutine],
                             consumer_name: str = "all-events"):
@@ -305,6 +348,54 @@ class EventBus:
         except Exception:
             # Timeout or connection error -- return None for graceful degradation.
             return None
+
+    def get_metrics(self) -> dict:
+        """Return a snapshot of event bus throughput and health metrics.
+
+        All counters reflect the lifetime of this EventBus instance (since
+        ``__init__`` was called).  Uptime is calculated from the moment
+        ``connect()`` succeeded; it is 0 if the bus has never connected.
+
+        Returns a dict with the following keys:
+
+        - ``total_published``     — total publish() calls attempted (including errors)
+        - ``total_errors``        — JetStream-level publish failures
+        - ``active_subscriptions``— number of subscribe() calls that succeeded
+        - ``last_publish_at``     — ISO-8601 UTC timestamp of the most recent publish, or None
+        - ``started_at``          — ISO-8601 UTC timestamp when connect() first succeeded, or None
+        - ``uptime_seconds``      — float seconds since connect() succeeded, 0 if not connected
+        - ``top_subjects``        — dict of up to 20 highest-count subjects and their counts
+        - ``error_rate``          — fraction of publish attempts that resulted in errors (0.0–1.0)
+        - ``is_connected``        — current NATS connection state
+        """
+        now = datetime.now(timezone.utc)
+
+        # Compute uptime from when the bus first connected.
+        uptime_seconds = 0.0
+        if self._started_at:
+            started = datetime.fromisoformat(self._started_at)
+            uptime_seconds = (now - started).total_seconds()
+
+        # Sort by descending count and take the top 20 subjects.
+        sorted_subjects = sorted(
+            self._publish_by_subject.items(),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        top_subjects = dict(sorted_subjects[:20])
+
+        return {
+            "total_published": self._publish_count,
+            "total_errors": self._publish_error_count,
+            "active_subscriptions": self._subscribe_count,
+            "last_publish_at": self._last_publish_at,
+            "started_at": self._started_at,
+            "uptime_seconds": uptime_seconds,
+            "top_subjects": top_subjects,
+            # Avoid division by zero: denominator is at least 1.
+            "error_rate": self._publish_error_count / max(self._publish_count, 1),
+            "is_connected": self.is_connected,
+        }
 
     @property
     def is_connected(self) -> bool:
