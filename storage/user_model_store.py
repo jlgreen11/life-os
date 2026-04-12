@@ -38,6 +38,12 @@ class UserModelStore:
         self.db = db
         self._event_bus = event_bus
         self._event_store = event_store
+        # Write counters for throttled WAL checkpointing.
+        # Signal profiles are written very frequently (63K+ events observed),
+        # so we checkpoint every 50 writes rather than every write.
+        # Templates are written infrequently, so we checkpoint on every write.
+        self._signal_profile_write_count = 0
+        self._template_write_count = 0
 
     def _emit_telemetry(self, event_type: str, payload: dict):
         """Fire-and-forget telemetry event publication.
@@ -439,6 +445,19 @@ class UserModelStore:
                                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
                     (profile_type, json.dumps(data), profile_type),
                 )
+            # Throttled WAL checkpoint: signal profiles are written very
+            # frequently (63K+ writes observed), so checkpoint every 50 writes
+            # rather than every write.  Prevents WAL file from growing unbounded
+            # and reduces data loss exposure from WAL corruption (March 5-6 incident).
+            self._signal_profile_write_count += 1
+            if self._signal_profile_write_count % 50 == 0:
+                try:
+                    self.db.checkpoint_wal("user_model")
+                except Exception as wal_err:
+                    logger.warning(
+                        "UserModelStore: WAL checkpoint after signal profile write failed: %s",
+                        wal_err,
+                    )
             # Telemetry fires only after a successful DB write.  Previously this
             # was outside the try/except, inflating event counts when the DB was
             # corrupt (phantom telemetry bug).
@@ -667,6 +686,17 @@ class UserModelStore:
                 ),
             )
 
+        # Templates are written infrequently, so checkpoint on every store to
+        # minimise data-loss exposure from WAL corruption (March 5-6 incident).
+        self._template_write_count += 1
+        try:
+            self.db.checkpoint_wal("user_model")
+        except Exception as wal_err:
+            logger.warning(
+                "UserModelStore: WAL checkpoint after template store failed: %s",
+                wal_err,
+            )
+
         self._emit_telemetry("usermodel.template.updated", {
             "template_id": template["id"],
             "contact_id": template.get("contact_id"),
@@ -866,6 +896,16 @@ class UserModelStore:
             return None
 
         if result:
+            # Templates are written infrequently, so checkpoint on every update
+            # to minimise data-loss exposure from WAL corruption (March 5-6 incident).
+            self._template_write_count += 1
+            try:
+                self.db.checkpoint_wal("user_model")
+            except Exception as wal_err:
+                logger.warning(
+                    "UserModelStore: WAL checkpoint after template update failed: %s",
+                    wal_err,
+                )
             self._emit_telemetry("usermodel.template.patched", {
                 "template_id": template_id,
                 "fields_updated": [f for f in updates if f in ALLOWED_FIELDS],
