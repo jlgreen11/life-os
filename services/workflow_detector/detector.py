@@ -177,6 +177,101 @@ class WorkflowDetector:
 
         logger.info("Backfill: updated %d episodes with derived interaction_type values", len(updates))
 
+    # Event types that indicate real user activity — used by adaptive lookback
+    # to decide whether the default window has sufficient data for detection.
+    QUALIFYING_EVENT_TYPES: tuple[str, ...] = (
+        "email.received",
+        "email.sent",
+        "message.sent",
+        "message.received",
+        "task.created",
+        "task.completed",
+        "calendar.event.created",
+    )
+
+    # Adaptive lookback fires when fewer than this many qualifying events are
+    # found in the default window.  50 is the same floor used by the routine
+    # detector's min_episodes_for_detection and provides a reasonable baseline
+    # for multi-step workflow pattern recognition.
+    MIN_QUALIFYING_EVENTS = 50
+
+    # Hard ceiling on how far back adaptive lookback will ever extend.
+    # 365 days covers a full year of behavioral data while keeping query
+    # costs bounded on systems with millions of historical events.
+    MAX_ADAPTIVE_LOOKBACK_DAYS = 365
+
+    def _compute_adaptive_lookback_days(self, lookback_days: int) -> int:
+        """Extend the lookback window when qualifying events are sparse.
+
+        When a connector outage (or any data gap) moves all qualifying events
+        outside the default window, ``detect_workflows()`` would return 0
+        results despite rich historical data existing in events.db.  This
+        method detects that scenario by:
+
+        1. Counting qualifying events (email, task, calendar, message) within
+           the current ``lookback_days`` window.
+        2. If count < MIN_QUALIFYING_EVENTS, doubling the window and repeating.
+        3. Stopping once count >= MIN_QUALIFYING_EVENTS or the window hits
+           MAX_ADAPTIVE_LOOKBACK_DAYS (365 days).
+        4. Logging the extension so operators can see when it fires.
+
+        The extension only fires when the window is sparse (count < 50) —
+        having even a small number of recent events means the system is still
+        receiving data normally; in that case, no extension is applied.
+
+        Args:
+            lookback_days: The requested lookback window in days.
+
+        Returns:
+            Effective lookback window in days (>= lookback_days,
+            <= MAX_ADAPTIVE_LOOKBACK_DAYS).
+        """
+        original_lookback = lookback_days
+        effective_lookback = lookback_days
+        count = 0  # Track count for the final log message
+
+        try:
+            placeholders = ",".join("?" * len(self.QUALIFYING_EVENT_TYPES))
+
+            while True:
+                cutoff = (datetime.now(UTC) - timedelta(days=effective_lookback)).isoformat()
+                with self.db.get_connection("events") as conn:
+                    row = conn.execute(
+                        f"SELECT COUNT(*) FROM events "
+                        f"WHERE julianday(timestamp) > julianday(?) "
+                        f"AND type IN ({placeholders})",
+                        (cutoff, *self.QUALIFYING_EVENT_TYPES),
+                    ).fetchone()
+                count = row[0] if row else 0
+
+                if count >= self.MIN_QUALIFYING_EVENTS:
+                    # Sufficient events found — no further extension needed.
+                    break
+
+                if effective_lookback >= self.MAX_ADAPTIVE_LOOKBACK_DAYS:
+                    # Already at the hard ceiling — cannot extend further.
+                    break
+
+                # Double the window (capped at the maximum).
+                effective_lookback = min(effective_lookback * 2, self.MAX_ADAPTIVE_LOOKBACK_DAYS)
+
+            if effective_lookback != original_lookback:
+                logger.info(
+                    "WorkflowDetector: extended lookback from %dd to %dd (%d qualifying events)",
+                    original_lookback,
+                    effective_lookback,
+                    count,
+                )
+
+            return effective_lookback
+
+        except Exception:
+            logger.warning(
+                "WorkflowDetector: adaptive lookback computation failed — falling back to %dd",
+                lookback_days,
+            )
+            return lookback_days
+
     def detect_workflows(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """Detect all workflows from recent event history.
 
@@ -197,10 +292,24 @@ class WorkflowDetector:
         Returns:
             List of detected workflows (email, task, calendar, interaction-based)
         """
+        # Adaptive lookback: when the default window contains fewer than
+        # MIN_QUALIFYING_EVENTS qualifying events (because a connector outage
+        # pushed all data outside the window), double the window repeatedly up
+        # to MAX_ADAPTIVE_LOOKBACK_DAYS.  This mirrors the same pattern used
+        # by RoutineDetector._compute_adaptive_lookback_days().
+        try:
+            effective_lookback_days = self._compute_adaptive_lookback_days(lookback_days)
+        except Exception:
+            logger.warning(
+                "WorkflowDetector: adaptive lookback raised unexpectedly — using default %dd",
+                lookback_days,
+            )
+            effective_lookback_days = lookback_days
+
         # Backfill stale interaction_type values before any detection strategy
         # runs, so interaction workflows benefit from properly classified episodes.
         try:
-            self._backfill_stale_interaction_types(lookback_days)
+            self._backfill_stale_interaction_types(effective_lookback_days)
         except Exception:
             logger.exception("Interaction type backfill failed — continuing with detection")
 
@@ -212,41 +321,41 @@ class WorkflowDetector:
         # RoutineDetector and InsightEngine correlators.
         email_workflows = []
         try:
-            email_workflows = self._detect_email_workflows(lookback_days)
+            email_workflows = self._detect_email_workflows(effective_lookback_days)
             workflows.extend(email_workflows)
         except Exception:
             logger.exception("WorkflowDetector: email workflow detection failed")
 
         task_workflows = []
         try:
-            task_workflows = self._detect_task_workflows(lookback_days)
+            task_workflows = self._detect_task_workflows(effective_lookback_days)
             workflows.extend(task_workflows)
         except Exception:
             logger.exception("WorkflowDetector: task workflow detection failed")
 
         calendar_workflows = []
         try:
-            calendar_workflows = self._detect_calendar_workflows(lookback_days)
+            calendar_workflows = self._detect_calendar_workflows(effective_lookback_days)
             workflows.extend(calendar_workflows)
         except Exception:
             logger.exception("WorkflowDetector: calendar workflow detection failed")
 
         interaction_workflows = []
         try:
-            interaction_workflows = self._detect_interaction_workflows(lookback_days)
+            interaction_workflows = self._detect_interaction_workflows(effective_lookback_days)
             workflows.extend(interaction_workflows)
         except Exception:
             logger.exception("WorkflowDetector: interaction workflow detection failed")
 
         recurring_inbound_workflows = []
         try:
-            recurring_inbound_workflows = self._detect_recurring_inbound_patterns(lookback_days)
+            recurring_inbound_workflows = self._detect_recurring_inbound_patterns(effective_lookback_days)
             workflows.extend(recurring_inbound_workflows)
         except Exception:
             logger.exception("WorkflowDetector: recurring inbound detection failed")
 
         logger.info(
-            f"Detected {len(workflows)} workflows from {lookback_days} days of history "
+            f"Detected {len(workflows)} workflows from {effective_lookback_days} days of history "
             f"({len(email_workflows)} email, {len(task_workflows)} task, "
             f"{len(calendar_workflows)} calendar, {len(interaction_workflows)} interaction, "
             f"{len(recurring_inbound_workflows)} recurring_inbound)"
