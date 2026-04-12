@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,6 +40,9 @@ class VectorStore:
     normalized vectors, enabling cosine similarity via a simple dot product.
     """
 
+    # Embedding dimensions for the default model (all-MiniLM-L6-v2).
+    EMBEDDING_DIMENSIONS = 384
+
     def __init__(self, db_path: str = "./data/vectors", model_name: str = "all-MiniLM-L6-v2"):
         self.db_path = Path(db_path)
         # ``model_name`` refers to a sentence-transformers model identifier.
@@ -55,6 +58,15 @@ class VectorStore:
         # (index N in _fallback_docs corresponds to index N in _fallback_embeddings).
         self._fallback_docs: list[dict] = []
         self._fallback_embeddings: list[list[float]] = []
+
+        # Observability tracking attributes — all recorded as ISO-8601 UTC strings
+        # so they are JSON-serialisable without extra conversion.
+        self._initialized_at: str = datetime.now(timezone.utc).isoformat()
+        self._last_add_at: Optional[str] = None    # Timestamp of the most recent add_document call
+        self._last_search_at: Optional[str] = None  # Timestamp of the most recent search call
+        self._add_count: int = 0          # Total documents added this session
+        self._search_count: int = 0       # Total search calls this session
+        self._search_error_count: int = 0  # Search calls that raised an exception this session
 
     def initialize(self):
         """Initialize the vector store and embedding model.
@@ -243,6 +255,10 @@ class VectorStore:
         if chunks_stored == 0:
             logger.warning("add_document(%s): no chunks embedded — embedding model may be unavailable", doc_id)
             return False
+
+        # Update session-level observability counters on successful storage.
+        self._last_add_at = datetime.now(timezone.utc).isoformat()
+        self._add_count += 1
         return True
 
     def search(self, query: str, limit: int = 10,
@@ -258,18 +274,26 @@ class VectorStore:
         Returns:
             List of matching documents with scores
         """
-        # Embed the query text into the same vector space as the stored documents.
-        query_embedding = self.embed_text(query)
-        if query_embedding is None:
-            # If the embedding model is unavailable, fall back to simple keyword
-            # matching so the search endpoint still returns *something* useful.
-            return self._text_search_fallback(query, limit)
+        self._search_count += 1
+        self._last_search_at = datetime.now(timezone.utc).isoformat()
 
-        # Dispatch to the active backend.
-        if self._use_lancedb and self._table is not None:
-            return self._lancedb_search(query_embedding, limit, filter_metadata)
-        else:
-            return self._numpy_search(query_embedding, limit, filter_metadata)
+        try:
+            # Embed the query text into the same vector space as the stored documents.
+            query_embedding = self.embed_text(query)
+            if query_embedding is None:
+                # If the embedding model is unavailable, fall back to simple keyword
+                # matching so the search endpoint still returns *something* useful.
+                return self._text_search_fallback(query, limit)
+
+            # Dispatch to the active backend.
+            if self._use_lancedb and self._table is not None:
+                return self._lancedb_search(query_embedding, limit, filter_metadata)
+            else:
+                return self._numpy_search(query_embedding, limit, filter_metadata)
+        except Exception as e:
+            self._search_error_count += 1
+            logger.error("Search error: %s", e)
+            return []
 
     def _lancedb_search(self, query_embedding: list[float], limit: int,
                         filter_metadata: Optional[dict]) -> list[dict]:
@@ -468,6 +492,158 @@ class VectorStore:
                 "backend": "numpy_fallback",
                 "document_count": len(self._fallback_docs),
             }
+
+    def get_health(self) -> dict:
+        """Return a comprehensive health snapshot of the vector store.
+
+        This is the primary observability surface for the vector store.  It is
+        designed to be included in ``/api/health`` responses and fed into
+        monitoring dashboards without additional processing.
+
+        Returns a dict with the following keys:
+
+        Common keys (both backends):
+            - backend (str): "lancedb" or "numpy_fallback"
+            - is_healthy (bool): True if the store is accessible and functional
+            - document_count (int | str): Number of stored documents, or "unknown"
+              if the count query failed
+            - embedding_dimensions (int): Fixed vector size (384 for all-MiniLM-L6-v2)
+            - model_name (str): The embedding model identifier
+            - storage_path (str): Absolute path to the vector store directory
+            - initialized_at (str): ISO-8601 UTC timestamp of store initialisation
+            - last_add_at (str | None): ISO-8601 UTC timestamp of the most recent
+              successful add_document call, or None if no documents were added
+            - last_search_at (str | None): ISO-8601 UTC timestamp of the most recent
+              search call, or None if no searches were performed
+            - add_count (int): Total documents added in the current process session
+            - search_count (int): Total search calls in the current process session
+            - search_error_count (int): Search calls that raised an exception this session
+
+        LanceDB-specific keys (only when backend == "lancedb"):
+            - table_accessible (bool): True if a count query succeeded
+            - error (str | None): Exception message if the table is not accessible
+
+        NumPy-fallback-specific keys (only when backend == "numpy_fallback"):
+            - fallback_file_exists (bool): True if the JSON persistence file is on disk
+            - fallback_file_size_bytes (int | None): File size in bytes, or None if missing
+        """
+        health: dict[str, Any] = {
+            "embedding_dimensions": self.EMBEDDING_DIMENSIONS,
+            "model_name": self.model_name,
+            "storage_path": str(self.db_path.resolve()),
+            "initialized_at": self._initialized_at,
+            "last_add_at": self._last_add_at,
+            "last_search_at": self._last_search_at,
+            "add_count": self._add_count,
+            "search_count": self._search_count,
+            "search_error_count": self._search_error_count,
+        }
+
+        if self._use_lancedb and self._table is not None:
+            health["backend"] = "lancedb"
+            try:
+                count = self._table.count_rows()
+                health.update({
+                    "is_healthy": True,
+                    "document_count": count,
+                    "table_accessible": True,
+                    "error": None,
+                })
+            except Exception as e:
+                health.update({
+                    "is_healthy": False,
+                    "document_count": "unknown",
+                    "table_accessible": False,
+                    "error": str(e),
+                })
+        else:
+            # NumPy fallback backend
+            fallback_path = self.db_path / "fallback.json"
+            file_exists = fallback_path.exists()
+            health.update({
+                "backend": "numpy_fallback",
+                "is_healthy": True,  # In-memory fallback is always accessible
+                "document_count": len(self._fallback_docs),
+                "fallback_file_exists": file_exists,
+                "fallback_file_size_bytes": fallback_path.stat().st_size if file_exists else None,
+            })
+
+        return health
+
+    def get_stale_documents(self, max_age_hours: int = 168) -> dict:
+        """Find documents whose embeddings are older than ``max_age_hours``.
+
+        Stale embeddings can degrade search quality when the embedding model is
+        updated or when documents are added from a source whose data has since
+        changed.  This method identifies candidates for re-embedding.
+
+        Args:
+            max_age_hours: Age threshold in hours.  Documents with a
+                ``created_at`` timestamp older than this value are considered
+                stale.  Defaults to 168 (7 days).
+
+        Returns:
+            A dict with:
+                - stale_doc_ids (list[str]): IDs of documents older than the threshold
+                - stale_ages_hours (list[float]): Corresponding ages in hours (same order)
+                - total_checked (int): Number of documents examined
+                - age_tracking_available (bool): False if no documents have timestamps,
+                  meaning age-based filtering is not possible
+                - threshold_hours (int): The max_age_hours value used
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        stale_ids: list[str] = []
+        stale_ages: list[float] = []
+        total_checked = 0
+        age_tracking_available = False
+
+        def _parse_timestamp(ts_str: str | None) -> Optional[datetime]:
+            """Parse an ISO-8601 timestamp string, returning None on failure."""
+            if not ts_str:
+                return None
+            try:
+                dt = datetime.fromisoformat(ts_str)
+                # Ensure the datetime is timezone-aware so we can compare to cutoff.
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except (ValueError, TypeError):
+                return None
+
+        if self._use_lancedb and self._table is not None:
+            # Query all documents from LanceDB and filter by created_at.
+            try:
+                rows = self._table.search().limit(None).to_list()
+                for row in rows:
+                    total_checked += 1
+                    created_at = _parse_timestamp(row.get("created_at"))
+                    if created_at is not None:
+                        age_tracking_available = True
+                        if created_at < cutoff:
+                            age_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                            stale_ids.append(row["doc_id"])
+                            stale_ages.append(round(age_hours, 2))
+            except Exception as e:
+                logger.error("get_stale_documents LanceDB query error: %s", e)
+        else:
+            # NumPy fallback: iterate the in-memory document list.
+            for doc in self._fallback_docs:
+                total_checked += 1
+                created_at = _parse_timestamp(doc.get("created_at"))
+                if created_at is not None:
+                    age_tracking_available = True
+                    if created_at < cutoff:
+                        age_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                        stale_ids.append(doc["doc_id"])
+                        stale_ages.append(round(age_hours, 2))
+
+        return {
+            "stale_doc_ids": stale_ids,
+            "stale_ages_hours": stale_ages,
+            "total_checked": total_checked,
+            "age_tracking_available": age_tracking_available,
+            "threshold_hours": max_age_hours,
+        }
 
     def delete_document(self, doc_id: str):
         """Delete a document and all its chunks.

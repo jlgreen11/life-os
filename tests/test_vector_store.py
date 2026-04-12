@@ -843,3 +843,322 @@ def test_search_score_ordering_consistency(vector_store_with_embedder):
             f"Result {i} (score={results[i]['score']}) should be >= "
             f"result {i + 1} (score={results[i + 1]['score']})"
         )
+
+
+# --- Health Diagnostics Tests ---
+
+
+def test_get_health_fallback_backend_required_keys(vector_store_fallback):
+    """get_health() returns all required keys for the numpy_fallback backend."""
+    health = vector_store_fallback.get_health()
+
+    # Common keys present for both backends
+    assert health["backend"] == "numpy_fallback"
+    assert isinstance(health["is_healthy"], bool)
+    assert isinstance(health["document_count"], int)
+    assert health["embedding_dimensions"] == 384
+    assert health["model_name"] == "all-MiniLM-L6-v2"
+    assert "storage_path" in health
+    assert "initialized_at" in health
+    assert "last_add_at" in health
+    assert "last_search_at" in health
+    assert "add_count" in health
+    assert "search_count" in health
+    assert "search_error_count" in health
+
+    # NumPy-specific keys
+    assert "fallback_file_exists" in health
+    assert "fallback_file_size_bytes" in health
+
+
+def test_get_health_lancedb_backend_required_keys():
+    """get_health() returns all required keys for the lancedb backend."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+        store._table.count_rows.return_value = 10
+
+        health = store.get_health()
+
+    assert health["backend"] == "lancedb"
+    assert health["is_healthy"] is True
+    assert health["document_count"] == 10
+    assert health["embedding_dimensions"] == 384
+    assert health["model_name"] == "all-MiniLM-L6-v2"
+    assert "storage_path" in health
+    assert "initialized_at" in health
+    assert health["table_accessible"] is True
+    assert health["error"] is None
+
+
+def test_get_health_lancedb_unhealthy_on_error():
+    """get_health() reports is_healthy=False when the LanceDB table is inaccessible."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+        store._table.count_rows.side_effect = Exception("table corrupted")
+
+        health = store.get_health()
+
+    assert health["backend"] == "lancedb"
+    assert health["is_healthy"] is False
+    assert health["document_count"] == "unknown"
+    assert health["table_accessible"] is False
+    assert "table corrupted" in health["error"]
+
+
+def test_get_health_fallback_document_count_reflects_stored_docs(vector_store_fallback):
+    """get_health() document_count matches the number of documents in the fallback store."""
+    vector_store_fallback._fallback_docs = [
+        {"doc_id": "doc1", "text": "First", "metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
+        {"doc_id": "doc2", "text": "Second", "metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
+        {"doc_id": "doc3", "text": "Third", "metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
+    ]
+
+    health = vector_store_fallback.get_health()
+    assert health["document_count"] == 3
+
+
+def test_get_health_initialized_at_is_set_at_construction(vector_store_fallback):
+    """get_health() initialized_at is set when the VectorStore is constructed."""
+    health = vector_store_fallback.get_health()
+    assert health["initialized_at"] is not None
+    # Should be a valid ISO-8601 string
+    from datetime import datetime
+    dt = datetime.fromisoformat(health["initialized_at"])
+    assert dt is not None
+
+
+# --- Observability Tracking Tests ---
+
+
+def test_tracking_attrs_initialized_to_defaults(vector_store_fallback):
+    """Session tracking attributes start at zero/None after construction."""
+    assert vector_store_fallback._initialized_at is not None
+    assert vector_store_fallback._last_add_at is None
+    assert vector_store_fallback._last_search_at is None
+    assert vector_store_fallback._add_count == 0
+    assert vector_store_fallback._search_count == 0
+    assert vector_store_fallback._search_error_count == 0
+
+
+def test_add_document_updates_last_add_at(vector_store_with_embedder):
+    """_last_add_at is updated after a successful add_document call."""
+    assert vector_store_with_embedder._last_add_at is None
+
+    vector_store_with_embedder.add_document("doc1", "Valid content for embedding and storage.")
+
+    assert vector_store_with_embedder._last_add_at is not None
+    # Should be a valid ISO-8601 timestamp
+    from datetime import datetime
+    dt = datetime.fromisoformat(vector_store_with_embedder._last_add_at)
+    assert dt is not None
+
+
+def test_add_document_increments_add_count(vector_store_with_embedder):
+    """_add_count is incremented by 1 for each successful add_document call."""
+    assert vector_store_with_embedder._add_count == 0
+
+    vector_store_with_embedder.add_document("doc1", "First document content here.")
+    assert vector_store_with_embedder._add_count == 1
+
+    vector_store_with_embedder.add_document("doc2", "Second document content here.")
+    assert vector_store_with_embedder._add_count == 2
+
+
+def test_add_document_does_not_increment_count_on_failure(vector_store_fallback):
+    """_add_count is NOT incremented when add_document returns False (embedding unavailable)."""
+    # vector_store_fallback has no embedder — all adds fail
+    vector_store_fallback.add_document("doc1", "Content that will fail to embed.")
+    assert vector_store_fallback._add_count == 0
+    assert vector_store_fallback._last_add_at is None
+
+
+def test_search_updates_last_search_at(vector_store_with_embedder):
+    """_last_search_at is updated after each search call."""
+    assert vector_store_with_embedder._last_search_at is None
+
+    vector_store_with_embedder.search("machine learning")
+
+    assert vector_store_with_embedder._last_search_at is not None
+    from datetime import datetime
+    dt = datetime.fromisoformat(vector_store_with_embedder._last_search_at)
+    assert dt is not None
+
+
+def test_search_increments_search_count(vector_store_with_embedder):
+    """_search_count is incremented on every search call."""
+    assert vector_store_with_embedder._search_count == 0
+
+    vector_store_with_embedder.search("first query")
+    assert vector_store_with_embedder._search_count == 1
+
+    vector_store_with_embedder.search("second query")
+    assert vector_store_with_embedder._search_count == 2
+
+
+def test_search_error_count_increments_on_exception():
+    """_search_error_count increments when search raises an unexpected exception."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._embedder = Mock()
+        store._embedder.encode.return_value = np.ones(384)
+        store._table = Mock()
+        store._table.search.side_effect = Exception("unexpected crash")
+
+        assert store._search_error_count == 0
+        result = store.search("some query")
+
+        # The exception should be caught and an empty list returned
+        assert result == []
+        assert store._search_error_count == 1
+        # The search_count should still be incremented (it's incremented before dispatch)
+        assert store._search_count == 1
+
+
+def test_get_health_reflects_tracking_attrs(vector_store_with_embedder):
+    """get_health() reports the current values of all tracking attributes."""
+    vector_store_with_embedder.add_document("doc1", "Valid document to store in the vector index.")
+    vector_store_with_embedder.search("valid document")
+
+    health = vector_store_with_embedder.get_health()
+
+    assert health["add_count"] == 1
+    assert health["search_count"] == 1
+    assert health["search_error_count"] == 0
+    assert health["last_add_at"] is not None
+    assert health["last_search_at"] is not None
+
+
+# --- Stale Document Detection Tests ---
+
+
+def test_get_stale_documents_empty_store(vector_store_fallback):
+    """get_stale_documents() returns empty results for an empty store."""
+    result = vector_store_fallback.get_stale_documents()
+
+    assert result["stale_doc_ids"] == []
+    assert result["stale_ages_hours"] == []
+    assert result["total_checked"] == 0
+    assert result["threshold_hours"] == 168  # default
+
+
+def test_get_stale_documents_no_stale_docs(vector_store_fallback):
+    """get_stale_documents() returns empty stale list when all docs are fresh."""
+    from datetime import datetime, timezone
+
+    # Documents created 1 hour ago — well within the 168-hour (7-day) window
+    recent_ts = (datetime.now(timezone.utc).replace(
+        hour=datetime.now(timezone.utc).hour - 1
+    )).isoformat()
+
+    vector_store_fallback._fallback_docs = [
+        {"doc_id": "doc1", "text": "Fresh doc", "metadata": {}, "created_at": recent_ts},
+    ]
+
+    result = vector_store_fallback.get_stale_documents(max_age_hours=168)
+
+    assert result["stale_doc_ids"] == []
+    assert result["total_checked"] == 1
+    assert result["age_tracking_available"] is True
+
+
+def test_get_stale_documents_detects_old_docs(vector_store_fallback):
+    """get_stale_documents() identifies documents older than max_age_hours."""
+    # Use a timestamp 10 days in the past (well beyond the 7-day default threshold)
+    old_ts = "2020-01-01T00:00:00+00:00"
+    fresh_ts = "2099-12-31T23:59:59+00:00"  # Far future — never stale
+
+    vector_store_fallback._fallback_docs = [
+        {"doc_id": "old_doc", "text": "Old content", "metadata": {}, "created_at": old_ts},
+        {"doc_id": "fresh_doc", "text": "Fresh content", "metadata": {}, "created_at": fresh_ts},
+    ]
+
+    result = vector_store_fallback.get_stale_documents(max_age_hours=168)
+
+    assert "old_doc" in result["stale_doc_ids"]
+    assert "fresh_doc" not in result["stale_doc_ids"]
+    assert result["total_checked"] == 2
+    assert result["age_tracking_available"] is True
+    assert len(result["stale_ages_hours"]) == 1
+    # Age should be substantially larger than 168 hours
+    assert result["stale_ages_hours"][0] > 168
+
+
+def test_get_stale_documents_custom_threshold(vector_store_fallback):
+    """get_stale_documents() respects a custom max_age_hours threshold."""
+    # 2 hours old
+    two_hours_ago = "2020-01-01T00:00:00+00:00"
+
+    vector_store_fallback._fallback_docs = [
+        {"doc_id": "old_doc", "text": "Old content", "metadata": {}, "created_at": two_hours_ago},
+    ]
+
+    # With a 1-hour threshold, this doc should be stale
+    result_1h = vector_store_fallback.get_stale_documents(max_age_hours=1)
+    assert "old_doc" in result_1h["stale_doc_ids"]
+    assert result_1h["threshold_hours"] == 1
+
+    # With a 999999-hour threshold, nothing is stale
+    result_long = vector_store_fallback.get_stale_documents(max_age_hours=999999)
+    assert result_long["stale_doc_ids"] == []
+    assert result_long["threshold_hours"] == 999999
+
+
+def test_get_stale_documents_no_timestamp_field(vector_store_fallback):
+    """get_stale_documents() reports age_tracking_available=False when timestamps are absent."""
+    # Documents without a created_at field
+    vector_store_fallback._fallback_docs = [
+        {"doc_id": "doc1", "text": "No timestamp", "metadata": {}},
+        {"doc_id": "doc2", "text": "Also no timestamp", "metadata": {}},
+    ]
+
+    result = vector_store_fallback.get_stale_documents()
+
+    assert result["stale_doc_ids"] == []
+    assert result["total_checked"] == 2
+    assert result["age_tracking_available"] is False
+
+
+def test_get_stale_documents_lancedb_backend():
+    """get_stale_documents() works with a mocked LanceDB backend."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+
+        # One old document, one fresh (far-future timestamp)
+        store._table.search.return_value.limit.return_value.to_list.return_value = [
+            {"doc_id": "old_doc", "text": "Old", "metadata": "{}", "created_at": "2020-01-01T00:00:00+00:00"},
+            {"doc_id": "new_doc", "text": "New", "metadata": "{}", "created_at": "2099-12-31T23:59:59+00:00"},
+        ]
+
+        result = store.get_stale_documents(max_age_hours=168)
+
+    assert "old_doc" in result["stale_doc_ids"]
+    assert "new_doc" not in result["stale_doc_ids"]
+    assert result["total_checked"] == 2
+    assert result["age_tracking_available"] is True
+
+
+def test_get_stale_documents_lancedb_query_error():
+    """get_stale_documents() handles LanceDB query errors gracefully."""
+    with patch("storage.vector_store.VectorStore._ensure_table"), \
+         patch("storage.vector_store.VectorStore._load_fallback"):
+        store = VectorStore(db_path="./data/vectors")
+        store._use_lancedb = True
+        store._table = Mock()
+        store._table.search.side_effect = Exception("LanceDB connection lost")
+
+        # Should not raise — returns empty result with no stale docs
+        result = store.get_stale_documents()
+
+    assert result["stale_doc_ids"] == []
+    assert result["total_checked"] == 0
