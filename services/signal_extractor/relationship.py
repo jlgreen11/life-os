@@ -213,8 +213,24 @@ class RelationshipExtractor(BaseExtractor):
         # Extract communication templates from ALL messages (both directions).
         # Outbound templates capture the user's writing style per contact/channel.
         # Inbound templates capture how each contact writes to the user.
+        #
+        # Wrapped in try/except so template extraction failures never abort the
+        # relationship signal extraction that already succeeded above.  Without
+        # this isolation, a single DB write error inside
+        # _extract_communication_templates() would raise through extract() and
+        # be caught by the pipeline's fail-open handler — silently losing both
+        # the template AND causing the extractor_hits counter to go unincremented,
+        # hiding the failure from the write-verification phase.
         is_outbound = "sent" in event_type.lower()
-        self._extract_communication_templates(event, addresses, is_outbound)
+        try:
+            self._extract_communication_templates(event, addresses, is_outbound)
+        except Exception as e:
+            logger.warning(
+                "RelationshipExtractor: _extract_communication_templates failed for "
+                "event %s — relationship signals were saved but template was lost: %s",
+                event.get("id", "?"),
+                e,
+            )
 
         return signals
 
@@ -479,11 +495,35 @@ class RelationshipExtractor(BaseExtractor):
         """
         payload = event.get("payload", {})
         channel = payload.get("channel", event.get("source", "email"))
-        body = payload.get("body_plain") or payload.get("body", "")
+
+        # Prefer body_plain (clean text) over body (may be HTML from email connectors).
+        # Both Google and Proton Mail connectors store:
+        #   body      = body_html or body_plain  (HTML if available, else plain)
+        #   body_plain = plain text version       (may be "" for HTML-only emails)
+        raw_body = payload.get("body_plain") or payload.get("body") or ""
+
+        # Strip HTML tags when the body appears to be HTML markup.  Email connectors
+        # store the HTML body as ``body`` when no plain-text alternative exists, and
+        # as a fallback when body_plain is empty.  Analyzing raw HTML would poison
+        # common_phrases with tag names ("div", "span", "href", "style") and skew
+        # formality scores via markup artifacts.
+        body = self._strip_html(raw_body) if raw_body and raw_body.strip().startswith("<") else raw_body
 
         if not body or len(body.strip()) < 10:
-            # Skip very short messages — not enough data for style analysis
+            # Log at debug level — in production this fires for thousands of
+            # attachment-only or very short system-generated emails, so keeping
+            # it at debug prevents log flooding while still being diagnosable.
+            logger.debug(
+                "_extract_communication_templates: skipping event %s — "
+                "body too short after HTML strip (%d chars); raw_body len=%d",
+                event.get("id", "?"),
+                len(body.strip()) if body else 0,
+                len(raw_body) if raw_body else 0,
+            )
             return
+
+        templates_stored = 0
+        templates_skipped_marketing = 0
 
         for address in addresses:
             if not address:
@@ -496,6 +536,7 @@ class RelationshipExtractor(BaseExtractor):
             # they compose transactional messages — that style signal is valuable
             # for tone-matching and procedural-layer completeness.
             if not is_outbound and is_marketing_or_noreply(address, payload):
+                templates_skipped_marketing += 1
                 continue
 
             # Generate deterministic template ID from contact + channel + direction
@@ -576,9 +617,103 @@ class RelationshipExtractor(BaseExtractor):
                 "samples_analyzed": samples_count + 1,
             }
 
-            # Persist the updated template
-            # (Telemetry is published by the UserModelStore itself)
-            self.ums.store_communication_template(template)
+            # Persist the updated template.  Wrapped in try/except matching the
+            # LinguisticExtractor pattern (services/signal_extractor/linguistic.py:921).
+            # Without this guard, any DB error (WAL corruption, lock contention,
+            # schema mismatch) propagates out of _extract_communication_templates()
+            # uncaught, and — since extract() previously had no isolation around
+            # this call — would bubble all the way to the pipeline's fail-open
+            # handler, silently losing the template and decrementing extractor_hits
+            # so the write-verification phase couldn't detect the failure.
+            try:
+                self.ums.store_communication_template(template)
+                templates_stored += 1
+            except Exception as e:
+                logger.warning(
+                    "_extract_communication_templates: failed to store template "
+                    "for contact=%s channel=%s direction=%s event=%s: %s",
+                    address,
+                    channel,
+                    direction_suffix,
+                    event.get("id", "?"),
+                    e,
+                )
+
+        # Diagnostic log when templates were expected but none were stored.
+        # This fires at WARNING level so it's visible without debug logging,
+        # making the "0 templates" data quality issue immediately diagnosable.
+        if addresses and templates_stored == 0:
+            logger.debug(
+                "_extract_communication_templates: 0 templates stored for event %s "
+                "(addresses=%d, marketing_filtered=%d, is_outbound=%s, channel=%s)",
+                event.get("id", "?"),
+                len(addresses),
+                templates_skipped_marketing,
+                is_outbound,
+                channel,
+            )
+
+    def _strip_html(self, text: str) -> str:
+        """Remove HTML tags from text and return the plain content.
+
+        Email connectors store the HTML body as ``body`` when no plain-text
+        alternative exists (e.g. marketing emails, rich newsletters).  Analyzing
+        raw HTML markup would pollute ``common_phrases`` with tag names and
+        CSS property names ("div", "span", "font", "family", "arial") and skew
+        formality scores via inline CSS artifacts.
+
+        This method applies three passes:
+        1. Remove ``<script>``/``<style>`` block content (CSS/JS, not human text)
+        2. Strip remaining HTML tags (``<tag>``, ``</tag>``, ``<br/>`` etc.)
+        3. Decode safe HTML entities (``&amp;``, ``&quot;``, ``&nbsp;``, etc.)
+           — deliberately skips ``&lt;`` / ``&gt;`` so decoded text does not
+           re-introduce ``<``/``>`` characters that could look like partial tags
+        4. Collapse excess whitespace into single spaces
+
+        We avoid importing an HTML parser (``html.parser``, ``BeautifulSoup``)
+        to keep the dependency footprint small and the strip fast for the
+        high-throughput rebuild path.
+
+        Args:
+            text: Raw text that may contain HTML markup.
+
+        Returns:
+            Plain text with tags and CSS/JS blocks removed, whitespace normalised.
+            Returns the original text unchanged if it contains no angle brackets.
+        """
+        if not text or "<" not in text:
+            return text
+
+        # Pass 1: Remove <script> and <style> blocks INCLUDING their content.
+        # These contain code and CSS that is not human language and would
+        # pollute common_phrases with programming tokens.
+        stripped = re.sub(
+            r"<(script|style)[^>]*>.*?</(script|style)>",
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+        # Pass 2: Remove remaining HTML tags (shortest-match to avoid
+        # swallowing text between tags in adjacent-tag sequences).
+        stripped = re.sub(r"<[^>]+>", " ", stripped)
+
+        # Pass 3: Decode safe HTML entities to their plain equivalents.
+        # Intentionally excludes &lt; / &gt; — decoding them would
+        # re-introduce angle brackets that downstream code might misinterpret.
+        entity_map = {
+            "&amp;": "&",
+            "&quot;": '"',
+            "&#39;": "'",
+            "&nbsp;": " ",
+            "&apos;": "'",
+        }
+        for entity, replacement in entity_map.items():
+            stripped = stripped.replace(entity, replacement)
+
+        # Pass 4: Collapse sequences of whitespace (spaces, tabs, newlines) to
+        # a single space so the body check and word extraction work correctly.
+        return re.sub(r"\s+", " ", stripped).strip()
 
     def _get_existing_template(self, template_id: str) -> dict:
         """Retrieve existing template from database or return empty dict."""
