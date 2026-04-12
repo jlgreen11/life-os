@@ -8,7 +8,6 @@ Reveals priorities, avoidance patterns, and natural rhythms.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -228,13 +227,17 @@ class CadenceExtractor(BaseExtractor):
             activity-window heatmap
         """
         # Load the existing profile or bootstrap with empty structures.
+        # Use plain dicts (not defaultdict) so the data is JSON-serializable
+        # when passed to UserModelStore.update_signal_profile().  The update
+        # code below uses explicit setdefault / key-existence checks everywhere,
+        # so no auto-vivification is needed.
         existing = self.ums.get_signal_profile("cadence")
         data = existing["data"] if existing else {
             "response_times": [],
-            "hourly_activity": defaultdict(int),
-            "daily_activity": defaultdict(int),
-            "per_contact_response_times": defaultdict(list),
-            "per_channel_response_times": defaultdict(list),
+            "hourly_activity": {},
+            "daily_activity": {},
+            "per_contact_response_times": {},
+            "per_channel_response_times": {},
             "per_contact_initiations": {},
             "per_contact_inbound_count": {},
         }
