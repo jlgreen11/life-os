@@ -44,6 +44,8 @@ class TestDiagnosticsStructure:
             "total_sources", "total_interactions", "total_engagements",
             "total_dismissals", "sources_with_drift", "feedback_loop_health",
             "per_source", "stale_sources", "drift_active",
+            # Saturation diagnostics added to surface invisible user preferences
+            "saturated_sources", "drift_health",
         }
         assert expected_keys == set(diag.keys())
         assert diag["total_sources"] > 0

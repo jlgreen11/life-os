@@ -536,13 +536,28 @@ class SourceWeightManager:
             old_drift = row["ai_drift"]
             new_drift = min(MAX_DRIFT, old_drift + DRIFT_STEP)
 
+            # Check for drift saturation and warn if user preference becomes invisible
+            saturation = self._check_drift_saturation(source_key, row["user_weight"], new_drift)
+            if saturation:
+                logger.warning(
+                    "Source weight drift saturated for %s: drift=%s, user_weight=%s, "
+                    "effective_weight=%s. User preference is no longer visible.",
+                    source_key,
+                    new_drift,
+                    row["user_weight"],
+                    saturation["effective_weight"],
+                )
+
             history = json.loads(row["drift_history"] or "[]")
-            history.append({
+            entry: dict = {
                 "timestamp": now,
                 "old_drift": round(old_drift, 4),
                 "new_drift": round(new_drift, 4),
                 "reason": "engagement",
-            })
+            }
+            if saturation:
+                entry["saturated"] = True
+            history.append(entry)
             history = history[-50:]
 
             conn.execute(
@@ -581,13 +596,28 @@ class SourceWeightManager:
             old_drift = row["ai_drift"]
             new_drift = max(-MAX_DRIFT, old_drift - DRIFT_STEP)
 
+            # Check for drift saturation and warn if user preference becomes invisible
+            saturation = self._check_drift_saturation(source_key, row["user_weight"], new_drift)
+            if saturation:
+                logger.warning(
+                    "Source weight drift saturated for %s: drift=%s, user_weight=%s, "
+                    "effective_weight=%s. User preference is no longer visible.",
+                    source_key,
+                    new_drift,
+                    row["user_weight"],
+                    saturation["effective_weight"],
+                )
+
             history = json.loads(row["drift_history"] or "[]")
-            history.append({
+            entry: dict = {
                 "timestamp": now,
                 "old_drift": round(old_drift, 4),
                 "new_drift": round(new_drift, 4),
                 "reason": "dismissal",
-            })
+            }
+            if saturation:
+                entry["saturated"] = True
+            history.append(entry)
             history = history[-50:]
 
             conn.execute(
@@ -654,14 +684,31 @@ class SourceWeightManager:
                 if abs(new_drift - old_drift) < 0.001:
                     continue
 
+                # Check for drift saturation and warn if user preference becomes invisible
+                saturation = self._check_drift_saturation(
+                    row_dict["source_key"], row_dict["user_weight"], new_drift
+                )
+                if saturation:
+                    logger.warning(
+                        "Source weight drift saturated for %s: drift=%s, user_weight=%s, "
+                        "effective_weight=%s. User preference is no longer visible.",
+                        row_dict["source_key"],
+                        new_drift,
+                        row_dict["user_weight"],
+                        saturation["effective_weight"],
+                    )
+
                 history = json.loads(row_dict.get("drift_history", "[]"))
                 reason = "above" if deviation > 0 else "below"
-                history.append({
+                entry: dict = {
                     "timestamp": now,
                     "old_drift": round(old_drift, 4),
                     "new_drift": round(new_drift, 4),
                     "reason": f"bulk_recalc: engagement rate {reason} average",
-                })
+                }
+                if saturation:
+                    entry["saturated"] = True
+                history.append(entry)
                 history = history[-50:]
 
                 conn.execute(
@@ -679,6 +726,50 @@ class SourceWeightManager:
                         row_dict["source_key"],
                     ),
                 )
+
+    # ------------------------------------------------------------------
+    # Drift Saturation Check
+    # ------------------------------------------------------------------
+
+    def _check_drift_saturation(
+        self, source_key: str, user_weight: float, new_drift: float
+    ) -> dict:
+        """Check whether the given drift saturates the effective weight.
+
+        Saturation occurs when:
+          - abs(new_drift) == MAX_DRIFT (AI drift is at its hard cap), OR
+          - the resulting effective weight is clamped to exactly 0.0 or 1.0
+            (meaning the user's explicit weight preference becomes invisible).
+
+        At saturation the user-controlled weight no longer affects the effective
+        weight, which undermines the design guarantee that the user stays in
+        primary control.
+
+        Args:
+            source_key:  The source identifier (used for logging context).
+            user_weight: The user-set weight for the source.
+            new_drift:   The candidate new drift value (post-nudge, pre-save).
+
+        Returns:
+            A non-empty dict with saturation details if saturated, empty dict
+            otherwise.  Keys when saturated: ``source_key``, ``user_weight``,
+            ``drift``, ``effective_weight``, ``saturated`` (always True).
+        """
+        effective = max(0.0, min(1.0, user_weight + new_drift))
+        is_saturated = (
+            abs(new_drift) >= MAX_DRIFT
+            or user_weight + new_drift <= 0.0
+            or user_weight + new_drift >= 1.0
+        )
+        if not is_saturated:
+            return {}
+        return {
+            "saturated": True,
+            "source_key": source_key,
+            "user_weight": user_weight,
+            "drift": new_drift,
+            "effective_weight": effective,
+        }
 
     # ------------------------------------------------------------------
     # Drift Decay
@@ -735,6 +826,9 @@ class SourceWeightManager:
             "per_source": [],
             "stale_sources": [],
             "drift_active": False,
+            # Saturation diagnostics — see _check_drift_saturation for details
+            "saturated_sources": [],
+            "drift_health": "inactive",
         }
 
         # Aggregate counts
@@ -783,6 +877,7 @@ class SourceWeightManager:
             stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
             per_source = []
             stale_sources = []
+            saturated_sources = []
 
             for row in rows:
                 d = dict(row)
@@ -804,8 +899,26 @@ class SourceWeightManager:
                 if d["interactions"] > 0 and last_updated and last_updated < stale_cutoff:
                     stale_sources.append(d["source_key"])
 
+                # Saturated: drift at cap or effective weight is pinned at 0 or 1,
+                # meaning the user's explicit weight preference has no visible effect.
+                if (
+                    abs(d["ai_drift"]) >= MAX_DRIFT
+                    or effective == 0.0
+                    or effective == 1.0
+                ):
+                    saturated_sources.append(d["source_key"])
+
             result["per_source"] = per_source
             result["stale_sources"] = stale_sources
+            result["saturated_sources"] = saturated_sources
+
+            # drift_health summarises the overall saturation state for dashboards
+            if saturated_sources:
+                result["drift_health"] = "saturated"
+            elif result.get("drift_active"):
+                result["drift_health"] = "active"
+            else:
+                result["drift_health"] = "inactive"
         except Exception:
             logger.warning("Failed to fetch per-source diagnostics", exc_info=True)
 

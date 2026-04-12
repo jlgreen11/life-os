@@ -14,6 +14,7 @@ Validates:
 """
 
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -557,3 +558,132 @@ class TestEffectiveWeightEdgeCases:
 
         eff = swm.get_effective_weight("email.marketing")
         assert eff >= 0.0
+
+
+# ------------------------------------------------------------------
+# Drift Saturation Warnings & Diagnostics
+# ------------------------------------------------------------------
+
+
+class TestDriftSaturation:
+    """Tests for the drift saturation detection added to record_engagement,
+    record_dismissal, bulk_recalculate_drift, and get_diagnostics."""
+
+    def _prime_and_max_drift(self, swm, source_key: str):
+        """Prime interactions then engage enough times to saturate drift.
+
+        DRIFT_STEP=0.02, MAX_DRIFT=0.3 → 15 engagements reach saturation.
+        """
+        for _ in range(MIN_INTERACTIONS):
+            swm.record_interaction(source_key)
+        # 15 engagements * 0.02 = 0.30 == MAX_DRIFT
+        for _ in range(15):
+            swm.record_engagement(source_key)
+
+    def test_record_engagement_logs_saturation_warning(self, swm, caplog):
+        """Engaging with a source until drift hits MAX_DRIFT should log a WARNING."""
+        with caplog.at_level(logging.WARNING, logger="services.insight_engine.source_weights"):
+            self._prime_and_max_drift(swm, "email.work")
+
+        # At least one saturation warning should have been emitted when drift == MAX_DRIFT
+        saturation_warnings = [
+            r for r in caplog.records
+            if "saturated" in r.message.lower() and "email.work" in r.message
+        ]
+        assert len(saturation_warnings) >= 1, (
+            f"Expected saturation WARNING for email.work; log records: {[r.message for r in caplog.records]}"
+        )
+
+    def test_history_entry_includes_saturated_flag(self, swm):
+        """The drift history entry written when saturation occurs should contain saturated=True."""
+        self._prime_and_max_drift(swm, "email.work")
+
+        row = swm._get_weight_row("email.work")
+        history = json.loads(row["drift_history"])
+
+        saturated_entries = [e for e in history if e.get("saturated") is True]
+        assert len(saturated_entries) >= 1, (
+            f"Expected at least one history entry with saturated=True; history={history}"
+        )
+
+    def test_get_diagnostics_returns_saturated_sources(self, swm):
+        """get_diagnostics should list sources whose drift is at MAX_DRIFT in saturated_sources."""
+        self._prime_and_max_drift(swm, "email.work")
+
+        diag = swm.get_diagnostics()
+
+        assert "saturated_sources" in diag, "get_diagnostics must include 'saturated_sources' key"
+        assert "email.work" in diag["saturated_sources"], (
+            f"email.work should be in saturated_sources; got {diag['saturated_sources']}"
+        )
+
+    def test_get_diagnostics_drift_health_saturated(self, swm):
+        """drift_health should be 'saturated' when any source has reached MAX_DRIFT."""
+        self._prime_and_max_drift(swm, "email.work")
+
+        diag = swm.get_diagnostics()
+
+        assert diag.get("drift_health") == "saturated", (
+            f"Expected drift_health='saturated'; got {diag.get('drift_health')}"
+        )
+
+    def test_get_diagnostics_drift_health_active(self, swm):
+        """drift_health should be 'active' when there is drift but no saturation."""
+        # Apply a small amount of drift (well below MAX_DRIFT)
+        for _ in range(MIN_INTERACTIONS):
+            swm.record_interaction("email.personal")
+        swm.record_engagement("email.personal")  # drift = 0.02, far from 0.3
+
+        diag = swm.get_diagnostics()
+
+        assert diag.get("drift_health") == "active", (
+            f"Expected drift_health='active'; got {diag.get('drift_health')}"
+        )
+
+    def test_get_diagnostics_drift_health_inactive_when_no_drift(self, swm):
+        """drift_health should be 'inactive' when no sources have any drift."""
+        diag = swm.get_diagnostics()
+
+        # Fresh seeds have zero drift
+        assert diag.get("drift_health") == "inactive", (
+            f"Expected drift_health='inactive' on fresh seed; got {diag.get('drift_health')}"
+        )
+
+    def test_check_drift_saturation_returns_empty_when_not_saturated(self, swm):
+        """_check_drift_saturation should return {} when drift is below MAX_DRIFT."""
+        result = swm._check_drift_saturation("email.work", user_weight=0.7, new_drift=0.1)
+        assert result == {}, f"Expected empty dict for unsaturated drift; got {result}"
+
+    def test_check_drift_saturation_detects_max_drift(self, swm):
+        """_check_drift_saturation should detect saturation when new_drift == MAX_DRIFT."""
+        result = swm._check_drift_saturation("email.work", user_weight=0.7, new_drift=MAX_DRIFT)
+        assert result.get("saturated") is True
+        assert result["source_key"] == "email.work"
+        assert result["drift"] == MAX_DRIFT
+
+    def test_check_drift_saturation_detects_clamped_effective_weight(self, swm):
+        """_check_drift_saturation should detect saturation when effective weight is clamped to 1.0."""
+        # user_weight=0.9 + drift=0.2 → unclamped=1.1 → clamped to 1.0
+        result = swm._check_drift_saturation("email.personal", user_weight=0.9, new_drift=0.2)
+        assert result.get("saturated") is True
+        assert result["effective_weight"] == 1.0
+
+    def test_record_dismissal_logs_saturation_warning(self, swm, caplog):
+        """Dismissing with a low-weight source to drift floor should log a WARNING."""
+        # Set user weight low so negative drift quickly pins effective to 0
+        swm.set_user_weight("email.marketing", 0.15)
+        for _ in range(MIN_INTERACTIONS):
+            swm.record_interaction("email.marketing")
+
+        with caplog.at_level(logging.WARNING, logger="services.insight_engine.source_weights"):
+            # 15 dismissals * 0.02 = 0.30, drift = -0.30 → effective = max(0, 0.15-0.30) = 0.0
+            for _ in range(15):
+                swm.record_dismissal("email.marketing")
+
+        saturation_warnings = [
+            r for r in caplog.records
+            if "saturated" in r.message.lower() and "email.marketing" in r.message
+        ]
+        assert len(saturation_warnings) >= 1, (
+            f"Expected saturation WARNING for email.marketing; log records: {[r.message for r in caplog.records]}"
+        )
