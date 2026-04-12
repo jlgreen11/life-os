@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 
 from models.user_model import MoodState
 from storage.database import DatabaseManager, UserModelStore
@@ -56,6 +57,21 @@ PROFILE_EVENT_TYPES: dict[str, list[str]] = {
     "spatial": ["calendar.event.created", "calendar.event.updated", "ios.context.update", "system.user.location_update", "email.received"],
     "decision": ["task.completed", "task.created", "email.sent", "message.sent", "email.received", "message.received", "calendar.event.created", "calendar.event.updated", "finance.transaction.new"],
 }
+
+# Number of consecutive degraded health checks to wait before retrying a
+# rebuild for a persistently missing profile that has sufficient qualifying
+# events.  Avoids hammering the rebuild path on every health tick.
+_RETRY_EVERY_N_CHECKS: int = 3
+
+# Minimum number of qualifying events required to classify a persistently
+# missing profile as worth retrying.  Profiles below this threshold (e.g.,
+# 'linguistic' on an inbound-only system with only a handful of sent messages)
+# are left in degraded state without a wasted rebuild attempt.
+_RETRY_EVENT_COUNT_THRESHOLD: int = 100
+
+# How long (in seconds) to cache the qualifying event count per profile.
+# Avoids querying events.db on every health tick when the check fires frequently.
+_EVENT_COUNT_CACHE_TTL_SECONDS: int = 3600
 
 
 # Maps profile names to the extractor class names that write them.
@@ -173,6 +189,19 @@ class SignalExtractorPipeline:
         # have been persistently empty across consecutive checks.
         self._last_health_check_missing: list[str] = []
 
+        # Per-profile retry backoff counter for persistently missing profiles.
+        # Incremented on each health check where a profile remains missing.
+        # When the count is a multiple of _RETRY_EVERY_N_CHECKS AND the profile
+        # has > _RETRY_EVENT_COUNT_THRESHOLD qualifying events, the rebuild is
+        # retried so transient failures (WAL checkpoint races, disk stalls) can
+        # self-heal without operator intervention.
+        self._rebuild_retry_count: dict[str, int] = {}
+
+        # Qualifying event count cache keyed by profile name.  Each value is a
+        # (count, timestamp) tuple.  Populated lazily by _count_qualifying_events()
+        # and invalidated after _EVENT_COUNT_CACHE_TTL_SECONDS.
+        self._event_count_cache: dict[str, tuple[int, float]] = {}
+
     async def process_event(self, event: dict) -> list[dict]:
         """
         Process an event through all applicable extractors.
@@ -201,6 +230,51 @@ class SignalExtractorPipeline:
                     logger.error("Extractor %s error: %s", type(extractor).__name__, e, exc_info=True)
 
         return all_signals
+
+    def _count_qualifying_events(self, profile_name: str) -> int:
+        """Count qualifying events in events.db for the given profile, with TTL caching.
+
+        Looks up the event types relevant to *profile_name* in PROFILE_EVENT_TYPES,
+        then issues a COUNT query against events.db.  Results are cached for
+        _EVENT_COUNT_CACHE_TTL_SECONDS to avoid a DB round-trip on every health
+        check tick.  The cache is intentionally not invalidated between checks
+        because event counts grow slowly and we only need a rough threshold
+        comparison, not an exact current count.
+
+        Args:
+            profile_name: The signal profile name (e.g., ``'temporal'``).
+
+        Returns:
+            Number of qualifying events for this profile, or 0 on error or when
+            no event types are defined for the profile.
+        """
+        now = time.time()
+        cached = self._event_count_cache.get(profile_name)
+        if cached is not None and now - cached[1] < _EVENT_COUNT_CACHE_TTL_SECONDS:
+            return cached[0]
+
+        event_types = PROFILE_EVENT_TYPES.get(profile_name, [])
+        if not event_types:
+            self._event_count_cache[profile_name] = (0, now)
+            return 0
+
+        try:
+            with self.db.get_connection("events") as conn:
+                placeholders = ", ".join("?" for _ in event_types)
+                row = conn.execute(
+                    f"SELECT COUNT(*) AS cnt FROM events WHERE type IN ({placeholders})",
+                    event_types,
+                ).fetchone()
+                count = row["cnt"] if row else 0
+        except Exception as e:
+            logger.warning(
+                "_count_qualifying_events: failed for profile '%s': %s",
+                profile_name, e,
+            )
+            return 0
+
+        self._event_count_cache[profile_name] = (count, now)
+        return count
 
     def get_profile_health(self) -> dict:
         """Return the health status of each of the 9 expected signal profiles.
@@ -476,8 +550,44 @@ class SignalExtractorPipeline:
             self._last_health_check_missing = missing
             return {"status": "rebuilt", "missing": missing, "rebuild_result": result}
 
-        # Same profiles still missing — no action, but flag as degraded so
-        # callers and monitoring dashboards can surface this.
+        # Same profiles still missing.  Before giving up entirely, check whether
+        # any of the persistently missing profiles have enough qualifying events
+        # in events.db to be worth retrying.  A rebuild that produced zero data
+        # may have failed transiently (WAL checkpoint race, disk stall, brief
+        # lock contention) rather than legitimately having no events.  Profiles
+        # with very few qualifying events (e.g., 'linguistic' on an inbound-only
+        # system with only 11 sent messages) are left in degraded state to avoid
+        # wasted rebuild attempts.
+        #
+        # To spread retries out and avoid hammering the rebuild path on every
+        # health tick, each persistently missing profile accumulates a check
+        # counter.  A rebuild is re-attempted only when the counter is a multiple
+        # of _RETRY_EVERY_N_CHECKS AND the profile has > _RETRY_EVENT_COUNT_THRESHOLD
+        # qualifying events.
+        retry_profiles = []
+        for profile_name in missing:
+            new_count = self._rebuild_retry_count.get(profile_name, 0) + 1
+            self._rebuild_retry_count[profile_name] = new_count
+            event_count = self._count_qualifying_events(profile_name)
+            if event_count > _RETRY_EVENT_COUNT_THRESHOLD and new_count % _RETRY_EVERY_N_CHECKS == 0:
+                retry_profiles.append(profile_name)
+
+        if retry_profiles:
+            logger.warning(
+                "Periodic health check: %d persistently missing profiles (%s) have >%d qualifying events "
+                "— retrying rebuild (backoff check #%d)",
+                len(retry_profiles),
+                ", ".join(retry_profiles),
+                _RETRY_EVENT_COUNT_THRESHOLD,
+                max(self._rebuild_retry_count.get(p, 0) for p in retry_profiles),
+            )
+            result = self.check_and_rebuild_missing_profiles()
+            self._last_health_check_missing = missing
+            return {"status": "rebuilt", "missing": missing, "rebuild_result": result}
+
+        # No profiles are worth retrying right now (either their qualifying event
+        # count is too low, or they haven't reached the backoff threshold yet).
+        # Flag as degraded so monitoring dashboards can surface this state.
         self._last_health_check_missing = missing
         return {
             "status": "degraded",
