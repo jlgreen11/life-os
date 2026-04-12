@@ -1959,23 +1959,35 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/rules")
     async def list_rules():
-        rules = life_os.rules_engine.get_all_rules()
-        return {"rules": rules}
+        try:
+            rules = life_os.rules_engine.get_all_rules()
+            return {"rules": rules}
+        except Exception as e:
+            logger.warning("Failed to retrieve rules: %s", e)
+            return JSONResponse(status_code=500, content={"error": "Failed to retrieve rules"})
 
     @app.post("/api/rules")
     async def create_rule(req: RuleCreateRequest):
-        rule_id = await life_os.rules_engine.add_rule(
-            name=req.name,
-            trigger_event=req.trigger_event,
-            conditions=req.conditions,
-            actions=req.actions,
-        )
-        return {"rule_id": rule_id}
+        try:
+            rule_id = await life_os.rules_engine.add_rule(
+                name=req.name,
+                trigger_event=req.trigger_event,
+                conditions=req.conditions,
+                actions=req.actions,
+            )
+            return {"rule_id": rule_id}
+        except Exception as e:
+            logger.warning("Failed to create rule: %s", e)
+            return JSONResponse(status_code=500, content={"error": "Failed to create rule"})
 
     @app.delete("/api/rules/{rule_id}")
     async def delete_rule(rule_id: str):
-        await life_os.rules_engine.remove_rule(rule_id)
-        return {"status": "deactivated"}
+        try:
+            await life_os.rules_engine.remove_rule(rule_id)
+            return {"status": "deactivated"}
+        except Exception as e:
+            logger.warning("Failed to delete rule %s: %s", rule_id, e)
+            return JSONResponse(status_code=500, content={"error": "Failed to delete rule"})
 
     # -------------------------------------------------------------------
     # User Model
@@ -2714,84 +2726,88 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         import json as _json
 
-        # Hard cap to prevent accidental full-table dumps.
-        effective_limit = min(limit, 500)
+        try:
+            # Hard cap to prevent accidental full-table dumps.
+            effective_limit = min(limit, 500)
 
-        # Build the WHERE clause dynamically based on provided filters.
-        conditions: list[str] = []
-        params: list = []
+            # Build the WHERE clause dynamically based on provided filters.
+            conditions: list[str] = []
+            params: list = []
 
-        if is_priority is not None:
-            conditions.append("is_priority = ?")
-            params.append(1 if is_priority else 0)
+            if is_priority is not None:
+                conditions.append("is_priority = ?")
+                params.append(1 if is_priority else 0)
 
-        if name is not None:
-            conditions.append("LOWER(name) LIKE ?")
-            params.append(f"%{name.lower()}%")
+            if name is not None:
+                conditions.append("LOWER(name) LIKE ?")
+                params.append(f"%{name.lower()}%")
 
-        if has_metrics is True:
-            # At least one of the relationship metrics is populated.
-            conditions.append("contact_frequency_days IS NOT NULL")
-        elif has_metrics is False:
-            conditions.append("contact_frequency_days IS NULL")
+            if has_metrics is True:
+                # At least one of the relationship metrics is populated.
+                conditions.append("contact_frequency_days IS NOT NULL")
+            elif has_metrics is False:
+                conditions.append("contact_frequency_days IS NULL")
 
-        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+            where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        # ORDER BY: priority contacts first, then most-recently contacted,
-        # then alphabetically for contacts with no last_contact date.
-        order_clause = (
-            "ORDER BY is_priority DESC, "
-            "last_contact DESC NULLS LAST, "
-            "name ASC"
-        )
+            # ORDER BY: priority contacts first, then most-recently contacted,
+            # then alphabetically for contacts with no last_contact date.
+            order_clause = (
+                "ORDER BY is_priority DESC, "
+                "last_contact DESC NULLS LAST, "
+                "name ASC"
+            )
 
-        query = f"""
-            SELECT id, name, aliases, emails, phones, channels, relationship,
-                   domains, is_priority, preferred_channel, always_surface,
-                   typical_response_time, communication_style, last_contact,
-                   contact_frequency_days, notes, created_at, updated_at
-            FROM contacts
-            {where_clause}
-            {order_clause}
-            LIMIT ?
-        """
-        params.append(effective_limit)
+            query = f"""
+                SELECT id, name, aliases, emails, phones, channels, relationship,
+                       domains, is_priority, preferred_channel, always_surface,
+                       typical_response_time, communication_style, last_contact,
+                       contact_frequency_days, notes, created_at, updated_at
+                FROM contacts
+                {where_clause}
+                {order_clause}
+                LIMIT ?
+            """
+            params.append(effective_limit)
 
-        # Separate count query (uses same conditions but no LIMIT).
-        count_query = f"SELECT COUNT(*) FROM contacts {where_clause}"
+            # Separate count query (uses same conditions but no LIMIT).
+            count_query = f"SELECT COUNT(*) FROM contacts {where_clause}"
 
-        with life_os.db.get_connection("entities") as conn:
-            total = conn.execute(count_query, params[:-1]).fetchone()[0]
-            rows = conn.execute(query, params).fetchall()
+            with life_os.db.get_connection("entities") as conn:
+                total = conn.execute(count_query, params[:-1]).fetchone()[0]
+                rows = conn.execute(query, params).fetchall()
 
-        # Deserialize stored JSON strings into native Python lists/dicts so
-        # the response payload is clean JSON rather than stringified arrays.
-        contacts = []
-        for row in rows:
-            contact = dict(row)
-            for json_field in ("aliases", "emails", "phones", "notes", "domains"):
-                raw = contact.get(json_field)
-                if isinstance(raw, str):
+            # Deserialize stored JSON strings into native Python lists/dicts so
+            # the response payload is clean JSON rather than stringified arrays.
+            contacts = []
+            for row in rows:
+                contact = dict(row)
+                for json_field in ("aliases", "emails", "phones", "notes", "domains"):
+                    raw = contact.get(json_field)
+                    if isinstance(raw, str):
+                        try:
+                            contact[json_field] = _json.loads(raw)
+                        except (_json.JSONDecodeError, ValueError):
+                            contact[json_field] = []
+                raw_channels = contact.get("channels")
+                if isinstance(raw_channels, str):
                     try:
-                        contact[json_field] = _json.loads(raw)
+                        contact["channels"] = _json.loads(raw_channels)
                     except (_json.JSONDecodeError, ValueError):
-                        contact[json_field] = []
-            raw_channels = contact.get("channels")
-            if isinstance(raw_channels, str):
-                try:
-                    contact["channels"] = _json.loads(raw_channels)
-                except (_json.JSONDecodeError, ValueError):
-                    contact["channels"] = {}
-            # Coerce SQLite integers to booleans for cleaner JSON output.
-            contact["is_priority"] = bool(contact.get("is_priority", 0))
-            contact["always_surface"] = bool(contact.get("always_surface", 0))
-            contacts.append(contact)
+                        contact["channels"] = {}
+                # Coerce SQLite integers to booleans for cleaner JSON output.
+                contact["is_priority"] = bool(contact.get("is_priority", 0))
+                contact["always_surface"] = bool(contact.get("always_surface", 0))
+                contacts.append(contact)
 
-        return {
-            "contacts": contacts,
-            "total": total,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }
+            return {
+                "contacts": contacts,
+                "total": total,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except Exception as e:
+            logger.warning("Failed to retrieve contacts: %s", e)
+            return JSONResponse(status_code=500, content={"error": "Failed to retrieve contacts"})
 
     @app.get("/api/contacts/{contact_email}/interactions")
     async def get_contact_interactions(
@@ -3440,18 +3456,22 @@ def register_routes(app: FastAPI, life_os) -> None:
           - effective_weight: clamped(user_weight + decayed_ai_drift)
           - engagement/dismissal counts and rates
         """
-        weights = life_os.source_weight_manager.get_all_weights()
-        grouped = {}
-        for w in weights:
-            cat = w["category"]
-            if cat not in grouped:
-                grouped[cat] = []
-            grouped[cat].append(w)
-        return {
-            "weights": weights,
-            "by_category": grouped,
-            "count": len(weights),
-        }
+        try:
+            weights = life_os.source_weight_manager.get_all_weights()
+            grouped = {}
+            for w in weights:
+                cat = w["category"]
+                if cat not in grouped:
+                    grouped[cat] = []
+                grouped[cat].append(w)
+            return {
+                "weights": weights,
+                "by_category": grouped,
+                "count": len(weights),
+            }
+        except Exception as e:
+            logger.warning("Failed to retrieve source weights: %s", e)
+            return JSONResponse(status_code=500, content={"error": "Failed to retrieve source weights"})
 
     @app.get("/api/source-weights/{source_key:path}")
     async def get_source_weight(source_key: str):
@@ -3570,10 +3590,14 @@ def register_routes(app: FastAPI, life_os) -> None:
                           source: Optional[str] = None,
                           since: Optional[str] = None,
                           limit: int = 50):
-        events = life_os.event_store.get_events(
-            event_type=event_type, source=source, since=since, limit=limit,
-        )
-        return {"events": events, "count": len(events)}
+        try:
+            events = life_os.event_store.get_events(
+                event_type=event_type, source=source, since=since, limit=limit,
+            )
+            return {"events": events, "count": len(events)}
+        except Exception as e:
+            logger.warning("Failed to retrieve events: %s", e)
+            return JSONResponse(status_code=500, content={"error": "Failed to retrieve events"})
 
     # -------------------------------------------------------------------
     # Connectors
