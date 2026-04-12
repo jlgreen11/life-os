@@ -142,6 +142,244 @@ def register_routes(app: FastAPI, life_os) -> None:
             "feedback_summary": feedback,
         }
 
+    @app.get("/api/health/summary")
+    async def health_summary():
+        """Aggregated system health summary for at-a-glance diagnostics.
+
+        Returns a single response covering the critical health dimensions that
+        matter most for day-to-day operation: signal profile coverage, prediction
+        pipeline activity, notification delivery rate, source weight drift, active
+        connector errors, and data freshness.
+
+        This endpoint is designed for dashboards and monitoring integrations that
+        need a quick read on overall system health without running analyze-data-quality.py
+        or inspecting multiple endpoints manually.
+
+        Overall health classification:
+          - ``critical`` — prediction pipeline is stalled OR a connector is in error
+          - ``degraded``  — signal profiles are missing OR notification delivery rate < 50%
+          - ``healthy``   — all indicators are within acceptable ranges
+
+        Each section is independently wrapped in try/except so a failure in one
+        area never prevents the rest from reporting.  Returns HTTP 200 always;
+        errors are reported inline within each section.
+        """
+        import asyncio
+
+        EXPECTED_PROFILES = [
+            "relationships", "temporal", "topics", "linguistic",
+            "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
+        ]
+
+        result: dict = {}
+
+        # ------------------------------------------------------------------
+        # Signal profiles — which expected profiles are populated?
+        # ------------------------------------------------------------------
+        def _signal_profiles():
+            """Check which signal profiles exist and which are missing."""
+            present = []
+            missing = []
+            for ptype in EXPECTED_PROFILES:
+                try:
+                    profile = life_os.user_model_store.get_signal_profile(ptype)
+                    if profile and profile.get("samples_count", 0) > 0:
+                        present.append(ptype)
+                    else:
+                        missing.append(ptype)
+                except Exception:
+                    missing.append(ptype)
+            return {
+                "total_expected": len(EXPECTED_PROFILES),
+                "total_present": len(present),
+                "missing": missing,
+            }
+
+        try:
+            result["signal_profiles"] = await asyncio.to_thread(_signal_profiles)
+        except Exception as exc:
+            result["signal_profiles"] = {"error": str(exc), "total_expected": len(EXPECTED_PROFILES), "total_present": 0, "missing": list(EXPECTED_PROFILES)}
+
+        # ------------------------------------------------------------------
+        # Prediction pipeline — is it generating predictions?
+        # ------------------------------------------------------------------
+        def _prediction_pipeline():
+            """Query prediction count, last generation time, and pipeline status."""
+            with life_os.db.get_connection("user_model") as conn:
+                total_row = conn.execute("SELECT COUNT(*) as c FROM predictions").fetchone()
+                last_row = conn.execute("SELECT MAX(created_at) as ts FROM predictions").fetchone()
+                last_24h_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM predictions WHERE created_at > datetime('now', '-1 day')"
+                ).fetchone()
+
+            total = total_row["c"] if total_row else 0
+            last_gen = last_row["ts"] if last_row else None
+            last_24h = last_24h_row["c"] if last_24h_row else 0
+
+            # Classify pipeline status: stalled if no predictions in 24h AND total > 0
+            # (i.e., it used to work but stopped), disabled if never generated any
+            if total == 0:
+                status = "disabled"
+            elif last_24h == 0:
+                status = "stalled"
+            else:
+                status = "active"
+
+            return {
+                "stored_predictions": total,
+                "predictions_24h": last_24h,
+                "last_generation": last_gen,
+                "status": status,
+            }
+
+        try:
+            result["prediction_pipeline"] = await asyncio.to_thread(_prediction_pipeline)
+        except Exception as exc:
+            result["prediction_pipeline"] = {"error": str(exc), "status": "unknown"}
+
+        # ------------------------------------------------------------------
+        # Notification delivery — what fraction of notifications reach the user?
+        # ------------------------------------------------------------------
+        def _notification_delivery():
+            """Query notification status counts to compute delivery rate."""
+            with life_os.db.get_connection("state") as conn:
+                # Count delivered/acted_on (successful delivery)
+                delivered_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM notifications WHERE status IN ('delivered', 'acted_on', 'read') AND created_at > datetime('now', '-1 day')"
+                ).fetchone()
+                # Count expired/suppressed (failed to reach user) in last 24h
+                expired_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM notifications WHERE status IN ('expired', 'suppressed') AND created_at > datetime('now', '-1 day')"
+                ).fetchone()
+
+            delivered_24h = delivered_row["c"] if delivered_row else 0
+            expired_24h = expired_row["c"] if expired_row else 0
+            total_24h = delivered_24h + expired_24h
+
+            # Delivery rate = delivered / (delivered + expired); 0 if no data
+            delivery_rate = (delivered_24h / total_24h) if total_24h > 0 else None
+
+            return {
+                "delivery_rate": round(delivery_rate, 3) if delivery_rate is not None else None,
+                "delivered_24h": delivered_24h,
+                "expired_24h": expired_24h,
+            }
+
+        try:
+            result["notification_delivery"] = await asyncio.to_thread(_notification_delivery)
+        except Exception as exc:
+            result["notification_delivery"] = {"error": str(exc)}
+
+        # ------------------------------------------------------------------
+        # Source weights — are any sources saturated or has drift kicked in?
+        # ------------------------------------------------------------------
+        def _source_weights():
+            """Check for saturated sources (effective_weight >= 0.95) and drift activity."""
+            swm = getattr(life_os, "source_weight_manager", None)
+            if swm is None:
+                return {"saturated_sources": [], "drift_active": False}
+            try:
+                all_weights = swm.get_all_weights()
+            except Exception:
+                return {"saturated_sources": [], "drift_active": False}
+
+            saturated = [
+                w["source_key"]
+                for w in all_weights
+                if w.get("effective_weight", 0.0) >= 0.95
+            ]
+            drift_active = any(abs(w.get("ai_drift", 0.0)) > 0.01 for w in all_weights)
+
+            return {
+                "saturated_sources": saturated,
+                "drift_active": drift_active,
+            }
+
+        try:
+            result["source_weights"] = await asyncio.to_thread(_source_weights)
+        except Exception as exc:
+            result["source_weights"] = {"error": str(exc), "saturated_sources": [], "drift_active": False}
+
+        # ------------------------------------------------------------------
+        # Connector health — which connectors are in error?
+        # ------------------------------------------------------------------
+        async def _connector_health():
+            """Run health checks on all connectors and surface errors."""
+            connector_errors: dict = {}
+            for c in life_os.connectors:
+                try:
+                    check = await asyncio.wait_for(c.health_check(), timeout=5.0)
+                    if isinstance(check, dict) and check.get("status") == "error":
+                        connector_errors[c.CONNECTOR_ID] = {
+                            "status": "error",
+                            "error": check.get("details", "unknown error"),
+                        }
+                except asyncio.TimeoutError:
+                    connector_errors[c.CONNECTOR_ID] = {
+                        "status": "error",
+                        "error": "timeout",
+                    }
+                except Exception as exc:
+                    connector_errors[c.CONNECTOR_ID] = {
+                        "status": "error",
+                        "error": str(exc),
+                    }
+            return connector_errors
+
+        try:
+            result["connectors"] = await _connector_health()
+        except Exception as exc:
+            result["connectors"] = {"_error": str(exc)}
+
+        # ------------------------------------------------------------------
+        # Data freshness — when did we last receive an event?
+        # ------------------------------------------------------------------
+        def _data_freshness():
+            """Query the last event timestamp and 24h event count."""
+            with life_os.db.get_connection("events") as conn:
+                last_row = conn.execute("SELECT MAX(timestamp) as ts FROM events").fetchone()
+                last_24h_row = conn.execute(
+                    "SELECT COUNT(*) as c FROM events WHERE timestamp > datetime('now', '-1 day')"
+                ).fetchone()
+            return {
+                "last_event": last_row["ts"] if last_row else None,
+                "events_24h": last_24h_row["c"] if last_24h_row else 0,
+            }
+
+        try:
+            result["data_freshness"] = await asyncio.to_thread(_data_freshness)
+        except Exception as exc:
+            result["data_freshness"] = {"error": str(exc)}
+
+        # ------------------------------------------------------------------
+        # Overall health classification
+        # ------------------------------------------------------------------
+        # Critical conditions: stalled predictions OR any connector in error
+        prediction_status = result.get("prediction_pipeline", {}).get("status", "unknown")
+        connector_errors = result.get("connectors", {})
+        has_connector_error = bool(connector_errors) and not (
+            len(connector_errors) == 1 and "_error" in connector_errors
+        )
+
+        # Degraded conditions: missing profiles OR low delivery rate
+        profiles = result.get("signal_profiles", {})
+        missing_profiles = profiles.get("missing", [])
+        delivery = result.get("notification_delivery", {})
+        delivery_rate = delivery.get("delivery_rate")  # None means no data yet (not degraded)
+        low_delivery = delivery_rate is not None and delivery_rate < 0.5
+
+        if prediction_status == "stalled" or has_connector_error:
+            overall = "critical"
+        elif missing_profiles or low_delivery:
+            overall = "degraded"
+        else:
+            overall = "healthy"
+
+        result["overall_health"] = overall
+        result["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+        return result
+
     @app.get("/api/diagnostics/pipeline")
     async def pipeline_diagnostics():
         """Return comprehensive data-flow health diagnostics.
