@@ -22,6 +22,7 @@ Marketing email filtering:
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from html import unescape
@@ -30,6 +31,8 @@ from html.parser import HTMLParser
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
+
+logger = logging.getLogger(__name__)
 
 
 class HTMLStripper(HTMLParser):
@@ -265,9 +268,13 @@ class TopicExtractor(BaseExtractor):
         try:
             stripper.feed(html_text)
             text = stripper.get_text()
-        except Exception:
-            # If HTML parsing fails (malformed HTML), fall back to regex strip
-            # This is a safety net for edge cases where HTMLParser chokes
+        except Exception as e:
+            # If HTML parsing fails (malformed HTML, invalid entities, etc.),
+            # fall back to regex stripping so topic extraction still proceeds.
+            # Log the error so production issues are diagnosable without crashing.
+            logger.warning(
+                "TopicExtractor: HTML parsing failed, using regex fallback: %s", e
+            )
             text = re.sub(r'<[^>]+>', ' ', html_text)
             text = re.sub(r'\s+', ' ', text).strip()
 
@@ -355,3 +362,16 @@ class TopicExtractor(BaseExtractor):
             data["recent_topics"] = data["recent_topics"][-500:]
 
         self.ums.update_signal_profile("topics", data)
+
+        # Post-write verification: confirm the profile is readable after the write.
+        # update_signal_profile() silently swallows DB errors (fail-open), so
+        # without this check a corrupt user_model.db would cause 0 profile data
+        # while producing no visible error in the pipeline logs.
+        verify = self.ums.get_signal_profile("topics")
+        if not verify:
+            logger.error(
+                "TopicExtractor: topics profile FAILED to persist "
+                "(topics=%d, recent=%d) — user_model.db may be corrupt",
+                len(data.get("topic_counts", {})),
+                len(data.get("recent_topics", [])),
+            )
