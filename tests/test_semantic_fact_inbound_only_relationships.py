@@ -50,7 +50,7 @@ class TestInboundOnlyRelationshipFallback:
         assert result is not None
         assert result["type"] == "relationship"
         assert result["processed"] is True
-        assert result.get("facts_stored", 0) > 0
+        assert result.get("facts_written", 0) > 0
 
         # Check that communication_volume_category was stored
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
@@ -60,12 +60,10 @@ class TestInboundOnlyRelationshipFallback:
 
     def test_marketing_contacts_excluded_from_inbound_only(self, user_model_store):
         """Marketing/noreply contacts should be filtered out of the inbound-only analysis."""
-        # 3 human contacts + many marketing contacts = only 3 human, below threshold
+        # 1 human contact + many marketing contacts = only 1 human, below threshold (needs 2+)
         contacts = {
             "alice@example.com": {"interaction_count": 20, "outbound_count": 0, "inbound_count": 20},
-            "bob@example.com": {"interaction_count": 15, "outbound_count": 0, "inbound_count": 15},
-            "carol@example.com": {"interaction_count": 10, "outbound_count": 0, "inbound_count": 10},
-            # Marketing contacts — should be excluded
+            # Marketing contacts — should be excluded by the marketing filter
             "noreply@amazon.com": {"interaction_count": 100, "outbound_count": 0, "inbound_count": 100},
             "newsletter@shop.com": {"interaction_count": 50, "outbound_count": 0, "inbound_count": 50},
             "marketing@bigcorp.com": {"interaction_count": 30, "outbound_count": 0, "inbound_count": 30},
@@ -77,7 +75,7 @@ class TestInboundOnlyRelationshipFallback:
         inferrer = SemanticFactInferrer(user_model_store)
         result = inferrer.infer_from_relationship_profile()
 
-        # Only 3 human inbound-only contacts — below the 5 threshold
+        # Only 1 human inbound-only contact — below the minimum threshold of 2
         assert result["type"] == "relationship"
         assert result["processed"] is True
         assert result.get("reason") == "too_few_inbound_only"
@@ -141,9 +139,13 @@ class TestInboundOnlyRelationshipFallback:
         volume_fact = next((f for f in facts if f["key"] == "communication_volume_category"), None)
         assert volume_fact is None
 
-    def test_fewer_than_5_inbound_only_skips(self, user_model_store):
-        """Fewer than 5 inbound-only human contacts skips inference (too little data)."""
-        contacts = self._build_inbound_contacts(3)
+    def test_fewer_than_2_inbound_only_skips(self, user_model_store):
+        """Fewer than 2 inbound-only human contacts skips inference (too little data).
+
+        The minimum threshold for the inbound-only path is 2 contacts — a single
+        inbound contact does not provide enough signal for meaningful inference.
+        """
+        contacts = self._build_inbound_contacts(1)
         user_model_store.update_signal_profile("relationships", {"contacts": contacts})
         _set_samples(user_model_store, "relationships", 50)
 
@@ -154,7 +156,7 @@ class TestInboundOnlyRelationshipFallback:
         assert result["processed"] is True
         assert result.get("reason") == "too_few_inbound_only"
 
-        # No facts should have been stored
+        # No volume category fact should have been stored (threshold not met)
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
         volume_fact = next((f for f in facts if f["key"] == "communication_volume_category"), None)
         assert volume_fact is None
@@ -170,23 +172,30 @@ class TestInboundOnlyRelationshipFallback:
 
         assert result["processed"] is True
         # 1 volume fact + up to 5 sender facts = 6 total
-        assert result.get("facts_stored", 0) == 6
+        assert result.get("facts_written", 0) == 6
 
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
         sender_facts = [f for f in facts if f["key"].startswith("frequent_sender_")]
         assert len(sender_facts) == 5
 
-        # Verify fact values contain interaction counts
+        # Verify fact values match the canonical value used by the inferrer
         for fact in sender_facts:
-            assert fact["value"].startswith("inbound_sender_count_")
+            assert fact["value"] == "frequent_personal_sender"
 
     def test_frequent_sender_confidence_scales_with_interactions(self, user_model_store):
-        """Frequent sender confidence should scale with interaction count."""
+        """Frequent sender confidence should scale with interaction count.
+
+        Both heavy and filler contacts need inbound_count >= 3 to qualify for
+        a frequent_sender fact.  Filler contacts use 5 interactions (above the
+        threshold) so we can verify that higher inbound_count produces higher
+        confidence.
+        """
         contacts = {
-            # High-interaction contact
+            # High-interaction contact — should get high confidence
             "heavy@example.com": {"interaction_count": 200, "outbound_count": 0, "inbound_count": 200},
-            # Low-interaction contacts to fill the minimum
-            **{f"filler{i}@example.com": {"interaction_count": 2, "outbound_count": 0, "inbound_count": 2}
+            # Lower-interaction contacts: still above the 3-interaction threshold
+            # so they qualify for a frequent_sender fact with lower confidence
+            **{f"filler{i}@example.com": {"interaction_count": 5, "outbound_count": 0, "inbound_count": 5}
                for i in range(6)},
         }
         user_model_store.update_signal_profile("relationships", {"contacts": contacts})
@@ -201,5 +210,5 @@ class TestInboundOnlyRelationshipFallback:
 
         assert heavy_fact is not None
         assert filler_fact is not None
-        # Heavy sender (200 interactions) should have higher confidence than filler (2)
+        # Heavy sender (200 interactions) should have higher confidence than filler (5)
         assert heavy_fact["confidence"] > filler_fact["confidence"]
