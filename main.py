@@ -4315,6 +4315,12 @@ class LifeOS:
 
                 if not corruption_detected:
                     logger.debug("DB health check: user_model.db is healthy")
+                    # Periodic template health check: verifying communication template population
+                    logger.info("Periodic template health check: verifying communication template population")
+                    try:
+                        await self._backfill_communication_templates_if_needed()
+                    except Exception as e:
+                        logger.warning("Periodic template health check failed (non-fatal): %s", e)
                     await asyncio.sleep(1800)
                     continue
 
