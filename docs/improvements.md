@@ -43,9 +43,10 @@ Feel free to hand-add items above or below whatever the agent writes._
 
 - **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Open PR #700 awaiting merge. Temporal extractor writes fail silently; WAL resilience and retry needed.
 - **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
-- **Add per-extractor signal count to pipeline rebuild diagnostics** · `code_quality` — rebuild_diagnostics() reports which extractors ran but not how many signals each produced. Operators can't identify extractors that silently process 0 events.
+- **Add structured error reporting to dashboard feed and calendar endpoints** · `code_quality` — Feed and calendar JS loaders show generic errors or silently fail; add structured error responses and retry indicators.
+- **Fix routine detection for passive email-dominated data via inbound temporal patterns** · `broken_feature` — 0 routines despite 869 episodes. Detector min_episodes and consistency thresholds too strict for cold-start data.
+- **Fix workflow detection for email-only data via inbound email sequence detection** · `broken_feature` — 0 workflows despite 869 episodes. Workflow detector needs sequence patterns for inbound email chains.
 - **Add cache_age_seconds to /api/insights/summary response** · `code_quality` — Endpoint returns `generated_at` as current timestamp but doesn't indicate how old the underlying insight data is. Clients can't tell if insights are fresh or days old.
-- **Fix /api/events endpoint missing error handling** · `code_quality` — /api/events (routes.py:3568-3576) has no try/except; DB failures propagate as unhandled 500 errors.
 
 ## In Progress
 
@@ -53,13 +54,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Fix prediction engine persistence recovery and stale-generation diagnostics** · `broken_feature` (wave 5, slot 1)
-- **Fix communication template extraction failure (0 templates despite 2,110 template events)** · `broken_feature` (wave 5, slot 2)
-- **Add structured error reporting to dashboard feed and calendar endpoints** · `code_quality` (wave 5, slot 3)
-- **Add notification expiry reason tracking with expiry_reason column and diagnostics** · `missing_feature` (wave 5, slot 4)
-- **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` (wave 5, slot 5)
-- **Fix routine detection for passive email-dominated data via inbound temporal patterns** · `broken_feature` (wave 5, slot 6)
-- **Fix workflow detection for email-only data via inbound email sequence detection** · `broken_feature` (wave 5, slot 7)
+- **Add per-extractor signal count to pipeline rebuild diagnostics** · `code_quality` (wave 6, slot 1)
+- **Fix prediction engine stale-generation diagnostics and persistence verification** · `broken_feature` (wave 6, slot 2)
+- **Add notification expiry reason tracking with expiry_reason column and diagnostics** · `missing_feature` (wave 6, slot 3)
+- **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` (wave 6, slot 4)
+- **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` (wave 6, slot 5)
+- **Fix communication template extraction failure during profile rebuild** · `broken_feature` (wave 6, slot 6)
+- **Add task extraction telemetry and AI engine availability diagnostics** · `missing_feature` (wave 6, slot 7)
 
 ## Completed
 
