@@ -3036,9 +3036,34 @@ def register_routes(app: FastAPI, life_os) -> None:
             for ins in generated:
                 insights.append(ins.model_dump())
 
+        # Compute cache age from the oldest insight's created_at timestamp so
+        # clients can distinguish fresh data from hours-old cached results.
+        # Both fields are null when no insights are available.
+        oldest_insight_at: str | None = None
+        cache_age_seconds: float | None = None
+        if insights:
+            # Collect non-null created_at strings; some rows may omit it in
+            # degraded mode (in-memory fallback objects from model_dump()).
+            created_ats = [d.get("created_at") for d in insights if d.get("created_at")]
+            if created_ats:
+                oldest_str = min(created_ats)
+                try:
+                    oldest_dt = datetime.fromisoformat(oldest_str)
+                    # SQLite stores timestamps without timezone info; treat as UTC.
+                    if oldest_dt.tzinfo is None:
+                        oldest_dt = oldest_dt.replace(tzinfo=timezone.utc)
+                    now_utc = datetime.now(timezone.utc)
+                    cache_age_seconds = (now_utc - oldest_dt).total_seconds()
+                    oldest_insight_at = oldest_dt.isoformat()
+                except (ValueError, TypeError):
+                    # Leave both None if the timestamp is unparseable.
+                    pass
+
         return {
             "insights": insights,
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "cache_age_seconds": cache_age_seconds,
+            "oldest_insight_at": oldest_insight_at,
         }
 
     @app.get("/api/insights")
