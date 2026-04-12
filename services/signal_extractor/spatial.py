@@ -12,7 +12,6 @@ at each place the user frequents.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -275,11 +274,9 @@ class SpatialExtractor(BaseExtractor):
             inferred = {}
         else:
             data = profile.get("data", {})
-            inferred_raw = data.get("inferred_locations", {})
-            if isinstance(inferred_raw, str):
-                inferred = json.loads(inferred_raw)
-            else:
-                inferred = inferred_raw if inferred_raw else {}
+            # get_signal_profile already deserializes the outer JSON blob; the
+            # value here is a plain dict (not a JSON string).
+            inferred = data.get("inferred_locations") or {}
 
         if location not in inferred:
             inferred[location] = {
@@ -305,7 +302,8 @@ class SpatialExtractor(BaseExtractor):
             if "place_behaviors" in existing_data:
                 profile_data["place_behaviors"] = existing_data["place_behaviors"]
 
-        profile_data["inferred_locations"] = json.dumps(inferred)
+        # Pass the raw dict — update_signal_profile() handles JSON serialization.
+        profile_data["inferred_locations"] = inferred
 
         self.ums.update_signal_profile(
             profile_type="spatial",
@@ -370,12 +368,9 @@ class SpatialExtractor(BaseExtractor):
         if not profile:
             place_behaviors = {}
         else:
-            # Deserialize place_behaviors from the "data" field
-            place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-            if isinstance(place_behaviors_raw, str):
-                place_behaviors = json.loads(place_behaviors_raw)
-            else:
-                place_behaviors = place_behaviors_raw if place_behaviors_raw else {}
+            # get_signal_profile already deserializes the outer JSON blob; the
+            # value here is a plain dict (not a JSON string).
+            place_behaviors = profile.get("data", {}).get("place_behaviors") or {}
 
         # Get or create place behavior entry
         if location not in place_behaviors:
@@ -435,9 +430,9 @@ class SpatialExtractor(BaseExtractor):
             )
             place["typical_activities"] = [act for act, _count in sorted_activities[:5]]
 
-        # Serialize place_behaviors for storage
+        # Pass the raw dict — update_signal_profile() handles JSON serialization.
         profile_data = {
-            "place_behaviors": json.dumps(place_behaviors),
+            "place_behaviors": place_behaviors,
         }
 
         self.ums.update_signal_profile(
@@ -458,11 +453,9 @@ class SpatialExtractor(BaseExtractor):
         if not profile:
             return None
 
-        place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-        if isinstance(place_behaviors_raw, str):
-            place_behaviors = json.loads(place_behaviors_raw)
-        else:
-            place_behaviors = place_behaviors_raw if place_behaviors_raw else {}
+        # get_signal_profile already deserializes the outer JSON blob; the
+        # value here is a plain dict (not a JSON string).
+        place_behaviors = profile.get("data", {}).get("place_behaviors") or {}
 
         if not place_behaviors:
             return None
