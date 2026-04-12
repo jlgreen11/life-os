@@ -106,41 +106,66 @@ class NotificationManager:
             logger.warning("Failed to expire stale notifications", exc_info=True)
             return 0, []
 
-    async def auto_deliver_stale_batch(self, max_pending_hours: int = 6) -> int:
-        """Auto-deliver pending notifications older than max_pending_hours.
+    async def auto_deliver_stale_batch(
+        self,
+        max_pending_hours: float = 1,
+        high_priority_hours: float = 0.5,
+    ) -> int:
+        """Auto-deliver pending notifications that have been waiting too long.
 
-        Batched notifications sit in 'pending' status until the user visits a
-        digest endpoint.  If the user doesn't check the dashboard, they expire
-        after 48 hours and are never seen (77% expiry rate in practice).
+        Notifications sit in 'pending' or 'batched' status until the user
+        visits a digest endpoint.  If the user doesn't check the dashboard,
+        they expire after 48 hours and are never seen — previously an 86%
+        expiry rate in practice.
 
-        This method bridges the gap: it finds pending notifications that have
-        been waiting longer than *max_pending_hours* and delivers them
-        proactively, so they appear on the user's next dashboard visit rather
-        than silently expiring.
+        This method bridges the gap with a **graduated delivery strategy**:
+
+        - ``high`` and ``critical`` priority notifications are delivered after
+          *high_priority_hours* (default 0.5h / 30 min).  Urgent signals
+          should reach the user quickly regardless of dashboard visits.
+        - ``normal`` and ``low`` priority notifications are delivered after
+          *max_pending_hours* (default 1h).  If the user hasn't checked in
+          one hour they're unlikely to see a digest soon.
 
         Called periodically from the _notification_expiry_loop in main.py,
         BEFORE the expiry step, so notifications get a chance at delivery
         before they age out.
 
         Args:
-            max_pending_hours: Deliver pending notifications older than this
-                               many hours.  Default 6 hours — well before the
-                               48-hour expiry cutoff.
+            max_pending_hours: Deliver normal/low priority notifications older
+                               than this many hours.  Default 1 hour.
+            high_priority_hours: Deliver high/critical priority notifications
+                                 older than this many hours.  Default 0.5 hours
+                                 (30 minutes).
 
         Returns:
             Count of notifications auto-delivered.
         """
         try:
-            cutoff = (datetime.now(UTC) - timedelta(hours=max_pending_hours)).strftime(
+            now = datetime.now(UTC)
+            # Cutoff timestamps for each priority tier.
+            normal_cutoff = (now - timedelta(hours=max_pending_hours)).strftime(
                 "%Y-%m-%dT%H:%M:%S.000Z"
             )
+            high_cutoff = (now - timedelta(hours=high_priority_hours)).strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z"
+            )
+
             with self.db.get_connection("state") as conn:
+                # Fetch notifications eligible under either threshold.
+                # high/critical: older than high_priority_hours
+                # normal/low: older than max_pending_hours
                 rows = conn.execute(
-                    "SELECT id, title, body, priority, domain, source_event_id "
-                    "FROM notifications "
-                    "WHERE status IN ('pending', 'batched') AND created_at < ? "
-                    "ORDER BY created_at",
-                    (cutoff,),
+                    """SELECT id, title, body, priority, domain, source_event_id
+                       FROM notifications
+                       WHERE status IN ('pending', 'batched')
+                         AND (
+                           (priority IN ('high', 'critical') AND created_at < ?)
+                           OR
+                           (priority NOT IN ('high', 'critical') AND created_at < ?)
+                         )
+                       ORDER BY created_at""",
+                    (high_cutoff, normal_cutoff),
                 ).fetchall()
 
             delivered = 0
@@ -157,6 +182,13 @@ class NotificationManager:
                     logger.warning(
                         "Failed to auto-deliver notification %s", row["id"], exc_info=True
                     )
+
+            if delivered:
+                logger.info(
+                    "Auto-delivered %d stale notification(s) (high_priority_hours=%.1f, "
+                    "normal_hours=%.1f)",
+                    delivered, high_priority_hours, max_pending_hours,
+                )
 
             return delivered
         except Exception:
@@ -844,6 +876,66 @@ class NotificationManager:
                    GROUP BY status"""
             ).fetchall()
             return {row["status"]: row["cnt"] for row in rows}
+
+    def delivery_health(self) -> dict:
+        """Return a snapshot of the notification delivery pipeline health.
+
+        Provides operators and diagnostics with a single-call view into how
+        many notifications are being created, delivered, and lost to expiry.
+        The *delivery_rate* is the primary signal: a healthy system should
+        trend upward toward 1.0 as the graduated auto-delivery strategy keeps
+        more notifications from expiring unseen.
+
+        Returns:
+            A dict with the following keys:
+
+            - ``total_created``   — All notifications ever created.
+            - ``delivered``       — Notifications marked 'delivered'.
+            - ``expired``         — Notifications that aged out before delivery.
+            - ``pending``         — Still waiting for delivery (pending/batched).
+            - ``other``           — All other statuses (read, acted_on, dismissed,
+                                    suppressed, …).
+            - ``delivery_rate``   — delivered / total_created (0.0 if none created).
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    """SELECT status, COUNT(*) as cnt
+                       FROM notifications
+                       GROUP BY status"""
+                ).fetchall()
+        except Exception:
+            logger.warning("Failed to query delivery health stats", exc_info=True)
+            return {
+                "total_created": 0,
+                "delivered": 0,
+                "expired": 0,
+                "pending": 0,
+                "other": 0,
+                "delivery_rate": 0.0,
+            }
+
+        counts: dict[str, int] = {row["status"]: row["cnt"] for row in rows}
+        delivered = counts.get("delivered", 0)
+        expired = counts.get("expired", 0)
+        # Both 'pending' and 'batched' are awaiting delivery.
+        pending = counts.get("pending", 0) + counts.get("batched", 0)
+        # Everything that isn't delivered/expired/pending/batched (read, acted_on, etc.)
+        other = sum(
+            v for k, v in counts.items()
+            if k not in ("delivered", "expired", "pending", "batched")
+        )
+        total_created = delivered + expired + pending + other
+        delivery_rate = delivered / total_created if total_created > 0 else 0.0
+
+        return {
+            "total_created": total_created,
+            "delivered": delivered,
+            "expired": expired,
+            "pending": pending,
+            "other": other,
+            "delivery_rate": round(delivery_rate, 4),
+        }
 
     async def auto_resolve_stale_predictions(self, timeout_hours: int = 24):
         """
