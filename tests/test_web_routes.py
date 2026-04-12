@@ -194,6 +194,187 @@ def test_status_endpoint(client, mock_life_os):
 
 
 # ---------------------------------------------------------------------------
+# Health Summary
+# ---------------------------------------------------------------------------
+
+def _make_health_summary_db_mock(fetchone_results):
+    """Return a mock db.get_connection context manager that plays back fetchone results.
+
+    All get_connection("*") calls share the same mock conn, so fetchone() calls
+    are consumed in the order they are made across all three DB blocks:
+      1. prediction_pipeline  — 3 calls (COUNT, MAX created_at, COUNT 24h)
+      2. notification_delivery — 2 calls (COUNT delivered, COUNT expired)
+      3. data_freshness        — 2 calls (MAX timestamp, COUNT 24h)
+
+    Args:
+        fetchone_results: List of 7 dicts to return from sequential fetchone() calls.
+
+    Returns:
+        A Mock that replaces ``mock_life_os.db.get_connection``.
+    """
+    mock_conn = Mock()
+    mock_conn.execute.return_value.fetchone.side_effect = fetchone_results
+    return Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+
+
+# Shared set of DB rows that represent an active, healthy system.
+_HEALTHY_DB_ROWS = [
+    {"c": 5},                            # predictions total
+    {"ts": "2026-04-11T07:00:00"},       # predictions last_generation
+    {"c": 3},                            # predictions last_24h (active)
+    {"c": 8},                            # notifications delivered_24h
+    {"c": 2},                            # notifications expired_24h → rate = 0.8
+    {"ts": "2026-04-11T08:00:00"},       # events last_event
+    {"c": 50},                           # events events_24h
+]
+
+
+def test_health_summary_returns_expected_structure(client, mock_life_os):
+    """Test /api/health/summary returns all required top-level keys and nested fields."""
+    # All profiles are missing by default (get_signal_profile returns None)
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.get_all_weights.return_value = []
+    mock_life_os.db.get_connection = _make_health_summary_db_mock(list(_HEALTHY_DB_ROWS))
+
+    response = client.get("/api/health/summary")
+    assert response.status_code == 200
+    data = response.json()
+
+    # All top-level keys must be present
+    assert "overall_health" in data
+    assert "signal_profiles" in data
+    assert "prediction_pipeline" in data
+    assert "notification_delivery" in data
+    assert "source_weights" in data
+    assert "connectors" in data
+    assert "data_freshness" in data
+    assert "timestamp" in data
+
+    # overall_health is one of the three valid states
+    assert data["overall_health"] in ("healthy", "degraded", "critical")
+
+    # signal_profiles structure
+    sp = data["signal_profiles"]
+    assert sp["total_expected"] == 9
+    assert "total_present" in sp
+    assert "missing" in sp
+
+    # prediction_pipeline structure
+    pp = data["prediction_pipeline"]
+    assert "stored_predictions" in pp
+    assert "predictions_24h" in pp
+    assert "last_generation" in pp
+    assert pp["status"] in ("active", "stalled", "disabled")
+
+    # notification_delivery structure
+    nd = data["notification_delivery"]
+    assert "delivery_rate" in nd
+    assert "delivered_24h" in nd
+    assert "expired_24h" in nd
+
+    # source_weights structure
+    sw = data["source_weights"]
+    assert "saturated_sources" in sw
+    assert "drift_active" in sw
+
+    # data_freshness structure
+    df = data["data_freshness"]
+    assert "last_event" in df
+    assert "events_24h" in df
+
+
+def test_health_summary_critical_when_predictions_stalled(client, mock_life_os):
+    """Test overall_health is 'critical' when predictions exist but none generated in 24h."""
+    # Profiles all present so only prediction status drives critical
+    mock_life_os.user_model_store.get_signal_profile.return_value = {
+        "samples_count": 10, "data": {"key": "value"},
+    }
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.get_all_weights.return_value = []
+
+    # Stalled: total > 0 but last_24h == 0
+    stalled_rows = [
+        {"c": 5},                            # predictions total (has history)
+        {"ts": "2026-04-01T12:00:00"},       # last_generation (old)
+        {"c": 0},                            # predictions last_24h → stalled
+        {"c": 5},                            # notifications delivered_24h
+        {"c": 2},                            # notifications expired_24h
+        {"ts": "2026-04-11T08:00:00"},       # events last_event
+        {"c": 50},                           # events events_24h
+    ]
+    mock_life_os.db.get_connection = _make_health_summary_db_mock(stalled_rows)
+
+    response = client.get("/api/health/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["overall_health"] == "critical"
+    assert data["prediction_pipeline"]["status"] == "stalled"
+
+
+def test_health_summary_critical_when_connector_error(client, mock_life_os):
+    """Test overall_health is 'critical' when a connector reports error status."""
+    # Profiles all present, predictions active
+    mock_life_os.user_model_store.get_signal_profile.return_value = {
+        "samples_count": 10, "data": {"key": "value"},
+    }
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.get_all_weights.return_value = []
+    mock_life_os.db.get_connection = _make_health_summary_db_mock(list(_HEALTHY_DB_ROWS))
+
+    # Add a connector that returns an error status
+    error_connector = Mock()
+    error_connector.CONNECTOR_ID = "google"
+    error_connector.health_check = AsyncMock(
+        return_value={"connector": "google", "status": "error", "details": "Auth failed"}
+    )
+    mock_life_os.connectors = [error_connector]
+
+    response = client.get("/api/health/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["overall_health"] == "critical"
+    assert "google" in data["connectors"]
+    assert data["connectors"]["google"]["status"] == "error"
+
+
+def test_health_summary_degraded_when_profiles_missing(client, mock_life_os):
+    """Test overall_health is 'degraded' when signal profiles are absent."""
+    # All profiles missing (default: get_signal_profile returns None)
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.get_all_weights.return_value = []
+    # Predictions active so only missing profiles drives degraded (not critical)
+    mock_life_os.db.get_connection = _make_health_summary_db_mock(list(_HEALTHY_DB_ROWS))
+
+    response = client.get("/api/health/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["overall_health"] == "degraded"
+    assert data["signal_profiles"]["total_present"] == 0
+    assert len(data["signal_profiles"]["missing"]) == 9
+
+
+def test_health_summary_healthy_when_all_indicators_positive(client, mock_life_os):
+    """Test overall_health is 'healthy' when profiles are present, predictions active,
+    delivery rate is acceptable, and no connectors are in error."""
+    # All 9 profiles present
+    mock_life_os.user_model_store.get_signal_profile.return_value = {
+        "samples_count": 10, "data": {"key": "value"},
+    }
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.get_all_weights.return_value = []
+    mock_life_os.db.get_connection = _make_health_summary_db_mock(list(_HEALTHY_DB_ROWS))
+
+    response = client.get("/api/health/summary")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["overall_health"] == "healthy"
+    assert data["signal_profiles"]["total_present"] == 9
+    assert data["prediction_pipeline"]["status"] == "active"
+    # delivery_rate = 8 / (8 + 2) = 0.8 → above threshold
+    assert data["notification_delivery"]["delivery_rate"] == 0.8
+
+
+# ---------------------------------------------------------------------------
 # Command Bar
 # ---------------------------------------------------------------------------
 
