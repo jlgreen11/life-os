@@ -497,6 +497,58 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             background: rgba(46,204,113,0.1);
         }
 
+        /* --- Health Diagnostic Banner ---
+           Shown once on page load when the system is in a cold-start or
+           degraded state.  Dismissable (persisted in localStorage for 24h).
+           Placed above the feed content area. */
+        .health-banner {
+            background: var(--bg-card);
+            border-left: 3px solid var(--accent-blue);
+            padding: 16px;
+            margin-bottom: 16px;
+            border-radius: 8px;
+        }
+        .health-banner-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+        .health-banner-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        .health-banner-actions {
+            list-style: none;
+            padding: 0;
+            margin: 8px 0 0;
+        }
+        .health-banner-actions li {
+            padding: 3px 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .health-banner-actions li::before {
+            content: '\2192  ';
+            color: var(--accent-blue);
+        }
+        .health-banner-dismiss {
+            float: right;
+            cursor: pointer;
+            opacity: 0.6;
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 18px;
+            padding: 0 4px;
+            line-height: 1;
+        }
+        .health-banner-dismiss:hover { opacity: 1; }
+        .health-banner a {
+            color: var(--accent-blue);
+            text-decoration: underline;
+        }
+
         /* Sentiment dots */
         .sentiment-dot {
             display: inline-block;
@@ -1427,6 +1479,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
             <div id="response"></div>
             <div class="feed-header"><span id="feedHeader">Inbox</span><button class="refresh-btn" onclick="refreshAll()" title="Refresh">&#8635; Refresh</button></div>
+            <!-- Health diagnostic banner: populated by checkSystemHealth() on page load.
+                 Shown when user model is empty or connectors are in error state.
+                 Dismissed via localStorage (persists 24 hours). -->
+            <div id="healthBanner" style="display:none"></div>
             <div id="feedContent">
                 <div class="skeleton skeleton-card"></div>
                 <div class="skeleton skeleton-card"></div>
@@ -3932,6 +3988,110 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         sessionStorage.setItem('stale-dismissed', '1');
     }
 
+    /**
+     * checkSystemHealth — fetches /api/health/summary and renders a diagnostic
+     * banner in #healthBanner when the system is in a cold-start or degraded
+     * state.
+     *
+     * Conditions checked:
+     *   - Most signal profiles missing (> 4 of 9) AND events are flowing
+     *     → cold start: model is being built from incoming data
+     *   - Any connector reports status === 'error'
+     *     → connector issues need admin attention
+     *   - Rough health score < 30 (computed from missing profiles + connector errors)
+     *     → generally degraded system
+     *
+     * The banner is suppressed for 24 hours once dismissed.  If the health
+     * endpoint is unreachable the function silently exits — the banner is
+     * purely informational and must never break the page.
+     */
+    function checkSystemHealth() {
+        // Honour dismiss — don't re-show within 24 hours of the user closing it
+        var dismissed = localStorage.getItem('healthBannerDismissed');
+        if (dismissed && (Date.now() - parseInt(dismissed, 10)) < 86400000) return;
+
+        fetch(API + '/api/health/summary')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var sigProfiles = data.signal_profiles || {};
+            var missingProfiles = sigProfiles.missing || [];
+            var connectors = data.connectors || {};
+            var freshness = data.data_freshness || {};
+
+            // Determine connector error entries (each key is a connector with an error)
+            var connectorIds = Object.keys(connectors);
+            var hasConnectorError = connectorIds.some(function(id) {
+                return connectors[id] && connectors[id].status === 'error';
+            });
+
+            // Events flowing = at least one event in the last 24 hours
+            var events24h = freshness.events_24h || 0;
+
+            // Rough health score: 100 base, -10 per missing profile, -20 per connector error
+            var score = 100 - (missingProfiles.length * 10) - (hasConnectorError ? 20 : 0);
+
+            // Cold start: most profiles absent yet data is arriving
+            var isColdStart = missingProfiles.length > 4 && events24h > 0;
+            // Generally degraded
+            var isDegraded = score < 30;
+
+            // Nothing to report
+            if (!isColdStart && !isDegraded && !hasConnectorError) return;
+
+            // Title and top-level description
+            var title = isColdStart ? 'Life OS is warming up' : 'System needs attention';
+            var description = isColdStart
+                ? 'Your personal model is being built from incoming data. This takes a few hours of active data flow.'
+                : 'One or more system components need attention to work correctly.';
+
+            // Actionable bullet points
+            var actions = [];
+            if (hasConnectorError) {
+                actions.push('<a href="/admin">Fix connector issues in Admin &rarr;</a>');
+            }
+            if (missingProfiles.length > 4) {
+                actions.push('Signal profiles are rebuilding \u2014 check the System tab for progress');
+            }
+            if (isColdStart) {
+                actions.push('Events are flowing but your personal model is still being built');
+            }
+
+            // Build banner HTML
+            var html = '<div class="health-banner">';
+            html += '<button class="health-banner-dismiss" onclick="dismissHealthBanner()" title="Dismiss for 24 hours">&times;</button>';
+            html += '<div class="health-banner-title">' + escHtml(title) + '</div>';
+            html += '<div class="health-banner-desc">' + escHtml(description) + '</div>';
+            if (actions.length > 0) {
+                html += '<ul class="health-banner-actions">';
+                for (var i = 0; i < actions.length; i++) {
+                    // Actions may contain safe HTML links; plain-text items are escaped above
+                    html += '<li>' + actions[i] + '</li>';
+                }
+                html += '</ul>';
+            }
+            html += '</div>';
+
+            var banner = document.getElementById('healthBanner');
+            if (banner) {
+                safeSetContent(banner, html);
+                banner.style.display = 'block';
+            }
+        })
+        .catch(function() {
+            // Silent fail — never show the banner if the health endpoint is unavailable
+        });
+    }
+
+    /**
+     * dismissHealthBanner — hide the health banner and record the dismissal
+     * timestamp in localStorage so it is not shown again for 24 hours.
+     */
+    function dismissHealthBanner() {
+        localStorage.setItem('healthBannerDismissed', String(Date.now()));
+        var banner = document.getElementById('healthBanner');
+        if (banner) banner.style.display = 'none';
+    }
+
     // --- Manual Refresh ---
     function refreshAll() {
         loadFeed();
@@ -4019,6 +4179,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     loadPeopleRadar();
     loadMood();
     checkDataFreshness();
+    // Check system health once on load; shows a dismissable banner if the
+    // user model is empty or connectors are in an error state.  Not added
+    // to the 60-second refresh interval — it's informational and dismissable.
+    checkSystemHealth();
 
     // --- Auto-refresh sidebar data every 60 seconds ---
     // The main feed is not auto-refreshed to avoid surprising the user mid-scroll;
