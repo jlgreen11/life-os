@@ -1079,6 +1079,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         }
         .skeleton-line.short { width: 60%; }
 
+        /* --- Error States --- */
+        .error-banner { background: #3a1c1c; border: 1px solid #6b3030; border-radius: 8px; padding: 12px 16px; margin: 8px 0; text-align: center; color: #ff8a8a; }
+        .error-banner button { margin-left: 8px; }
+        .error-note { color: #ff8a8a; font-size: 12px; padding: 4px 0; }
+
         /* --- Calendar Grid --- */
         .calendar-header {
             display: flex;
@@ -1903,6 +1908,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         })
         .catch(function(err) {
             console.error('Failed to load calendar events:', err);
+            // Show a user-visible error banner inside the calendar grid so the
+            // user knows loading failed and can retry rather than seeing a blank grid.
+            var grid = document.getElementById('calendarGrid');
+            if (grid) safeSetContent(grid, '<div class="error-banner">Failed to load calendar events. <button onclick="loadCalendarView()">Retry</button></div>');
         });
     }
 
@@ -2102,12 +2111,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         safeSetContent(el, '<div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div>');
 
         Promise.all([
-            fetch(API + '/api/insights/summary').then(function(r) { return r.json(); }).catch(function() { return {}; }),
-            fetch(API + '/api/user-model/signal-profiles').then(function(r) { return r.json(); }).catch(function() { return {}; }),
-            fetch(API + '/api/user-model/routines?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; }),
-            fetch(API + '/api/user-model/workflows?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {}; }),
-            fetch(API + '/api/user-model/templates?limit=20').then(function(r) { return r.json(); }).catch(function() { return {}; })
+            fetch(API + '/api/insights/summary').then(function(r) { return r.json(); }).catch(function() { return {__failed: true}; }),
+            fetch(API + '/api/user-model/signal-profiles').then(function(r) { return r.json(); }).catch(function() { return {__failed: true}; }),
+            fetch(API + '/api/user-model/routines?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {__failed: true}; }),
+            fetch(API + '/api/user-model/workflows?min_observations=2').then(function(r) { return r.json(); }).catch(function() { return {__failed: true}; }),
+            fetch(API + '/api/user-model/templates?limit=20').then(function(r) { return r.json(); }).catch(function() { return {__failed: true}; })
         ]).then(function(results) {
+            // Count how many API calls returned the failure sentinel so we can
+            // show an appropriate error state (full banner vs. partial note).
+            var failCount = 0;
+            for (var fi = 0; fi < results.length; fi++) {
+                if (results[fi] && results[fi].__failed) failCount++;
+            }
+
             var insightData   = results[0];
             var profileData   = results[1];
             var routineData   = results[2];
@@ -2355,7 +2371,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 }
             }
 
-            if (!hasAny) {
+            if (failCount === 5) {
+                // Every API call failed — replace all content with a full-width error
+                // banner so the user can see the problem and trigger a retry.
+                html = '<div class="error-banner">Unable to load insights. <button onclick="loadInsightsFeed()">Retry</button></div>';
+            } else if (failCount > 0) {
+                // Some calls failed — prepend a compact note so the user knows
+                // certain sections may be missing, while still showing what loaded.
+                html = '<div class="error-note">Some data unavailable</div>' + html;
+            } else if (!hasAny) {
                 html = '<div class="card"><div class="card-meta" style="text-align:center;padding:20px">No insights yet. Use Life OS for a few days and patterns will emerge here.</div></div>';
             }
             safeSetContent(el, html);
