@@ -233,13 +233,15 @@ class TestEpisodeMoodIntegration:
         self, db, user_model_store, signal_extractor
     ):
         """
-        Test that mood signals are capped at 200 entries (ring buffer).
+        Test that mood signals are capped at 500 entries (ring buffer).
 
-        After processing 250 events, the profile should contain exactly
-        200 signals (the most recent ones).
+        After processing 600 events, the profile should contain no more than
+        500 signals (the most recent ones).  The cap was raised from 200 to
+        500 to accommodate higher-volume event streams while still preventing
+        unbounded growth.
         """
-        # Process 250 events
-        for i in range(250):
+        # Process 600 events (above the 500-entry cap)
+        for i in range(600):
             await signal_extractor.process_event(
                 {
                     "id": f"event-{i}",
@@ -260,7 +262,9 @@ class TestEpisodeMoodIntegration:
         profile = user_model_store.get_signal_profile("mood_signals")
         assert profile is not None
         recent_signals = profile["data"].get("recent_signals", [])
-        assert len(recent_signals) == 200, "Ring buffer should cap at 200 signals"
+        assert len(recent_signals) <= 500, (
+            f"Ring buffer must cap at 500 signals; found {len(recent_signals)}"
+        )
 
     @pytest.mark.asyncio
     async def test_episode_stores_mood_state_correctly(

@@ -298,9 +298,9 @@ class TestMoodInferenceEngine:
         assert "recent_signals" in profile["data"]
         assert len(profile["data"]["recent_signals"]) == 2  # quality + duration
 
-    def test_extract_caps_signal_buffer_at_200(self, engine, user_model_store):
-        """Signal buffer should be capped at 200 entries to prevent unbounded growth."""
-        # Pre-populate with 199 signals
+    def test_extract_caps_signal_buffer_at_500(self, engine, user_model_store):
+        """Signal buffer should be capped at 500 entries to prevent unbounded growth."""
+        # Pre-populate with 499 signals
         existing_signals = [
             {
                 "signal_type": "test_signal",
@@ -309,7 +309,7 @@ class TestMoodInferenceEngine:
                 "weight": 0.5,
                 "source": "test",
             }
-            for i in range(199)
+            for i in range(499)
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": existing_signals})
 
@@ -324,9 +324,9 @@ class TestMoodInferenceEngine:
         }
         engine.extract(event)
 
-        # Buffer should be capped at 200 (oldest entry should be dropped)
+        # Buffer should be capped at 500 (oldest entry should be dropped)
         profile = user_model_store.get_signal_profile("mood_signals")
-        assert len(profile["data"]["recent_signals"]) == 200
+        assert len(profile["data"]["recent_signals"]) == 500
 
         # First signal should be value=1 (value=0 was dropped)
         assert profile["data"]["recent_signals"][0]["value"] == 1

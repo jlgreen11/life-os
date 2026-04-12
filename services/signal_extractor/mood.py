@@ -10,6 +10,7 @@ adjusts its behavior (tone, timing, proactivity) based on the inference.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from models.core import EventType
@@ -581,30 +582,110 @@ class MoodInferenceEngine(BaseExtractor):
     def _update_mood_state(self, signals: list[dict]):
         """Accumulate mood signals into the "mood_signals" profile.
 
-        New signals are appended to a ring buffer capped at 200 entries
-        (roughly 2-3 days of typical activity).  This buffer is the input
+        New signals are appended to a ring buffer capped at 500 entries
+        (roughly 5-7 days of typical activity).  This buffer is the input
         that ``compute_current_mood()`` reads to produce the MoodState.
+
+        Root-cause fixes for the silent write-failure bug (PR #708 diagnosed
+        the symptom with logging; this method now also addresses causes):
+
+        1. **Serialization guard**: Before calling ``update_signal_profile()``,
+           we verify the data dict is JSON-serializable.  ``update_signal_profile``
+           catches *all* exceptions with a silent warning, so a ``TypeError`` from
+           ``json.dumps()`` (e.g. a ``set``, ``datetime``, or Pydantic model
+           sneaking into the signals list) would cause a zero-trace write failure.
+           The guard logs the exact non-serializable key and type so the root
+           cause can be fixed rather than silently skipped.
+
+        2. **WAL checkpoint retry**: If the immediate post-write read-back
+           returns ``None``, we force a WAL checkpoint (flushing pending frames
+           to the main database file) and retry the write once.  This resolves
+           transient WAL-visibility failures where ``PRAGMA journal_mode=WAL``
+           writes succeed but are not yet visible to readers on the same
+           connection due to an unflushed WAL frame.
         """
         existing = self.ums.get_signal_profile("mood_signals")
         data = existing["data"] if existing else {"recent_signals": []}
 
         data["recent_signals"].extend(signals)
-        # Cap at 200 to bound memory and keep the mood estimate focused on
+        # Cap at 500 to bound memory and keep the mood estimate focused on
         # recent behaviour rather than stale historical signals.
-        if len(data["recent_signals"]) > 200:
-            data["recent_signals"] = data["recent_signals"][-200:]
+        if len(data["recent_signals"]) > 500:
+            data["recent_signals"] = data["recent_signals"][-500:]
+
+        # --- Defensive serialization check ---
+        # ``update_signal_profile`` wraps ``json.dumps(data)`` in a broad
+        # ``try/except Exception`` that only logs a warning.  If data contains
+        # a non-serializable type (e.g. a ``set``, ``datetime``, ``Enum``, or
+        # Pydantic model object), the write silently fails.  We catch this here
+        # first so we can log the exact field causing the problem.
+        try:
+            json.dumps(data)
+        except (TypeError, ValueError) as exc:
+            # Identify which keys or signal fields are non-serializable.
+            bad_fields: list[str] = []
+            for key, val in data.items():
+                if key == "recent_signals":
+                    # Inspect each signal dict for non-serializable fields.
+                    for idx, sig in enumerate(val if isinstance(val, list) else []):
+                        if not isinstance(sig, dict):
+                            bad_fields.append(
+                                f"recent_signals[{idx}]={type(sig).__name__}"
+                            )
+                            continue
+                        for field, fval in sig.items():
+                            try:
+                                json.dumps(fval)
+                            except (TypeError, ValueError):
+                                bad_fields.append(
+                                    f"recent_signals[{idx}][{field!r}]"
+                                    f"={type(fval).__name__}"
+                                )
+                else:
+                    try:
+                        json.dumps(val)
+                    except (TypeError, ValueError):
+                        bad_fields.append(f"{key!r}={type(val).__name__}")
+
+            logger.error(
+                "MoodExtractor: mood_signals data contains non-JSON-serializable "
+                "types — write SKIPPED to avoid silent data loss. "
+                "Non-serializable fields: %s. Error: %s",
+                bad_fields or ["unknown"],
+                exc,
+            )
+            return
 
         self.ums.update_signal_profile("mood_signals", data)
-        # Post-write verification: immediately read back to confirm the profile
-        # was persisted.  A missing read-back indicates a silent write failure
-        # (e.g. WAL corruption, DB locked, JSON serialization error silently
-        # caught by update_signal_profile's try/except).  This diagnostic log
-        # surfaces the failure so operators can investigate rather than
-        # discovering the problem indirectly from missing mood widget data.
+
+        # --- Post-write verification with WAL checkpoint retry ---
+        # Immediately read back to confirm the profile was persisted.  A missing
+        # read-back indicates a silent write failure (e.g. WAL corruption, DB
+        # locked, or a JSON serialization error caught by update_signal_profile's
+        # own try/except).
         verify = self.ums.get_signal_profile("mood_signals")
         if not verify:
             logger.error(
                 "MoodExtractor: mood_signals profile FAILED to persist after write "
-                "(data keys=%s, signals=%d)",
+                "(data keys=%s, signals=%d) — retrying after WAL checkpoint",
                 list(data.keys()), len(data.get("recent_signals", [])),
             )
+            # Force a WAL checkpoint to flush all pending frames to the main
+            # database file, then retry the write.  This resolves transient
+            # WAL-visibility failures where the write succeeded internally but
+            # was not yet visible to subsequent readers.
+            try:
+                self.db.checkpoint_wal("user_model")
+            except Exception as wal_err:
+                logger.warning(
+                    "MoodExtractor: WAL checkpoint before retry failed: %s", wal_err
+                )
+            self.ums.update_signal_profile("mood_signals", data)
+            verify2 = self.ums.get_signal_profile("mood_signals")
+            if not verify2:
+                logger.error(
+                    "MoodExtractor: mood_signals profile STILL missing after "
+                    "WAL checkpoint retry (signals=%d). "
+                    "Check user_model.db integrity.",
+                    len(data.get("recent_signals", [])),
+                )
