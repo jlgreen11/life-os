@@ -43,6 +43,27 @@ class DecisionExtractor(BaseExtractor):
     - Time-of-day patterns in decisive language vs. deferring language
     """
 
+    def __init__(self, db, user_model_store):
+        """Initialize DecisionExtractor.
+
+        Extends BaseExtractor to add a write-attempt counter used by the
+        defensive health check in _update_profile.  After the first successful
+        persistence call we expect every subsequent call to also write
+        successfully; if the profile disappears mid-stream a CRITICAL is logged
+        immediately so operators are alerted.
+
+        Args:
+            db: DatabaseManager for raw event history.
+            user_model_store: UserModelStore for signal profile persistence.
+        """
+        super().__init__(db, user_model_store)
+        # Counts the number of times _update_profile has attempted to persist
+        # the decision profile.  Used to distinguish "first write" (profile
+        # doesn't exist yet, which is normal) from "Nth write" (profile should
+        # exist, so a None result from get_signal_profile is a persistence
+        # failure).
+        self._profile_write_count = 0
+
     def can_process(self, event: dict) -> bool:
         """
         Process events that indicate decision-making activity.
@@ -133,6 +154,28 @@ class DecisionExtractor(BaseExtractor):
                 info_signal = self._detect_information_gathering_patterns(payload, dt, event_type)
                 if info_signal:
                     signals.append(info_signal)
+
+            # Fallback: inbound email/message with no specific pattern match emits
+            # 'decision_information_processing' so every event produces a visible
+            # signal for extraction quality diagnostics.
+            # Marketing/noreply senders are excluded (same filter as the specific
+            # pattern detectors above) to avoid inflating counts with automated mail.
+            if event_type in [EventType.EMAIL_RECEIVED.value, EventType.MESSAGE_RECEIVED.value]:
+                from_address = payload.get("from_address", "") or payload.get("from", "")
+                if not is_marketing_or_noreply(from_address, payload):
+                    has_specific = any(
+                        s.get("type") in {"decision_response", "decision_signal"}
+                        for s in signals
+                    )
+                    if not has_specific:
+                        body = payload.get("body", "") or payload.get("body_plain", "") or ""
+                        signals.append({
+                            "type": "decision_information_processing",
+                            "source_type": event_type,
+                            "has_attachments": bool(payload.get("attachments")),
+                            "word_count": len(body.split()) if body else 0,
+                            "timestamp": dt.isoformat(),
+                        })
 
             # Track calendar commitment speed (how far in advance they schedule)
             if event_type == EventType.CALENDAR_EVENT_CREATED.value:
@@ -987,8 +1030,63 @@ class DecisionExtractor(BaseExtractor):
                     profile_dict.get("_response_total_count", 0) + 1
                 )
 
+            elif signal["type"] == "decision_information_processing":
+                # ----------------------------------------------------------------
+                # Track fallback inbound events: events that didn't match any
+                # specific decision pattern but still need to be counted for
+                # extraction quality diagnostics.
+                #
+                # _inbound_processing_counts — per-source-type event count
+                # ----------------------------------------------------------------
+                source_type = signal.get("source_type", "unknown")
+                inbound_counts = profile_dict.get("_inbound_processing_counts", {})
+                inbound_counts[source_type] = inbound_counts.get(source_type, 0) + 1
+                profile_dict["_inbound_processing_counts"] = inbound_counts
+
         # Update timestamp
         profile_dict["last_updated"] = timestamp.isoformat()
 
-        # Persist updated profile
-        self.ums.update_signal_profile("decision", profile_dict)
+        # Persist the updated profile with defensive write pattern.
+        # Every 10 writes, verify the profile row actually exists; if it is
+        # missing, update_signal_profile() is silently failing and a CRITICAL
+        # is logged so operators are alerted immediately.
+        # A passive WAL checkpoint is issued after each write to flush
+        # accumulated WAL frames to the main DB file, reducing data-loss
+        # exposure between the store-level throttled checkpoints (every 50).
+        self._profile_write_count += 1
+        try:
+            self.ums.update_signal_profile("decision", profile_dict)
+        except Exception as e:
+            logger.error(
+                "decision_extractor: update_signal_profile raised on write #%d: %s",
+                self._profile_write_count,
+                e,
+                exc_info=True,
+            )
+            return
+
+        # Post-write verification every 10 writes (avoids per-event read
+        # overhead on high-volume rebuilds while still catching silent failures).
+        if self._profile_write_count > 1 and self._profile_write_count % 10 == 0:
+            try:
+                profile = self.ums.get_signal_profile("decision")
+                if profile is None:
+                    logger.critical(
+                        "decision_extractor: profile MISSING after %d writes — "
+                        "update_signal_profile() is silently failing to persist data. "
+                        "Check user_model.db health and disk space.",
+                        self._profile_write_count,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "decision_extractor: post-write profile verification failed: %s", e
+                )
+
+        # Forced WAL checkpoint after each profile write.
+        try:
+            with self.ums.db.get_connection("user_model") as conn:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except Exception as e:
+            logger.warning(
+                "decision_extractor: WAL checkpoint after profile write failed: %s", e
+            )

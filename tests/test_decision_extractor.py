@@ -564,8 +564,13 @@ def test_marketing_emails_skipped_for_decision_response(db, user_model_store):
     assert len(signals) == 0
 
 
-def test_inbound_email_no_decision_patterns_produces_no_signal(db, user_model_store):
-    """Inbound emails without decision-response patterns should produce no signal."""
+def test_inbound_email_no_decision_patterns_produces_fallback_signal(db, user_model_store):
+    """Inbound emails without decision-response patterns emit fallback signal.
+
+    The fallback 'decision_information_processing' signal is emitted for every
+    non-marketing inbound email that doesn't match a specific decision pattern,
+    so that every event contributes to extraction quality diagnostics.
+    """
     extractor = DecisionExtractor(db, user_model_store)
 
     now = datetime.now(timezone.utc)
@@ -581,7 +586,10 @@ def test_inbound_email_no_decision_patterns_produces_no_signal(db, user_model_st
 
     signals = extractor.extract(event)
 
-    assert len(signals) == 0
+    # Now emits exactly one fallback signal instead of zero
+    assert len(signals) == 1
+    assert signals[0]["type"] == "decision_information_processing"
+    assert signals[0]["source_type"] == EventType.EMAIL_RECEIVED.value
 
 
 def test_profile_update_with_decision_response_approval(db, user_model_store):
