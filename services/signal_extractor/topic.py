@@ -22,6 +22,7 @@ Marketing email filtering:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import Counter
@@ -360,6 +361,70 @@ class TopicExtractor(BaseExtractor):
         # retaining enough observations for meaningful trend detection.
         if len(data["recent_topics"]) > 500:
             data["recent_topics"] = data["recent_topics"][-500:]
+
+        # --- Defensive serialization check ---
+        # ``update_signal_profile`` wraps ``json.dumps(data)`` in a broad
+        # ``try/except Exception`` that only logs a warning.  If data contains
+        # a non-serializable type (e.g. a ``set``, ``datetime``, or ``Enum``),
+        # the write silently fails.  We catch this here first so we can log
+        # the exact field causing the problem and skip the broken write.
+        try:
+            json.dumps(data)
+        except (TypeError, ValueError) as exc:
+            # Walk each key in the data dict to identify exactly which fields
+            # cannot be serialized, so the root cause is immediately obvious
+            # from the error log without requiring a debugger.
+            bad_fields: list[str] = []
+            for key, val in data.items():
+                if key == "topic_counts":
+                    # topic_counts is a dict mapping str → int.  Check each
+                    # value in case a count was accidentally assigned a
+                    # non-serializable type (e.g., a set or Counter object).
+                    if isinstance(val, dict):
+                        for topic, count in val.items():
+                            try:
+                                json.dumps(count)
+                            except (TypeError, ValueError):
+                                bad_fields.append(
+                                    f"topic_counts[{topic!r}]={type(count).__name__}"
+                                )
+                    else:
+                        try:
+                            json.dumps(val)
+                        except (TypeError, ValueError):
+                            bad_fields.append(f"{key!r}={type(val).__name__}")
+                elif key == "recent_topics":
+                    # recent_topics is a list of dicts with 'topics',
+                    # 'timestamp', and 'context' keys.  Inspect each entry
+                    # and each field within it.
+                    for idx, entry in enumerate(val if isinstance(val, list) else []):
+                        if not isinstance(entry, dict):
+                            bad_fields.append(
+                                f"recent_topics[{idx}]={type(entry).__name__}"
+                            )
+                            continue
+                        for field, fval in entry.items():
+                            try:
+                                json.dumps(fval)
+                            except (TypeError, ValueError):
+                                bad_fields.append(
+                                    f"recent_topics[{idx}][{field!r}]"
+                                    f"={type(fval).__name__}"
+                                )
+                else:
+                    try:
+                        json.dumps(val)
+                    except (TypeError, ValueError):
+                        bad_fields.append(f"{key!r}={type(val).__name__}")
+
+            logger.error(
+                "TopicExtractor: topics data contains non-JSON-serializable "
+                "types — write SKIPPED to avoid silent data loss. "
+                "Non-serializable fields: %s. Error: %s",
+                bad_fields or ["unknown"],
+                exc,
+            )
+            return
 
         self.ums.update_signal_profile("topics", data)
 
