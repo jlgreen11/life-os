@@ -45,8 +45,10 @@ Feel free to hand-add items above or below whatever the agent writes._
 - **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
 - **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` — Open PR #701 awaiting merge. Adds freshness/staleness tracking per profile to get_data_sufficiency_report().
 - **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` — Open PR #702 awaiting merge. Adds try/except guards and structured JSON 500 responses.
-- **Fix communication template extraction failure during profile rebuild** · `broken_feature` — Returned from wave 6 (no PR). Template extraction fails silently during profile rebuild; needs error handling and retry.
 - **Add cache_age_seconds to /api/insights/summary response** · `code_quality` — Endpoint returns `generated_at` as current timestamp but doesn't indicate how old the underlying insight data is. Clients can't tell if insights are fresh or days old.
+- **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` — Returned from wave 7 (no PR). Dashboard loaders silently swallow fetch errors; needs user-facing error states and retry UI.
+- **Fix routine detection min_episodes threshold for cold-start email data** · `broken_feature` — Returned from wave 7 (no PR). Routine detector requires too many episodes for initial detection with email-only data.
+- **Fix linguistic_inbound extractor profile persistence (13,508 qualifying events, 0 profile)** · `broken_feature` — Linguistic inbound profile never persists despite processing 13K+ email.received events; needs investigation and post-write verification.
 
 ## In Progress
 
@@ -54,13 +56,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` (wave 7, slot 1)
-- **Fix routine detection min_episodes threshold for cold-start email data** · `broken_feature` (wave 7, slot 2)
-- **Fix workflow detection with event-based fallback for empty episodes table** · `broken_feature` (wave 7, slot 3)
-- **Add notification expiry_reason column and diagnostic tracking** · `missing_feature` (wave 7, slot 4)
-- **Add per-extractor signal count to pipeline rebuild diagnostics** · `code_quality` (wave 7, slot 5)
-- **Add task extraction telemetry and AI engine availability diagnostics** · `missing_feature` (wave 7, slot 6)
-- **Fix prediction engine post-store verification and persistence failure diagnostics** · `broken_feature` (wave 7, slot 7)
+- **Fix cadence extractor defaultdict JSON serialization failure** · `broken_feature` (wave 5, slot 1)
+- **Fix spatial extractor double JSON-encoding that corrupts profile data** · `broken_feature` (wave 5, slot 2)
+- **Fix mood extractor profile persistence with post-write verification** · `broken_feature` (wave 5, slot 3)
+- **Fix topic extractor HTML parsing safety and profile persistence** · `broken_feature` (wave 5, slot 4)
+- **Fix communication template extraction failure during profile rebuild** · `broken_feature` (wave 5, slot 5)
+- **Add semantic fact inferrer cold-start diagnostics and fix zero-fact output** · `broken_feature` (wave 5, slot 6)
+- **Fix episode creation pipeline for email events producing 0 episodes** · `broken_feature` (wave 5, slot 7)
 
 ## Completed
 
@@ -68,6 +70,11 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Fix prediction engine post-store verification and persistence failure diagnostics** · `broken_feature` — wave 7, PR #707
+- **Add task extraction telemetry and AI engine availability diagnostics** · `missing_feature` — wave 7, PR #705
+- **Add per-extractor signal count to pipeline rebuild diagnostics** · `code_quality` — wave 7, PR #703
+- **Add notification expiry_reason column and diagnostic tracking** · `missing_feature` — wave 7, PR #706
+- **Fix workflow detection with event-based fallback for empty episodes table** · `broken_feature` — wave 7, PR #704
 - **Add /api/health/summary endpoint with aggregated system health indicators** · `missing_feature` — wave 4, PR #698
 - **Add source weight drift saturation warning and diagnostics** · `data_quality` — wave 4, PR #697
 - **Add WAL checkpoint resilience for signal profile and template writes in user_model.db** · `code_quality` — wave 4, PR #696
