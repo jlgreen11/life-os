@@ -116,11 +116,35 @@ class DecisionExtractor(BaseExtractor):
                 if response_signal:
                     signals.append(response_signal)
 
+            # Detect broader inbound-email decision signals: urgency language,
+            # action requests, and information-gathering patterns.  These cover
+            # the majority of email.received events that previously fell through
+            # without any signal because they didn't match the narrow
+            # approval/rejection/input_request patterns above.
+            if event_type == EventType.EMAIL_RECEIVED.value:
+                urgency_signal = self._detect_urgency_patterns(payload, dt, event_type)
+                if urgency_signal:
+                    signals.append(urgency_signal)
+
+                action_signal = self._detect_action_request_patterns(payload, dt, event_type)
+                if action_signal:
+                    signals.append(action_signal)
+
+                info_signal = self._detect_information_gathering_patterns(payload, dt, event_type)
+                if info_signal:
+                    signals.append(info_signal)
+
             # Track calendar commitment speed (how far in advance they schedule)
             if event_type == EventType.CALENDAR_EVENT_CREATED.value:
                 commitment_signal = self._track_commitment_patterns(payload, dt)
                 if commitment_signal:
                     signals.append(commitment_signal)
+
+                # Multi-attendee calendar events represent social commitments — a
+                # distinct decision type separate from the planning-horizon metric.
+                commitment_decision = self._detect_calendar_commitment_signal(payload, dt)
+                if commitment_decision:
+                    signals.append(commitment_decision)
 
             # Track calendar event updates as decision revisions
             if event_type == EventType.CALENDAR_EVENT_UPDATED.value:
@@ -338,6 +362,216 @@ class DecisionExtractor(BaseExtractor):
             "from_contact": from_address,
             "hour": received_at.hour,
             "timestamp": received_at.isoformat(),
+        }
+
+    def _detect_urgency_patterns(self, payload: dict, dt: datetime, event_type: str) -> Optional[dict]:
+        """
+        Detect urgency/priority signals in inbound emails.
+
+        Looks for time-pressure language in the subject or body that indicates
+        the user may need to make a decision quickly.  Subject-line matches get
+        a higher confidence score (0.6) than body-only matches (0.4) because
+        senders who front-load urgency in the subject are more likely to be
+        communicating a genuine time constraint.
+
+        Filters out marketing and automated senders to avoid false positives
+        from "URGENT: Limited time offer!" promotions.
+
+        Args:
+            payload:    Event payload dict with subject, body, and sender fields.
+            dt:         Timestamp of the received message.
+            event_type: Source event type string (always EMAIL_RECEIVED here).
+
+        Returns:
+            A signal dict with type='decision_signal' and
+            decision_type='urgency_response', or None if no urgency found.
+        """
+        from_address = payload.get("from_address", "") or payload.get("from", "")
+        if is_marketing_or_noreply(from_address, payload):
+            return None
+
+        subject = payload.get("subject", "") or ""
+        body = payload.get("body", "") or payload.get("body_plain", "") or ""
+
+        if not (subject or body):
+            return None
+
+        subject_lower = subject.lower()
+        body_lower = body.lower()
+
+        urgency_keywords = [
+            "urgent", "asap", "as soon as possible", "deadline",
+            "immediately", "time-sensitive", "time sensitive",
+            "critical", "emergency", "rush", "overdue",
+            "action required", "response required",
+        ]
+
+        subject_match = any(kw in subject_lower for kw in urgency_keywords)
+        body_match = any(kw in body_lower for kw in urgency_keywords)
+
+        if not (subject_match or body_match):
+            return None
+
+        # Subject-line urgency is a stronger signal than body-only urgency
+        confidence = 0.6 if subject_match else 0.4
+
+        return {
+            "type": "decision_signal",
+            "decision_type": "urgency_response",
+            "confidence": confidence,
+            "event_type": event_type,
+            "timestamp": dt.isoformat(),
+        }
+
+    def _detect_action_request_patterns(self, payload: dict, dt: datetime, event_type: str) -> Optional[dict]:
+        """
+        Detect action-request patterns in inbound emails.
+
+        Many inbound emails represent pending decisions: someone is asking the
+        user to review a document, approve a request, or provide input.  These
+        "please X" and "can you X" patterns indicate the user has a decision to
+        make — even if they are not yet aware of it.
+
+        Focuses on the email body since action requests are rarely expressed
+        only in the subject line.  Filters out marketing senders.
+
+        Args:
+            payload:    Event payload dict with body and sender fields.
+            dt:         Timestamp of the received message.
+            event_type: Source event type string.
+
+        Returns:
+            A signal dict with type='decision_signal' and
+            decision_type='action_request', or None if no request detected.
+        """
+        from_address = payload.get("from_address", "") or payload.get("from", "")
+        if is_marketing_or_noreply(from_address, payload):
+            return None
+
+        body = payload.get("body", "") or payload.get("body_plain", "") or ""
+        if not body:
+            return None
+
+        body_lower = body.lower()
+
+        action_patterns = [
+            "please review", "can you", "could you", "need your",
+            "waiting for", "waiting on", "would you",
+            "please confirm", "please respond", "please advise",
+            "please let me know", "kindly review",
+            "i need you to", "we need you to", "could you please",
+            "please provide", "your input needed", "need your help",
+            "need your approval", "need your feedback",
+            "action required", "action needed",
+        ]
+
+        if not any(pattern in body_lower for pattern in action_patterns):
+            return None
+
+        return {
+            "type": "decision_signal",
+            "decision_type": "action_request",
+            "confidence": 0.4,
+            "event_type": event_type,
+            "timestamp": dt.isoformat(),
+        }
+
+    def _detect_information_gathering_patterns(self, payload: dict, dt: datetime, event_type: str) -> Optional[dict]:
+        """
+        Detect information-gathering signals in inbound emails.
+
+        When the user receives replies to their own questions (RE: threads),
+        forwarded documents, or explicitly-requested information, they are in
+        an active decision process.  Identifying these patterns lets the
+        prediction engine surface relevant context when a decision is imminent.
+
+        Two complementary checks:
+        1. Subject starts with "re:", "fwd:", or "fw:" → thread reply
+        2. Body contains information-delivery language ("as requested",
+           "please find attached", etc.)
+
+        Info-delivery body patterns get higher confidence (0.5) because they
+        are more specific than a bare RE: prefix (0.3).  Filters out marketing
+        senders before any content inspection.
+
+        Args:
+            payload:    Event payload dict with subject, body, and sender fields.
+            dt:         Timestamp of the received message.
+            event_type: Source event type string.
+
+        Returns:
+            A signal dict with type='decision_signal' and
+            decision_type='information_gathering', or None if not detected.
+        """
+        from_address = payload.get("from_address", "") or payload.get("from", "")
+        if is_marketing_or_noreply(from_address, payload):
+            return None
+
+        subject = payload.get("subject", "") or ""
+        body = payload.get("body", "") or payload.get("body_plain", "") or ""
+
+        subject_lower = subject.lower()
+        body_lower = body.lower()
+
+        # Thread-reply prefix is the most common form of info gathering
+        is_thread_reply = subject_lower.startswith(("re:", "fwd:", "fw:"))
+
+        # Explicit information-delivery phrases in the body
+        info_delivery_patterns = [
+            "as requested", "as discussed", "attached is", "attached are",
+            "here is the", "here are the", "please find attached",
+            "please find enclosed", "i've attached", "i have attached",
+            "forwarding the", "fyi", "for your information",
+            "per your request", "following up",
+        ]
+        has_info_delivery = any(p in body_lower for p in info_delivery_patterns)
+
+        if not (is_thread_reply or has_info_delivery):
+            return None
+
+        # Explicit info delivery is a stronger signal than a thread-reply prefix
+        confidence = 0.5 if has_info_delivery else 0.3
+
+        return {
+            "type": "decision_signal",
+            "decision_type": "information_gathering",
+            "confidence": confidence,
+            "event_type": event_type,
+            "timestamp": dt.isoformat(),
+        }
+
+    def _detect_calendar_commitment_signal(self, payload: dict, dt: datetime) -> Optional[dict]:
+        """
+        Detect social commitment decisions in calendar events with multiple attendees.
+
+        A calendar event with two or more attendees is a social commitment — the
+        user has (or will) negotiate a shared time slot with others, which is a
+        distinct decision type from a solo planning-horizon signal.  This emits
+        a 'decision_signal' so the profile tracks how often the user makes
+        multi-party commitment decisions, separate from the planning-horizon
+        metric captured by commitment_pattern signals.
+
+        Args:
+            payload: Calendar event payload with optional 'attendees' list.
+            dt:      Timestamp of the event creation.
+
+        Returns:
+            A signal dict with type='decision_signal' and
+            decision_type='commitment', or None if fewer than 2 attendees.
+        """
+        attendees = payload.get("attendees", [])
+
+        # Require at least 2 attendees to indicate a genuine social commitment
+        if not attendees or len(attendees) < 2:
+            return None
+
+        return {
+            "type": "decision_signal",
+            "decision_type": "commitment",
+            "confidence": 0.5,
+            "event_type": EventType.CALENDAR_EVENT_CREATED.value,
+            "attendee_count": len(attendees),
+            "timestamp": dt.isoformat(),
         }
 
     def _track_commitment_patterns(self, payload: dict, created_at: datetime) -> Optional[dict]:
@@ -680,6 +914,42 @@ class DecisionExtractor(BaseExtractor):
                 profile_dict["mind_change_frequency"] = round(
                     0.7 * current_freq + 0.3 * 1.0, 4
                 )
+
+            elif signal["type"] == "decision_signal":
+                # ----------------------------------------------------------------
+                # Aggregate inbound-email and calendar decision signals.
+                #
+                # These signals are emitted by the new broad-pattern detectors
+                # (urgency_response, action_request, information_gathering,
+                # commitment).  We track two things:
+                #
+                # 1. _decision_signal_counts — raw event count per decision_type,
+                #    stored in the profile dict.  The prediction engine uses this
+                #    to bootstrap decision-pattern intelligence from historical email
+                #    data that previously produced no signals at all.
+                #
+                # 2. decision_signal_confidence — per-type EMA (α=0.3) of
+                #    confidence scores.  This lets the prediction engine weight
+                #    high-confidence signals (e.g. subject-line "URGENT:") more
+                #    heavily than low-confidence ones (bare RE: thread replies).
+                # ----------------------------------------------------------------
+                decision_type = signal.get("decision_type", "unknown")
+                confidence = signal.get("confidence", 0.3)
+
+                # Increment raw count for this decision type
+                signal_counts = profile_dict.get("_decision_signal_counts", {})
+                signal_counts[decision_type] = signal_counts.get(decision_type, 0) + 1
+                profile_dict["_decision_signal_counts"] = signal_counts
+
+                # EMA blend of per-type confidence scores (α=0.3)
+                signal_confidence = profile_dict.get("decision_signal_confidence", {})
+                if decision_type in signal_confidence:
+                    signal_confidence[decision_type] = round(
+                        0.7 * signal_confidence[decision_type] + 0.3 * confidence, 4
+                    )
+                else:
+                    signal_confidence[decision_type] = round(confidence, 4)
+                profile_dict["decision_signal_confidence"] = signal_confidence
 
             elif signal["type"] == "decision_response":
                 # ----------------------------------------------------------------
