@@ -150,6 +150,13 @@ class PredictionEngine:
         # a silent persistence failure (e.g. WAL not checkpointed, DB recovery).
         self._persistence_failure_detected: bool = False
 
+        # Counts how many times the persistence failure recovery block has
+        # executed (i.e. how many consecutive cycles started with the failure
+        # flag set).  If this exceeds 3 without the flag being cleared, the
+        # engine emits a CRITICAL log with full diagnostic details so operators
+        # can investigate the underlying DB problem.
+        self._recovery_attempt_count: int = 0
+
         # Per-check generation breakdown from the last generate_predictions() run.
         # Persisted to prediction_engine_state so it survives restarts and is
         # available in diagnostics for debugging 0-prediction anomalies.
@@ -417,6 +424,96 @@ class PredictionEngine:
             "last_generation_timestamp": self._last_generation_timestamp,
         }
 
+    def get_persistence_diagnostics(self) -> dict[str, Any]:
+        """Return detailed persistence-specific diagnostics for debugging prediction storage issues.
+
+        Combines in-memory failure tracking state with live database queries to give
+        operators a complete picture of why predictions are or aren't persisting.
+        All database queries are wrapped in try/except so this method never raises —
+        it degrades gracefully when the database is unavailable.
+
+        Returns:
+            dict with the following keys:
+              - store_failure_count: lifetime count of store_prediction() exceptions
+              - last_store_errors: ring buffer of the 10 most recent store error dicts
+              - persistence_failure_detected: True when post-store verification found 0 rows
+              - recovery_attempt_count: how many consecutive cycles entered recovery
+              - last_successful_generation: ISO timestamp from state table, or None
+              - current_prediction_count: total rows currently in predictions table
+              - generation_events_count: rows with type='usermodel.prediction.generated'
+              - count_mismatch: True when generation_events_count > 0 and predictions = 0
+              - schema_status: 'ok' or a description of missing/extra columns
+        """
+        result: dict[str, Any] = {
+            "store_failure_count": self._store_failure_count,
+            "last_store_errors": list(self._last_store_errors),
+            "persistence_failure_detected": self._persistence_failure_detected,
+            "recovery_attempt_count": self._recovery_attempt_count,
+            "last_successful_generation": None,
+            "current_prediction_count": 0,
+            "generation_events_count": 0,
+            "count_mismatch": False,
+            "schema_status": "unknown",
+        }
+
+        # --- user_model.db queries ---
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # Last time predictions were successfully stored this session
+                state_row = conn.execute(
+                    "SELECT value FROM prediction_engine_state "
+                    "WHERE key = 'last_successful_generation'"
+                ).fetchone()
+                if state_row:
+                    result["last_successful_generation"] = state_row["value"]
+
+                # Total prediction rows currently in the table
+                count_row = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()
+                result["current_prediction_count"] = count_row[0] if count_row else 0
+        except Exception as e:
+            result["user_model_query_error"] = str(e)
+
+        # --- events.db query (generation event counter) ---
+        try:
+            with self.db.get_connection("events") as conn:
+                gen_row = conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE type = 'usermodel.prediction.generated'"
+                ).fetchone()
+                result["generation_events_count"] = gen_row[0] if gen_row else 0
+        except Exception as e:
+            result["events_query_error"] = str(e)
+
+        # Flag the mismatch that triggered the original data-quality alert:
+        # generation events indicate predictions were produced, but none are stored.
+        result["count_mismatch"] = (
+            result["generation_events_count"] > 0
+            and result["current_prediction_count"] == 0
+        )
+
+        # --- predictions table schema check ---
+        # A schema mismatch after a DB migration can cause silent write failures
+        # where store_prediction() raises no exception but no rows are persisted.
+        # Checks all columns needed by store_prediction(), including those that go
+        # beyond the minimal DB write test INSERT used in the recovery block.
+        _expected_cols = {
+            "id", "prediction_type", "description", "confidence", "confidence_gate",
+            "time_horizon", "was_surfaced", "supporting_signals", "filter_reason",
+        }
+        try:
+            with self.db.get_connection("user_model") as conn:
+                _actual_cols = {
+                    r[1] for r in conn.execute("PRAGMA table_info(predictions)").fetchall()
+                }
+            _missing = _expected_cols - _actual_cols
+            if _missing:
+                result["schema_status"] = f"missing_columns: {sorted(_missing)}"
+            else:
+                result["schema_status"] = "ok"
+        except Exception as e:
+            result["schema_status"] = f"error: {e}"
+
+        return result
+
     @staticmethod
     def _empty_surfacing_diagnostics() -> dict[str, Any]:
         """Return a fresh surfacing diagnostics dict with zeroed counters.
@@ -539,9 +636,11 @@ class PredictionEngine:
         # (e.g., due to DB corruption recovery dropping the table), perform
         # corrective actions to ensure this cycle's predictions actually persist.
         if self._persistence_failure_detected:
+            self._recovery_attempt_count += 1
             logger.warning(
                 'Prediction persistence failure detected in previous cycle — '
-                'running recovery: verifying DB, clearing pre-filter cache'
+                'running recovery attempt #%d: verifying DB, clearing pre-filter cache',
+                self._recovery_attempt_count,
             )
             try:
                 test_id = '__persistence_test__'
@@ -565,17 +664,75 @@ class PredictionEngine:
                         # refresh — the table may have changed during DB recovery.
                         self._prefilter_cache = set()
                         self._prefilter_refresh_cycle = 0
+
+                        # Verify the predictions table has the expected schema so that
+                        # a column mismatch after a DB migration does not cause silent
+                        # write failures in subsequent store_prediction() calls.
+                        # Includes columns needed by store_prediction() that go beyond
+                        # the minimal set used by the DB write test above.
+                        _expected_cols = {
+                            'id', 'prediction_type', 'description', 'confidence',
+                            'confidence_gate', 'time_horizon', 'was_surfaced',
+                            'supporting_signals', 'filter_reason',
+                        }
+                        try:
+                            with self.db.get_connection('user_model') as schema_conn:
+                                _actual_cols = {
+                                    r[1] for r in schema_conn.execute(
+                                        'PRAGMA table_info(predictions)'
+                                    ).fetchall()
+                                }
+                            _missing_cols = _expected_cols - _actual_cols
+                            if _missing_cols:
+                                logger.critical(
+                                    'Persistence recovery: predictions table schema mismatch — '
+                                    'missing columns: %s. Silent write failures may occur. '
+                                    'A DB migration may be required.',
+                                    sorted(_missing_cols),
+                                )
+                            else:
+                                logger.debug(
+                                    'Persistence recovery: predictions table schema OK (%d columns present)',
+                                    len(_actual_cols),
+                                )
+                        except Exception as _schema_err:
+                            logger.warning(
+                                'Persistence recovery: schema check failed (non-fatal): %s',
+                                _schema_err,
+                            )
                     else:
-                        logger.critical(
-                            'Persistence recovery: DB write test FAILED — predictions '
-                            'table is not persisting writes. Skipping this cycle.'
-                        )
+                        if self._recovery_attempt_count > 3:
+                            logger.critical(
+                                'Prediction persistence: recovery attempted %d times without '
+                                'success. DB write test row not found after INSERT. '
+                                'store_failure_count=%d, last_errors=%s',
+                                self._recovery_attempt_count,
+                                self._store_failure_count,
+                                self._last_store_errors[-3:] if self._last_store_errors else [],
+                            )
+                        else:
+                            logger.critical(
+                                'Persistence recovery: DB write test FAILED — predictions '
+                                'table is not persisting writes. Skipping this cycle.'
+                            )
                         return []
             except Exception as e:
-                logger.critical(
-                    'Persistence recovery: DB write test raised %s: %s — '
-                    'skipping this cycle', type(e).__name__, e
-                )
+                if self._recovery_attempt_count > 3:
+                    logger.critical(
+                        'Prediction persistence: recovery attempted %d times without '
+                        'success. DB write test raised %s: %s. '
+                        'store_failure_count=%d, persistence_failure_detected=%s',
+                        self._recovery_attempt_count,
+                        type(e).__name__,
+                        e,
+                        self._store_failure_count,
+                        self._persistence_failure_detected,
+                    )
+                else:
+                    logger.critical(
+                        'Persistence recovery: DB write test raised %s: %s — '
+                        'skipping this cycle', type(e).__name__, e
+                    )
                 return []
 
             # Mark this cycle as running in recovery mode for diagnostics
@@ -1104,6 +1261,19 @@ class PredictionEngine:
         # trigger the alarm.
         if stored_count > 0:
             try:
+                # Force a second WAL checkpoint immediately before the verification
+                # query to ensure the verification reads from the main DB file, not
+                # from stale WAL frames that may not yet be visible to a new
+                # connection.  The first checkpoint (above) flushed after storage;
+                # this one guarantees the read in the next connection sees all
+                # committed data before we evaluate whether the data is present.
+                try:
+                    self.db.checkpoint_wal("user_model")
+                except Exception as _ckpt_err:
+                    logger.warning(
+                        "Pre-verification WAL checkpoint failed (verification may be stale): %s",
+                        _ckpt_err,
+                    )
                 run_start = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
                 with self.db.get_connection("user_model") as conn:
                     actual_count = conn.execute(
