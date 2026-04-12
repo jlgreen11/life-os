@@ -41,10 +41,7 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Fix dashboard loadMood() JSON path mismatch** · `broken_feature` — loadMood() reads data.energy but endpoint returns data.mood.energy_level. Mood bars always show defaults. From UI engagement fixes plan Task 1.
-- **Fix draftReply() payload and add copy button** · `broken_feature` — draftReply() sends wrong payload format (missing incoming_message field). AI generates context-free drafts. From UI engagement fixes plan Task 2.
-- **Add WAL checkpoint resilience for user_model.db writes** · `code_quality` — DB corruption events on March 5-6 wiped predictions, templates, and signal profiles. Only prediction engine checkpoints WAL; template store and signal profile writes don't. Need broader WAL checkpointing strategy.
-- **Fix source weight drift cap warning** · `data_quality` — When AI drift reaches ±0.3 (MAX_DRIFT), the effective weight hits 0.0 or 1.0 and the user's explicit weight preference becomes invisible. No warning or cap-hit notification exists.
+- **Fix prediction engine post-corruption recovery by clearing prefilter cache** · `broken_feature` — After DB corruption/recovery, stale pre-filter cache blocks prediction regeneration. Cache should be invalidated when DB state inconsistency is detected.
 
 ## In Progress
 
@@ -52,13 +49,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Fix signal profile health check to retry persistently missing profiles** · `broken_feature` (wave 4, slot 1)
-- **Broaden decision extractor signal patterns for inbound email data** · `data_quality` (wave 4, slot 2)
-- **Add periodic communication template re-backfill after DB recovery** · `broken_feature` (wave 4, slot 3)
-- **Reduce notification expiry rate with more aggressive auto-delivery** · `broken_feature` (wave 4, slot 4)
-- **Fix prediction engine post-corruption recovery by clearing prefilter cache** · `broken_feature` (wave 4, slot 5)
-- **Fix routine detector to detect temporal patterns in email-dominated data** · `broken_feature` (wave 4, slot 6)
-- **Add adaptive lookback to workflow detector for stale connector data** · `broken_feature` (wave 4, slot 7)
+- **Fix prediction pre-filter cache poisoning that prevents prediction persistence** · `broken_feature` (wave 5, slot 1)
+- **Add WAL checkpoint resilience for signal profile and template writes in user_model.db** · `code_quality` (wave 5, slot 2)
+- **Add source weight drift saturation warning and diagnostics** · `data_quality` (wave 5, slot 3)
+- **Fix decision extractor fallback signal for non-pattern-matching inbound emails** · `data_quality` (wave 5, slot 4)
+- **Add notification expiry reason tracking to diagnose 85% expiry rate** · `broken_feature` (wave 5, slot 5)
+- **Add /api/health/summary endpoint with aggregated system health indicators** · `missing_feature` (wave 5, slot 6)
+- **Add per-extractor signal count to pipeline rebuild diagnostics** · `code_quality` (wave 5, slot 7)
 
 ## Completed
 
@@ -66,6 +63,14 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Fix signal profile health check to retry persistently missing profiles** · `broken_feature` — wave 4, PR #693
+- **Broaden decision extractor signal patterns for inbound email data** · `data_quality` — wave 4, PR #692
+- **Add periodic communication template re-backfill after DB recovery** · `broken_feature` — wave 4, PR #690
+- **Reduce notification expiry rate with more aggressive auto-delivery** · `broken_feature` — wave 4, PR #691
+- **Fix routine detector to detect temporal patterns in email-dominated data** · `broken_feature` — wave 4, PR #695
+- **Add adaptive lookback to workflow detector for stale connector data** · `broken_feature` — wave 4, PR #694
+- **Fix dashboard loadMood() JSON path mismatch** · `broken_feature` — previously implemented (all UI engagement fixes plan tasks complete)
+- **Fix draftReply() payload and add copy button** · `broken_feature` — previously implemented (all UI engagement fixes plan tasks complete)
 - **Fix routine detector: auto-extend lookback when connector outage leaves 0 recent episodes** · `broken_feature` — wave 3, PR #685
 - **Fix notification batch durability: replace in-memory _pending_batch with DB-backed status** · `broken_feature` — wave 3, PR #689
 - **Reduce prediction intra-batch duplicates and persist pre-filter across cycles** · `data_quality` — wave 3, PR #688
