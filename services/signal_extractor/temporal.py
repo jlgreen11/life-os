@@ -290,20 +290,54 @@ class TemporalExtractor(BaseExtractor):
 
         # Post-write verification: after the second call (i.e. the profile
         # should exist from the first write), confirm the row is present.
-        # We only check every 10 writes to avoid a read-per-event overhead
-        # on high-volume rebuilds.
-        if self._profile_write_count > 1 and self._profile_write_count % 10 == 0:
+        # During the cold-start period (first 20 writes), check every 5 writes
+        # to catch persistence failures faster.  After that, check every 10 writes
+        # to avoid a read-per-event overhead on high-volume rebuilds.
+        verify_interval = 5 if self._profile_write_count <= 20 else 10
+        if self._profile_write_count > 1 and self._profile_write_count % verify_interval == 0:
             try:
                 profile = self.ums.get_signal_profile("temporal")
                 if profile is None:
                     logger.critical(
                         "temporal_extractor: profile MISSING after %d writes — "
                         "update_signal_profile() is silently failing to persist data. "
-                        "Check user_model.db health and disk space.",
+                        "Check user_model.db health and disk space. Retrying write...",
                         self._profile_write_count,
                     )
+                    # Recovery path: re-attempt the write and force a WAL checkpoint to
+                    # flush any buffered frames back to the main database file.  This
+                    # handles the case where a prior WAL corruption event caused the
+                    # profile row to disappear — the checkpoint ensures the retry write
+                    # is durable before the next verification cycle.
+                    try:
+                        self.ums.update_signal_profile("temporal", data)
+                        self._force_wal_checkpoint()
+                    except Exception as retry_err:
+                        logger.error(
+                            "temporal_extractor: retry write after missing profile also failed: %s",
+                            retry_err,
+                        )
             except Exception as e:
                 logger.warning("temporal_extractor: post-write profile verification failed: %s", e)
+
+    def _force_wal_checkpoint(self) -> None:
+        """Force a WAL checkpoint on user_model.db to flush buffered writes.
+
+        Called in the recovery path after a retry write when post-write
+        verification detects a missing profile.  Ensuring the retry write is
+        checkpointed (i.e. flushed from the WAL into the main database file)
+        makes it durable across database reconnections and process restarts,
+        which is the most likely explanation for a profile disappearing mid-stream
+        (WAL frames written but not yet checkpointed are lost on a hard restart).
+
+        Uses the existing ``checkpoint_wal`` helper on the DatabaseManager, which
+        issues ``PRAGMA wal_checkpoint(TRUNCATE)``.  Errors are logged as warnings
+        and not re-raised so that the caller's recovery flow is not interrupted.
+        """
+        try:
+            self.ums.db.checkpoint_wal("user_model")
+        except Exception as e:
+            logger.warning("temporal_extractor: WAL checkpoint failed: %s", e)
 
     def _derive_behavioral_fields(self, data: dict) -> dict:
         """
