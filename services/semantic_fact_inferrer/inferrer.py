@@ -1908,6 +1908,330 @@ class SemanticFactInferrer:
         logger.info(f"Inferred semantic facts from decision profile (samples={profile.get('samples_count')})")
         return {"type": "decision", "processed": True, "reason": None}
 
+    def _get_episode_count(self) -> int:
+        """Return the number of rows in the episodes table.
+
+        Used to detect the cold-start condition where the episode pipeline is
+        broken or the system has not yet generated any episodes from events.
+
+        Returns:
+            Episode count, or 0 on any database error (fail-open).
+        """
+        try:
+            with self.ums.db.get_connection("user_model") as conn:
+                return conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+        except Exception:
+            return 0
+
+    def _get_event_count(self) -> int:
+        """Return the total number of rows in the events table.
+
+        Used to confirm that there is enough raw data to make event-based
+        fallback inference worthwhile even when episodes are absent.
+
+        Returns:
+            Event count, or 0 on any database error (fail-open).
+        """
+        try:
+            with self.ums.db.get_connection("events") as conn:
+                return conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        except Exception:
+            return 0
+
+    def infer_facts_from_events(self, event_limit: int = 5000) -> dict:
+        """Infer basic semantic facts directly from the events table.
+
+        This is a cold-start fallback for when the episodes table is empty.
+        It queries events.db directly — bypassing the signal-profile pipeline —
+        to extract relationship, temporal, and topic facts.  All derived facts
+        are stored with ``confidence=0.3`` to signal that they come from
+        raw event data rather than the richer episodic signal profiles.
+
+        Facts extracted:
+          - ``event_fallback_contact_*``: Top-10 most-frequent email senders
+            (email.received), filtered for marketing/no-reply addresses and
+            classified as "work" or "personal" by domain.
+          - ``event_fallback_active_hours``: Hours of day (0-23) with
+            above-average email/calendar activity — proxy for peak productivity.
+          - ``event_fallback_most_active_day``: Day of week with most events.
+          - ``event_fallback_topic_*``: Top-10 words from email subject lines
+            after removing stop words and standard reply/forward prefixes.
+
+        This method supplements (never replaces) the normal signal-profile
+        inference path.  When episodes exist, ``run_all_inference`` skips this
+        method entirely.
+
+        Args:
+            event_limit: Maximum number of email/calendar events to scan.
+                Defaults to 5000 to keep execution time below ~1 s on large
+                event logs.
+
+        Returns:
+            Dict with keys: ``type``, ``processed``, ``reason``, ``facts_written``.
+        """
+        # Low confidence constant — event-only facts are preliminary estimates,
+        # not the richer signal-profile inferences that run when episodes exist.
+        COLD_START_CONFIDENCE = 0.3
+
+        # Days of week by weekday() index (Monday=0)
+        DAY_NAMES = [
+            "monday", "tuesday", "wednesday", "thursday", "friday",
+            "saturday", "sunday",
+        ]
+
+        # Stop words that should never appear as topic facts from subject lines.
+        # Covers common English words, email prefixes, and generic marketing terms.
+        SUBJECT_STOP_WORDS = {
+            "re", "fwd", "fw", "the", "a", "an", "and", "or", "but",
+            "in", "on", "at", "to", "for", "of", "is", "it", "be",
+            "as", "by", "with", "from", "your", "our", "we", "you",
+            "i", "my", "are", "was", "has", "have", "this", "that",
+            "not", "no", "can", "will", "just", "up", "out", "if",
+            "about", "all", "please", "here", "more", "new", "get",
+            "hi", "hello", "dear", "thank", "thanks", "update",
+            "email", "message", "notification", "reminder", "info",
+            "http", "https", "www", "com", "org", "net",
+        }
+
+        # Common personal email provider domains — everything else is treated
+        # as a potential work domain (the "company.com → work" heuristic from
+        # the task description).
+        PERSONAL_DOMAINS = {
+            "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+            "live.com", "icloud.com", "me.com", "aol.com",
+            "protonmail.com", "proton.me", "hey.com", "fastmail.com",
+            "ymail.com", "mail.com", "gmx.com",
+        }
+
+        # --- Step 1: Query events.db ---
+        try:
+            with self.ums.db.get_connection("events") as conn:
+                rows = conn.execute(
+                    """SELECT type, timestamp, payload
+                       FROM events
+                       WHERE type IN (
+                           'email.received', 'email.sent',
+                           'calendar.event.created'
+                       )
+                       ORDER BY timestamp DESC
+                       LIMIT ?""",
+                    (event_limit,),
+                ).fetchall()
+        except Exception as exc:
+            logger.warning("infer_facts_from_events: events query failed: %s", exc)
+            return {
+                "type": "event_fallback",
+                "processed": False,
+                "reason": f"events query failed: {exc}",
+                "facts_written": 0,
+            }
+
+        if not rows:
+            logger.info("infer_facts_from_events: no email/calendar events found in events.db")
+            return {
+                "type": "event_fallback",
+                "processed": False,
+                "reason": "no_events",
+                "facts_written": 0,
+            }
+
+        # --- Step 2: Aggregate data from events ---
+        # contact_counts: email address → inbound message count
+        contact_counts: dict[str, int] = {}
+        # hour_counts: 0-23 → event count
+        hour_counts: dict[int, int] = {}
+        # day_counts: "monday" etc. → event count
+        day_counts: dict[str, int] = {}
+        # subject_word_counts: lowercase word → occurrence count
+        subject_word_counts: dict[str, int] = {}
+
+        for row in rows:
+            event_type = row["type"]
+            payload: dict = {}
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                pass  # Treat malformed payload as empty — fail-open
+
+            # -- Relationship: collect email senders --
+            if event_type == "email.received":
+                from_addr = payload.get("from_address", "")
+                if isinstance(from_addr, str) and "@" in from_addr:
+                    addr = from_addr.lower().strip()
+                    if not is_marketing_or_noreply(addr):
+                        contact_counts[addr] = contact_counts.get(addr, 0) + 1
+
+            # -- Temporal: bucket event by hour and day of week --
+            try:
+                ts = row["timestamp"]
+                if ts:
+                    # Normalize 'Z' suffix so fromisoformat handles it on all
+                    # Python 3.12 builds (fromisoformat('...Z') was added in 3.11
+                    # but is not guaranteed across all patch versions).
+                    ts_norm = ts.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(ts_norm)
+                    hour_counts[dt.hour] = hour_counts.get(dt.hour, 0) + 1
+                    day_name = DAY_NAMES[dt.weekday()]
+                    day_counts[day_name] = day_counts.get(day_name, 0) + 1
+            except Exception:
+                pass  # Skip unparseable timestamps — fail-open
+
+            # -- Topic: extract keywords from email subject lines --
+            if event_type in ("email.received", "email.sent"):
+                subject = payload.get("subject", "")
+                if isinstance(subject, str) and subject.strip():
+                    cleaned = subject.strip()
+                    # Strip common reply/forward prefixes (may be nested, e.g. "Re: Fwd:")
+                    for prefix in ("Re: ", "RE: ", "Fwd: ", "FWD: ", "FW: ",
+                                   "re: ", "fwd: ", "fw: "):
+                        while cleaned.lower().startswith(prefix.lower()):
+                            cleaned = cleaned[len(prefix):].strip()
+
+                    for raw_word in cleaned.lower().split():
+                        # Remove surrounding punctuation
+                        word = raw_word.strip(".,!?;:\"'()[]{}-_/\\|@#$%^&*+=<>~`")
+                        if (
+                            len(word) >= 4
+                            and word not in SUBJECT_STOP_WORDS
+                            and word.isalpha()
+                        ):
+                            subject_word_counts[word] = (
+                                subject_word_counts.get(word, 0) + 1
+                            )
+
+        # --- Step 3: Store facts ---
+        facts_written = 0
+
+        # Relationship facts: top-10 most-frequent non-marketing email senders
+        if contact_counts:
+            sorted_contacts = sorted(
+                contact_counts.items(), key=lambda x: x[1], reverse=True
+            )
+            for contact_addr, count in sorted_contacts[:10]:
+                if count < 2:
+                    # Not enough volume to be a meaningful contact
+                    break
+
+                # Classify as work or personal by email domain
+                domain = contact_addr.rsplit("@", 1)[-1] if "@" in contact_addr else ""
+                relationship_type = (
+                    "personal" if domain in PERSONAL_DOMAINS else "work"
+                )
+
+                # Build a key-safe representation of the email address
+                # (keys cannot contain '@' or '.' as fact key separators)
+                safe_addr = (
+                    contact_addr.replace("@", "_at_").replace(".", "_dot_")
+                )
+
+                try:
+                    self.ums.update_semantic_fact(
+                        key=f"event_fallback_contact_{safe_addr}",
+                        category="implicit_preference",
+                        value={
+                            "email": contact_addr,
+                            "email_count": count,
+                            "relationship_type": relationship_type,
+                        },
+                        confidence=COLD_START_CONFIDENCE,
+                        episode_id=None,
+                    )
+                    facts_written += 1
+                except Exception as exc:
+                    logger.warning(
+                        "infer_facts_from_events: failed to store contact fact "
+                        "for %s: %s", contact_addr, exc
+                    )
+
+        # Temporal facts: active hours and most active day
+        if hour_counts:
+            total_hour_events = sum(hour_counts.values())
+            if total_hour_events > 0:
+                # Active hours: those that exceed 1.5x the per-hour average.
+                # This threshold separates genuine peak hours from background noise
+                # while remaining reachable even with sparse data (24 hours, so
+                # average is total/24; 1.5x means the hour has at least 6.25% of
+                # all events when they were perfectly uniformly distributed).
+                avg_per_hour = total_hour_events / 24
+                active_hours = sorted(
+                    [h for h, c in hour_counts.items() if c > avg_per_hour * 1.5],
+                    key=lambda h: hour_counts[h],
+                    reverse=True,
+                )
+                if active_hours:
+                    try:
+                        self.ums.update_semantic_fact(
+                            key="event_fallback_active_hours",
+                            category="implicit_preference",
+                            value=active_hours[:6],  # Cap at 6 hours
+                            confidence=COLD_START_CONFIDENCE,
+                            episode_id=None,
+                        )
+                        facts_written += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "infer_facts_from_events: failed to store "
+                            "active_hours fact: %s", exc
+                        )
+
+        if day_counts:
+            most_active_day = max(day_counts, key=day_counts.get)
+            try:
+                self.ums.update_semantic_fact(
+                    key="event_fallback_most_active_day",
+                    category="implicit_preference",
+                    value=most_active_day,
+                    confidence=COLD_START_CONFIDENCE,
+                    episode_id=None,
+                )
+                facts_written += 1
+            except Exception as exc:
+                logger.warning(
+                    "infer_facts_from_events: failed to store "
+                    "most_active_day fact: %s", exc
+                )
+
+        # Topic facts: top-10 most-common subject keywords (min 2 occurrences)
+        if subject_word_counts:
+            sorted_words = sorted(
+                subject_word_counts.items(), key=lambda x: x[1], reverse=True
+            )
+            stored_topics = 0
+            for word, count in sorted_words:
+                if stored_topics >= 10:
+                    break
+                if count < 2:
+                    break  # List is sorted descending; no subsequent entry can qualify
+                try:
+                    self.ums.update_semantic_fact(
+                        key=f"event_fallback_topic_{word}",
+                        category="implicit_preference",
+                        value={"topic": word, "count": count},
+                        confidence=COLD_START_CONFIDENCE,
+                        episode_id=None,
+                    )
+                    facts_written += 1
+                    stored_topics += 1
+                except Exception as exc:
+                    logger.warning(
+                        "infer_facts_from_events: failed to store "
+                        "topic fact for %s: %s", word, exc
+                    )
+
+        logger.info(
+            "infer_facts_from_events: scanned %d events, wrote %d facts "
+            "(unique_senders=%d, hour_buckets=%d, subject_words=%d)",
+            len(rows), facts_written,
+            len(contact_counts), len(hour_counts), len(subject_word_counts),
+        )
+
+        return {
+            "type": "event_fallback",
+            "processed": True,
+            "reason": None,
+            "facts_written": facts_written,
+        }
+
     def _log_inference_summary(self, results: list[dict]) -> None:
         """
         Log a summary of which profile types were processed vs skipped.
@@ -2071,6 +2395,39 @@ class SemanticFactInferrer:
                     result["facts_written"] = 0
 
             results.append(result)
+
+        # --- Event-based fallback: supplement when episodes are absent ---
+        # When the episode pipeline is broken or the system is very new, all
+        # profile-based inference methods above skip because signal profiles are
+        # populated from episodes.  The fallback below queries events.db directly
+        # to extract basic facts (top contacts, active hours, subject keywords)
+        # so semantic memory is not completely empty, unblocking the prediction
+        # engine and morning briefing.
+        #
+        # Gate: run only when episodes=0 AND events>100 so we don't pollute
+        # semantic memory with noisy event-only facts when the richer
+        # episode-backed signal profiles are already available.
+        try:
+            _episode_count_for_fallback = self._get_episode_count()
+            _event_count_for_fallback = self._get_event_count()
+            if _episode_count_for_fallback == 0 and _event_count_for_fallback > 100:
+                logger.info(
+                    "SemanticFactInferrer: 0 episodes with %d events — "
+                    "running event-based fallback inference",
+                    _event_count_for_fallback,
+                )
+                fallback_result = self.infer_facts_from_events()
+                results.append(fallback_result)
+            elif _episode_count_for_fallback > 0:
+                logger.debug(
+                    "SemanticFactInferrer: %d episodes present — "
+                    "skipping event-based fallback (normal path active)",
+                    _episode_count_for_fallback,
+                )
+        except Exception:
+            logger.exception(
+                "SemanticFactInferrer: event fallback check failed, continuing"
+            )
 
         self._log_inference_summary(results)
 
