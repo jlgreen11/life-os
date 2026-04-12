@@ -39,6 +39,8 @@ def backfill_communication_templates(
     batch_size: int = 1000,
     limit: int | None = None,
     dry_run: bool = False,
+    db: DatabaseManager | None = None,
+    ums: UserModelStore | None = None,
 ) -> dict:
     """Backfill communication templates from all historical communication events.
 
@@ -47,10 +49,17 @@ def backfill_communication_templates(
     templates for each contact address involved (sender or recipients).
 
     Args:
-        data_dir: Path to data directory containing SQLite databases
+        data_dir: Path to data directory containing SQLite databases.
+                  Ignored when ``db`` is provided.
         batch_size: Number of events to process per transaction batch
         limit: Maximum number of events to process (None = all)
         dry_run: If True, report what would be done without writing to DB
+        db: Optional existing DatabaseManager to reuse.  When provided, no
+            new SQLite connections are opened, avoiding WAL lock contention
+            when called from a running LifeOS instance.  When None (CLI
+            usage), a fresh DatabaseManager is created from ``data_dir``.
+        ums: Optional existing UserModelStore to reuse.  Constructed from
+             ``db`` when not provided.
 
     Returns:
         Dict with processing statistics:
@@ -62,9 +71,14 @@ def backfill_communication_templates(
     """
     start_time = time.time()
 
-    # Initialize database manager and user model store
-    db = DatabaseManager(data_dir)
-    ums = UserModelStore(db)
+    # Use provided db/ums instances (caller-owned, no new connections opened)
+    # or create our own for CLI / standalone usage.  Reusing the caller's
+    # DatabaseManager avoids competing SQLite connections to the same WAL-mode
+    # file, which can cause lock contention that silently drops writes.
+    if db is None:
+        db = DatabaseManager(data_dir)
+    if ums is None:
+        ums = UserModelStore(db)
 
     # Initialize relationship extractor (handles template extraction)
     extractor = RelationshipExtractor(db, ums)
@@ -89,6 +103,9 @@ def backfill_communication_templates(
     templates_after = 0
     errors = 0
     last_report_time = start_time
+    # Running template count used for per-batch write verification.
+    # Updated after each WAL checkpoint so we can detect silently-dropped writes.
+    templates_running_count = 0
 
     with db.get_connection("events") as events_conn:
         events_conn.row_factory = sqlite3.Row
@@ -98,6 +115,9 @@ def backfill_communication_templates(
             templates_before = um_conn.execute(
                 "SELECT COUNT(*) FROM communication_templates"
             ).fetchone()[0]
+
+        # Seed the running count so per-batch deltas are meaningful.
+        templates_running_count = templates_before
 
         print(f"Starting backfill (batch_size={batch_size}, limit={limit or 'all'})")
         print(f"Templates before: {templates_before}")
@@ -111,6 +131,7 @@ def backfill_communication_templates(
             if not batch:
                 break
 
+            batch_events_processed = 0
             for row in batch:
                 try:
                     # Reconstruct event dict from database row
@@ -129,10 +150,38 @@ def backfill_communication_templates(
                         extractor.extract(event)
 
                     events_processed += 1
+                    batch_events_processed += 1
 
                 except Exception as e:
                     print(f"Error processing event {row['id']}: {e}")
                     errors += 1
+
+            if not dry_run and batch_events_processed > 0:
+                # Flush WAL frames written during this batch into the main DB
+                # file.  PASSIVE mode does not block concurrent readers, making
+                # it safe inside a tight write loop.  This is in addition to the
+                # per-template checkpoint in UserModelStore.upsert_communication_template()
+                # and ensures batch-level durability even if that checkpoint is
+                # skipped for any reason.
+                with db.get_connection("user_model") as chk_conn:
+                    chk_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+                # Post-batch verification: confirm templates were actually
+                # persisted to user_model.db.  A flat count after a large batch
+                # of communication events strongly suggests lock contention or a
+                # silent write failure.
+                with db.get_connection("user_model") as verify_conn:
+                    post_batch_count = verify_conn.execute(
+                        "SELECT COUNT(*) FROM communication_templates"
+                    ).fetchone()[0]
+                if post_batch_count == templates_running_count:
+                    print(
+                        f"Warning: template count unchanged after processing "
+                        f"{batch_events_processed} events "
+                        f"(count={templates_running_count}). "
+                        "Check for WAL lock contention or extractor errors."
+                    )
+                templates_running_count = post_batch_count
 
             # Report progress every 5 seconds
             now = time.time()

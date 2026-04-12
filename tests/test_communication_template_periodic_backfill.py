@@ -170,9 +170,13 @@ class TestBackfillMethodTriggersWhenEmpty:
 
         captured_calls = []
 
-        def fake_backfill(data_dir, batch_size=5000):
-            """Stub backfill that records it was called and returns plausible stats."""
-            captured_calls.append(data_dir)
+        def fake_backfill(data_dir="data", batch_size=5000, db=None, ums=None, **kwargs):
+            """Stub backfill that records it was called and returns plausible stats.
+
+            Updated to accept the ``db`` and ``ums`` kwargs added to avoid WAL lock
+            contention when the backfill is called from a running LifeOS instance.
+            """
+            captured_calls.append({"data_dir": data_dir, "db": db, "ums": ums})
             return {"templates_created": 55, "events_processed": 55, "elapsed_seconds": 1.0}
 
         with patch("scripts.backfill_communication_templates.backfill_communication_templates", side_effect=fake_backfill):
@@ -184,6 +188,8 @@ class TestBackfillMethodTriggersWhenEmpty:
             asyncio.run(_run())
 
         assert len(captured_calls) == 1, "Backfill should have been called exactly once"
+        # Verify db and ums are passed so the backfill reuses the server's connections.
+        assert captured_calls[0]["db"] is db, "db must be passed to avoid WAL contention"
 
     def test_skips_when_no_templates_but_insufficient_events(self, db_with_few_events):
         """Method skips the backfill when event_count < 50 (not enough data)."""

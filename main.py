@@ -1526,12 +1526,18 @@ class LifeOS:
 
             logger.info("       → Backfilling communication templates from %s historical events...", f"{event_count:,}")
 
-            # Run the backfill in a thread to avoid blocking startup
+            # Run the backfill in a thread to avoid blocking startup.
+            # Pass the existing db / user_model_store so the backfill reuses
+            # the server's connections rather than opening competing ones that
+            # cause WAL lock contention and silently drop writes.
+            _db = self.db
+            _ums = self.user_model_store
             def _run_backfill():
                 from scripts.backfill_communication_templates import backfill_communication_templates
                 stats = backfill_communication_templates(
-                    data_dir=self.db.data_dir,
                     batch_size=5000,
+                    db=_db,
+                    ums=_ums,
                 )
                 return stats
 
