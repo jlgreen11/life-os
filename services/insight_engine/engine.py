@@ -125,17 +125,42 @@ class InsightEngine:
 
         Checks each signal profile and data source that the correlators depend
         on and returns a structured dict mapping correlator name to its data
-        readiness status.
+        readiness status.  Profile-based correlators also include a freshness
+        assessment — a profile with enough samples but stale data signals that
+        insights may be based on outdated behavior (e.g. a connector that has
+        been offline for weeks).
 
         Returns:
-            A dict keyed by correlator method name. Each value contains:
+            A dict with a ``freshness_summary`` key and correlator-keyed entries.
+            Each correlator entry contains:
+
             - ``profile`` or ``source``: the data source checked
-            - ``status``: one of ``'ready'``, ``'partial'``, or ``'no_data'``
+            - ``status``: one of ``'ready'``, ``'stale_data'``, ``'partial'``,
+              ``'no_data'``, or ``'error'``.  ``'stale_data'`` means samples
+              are sufficient but the profile has not been updated in > 7 days.
             - ``samples`` or ``count``: current data point count
             - ``min_required``: minimum samples needed for ``'ready'`` status
               (profile-based correlators only)
+
+            Profile-based entries additionally include:
+
+            - ``freshness``: ``'fresh'`` (< 24 h), ``'stale'`` (1–7 days),
+              ``'very_stale'`` (> 7 days), or ``'unknown'`` when ``updated_at``
+              is missing / unparseable.
+            - ``last_updated``: ISO-8601 timestamp string from the database, or
+              ``None`` if unavailable.
+            - ``age_hours``: float hours since last update, or ``None``.
+
+            The ``freshness_summary`` top-level key contains:
+
+            - ``fresh``: count of profile-based correlators with fresh data
+            - ``stale``: count with stale data (1–7 days)
+            - ``very_stale``: count with very stale data (> 7 days)
+            - ``unknown``: count where freshness could not be determined
         """
+        now = datetime.now(timezone.utc)
         report: dict[str, dict] = {}
+        freshness_summary: dict[str, int] = {"fresh": 0, "stale": 0, "very_stale": 0, "unknown": 0}
 
         # Profile-based correlators: each needs a signal profile with enough
         # samples to produce meaningful insights.
@@ -151,24 +176,57 @@ class InsightEngine:
             ("decision", "_decision_pattern_insights", 5),
         ]
         for profile_type, correlator_name, min_samples in profiles_to_check:
+            profile = None
+            samples = 0
+            updated_at_str: str | None = None
+            age_hours: float | None = None
+            freshness: str = "unknown"
+
             try:
                 profile = self.ums.get_signal_profile(profile_type)
                 samples = profile["samples_count"] if profile else 0
+                updated_at_str = profile.get("updated_at") if profile else None
             except Exception:
                 samples = -1  # DB or deserialization error
+
+            # Compute freshness from the updated_at timestamp when available.
+            if updated_at_str:
+                try:
+                    # The column is stored as ISO-8601 with 'Z' suffix (UTC).
+                    updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+                    age_hours = (now - updated_at).total_seconds() / 3600.0
+                    if age_hours < 24.0:
+                        freshness = "fresh"
+                    elif age_hours <= 168.0:  # 7 days × 24 h
+                        freshness = "stale"
+                    else:
+                        freshness = "very_stale"
+                except (ValueError, TypeError):
+                    freshness = "unknown"
+
+            # Accumulate freshness summary counts for all profile-based correlators.
+            freshness_summary[freshness] += 1
+
+            # Determine readiness status, downgrading 'ready' to 'stale_data'
+            # when the profile has sufficient samples but the data is very old.
             if samples < 0:
                 status = "error"
             elif samples >= min_samples:
-                status = "ready"
+                # Enough samples, but check if the data has gone very stale.
+                status = "stale_data" if freshness == "very_stale" else "ready"
             elif samples > 0:
                 status = "partial"
             else:
                 status = "no_data"
+
             report[correlator_name] = {
                 "profile": profile_type,
                 "status": status,
                 "samples": samples,
                 "min_required": min_samples,
+                "freshness": freshness,
+                "last_updated": updated_at_str,
+                "age_hours": round(age_hours, 2) if age_hours is not None else None,
             }
 
         # Episode-based correlator (_place_frequency_insights)
@@ -232,6 +290,7 @@ class InsightEngine:
                 "min_required": min_count,
             }
 
+        report["freshness_summary"] = freshness_summary
         return report
 
     async def generate_insights(self) -> list[Insight]:
