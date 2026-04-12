@@ -14,6 +14,7 @@ Extracts: vocabulary complexity, formality, common patterns, per-contact style.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import statistics
@@ -474,6 +475,13 @@ class LinguisticExtractor(BaseExtractor):
     # replies, so we need higher statistical confidence than for style averages.
     _MIN_TEMPLATE_SAMPLES = 5
 
+    # Maximum unique contacts tracked in the linguistic_inbound profile.
+    # With 13K+ qualifying events from potentially thousands of unique senders,
+    # the JSON-serialized per_contact dict can grow very large.  When this
+    # limit is reached, the least-recently-updated contacts are pruned so the
+    # profile remains serializable within SQLite's comfortable range.
+    _MAX_INBOUND_CONTACTS = 500
+
     def _update_profile(self, signal: dict):
         """Incrementally update the stored linguistic profile.
 
@@ -741,99 +749,201 @@ class LinguisticExtractor(BaseExtractor):
             snapshots for style-shift detection ("Bob's tone changed this week").
           - ``per_contact_averages``: running averages per contact for quick
             comparison ("Alice writes formally, Carol writes casually").
+          - ``per_contact_updated_at``: ISO timestamp of the most recent sample
+            per contact, used for recency-based pruning when the contact count
+            exceeds ``_MAX_INBOUND_CONTACTS``.
+
+        Robustness measures:
+          1. The entire method body is wrapped in a try/except so exceptions
+             never propagate to the pipeline's catch-all, making root causes
+             visible in the logs at the extractor level.
+          2. A contact count cap (``_MAX_INBOUND_CONTACTS``) prunes the least-
+             recently-updated contacts when too many unique senders accumulate,
+             keeping the JSON payload within SQLite's comfortable range.
+          3. Data size (bytes) and contact count are logged at DEBUG level
+             before every write so operators can track profile growth over time.
+          4. Post-write verification reads back the profile immediately after
+             the write and logs CRITICAL if it is missing, surfacing silent
+             write failures caused by WAL corruption, DB lock contention, or
+             JSON serialization errors caught inside ``update_signal_profile``.
         """
-        existing = self.ums.get_signal_profile("linguistic_inbound")
-        if existing:
-            data = existing["data"]
-        else:
-            data = {"per_contact": {}, "per_contact_averages": {}}
+        try:
+            existing = self.ums.get_signal_profile("linguistic_inbound")
+            if existing:
+                data = existing["data"]
+            else:
+                data = {"per_contact": {}, "per_contact_averages": {}}
 
-        contact = signal.get("contact_id")
-        if not contact:
-            return
+            # Ensure the recency-tracking dict exists for profiles written by
+            # older code that did not include it.
+            if "per_contact_updated_at" not in data:
+                data["per_contact_updated_at"] = {}
 
-        # Append the latest metrics snapshot to this contact's ring buffer.
-        if contact not in data["per_contact"]:
-            data["per_contact"][contact] = []
-        data["per_contact"][contact].append(signal["metrics"])
-        if len(data["per_contact"][contact]) > 100:
-            data["per_contact"][contact] = data["per_contact"][contact][-100:]
+            contact = signal.get("contact_id")
+            if not contact:
+                return
 
-        # Recompute running averages for this contact so downstream consumers
-        # can quickly characterise a contact's communication style without
-        # iterating the raw samples.
-        #
-        # IMPORTANT: All metrics must mirror what the signal dict stores (see
-        # the ``extract()`` method above) so that downstream consumers like
-        # ContextAssembler.assemble_draft_context() can reliably read them.
-        # Previously ``question_rate``, ``ellipsis_rate``, and
-        # ``unique_word_ratio`` were computed per-signal but never included
-        # here, causing the draft context to always read 0.0 for every contact
-        # despite 100K+ inbound samples.
-        samples = data["per_contact"][contact]
-        avgs: dict = {
-            "avg_sentence_length": statistics.mean(s["avg_sentence_length"] for s in samples),
-            "formality": statistics.mean(s["formality"] for s in samples),
-            "hedge_rate": statistics.mean(s["hedge_rate"] for s in samples),
-            "assertion_rate": statistics.mean(s["assertion_rate"] for s in samples),
-            "exclamation_rate": statistics.mean(s["exclamation_rate"] for s in samples),
-            # question_rate was computed per-signal but missing from averages —
-            # the draft-context assembler reads this to detect inquisitive contacts.
-            "question_rate": statistics.mean(s["question_rate"] for s in samples),
-            # ellipsis_rate signals trailing thoughts and informality; helps
-            # the draft context detect casual contacts who trail off with "...".
-            "ellipsis_rate": statistics.mean(s["ellipsis_rate"] for s in samples),
-            # unique_word_ratio (type-token ratio) measures vocabulary richness;
-            # lets the system detect contacts with elaborate vs. simple word choice.
-            "unique_word_ratio": statistics.mean(s["unique_word_ratio"] for s in samples),
-            "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
-            "samples_count": len(samples),
-        }
+            # Append the latest metrics snapshot to this contact's ring buffer.
+            if contact not in data["per_contact"]:
+                data["per_contact"][contact] = []
+            data["per_contact"][contact].append(signal["metrics"])
+            if len(data["per_contact"][contact]) > 100:
+                data["per_contact"][contact] = data["per_contact"][contact][-100:]
 
-        # --- Derived higher-level fields (parity with outbound profile) ---
-        # These give the AI context assembler the same richness for contacts'
-        # writing style as it has for the user's own style.
+            # Record when this contact was last updated so we can rank contacts
+            # by recency when the profile needs to be compacted.
+            data["per_contact_updated_at"][contact] = datetime.now(timezone.utc).isoformat()
 
-        # vocabulary_complexity: blends lexical diversity (unique_word_ratio)
-        # with average word length (normalized to 0–1 on a 2–8 char scale).
-        # Uses .get() defaults so older samples without avg_word_length don't crash.
-        avg_word_len = statistics.mean(s.get("avg_word_length", 4.0) for s in samples)
-        avg_unique = statistics.mean(s["unique_word_ratio"] for s in samples)
-        word_len_norm = min(1.0, max(0.0, (avg_word_len - 2.0) / 6.0))
-        avgs["vocabulary_complexity"] = round(avg_unique * 0.6 + word_len_norm * 0.4, 3)
+            # ── Contact count cap ─────────────────────────────────────────────
+            # With 13K+ qualifying email events from potentially thousands of
+            # unique senders, the JSON-serialized per_contact dict can exceed
+            # SQLite's comfortable handling size.  When the contact count goes
+            # over the limit, prune to the most-recently-updated contacts so
+            # style data for active senders is always preserved.
+            if len(data["per_contact"]) > self._MAX_INBOUND_CONTACTS:
+                updated_at = data["per_contact_updated_at"]
+                # Sort all tracked contacts by their last-updated timestamp,
+                # most recent first.  Contacts missing from updated_at (legacy
+                # entries) sort to the end and are pruned first.
+                sorted_contacts = sorted(
+                    data["per_contact"].keys(),
+                    key=lambda c: updated_at.get(c, ""),
+                    reverse=True,
+                )
+                keep = set(sorted_contacts[: self._MAX_INBOUND_CONTACTS])
+                data["per_contact"] = {c: v for c, v in data["per_contact"].items() if c in keep}
+                data["per_contact_averages"] = {
+                    c: v for c, v in data["per_contact_averages"].items() if c in keep
+                }
+                data["per_contact_updated_at"] = {
+                    c: v for c, v in updated_at.items() if c in keep
+                }
+                logger.debug(
+                    "LinguisticExtractor: compacted linguistic_inbound from %d contacts "
+                    "down to %d (cap=%d)",
+                    len(sorted_contacts),
+                    len(data["per_contact"]),
+                    self._MAX_INBOUND_CONTACTS,
+                )
 
-        # capitalization_style: inferred from the balance of sentence-starting
-        # caps vs. lowercase starts and the frequency of ALL-CAPS emphasis words.
-        total_starts = sum(s.get("cap_starts", 0) + s.get("lower_starts", 0) for s in samples)
-        total_lower_starts = sum(s.get("lower_starts", 0) for s in samples)
-        total_caps_words = sum(s.get("all_caps_words", 0) for s in samples)
-        total_words_all = sum(s["word_count"] for s in samples)
-        if total_starts > 0:
-            lower_ratio = total_lower_starts / total_starts
-            caps_emphasis_rate = total_caps_words / max(total_words_all, 1)
-            if lower_ratio > 0.7:
-                avgs["capitalization_style"] = "all_lower"
-            elif caps_emphasis_rate > 0.05:
-                avgs["capitalization_style"] = "all_caps_emphasis"
+            # Recompute running averages for this contact so downstream consumers
+            # can quickly characterise a contact's communication style without
+            # iterating the raw samples.
+            #
+            # IMPORTANT: All metrics must mirror what the signal dict stores (see
+            # the ``extract()`` method above) so that downstream consumers like
+            # ContextAssembler.assemble_draft_context() can reliably read them.
+            # Previously ``question_rate``, ``ellipsis_rate``, and
+            # ``unique_word_ratio`` were computed per-signal but never included
+            # here, causing the draft context to always read 0.0 for every contact
+            # despite 100K+ inbound samples.
+            samples = data["per_contact"][contact]
+            avgs: dict = {
+                "avg_sentence_length": statistics.mean(s["avg_sentence_length"] for s in samples),
+                "formality": statistics.mean(s["formality"] for s in samples),
+                "hedge_rate": statistics.mean(s["hedge_rate"] for s in samples),
+                "assertion_rate": statistics.mean(s["assertion_rate"] for s in samples),
+                "exclamation_rate": statistics.mean(s["exclamation_rate"] for s in samples),
+                # question_rate was computed per-signal but missing from averages —
+                # the draft-context assembler reads this to detect inquisitive contacts.
+                "question_rate": statistics.mean(s["question_rate"] for s in samples),
+                # ellipsis_rate signals trailing thoughts and informality; helps
+                # the draft context detect casual contacts who trail off with "...".
+                "ellipsis_rate": statistics.mean(s["ellipsis_rate"] for s in samples),
+                # unique_word_ratio (type-token ratio) measures vocabulary richness;
+                # lets the system detect contacts with elaborate vs. simple word choice.
+                "unique_word_ratio": statistics.mean(s["unique_word_ratio"] for s in samples),
+                "emoji_rate": statistics.mean(s["emoji_count"] / max(s["word_count"], 1) for s in samples),
+                "samples_count": len(samples),
+            }
+
+            # --- Derived higher-level fields (parity with outbound profile) ---
+            # These give the AI context assembler the same richness for contacts'
+            # writing style as it has for the user's own style.
+
+            # vocabulary_complexity: blends lexical diversity (unique_word_ratio)
+            # with average word length (normalized to 0–1 on a 2–8 char scale).
+            # Uses .get() defaults so older samples without avg_word_length don't crash.
+            avg_word_len = statistics.mean(s.get("avg_word_length", 4.0) for s in samples)
+            avg_unique = statistics.mean(s["unique_word_ratio"] for s in samples)
+            word_len_norm = min(1.0, max(0.0, (avg_word_len - 2.0) / 6.0))
+            avgs["vocabulary_complexity"] = round(avg_unique * 0.6 + word_len_norm * 0.4, 3)
+
+            # capitalization_style: inferred from the balance of sentence-starting
+            # caps vs. lowercase starts and the frequency of ALL-CAPS emphasis words.
+            total_starts = sum(s.get("cap_starts", 0) + s.get("lower_starts", 0) for s in samples)
+            total_lower_starts = sum(s.get("lower_starts", 0) for s in samples)
+            total_caps_words = sum(s.get("all_caps_words", 0) for s in samples)
+            total_words_all = sum(s["word_count"] for s in samples)
+            if total_starts > 0:
+                lower_ratio = total_lower_starts / total_starts
+                caps_emphasis_rate = total_caps_words / max(total_words_all, 1)
+                if lower_ratio > 0.7:
+                    avgs["capitalization_style"] = "all_lower"
+                elif caps_emphasis_rate > 0.05:
+                    avgs["capitalization_style"] = "all_caps_emphasis"
+                else:
+                    avgs["capitalization_style"] = "standard"
             else:
                 avgs["capitalization_style"] = "standard"
-        else:
-            avgs["capitalization_style"] = "standard"
 
-        # Top-5 characteristic vocabulary per response category.  Mirrors
-        # the outbound profile's humor_markers, affirmative_patterns, etc.
-        all_humor = [s.get("humor_type") for s in samples if s.get("humor_type")]
-        all_affirmative = [s.get("affirmative_word") for s in samples if s.get("affirmative_word")]
-        all_negative = [s.get("negative_word") for s in samples if s.get("negative_word")]
-        all_gratitude = [s.get("gratitude_word") for s in samples if s.get("gratitude_word")]
-        avgs["humor_markers"] = [w for w, _ in Counter(all_humor).most_common(5)]
-        avgs["affirmative_patterns"] = [w for w, _ in Counter(all_affirmative).most_common(5)]
-        avgs["negative_patterns"] = [w for w, _ in Counter(all_negative).most_common(5)]
-        avgs["gratitude_patterns"] = [w for w, _ in Counter(all_gratitude).most_common(5)]
+            # Top-5 characteristic vocabulary per response category.  Mirrors
+            # the outbound profile's humor_markers, affirmative_patterns, etc.
+            all_humor = [s.get("humor_type") for s in samples if s.get("humor_type")]
+            all_affirmative = [s.get("affirmative_word") for s in samples if s.get("affirmative_word")]
+            all_negative = [s.get("negative_word") for s in samples if s.get("negative_word")]
+            all_gratitude = [s.get("gratitude_word") for s in samples if s.get("gratitude_word")]
+            avgs["humor_markers"] = [w for w, _ in Counter(all_humor).most_common(5)]
+            avgs["affirmative_patterns"] = [w for w, _ in Counter(all_affirmative).most_common(5)]
+            avgs["negative_patterns"] = [w for w, _ in Counter(all_negative).most_common(5)]
+            avgs["gratitude_patterns"] = [w for w, _ in Counter(all_gratitude).most_common(5)]
 
-        data["per_contact_averages"][contact] = avgs
+            data["per_contact_averages"][contact] = avgs
 
-        self.ums.update_signal_profile("linguistic_inbound", data)
+            # ── Data size diagnostics ─────────────────────────────────────────
+            # Serialize to measure size before writing so large payloads are
+            # visible in logs before a potential silent write failure.
+            data_json = json.dumps(data)
+            data_size = len(data_json)
+            contact_count = len(data["per_contact"])
+            logger.debug(
+                "LinguisticExtractor: writing linguistic_inbound profile "
+                "(size=%d bytes, contacts=%d)",
+                data_size,
+                contact_count,
+            )
+
+            self.ums.update_signal_profile("linguistic_inbound", data)
+
+            # ── Post-write verification ───────────────────────────────────────
+            # Immediately read back to confirm the profile was persisted.  A
+            # missing read-back indicates a silent write failure: WAL corruption,
+            # database lock contention, or a JSON serialization error silently
+            # caught inside ``update_signal_profile``'s try/except.  Logging
+            # CRITICAL here surfaces the failure so operators can investigate
+            # rather than discovering the problem indirectly from missing style
+            # data in the draft-context assembler output.
+            verify = self.ums.get_signal_profile("linguistic_inbound")
+            if not verify:
+                logger.critical(
+                    "LinguisticExtractor: linguistic_inbound profile FAILED to persist "
+                    "after write (size=%d bytes, contacts=%d, data_keys=%s)",
+                    data_size,
+                    contact_count,
+                    list(data.keys()),
+                )
+
+        except Exception as exc:
+            # Catch-all so a bug in this method never silently swallows the
+            # real exception inside the pipeline's generic handler.  The contact
+            # field helps identify whether the failure is contact-specific.
+            logger.error(
+                "LinguisticExtractor._update_inbound_profile raised unexpectedly "
+                "(contact=%r): %s",
+                signal.get("contact_id"),
+                exc,
+                exc_info=True,
+            )
 
     def _store_per_contact_templates(self, per_contact_samples: dict, per_contact_avgs: dict):
         """Store communication templates derived from per-contact linguistic data.
