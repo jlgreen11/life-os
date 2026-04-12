@@ -41,12 +41,20 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
+- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Open PR #724 awaiting merge. Returned from wave 8 (not merged).
+- **Add diagnostic banner to dashboard when user model is empty** · `missing_feature` — Open PR #723 awaiting merge. Returned from wave 8 (not merged).
 - **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Open PR #700 awaiting merge. Temporal extractor writes fail silently; WAL resilience and retry needed.
 - **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
 - **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` — Open PR #701 awaiting merge. Adds freshness/staleness tracking per profile to get_data_sufficiency_report().
 - **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` — Open PR #702 awaiting merge. Adds try/except guards and structured JSON 500 responses.
-- **Add prediction generation monitoring dashboard to admin UI** · `missing_feature` — 0 stored predictions despite 243 generation events. Admin UI should show prediction pipeline health with generation/dedup/persistence counts.
-- **Add event pipeline throughput metrics to /api/health/summary** · `code_quality` — Track events_published/consumed/errored per minute in the event bus for real-time pipeline health monitoring.
+- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Returned from wave 8 (no PR created). Admin connector cards need actionable error hints and a one-click retry button.
+- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` — Returned from wave 8 (no PR created). Track backfill completion and detect silent data loss.
+- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Returned from wave 8 (no PR created). 16x dedup ratio suggests predictions are being regenerated unnecessarily.
+- **Add vector store health diagnostics and stale embedding detection** · `code_quality` — Returned from wave 8 (no PR created). Detect embeddings that are out of sync with source events.
+- **Reduce notification expiry rate with shorter delivery thresholds** · `broken_feature` — Returned from wave 8 (no PR created). 85% expiry rate (159/183) needs more aggressive auto-delivery.
+- **Add linguistic main profile pre-write serialization guard** · `broken_feature` — Only 11 qualifying outbound events but guard is missing. Follow mood.py pattern for consistency.
+- **Add update_signal_profile() return value for caller-side failure detection** · `code_quality` — Currently returns void; callers can't distinguish success from silent failure. Requires coordinated changes across all extractors.
+- **Add insight engine correlator execution tracking and failure logging** · `code_quality` — Individual correlator methods have no timing or success/failure metrics. No visibility into which correlators ran.
 
 ## In Progress
 
@@ -54,13 +62,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 8, slot 1)
-- **Add diagnostic banner to dashboard when user model is empty** · `missing_feature` (wave 8, slot 2)
-- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` (wave 8, slot 3)
-- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` (wave 8, slot 4)
-- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` (wave 8, slot 5)
-- **Add vector store health diagnostics and stale embedding detection** · `code_quality` (wave 8, slot 6)
-- **Reduce notification expiry rate with shorter delivery thresholds** · `broken_feature` (wave 8, slot 7)
+- **Add pre-write JSON serialization guard to cadence extractor** · `broken_feature` (wave 9, slot 1)
+- **Add pre-write JSON serialization guard to topic extractor** · `broken_feature` (wave 9, slot 2)
+- **Add pre-write JSON serialization guard to spatial extractor** · `broken_feature` (wave 9, slot 3)
+- **Add prediction pipeline health section to admin UI** · `missing_feature` (wave 9, slot 4)
+- **Add event bus throughput counters and get_metrics() method** · `code_quality` (wave 9, slot 5)
+- **Add notification suppression telemetry and feedback logging** · `broken_feature` (wave 9, slot 6)
+- **Set prediction persistence failure flag immediately on store exceptions** · `broken_feature` (wave 9, slot 7)
 
 ## Completed
 
