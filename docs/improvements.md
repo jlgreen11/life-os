@@ -46,9 +46,8 @@ Feel free to hand-add items above or below whatever the agent writes._
 - **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` — Open PR #701 awaiting merge. Adds freshness/staleness tracking per profile to get_data_sufficiency_report().
 - **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` — Open PR #702 awaiting merge. Adds try/except guards and structured JSON 500 responses.
 - **Add cache_age_seconds to /api/insights/summary response** · `code_quality` — Endpoint returns `generated_at` as current timestamp but doesn't indicate how old the underlying insight data is. Clients can't tell if insights are fresh or days old.
-- **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` — Returned from wave 7 (no PR). Dashboard loaders silently swallow fetch errors; needs user-facing error states and retry UI.
-- **Fix routine detection min_episodes threshold for cold-start email data** · `broken_feature` — Returned from wave 7 (no PR). Routine detector requires too many episodes for initial detection with email-only data.
-- **Fix linguistic_inbound extractor profile persistence (13,508 qualifying events, 0 profile)** · `broken_feature` — Linguistic inbound profile never persists despite processing 13K+ email.received events; needs investigation and post-write verification.
+- **Fix communication template extraction failure during profile rebuild** · `broken_feature` — Returned from wave 5 (no PR). Template extraction fails during signal profile rebuild; needs investigation.
+- **Fix episode creation pipeline for email events producing 0 episodes** · `broken_feature` — Returned from wave 5 (no PR). Episode creation runs but 0 episodes persist to user_model.db despite 1,865 telemetry events.
 
 ## In Progress
 
@@ -56,13 +55,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Fix cadence extractor defaultdict JSON serialization failure** · `broken_feature` (wave 5, slot 1)
-- **Fix spatial extractor double JSON-encoding that corrupts profile data** · `broken_feature` (wave 5, slot 2)
-- **Fix mood extractor profile persistence with post-write verification** · `broken_feature` (wave 5, slot 3)
-- **Fix topic extractor HTML parsing safety and profile persistence** · `broken_feature` (wave 5, slot 4)
-- **Fix communication template extraction failure during profile rebuild** · `broken_feature` (wave 5, slot 5)
-- **Add semantic fact inferrer cold-start diagnostics and fix zero-fact output** · `broken_feature` (wave 5, slot 6)
-- **Fix episode creation pipeline for email events producing 0 episodes** · `broken_feature` (wave 5, slot 7)
+- **Fix episode store phantom telemetry and add WAL checkpoint resilience** · `broken_feature` (wave 6, slot 1)
+- **Fix linguistic_inbound profile persistence with write verification and data compaction** · `broken_feature` (wave 6, slot 2)
+- **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` (wave 6, slot 3)
+- **Fix routine detection min_episodes threshold for cold-start email data** · `broken_feature` (wave 6, slot 4)
+- **Fix prediction loop stall — no predictions generated since March 6** · `broken_feature` (wave 6, slot 5)
+- **Fix mood extractor profile persistence root cause** · `broken_feature` (wave 6, slot 6)
+- **Add event-based fallback to semantic fact inferrer for empty episodes table** · `missing_feature` (wave 6, slot 7)
 
 ## Completed
 
@@ -70,6 +69,11 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Fix cadence extractor defaultdict JSON serialization failure** · `broken_feature` — wave 5, PR #709
+- **Fix spatial extractor double JSON-encoding that corrupts profile data** · `broken_feature` — wave 5, PR #712
+- **Fix mood extractor profile persistence with post-write verification** · `broken_feature` — wave 5, PR #708
+- **Fix topic extractor HTML parsing safety and profile persistence** · `broken_feature` — wave 5, PR #711
+- **Add semantic fact inferrer cold-start diagnostics and fix zero-fact output** · `broken_feature` — wave 5, PR #710
 - **Fix prediction engine post-store verification and persistence failure diagnostics** · `broken_feature` — wave 7, PR #707
 - **Add task extraction telemetry and AI engine availability diagnostics** · `missing_feature` — wave 7, PR #705
 - **Add per-extractor signal count to pipeline rebuild diagnostics** · `code_quality` — wave 7, PR #703
