@@ -26,8 +26,37 @@ class TestGetDiagnosticsEmpty:
             "tasks_due_soon_72h", "stale_pending_count",
             "recent_completions_24h", "top_domains",
             "ai_extraction_available", "health",
+            "extraction_telemetry",
         }
         assert set(result.keys()) == expected_keys
+
+    def test_extraction_telemetry_keys(self, task_manager):
+        """extraction_telemetry nested dict contains all expected fields."""
+        result = task_manager.get_diagnostics()
+        telemetry = result["extraction_telemetry"]
+        expected_keys = {
+            "events_processed", "events_skipped_no_ai", "events_skipped_no_text",
+            "events_skipped_marketing", "tasks_extracted", "extraction_errors",
+            "last_extraction_time", "last_ai_check_time",
+            "ai_engine_available", "ai_engine_type", "skip_rate", "extraction_rate",
+        }
+        assert set(telemetry.keys()) == expected_keys
+
+    def test_extraction_telemetry_defaults(self, task_manager):
+        """Fresh TaskManager starts with all zeroed-out telemetry counters."""
+        telemetry = task_manager.get_diagnostics()["extraction_telemetry"]
+        assert telemetry["events_processed"] == 0
+        assert telemetry["events_skipped_no_ai"] == 0
+        assert telemetry["events_skipped_no_text"] == 0
+        assert telemetry["events_skipped_marketing"] == 0
+        assert telemetry["tasks_extracted"] == 0
+        assert telemetry["extraction_errors"] == 0
+        assert telemetry["last_extraction_time"] is None
+        assert telemetry["last_ai_check_time"] is None
+        assert telemetry["ai_engine_available"] is False
+        assert telemetry["ai_engine_type"] is None
+        assert telemetry["skip_rate"] == 0.0
+        assert telemetry["extraction_rate"] == 0.0
 
     def test_empty_table_defaults(self, task_manager):
         """Empty task table should return zeroed-out diagnostics."""

@@ -90,7 +90,22 @@ class TaskManager:
         self.db = db  # Database access for tasks, events, and contacts tables
         self.bus = event_bus
         self.ai_engine = ai_engine
-        self._ai_engine_skip_count = 0
+        self._ai_engine_skip_count = 0  # Legacy counter kept for backward compatibility
+
+        # --- Extraction pipeline telemetry counters ---
+        # These counters enable root-cause analysis when task extraction appears
+        # to be disabled or underperforming (e.g., 0 tasks in the database).
+        # All counters are in-memory and reset on restart; they reflect the
+        # health of the running process, not historical totals.
+        self._events_processed: int = 0          # Total events entering process_event
+        self._events_skipped_no_ai: int = 0      # Skipped: AI engine not available
+        self._events_skipped_no_text: int = 0    # Skipped: empty or sub-20-char text
+        self._events_skipped_marketing: int = 0  # Skipped: marketing/promotional email
+        self._tasks_extracted: int = 0           # Total task objects extracted by AI
+        self._extraction_errors: int = 0         # AI call failures (model errors, etc.)
+        self._last_extraction_time: str | None = None  # ISO timestamp: last successful extraction
+        self._last_ai_check_time: str | None = None    # ISO timestamp: last AI availability check
+        self._ai_engine_available: bool = self.ai_engine is not None  # Current AI status
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -122,13 +137,28 @@ class TaskManager:
         Args:
             event: Event dict with type, payload, and metadata
         """
+        self._events_processed += 1
+        self._last_ai_check_time = datetime.now(timezone.utc).isoformat()
+        self._ai_engine_available = self.ai_engine is not None
+
         if not self.ai_engine:
-            self._ai_engine_skip_count += 1
+            self._events_skipped_no_ai += 1
+            self._ai_engine_skip_count += 1  # Legacy counter
             if self._ai_engine_skip_count == 1 or self._ai_engine_skip_count % 100 == 0:
                 logger.warning(
                     'task_manager: AI engine not available — automatic task extraction disabled '
                     '(%d events skipped so far)', self._ai_engine_skip_count
                 )
+            # Publish a degraded-pipeline telemetry event every 500 skips so
+            # external health monitors can detect prolonged AI unavailability
+            # without polling get_diagnostics().
+            if self._events_skipped_no_ai % 500 == 0:
+                await self._publish_telemetry("system.task_extraction.degraded", {
+                    "events_skipped_no_ai": self._events_skipped_no_ai,
+                    "events_processed": self._events_processed,
+                    "skip_rate": self._events_skipped_no_ai / max(self._events_processed, 1),
+                    "reason": "ai_engine_unavailable",
+                })
             return
 
         event_type = event.get("type", "")
@@ -182,6 +212,7 @@ class TaskManager:
         # Don't waste LLM cycles on short messages like "ok", "thanks", etc.
         # Require at least 20 characters to reduce false positives.
         if not text or len(text.strip()) < 20:
+            self._events_skipped_no_text += 1
             return
 
         # --- Filter: Skip marketing/promotional emails ---
@@ -190,6 +221,7 @@ class TaskManager:
         # AI processing dramatically improves throughput and reduces costs.
         # This filter matches the same patterns used by the prediction engine.
         if event_type == "email.received" and self._is_marketing_email(payload):
+            self._events_skipped_marketing += 1
             return
 
         # --- Call AI engine to extract action items ---
@@ -201,6 +233,7 @@ class TaskManager:
             # Graceful degradation: if the AI engine fails (model down, parsing
             # error, etc.), log the error but don't crash the pipeline.
             # Task extraction is nice-to-have, not mission-critical.
+            self._extraction_errors += 1
             logger.error("AI extraction failed for event %s: %s", event.get("id"), e, exc_info=True)
             return
 
@@ -208,6 +241,8 @@ class TaskManager:
         # Each task is linked back to the source event for full provenance.
         # The ingest_ai_extracted_tasks method handles the database writes.
         if action_items:
+            self._tasks_extracted += len(action_items)
+            self._last_extraction_time = datetime.now(timezone.utc).isoformat()
             await self.ingest_ai_extracted_tasks(action_items, event.get("id"))
 
     async def create_task(
@@ -715,6 +750,35 @@ class TaskManager:
                 "health": "healthy" | "degraded"
             }
         """
+        # --- Extraction pipeline telemetry snapshot ---
+        # Computed upfront (in-memory only, never fails) so it's always present
+        # even if the database queries below raise exceptions.
+        ai_engine = self.ai_engine
+        events_processed = self._events_processed
+        events_skipped_no_ai = self._events_skipped_no_ai
+        tasks_extracted = self._tasks_extracted
+        # skip_rate: fraction of all events blocked by missing AI engine
+        skip_rate = events_skipped_no_ai / max(events_processed, 1)
+        # extraction_rate: tasks produced per AI-eligible event (can exceed 1.0
+        # if a single message contains multiple action items)
+        ai_eligible = events_processed - events_skipped_no_ai
+        extraction_rate = tasks_extracted / max(ai_eligible, 1)
+
+        extraction_telemetry: dict = {
+            "events_processed": events_processed,
+            "events_skipped_no_ai": events_skipped_no_ai,
+            "events_skipped_no_text": self._events_skipped_no_text,
+            "events_skipped_marketing": self._events_skipped_marketing,
+            "tasks_extracted": tasks_extracted,
+            "extraction_errors": self._extraction_errors,
+            "last_extraction_time": self._last_extraction_time,
+            "last_ai_check_time": self._last_ai_check_time,
+            "ai_engine_available": ai_engine is not None,
+            "ai_engine_type": type(ai_engine).__name__ if ai_engine is not None else None,
+            "skip_rate": round(skip_rate, 4),
+            "extraction_rate": round(extraction_rate, 4),
+        }
+
         diagnostics: dict = {
             "total_tasks": 0,
             "by_status": {},
@@ -723,8 +787,9 @@ class TaskManager:
             "stale_pending_count": 0,
             "recent_completions_24h": 0,
             "top_domains": {},
-            "ai_extraction_available": self.ai_engine is not None,
+            "ai_extraction_available": ai_engine is not None,
             "health": "healthy",
+            "extraction_telemetry": extraction_telemetry,
         }
 
         # --- Total tasks ---
