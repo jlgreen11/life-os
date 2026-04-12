@@ -12,6 +12,7 @@ at each place the user frequents.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -305,10 +306,76 @@ class SpatialExtractor(BaseExtractor):
         # Pass the raw dict — update_signal_profile() handles JSON serialization.
         profile_data["inferred_locations"] = inferred
 
+        # --- Defensive serialization check ---
+        # update_signal_profile() catches all exceptions with a silent warning, so a
+        # TypeError from json.dumps() (e.g. a set, datetime, or Enum sneaking into
+        # inferred_locations) would cause a zero-trace write failure.  We catch this
+        # here first so we can log the exact field causing the problem.
+        try:
+            json.dumps(profile_data)
+        except (TypeError, ValueError) as exc:
+            bad_fields: list[str] = []
+            inferred_locs = profile_data.get("inferred_locations", {})
+            if isinstance(inferred_locs, dict):
+                for loc_key, loc_val in inferred_locs.items():
+                    if not isinstance(loc_val, dict):
+                        bad_fields.append(
+                            f"inferred_locations[{loc_key!r}]={type(loc_val).__name__}"
+                        )
+                        continue
+                    for field, fval in loc_val.items():
+                        if field == "sources" and isinstance(fval, dict):
+                            # Inspect the nested sources sub-dict
+                            for src_key, src_val in fval.items():
+                                try:
+                                    json.dumps(src_val)
+                                except (TypeError, ValueError):
+                                    bad_fields.append(
+                                        f"inferred_locations[{loc_key!r}]"
+                                        f"['sources'][{src_key!r}]"
+                                        f"={type(src_val).__name__}"
+                                    )
+                        else:
+                            try:
+                                json.dumps(fval)
+                            except (TypeError, ValueError):
+                                bad_fields.append(
+                                    f"inferred_locations[{loc_key!r}][{field!r}]"
+                                    f"={type(fval).__name__}"
+                                )
+            for key, val in profile_data.items():
+                if key != "inferred_locations":
+                    try:
+                        json.dumps(val)
+                    except (TypeError, ValueError):
+                        bad_fields.append(f"{key!r}={type(val).__name__}")
+
+            logger.error(
+                "SpatialExtractor._update_inferred_location: profile_data contains "
+                "non-JSON-serializable types — write SKIPPED to avoid silent data loss. "
+                "Non-serializable fields: %s. Error: %s",
+                bad_fields or ["unknown"],
+                exc,
+            )
+            return
+
         self.ums.update_signal_profile(
             profile_type="spatial",
             data=profile_data,
         )
+
+        # Post-write verification: confirm the profile is readable after the write.
+        # update_signal_profile() silently swallows DB errors (fail-open), so without
+        # this check a corrupt user_model.db would cause 0 profile data while producing
+        # no visible error in the pipeline logs.
+        verify = self.ums.get_signal_profile("spatial")
+        if not verify:
+            logger.error(
+                "SpatialExtractor._update_inferred_location: spatial profile FAILED "
+                "to persist after write (inferred_locations=%d) — "
+                "user_model.db may be corrupt",
+                len(inferred),
+            )
 
     def _normalize_location(self, location: str) -> str:
         """Normalize location strings to group similar places.
@@ -435,10 +502,81 @@ class SpatialExtractor(BaseExtractor):
             "place_behaviors": place_behaviors,
         }
 
+        # --- Defensive serialization check ---
+        # update_signal_profile() catches all exceptions with a silent warning, so a
+        # TypeError from json.dumps() (e.g. a set sneaking into activity_counts or
+        # typical_activities) would cause a zero-trace write failure.  We catch this
+        # here first so we can log the exact field causing the problem.
+        try:
+            json.dumps(profile_data)
+        except (TypeError, ValueError) as exc:
+            bad_fields: list[str] = []
+            behaviors = profile_data.get("place_behaviors", {})
+            if isinstance(behaviors, dict):
+                for place_key, place_val in behaviors.items():
+                    if not isinstance(place_val, dict):
+                        bad_fields.append(
+                            f"place_behaviors[{place_key!r}]={type(place_val).__name__}"
+                        )
+                        continue
+                    for field, fval in place_val.items():
+                        if field == "activity_counts" and isinstance(fval, dict):
+                            # Inspect the nested activity_counts sub-dict
+                            for act_key, act_val in fval.items():
+                                try:
+                                    json.dumps(act_val)
+                                except (TypeError, ValueError):
+                                    bad_fields.append(
+                                        f"place_behaviors[{place_key!r}]"
+                                        f"['activity_counts'][{act_key!r}]"
+                                        f"={type(act_val).__name__}"
+                                    )
+                        elif field == "typical_activities" and isinstance(fval, list):
+                            # Inspect each item in the typical_activities list
+                            for idx, item in enumerate(fval):
+                                try:
+                                    json.dumps(item)
+                                except (TypeError, ValueError):
+                                    bad_fields.append(
+                                        f"place_behaviors[{place_key!r}]"
+                                        f"['typical_activities'][{idx}]"
+                                        f"={type(item).__name__}"
+                                    )
+                        else:
+                            try:
+                                json.dumps(fval)
+                            except (TypeError, ValueError):
+                                bad_fields.append(
+                                    f"place_behaviors[{place_key!r}][{field!r}]"
+                                    f"={type(fval).__name__}"
+                                )
+
+            logger.error(
+                "SpatialExtractor._update_spatial_profile: profile_data contains "
+                "non-JSON-serializable types — write SKIPPED to avoid silent data loss. "
+                "Non-serializable fields: %s. Error: %s",
+                bad_fields or ["unknown"],
+                exc,
+            )
+            return
+
         self.ums.update_signal_profile(
             profile_type="spatial",
             data=profile_data,
         )
+
+        # Post-write verification: confirm the profile is readable after the write.
+        # update_signal_profile() silently swallows DB errors (fail-open), so without
+        # this check a corrupt user_model.db would cause 0 profile data while producing
+        # no visible error in the pipeline logs.
+        verify = self.ums.get_signal_profile("spatial")
+        if not verify:
+            logger.error(
+                "SpatialExtractor._update_spatial_profile: spatial profile FAILED "
+                "to persist after write (place_behaviors=%d) — "
+                "user_model.db may be corrupt",
+                len(place_behaviors),
+            )
 
     def get_dominant_location_now(self) -> Optional[str]:
         """Get the most likely current location based on recent observations.
