@@ -1795,3 +1795,89 @@ def test_feedback_skips_weight_update_for_unclassified_source(client, mock_life_
     # Neither engagement nor dismissal should be recorded for prediction-domain notifications
     mock_life_os.source_weight_manager.record_engagement.assert_not_called()
     mock_life_os.source_weight_manager.record_dismissal.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Error handling — structured 500 JSON responses
+# ---------------------------------------------------------------------------
+
+
+def test_list_events_returns_500_json_on_db_failure(client, mock_life_os):
+    """GET /api/events returns a structured JSON 500 (not a raw traceback) when
+    the event store raises an exception."""
+    mock_life_os.event_store.get_events = Mock(side_effect=Exception("DB connection lost"))
+
+    response = client.get("/api/events")
+
+    assert response.status_code == 500
+    data = response.json()
+    assert "error" in data
+    assert data["error"] == "Failed to retrieve events"
+
+
+def test_list_rules_returns_500_json_on_failure(client, mock_life_os):
+    """GET /api/rules returns a structured JSON 500 when rules_engine raises."""
+    mock_life_os.rules_engine.get_all_rules = Mock(side_effect=Exception("rules DB corrupt"))
+
+    response = client.get("/api/rules")
+
+    assert response.status_code == 500
+    data = response.json()
+    assert "error" in data
+    assert data["error"] == "Failed to retrieve rules"
+
+
+def test_create_rule_returns_500_json_on_failure(client, mock_life_os):
+    """POST /api/rules returns a structured JSON 500 when add_rule raises."""
+    mock_life_os.rules_engine.add_rule = AsyncMock(side_effect=Exception("write failed"))
+
+    response = client.post("/api/rules", json={
+        "name": "test-rule",
+        "trigger_event": "email.received",
+        "conditions": [],
+        "actions": [],
+    })
+
+    assert response.status_code == 500
+    data = response.json()
+    assert "error" in data
+    assert data["error"] == "Failed to create rule"
+
+
+def test_delete_rule_returns_500_json_on_failure(client, mock_life_os):
+    """DELETE /api/rules/{rule_id} returns a structured JSON 500 when remove_rule raises."""
+    mock_life_os.rules_engine.remove_rule = AsyncMock(side_effect=Exception("delete failed"))
+
+    response = client.delete("/api/rules/rule-abc")
+
+    assert response.status_code == 500
+    data = response.json()
+    assert "error" in data
+    assert data["error"] == "Failed to delete rule"
+
+
+def test_get_contacts_returns_500_json_on_db_failure(client, mock_life_os):
+    """GET /api/contacts returns a structured JSON 500 when the entities DB is unavailable."""
+    mock_life_os.db.get_connection = Mock(side_effect=Exception("entities.db unavailable"))
+
+    response = client.get("/api/contacts")
+
+    assert response.status_code == 500
+    data = response.json()
+    assert "error" in data
+    assert data["error"] == "Failed to retrieve contacts"
+
+
+def test_list_source_weights_returns_500_json_on_failure(client, mock_life_os):
+    """GET /api/source-weights returns a structured JSON 500 when source_weight_manager raises."""
+    mock_life_os.source_weight_manager = Mock()
+    mock_life_os.source_weight_manager.get_all_weights = Mock(
+        side_effect=Exception("weight store unavailable")
+    )
+
+    response = client.get("/api/source-weights")
+
+    assert response.status_code == 500
+    data = response.json()
+    assert "error" in data
+    assert data["error"] == "Failed to retrieve source weights"
