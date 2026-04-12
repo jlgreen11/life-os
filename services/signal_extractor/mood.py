@@ -10,9 +10,13 @@ adjusts its behavior (tone, timing, proactivity) based on the inference.
 
 from __future__ import annotations
 
+import logging
+
 from models.core import EventType
 from models.user_model import MoodSignal, MoodState
 from services.signal_extractor.base import BaseExtractor
+
+logger = logging.getLogger(__name__)
 
 
 class MoodInferenceEngine(BaseExtractor):
@@ -591,3 +595,16 @@ class MoodInferenceEngine(BaseExtractor):
             data["recent_signals"] = data["recent_signals"][-200:]
 
         self.ums.update_signal_profile("mood_signals", data)
+        # Post-write verification: immediately read back to confirm the profile
+        # was persisted.  A missing read-back indicates a silent write failure
+        # (e.g. WAL corruption, DB locked, JSON serialization error silently
+        # caught by update_signal_profile's try/except).  This diagnostic log
+        # surfaces the failure so operators can investigate rather than
+        # discovering the problem indirectly from missing mood widget data.
+        verify = self.ums.get_signal_profile("mood_signals")
+        if not verify:
+            logger.error(
+                "MoodExtractor: mood_signals profile FAILED to persist after write "
+                "(data keys=%s, signals=%d)",
+                list(data.keys()), len(data.get("recent_signals", [])),
+            )
