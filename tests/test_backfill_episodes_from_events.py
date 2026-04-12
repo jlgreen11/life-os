@@ -447,3 +447,80 @@ class TestBatchProcessing:
 
         assert stats["episodes_created"] == 7
         assert _count_episodes(db) == 7
+
+
+class TestPostWriteVerification:
+    """Test that the post-write verification correctly counts persisted episodes."""
+
+    def test_episodes_verified_key_in_stats(self, db):
+        """The returned stats dict must always include episodes_verified."""
+        stats = backfill_episodes(db)
+        assert "episodes_verified" in stats
+
+    def test_episodes_verified_zero_for_empty_run(self, db):
+        """With no events, episodes_verified should be 0."""
+        stats = backfill_episodes(db)
+        assert stats["episodes_verified"] == 0
+        assert stats["episodes_created"] == 0
+
+    def test_episodes_verified_matches_created_on_success(self, db):
+        """After a successful backfill, episodes_verified must equal episodes_created.
+
+        This is the core invariant: INSERT OR IGNORE must not silently drop rows.
+        If verification and creation counts diverge, the batch write silently
+        lost data (e.g. constraint collision or WAL corruption).
+        """
+        for i in range(5):
+            _insert_event(db, f"evt-verify-{i}", "email.received", {
+                "from_address": f"verify{i}@example.com",
+                "subject": f"Verify email {i}",
+            })
+
+        stats = backfill_episodes(db)
+
+        assert stats["episodes_created"] == 5
+        assert stats["episodes_verified"] == 5
+        # The count in the database must match both stats fields
+        assert _count_episodes(db) == 5
+
+    def test_episodes_verified_matches_actual_db_count(self, db):
+        """episodes_verified should equal the actual row count in the database."""
+        for i in range(4):
+            _insert_event(db, f"evt-dbcount-{i}", "task.created", {
+                "title": f"Task {i}",
+            })
+
+        stats = backfill_episodes(db)
+
+        actual_db_count = _count_episodes(db)
+        assert stats["episodes_verified"] == actual_db_count
+
+    def test_episodes_verified_zero_in_dry_run(self, db):
+        """In dry-run mode, nothing is written so episodes_verified must be 0."""
+        for i in range(3):
+            _insert_event(db, f"evt-dry-verify-{i}", "message.received", {
+                "from_address": f"+1{i:010d}",
+                "body_plain": f"Message {i}",
+            })
+
+        stats = backfill_episodes(db, dry_run=True)
+
+        # dry-run reports what would be created but writes nothing
+        assert stats["episodes_created"] == 3
+        assert stats["episodes_verified"] == 0
+        assert _count_episodes(db) == 0
+
+    def test_episodes_verified_across_multiple_batches(self, db):
+        """Verification must aggregate correctly across multiple batch commits."""
+        # 11 events with batch_size=4 → batches of 4, 4, 3
+        for i in range(11):
+            _insert_event(db, f"evt-multibatch-{i}", "email.received", {
+                "from_address": f"multi{i}@example.com",
+                "subject": f"Multi-batch email {i}",
+            })
+
+        stats = backfill_episodes(db, batch_size=4)
+
+        assert stats["episodes_created"] == 11
+        assert stats["episodes_verified"] == 11
+        assert _count_episodes(db) == 11

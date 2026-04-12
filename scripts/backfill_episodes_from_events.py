@@ -253,6 +253,11 @@ def backfill_episodes(
     user_model.db, and creates new episodes for any gaps. The operation is
     idempotent — running it multiple times will not create duplicates.
 
+    After each batch write, the actual row count is verified in the database.
+    If INSERT OR IGNORE silently drops rows (e.g. due to constraint violations
+    or WAL corruption), a CRITICAL warning is logged and the discrepancy is
+    captured in the returned ``episodes_verified`` stat.
+
     Args:
         db: DatabaseManager instance with access to events.db and user_model.db
         dry_run: If True, report what would be created without writing
@@ -260,11 +265,15 @@ def backfill_episodes(
         batch_size: Number of episodes to commit per batch
 
     Returns:
-        Dictionary with statistics about the backfill run
+        Dictionary with statistics about the backfill run. Includes:
+          - ``episodes_created``: number of episodes passed to the write layer
+          - ``episodes_verified``: number confirmed present after each batch commit
+            (0 in dry-run mode; a mismatch indicates silent data loss)
     """
     stats = {
         "total_events_scanned": 0,
         "episodes_created": 0,
+        "episodes_verified": 0,
         "episodes_skipped_existing": 0,
         "events_skipped_non_episodic": 0,
         "errors": 0,
@@ -389,12 +398,13 @@ def backfill_episodes(
 
             # Commit in batches for performance
             if len(pending_episodes) >= batch_size:
-                if not dry_run:
-                    _write_episode_batch(db, pending_episodes)
                 stats["episodes_created"] += len(pending_episodes)
+                if not dry_run:
+                    batch_verified = _write_episode_batch(db, pending_episodes)
+                    stats["episodes_verified"] += batch_verified
                 logger.info(
-                    "Progress: %d/%d events processed, %d episodes created",
-                    i + 1, len(events), stats["episodes_created"],
+                    "Progress: %d/%d events processed, %d episodes created, %d verified",
+                    i + 1, len(events), stats["episodes_created"], stats["episodes_verified"],
                 )
                 pending_episodes = []
 
@@ -404,22 +414,51 @@ def backfill_episodes(
 
     # Write any remaining episodes
     if pending_episodes:
-        if not dry_run:
-            _write_episode_batch(db, pending_episodes)
         stats["episodes_created"] += len(pending_episodes)
+        if not dry_run:
+            batch_verified = _write_episode_batch(db, pending_episodes)
+            stats["episodes_verified"] += batch_verified
+
+    # Log a summary warning if the verified count doesn't match what was written.
+    # This catches silent data loss (e.g. INSERT OR IGNORE dropping all rows due
+    # to an unexpected constraint conflict or WAL frame corruption).
+    if not dry_run and stats["episodes_verified"] != stats["episodes_created"]:
+        logger.critical(
+            "Episode backfill verification mismatch: %d episodes written but only "
+            "%d confirmed present. Some episode data may have been silently lost. "
+            "Run again or inspect user_model.db manually.",
+            stats["episodes_created"],
+            stats["episodes_verified"],
+        )
 
     return stats
 
 
-def _write_episode_batch(db: DatabaseManager, episodes: list[dict]) -> None:
+def _write_episode_batch(db: DatabaseManager, episodes: list[dict]) -> int:
     """Write a batch of episodes to user_model.db in a single transaction.
 
-    Uses executemany for efficiency when inserting multiple rows.
+    Uses executemany for efficiency when inserting multiple rows. After the
+    commit, issues a PASSIVE WAL checkpoint to flush written frames into the
+    main database file — without this, a process crash after commit could lose
+    data that is still only in the WAL. Finally, performs a post-write
+    verification count to detect silent INSERT OR IGNORE drops.
+
+    INSERT OR IGNORE succeeds without raising an error even if all rows are
+    dropped (e.g. because of a duplicate ``id`` or ``event_id`` constraint
+    violation). The verification query catches this case and logs a CRITICAL
+    warning so operators know data was lost.
 
     Args:
         db: DatabaseManager instance
         episodes: List of episode dicts to insert
+
+    Returns:
+        The number of episode IDs from this batch confirmed present in the
+        database after the commit. A value less than ``len(episodes)`` means
+        some rows were silently dropped by INSERT OR IGNORE.
     """
+    episode_ids = [ep["id"] for ep in episodes]
+
     with db.get_connection("user_model") as conn:
         conn.executemany(
             """INSERT OR IGNORE INTO episodes
@@ -450,6 +489,34 @@ def _write_episode_batch(db: DatabaseManager, episodes: list[dict]) -> None:
             ],
         )
         conn.commit()
+
+        # Flush WAL frames into the main DB file. A PASSIVE checkpoint does not
+        # block concurrent readers or writers but ensures committed data is
+        # durable on disk. Without this, a crash between commit and the OS
+        # flushing the WAL to disk can silently lose the entire batch.
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+        # Post-write verification: count how many of the batch's episode IDs
+        # are actually present after the commit. INSERT OR IGNORE is silent on
+        # constraint conflicts — it returns success even if 0 rows landed.
+        placeholders = ", ".join("?" for _ in episode_ids)
+        cursor = conn.execute(
+            f"SELECT COUNT(*) FROM episodes WHERE id IN ({placeholders})",
+            episode_ids,
+        )
+        verified_count: int = cursor.fetchone()[0]
+
+    if verified_count != len(episodes):
+        logger.critical(
+            "Post-write verification FAILED for batch of %d episodes: only %d "
+            "are present in user_model.db after commit and WAL checkpoint. "
+            "Possible causes: duplicate IDs, constraint violations, or WAL "
+            "corruption. Inspect user_model.db and re-run the backfill.",
+            len(episodes),
+            verified_count,
+        )
+
+    return verified_count
 
 
 def _dict_factory(cursor, row):
@@ -511,6 +578,13 @@ def main():
     logger.info("=" * 60)
     logger.info(f"Total events scanned:       {stats['total_events_scanned']}")
     logger.info(f"Episodes created:           {stats['episodes_created']}")
+    logger.info(f"Episodes verified:          {stats['episodes_verified']}")
+    if not args.dry_run and stats["episodes_verified"] != stats["episodes_created"]:
+        logger.critical(
+            "VERIFICATION MISMATCH: %d written vs %d verified — check user_model.db",
+            stats["episodes_created"],
+            stats["episodes_verified"],
+        )
     logger.info(f"Skipped (already exist):    {stats['episodes_skipped_existing']}")
     logger.info(f"Skipped (non-episodic):     {stats['events_skipped_non_episodic']}")
     logger.info(f"Errors:                     {stats['errors']}")
