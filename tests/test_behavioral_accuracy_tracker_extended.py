@@ -1711,7 +1711,7 @@ async def test_stats_dict_has_all_expected_keys(db, user_model_store):
 
     stats = await tracker.run_inference_cycle()
 
-    expected_keys = {"marked_accurate", "marked_inaccurate", "surfaced", "filtered"}
+    expected_keys = {"marked_accurate", "marked_inaccurate", "surfaced", "filtered", "predictions_queried"}
     assert set(stats.keys()) == expected_keys
     for key in expected_keys:
         assert isinstance(stats[key], int)

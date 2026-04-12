@@ -89,6 +89,9 @@ class BehavioralAccuracyTracker:
         self.db = db
         self._last_cycle_stats: dict[str, int] | None = None
         self._total_cycles: int = 0
+        self._cycles_with_no_predictions: int = 0
+        self._last_cycle_predictions_found: int = 0
+        self._last_cycle_timestamp: str | None = None
         try:
             self._ensure_resolution_reason_column()
         except (sqlite3.DatabaseError, sqlite3.OperationalError):
@@ -504,7 +507,28 @@ class BehavioralAccuracyTracker:
                     stats['marked_inaccurate'] += 1
                 stats['filtered'] += 1
 
-        # Cache cycle stats for diagnostics observability
+        # Calculate total predictions queried this cycle for diagnostics.
+        # surfaced_predictions and filtered_predictions are counted separately.
+        # We record a combined count so get_pipeline_health() can surface cold-start.
+        predictions_queried = len(surfaced_predictions)
+        self._last_cycle_predictions_found = predictions_queried
+
+        if predictions_queried == 0:
+            self._cycles_with_no_predictions += 1
+            # Log at INFO every 10th empty cycle to avoid log spam while still
+            # making cold-start / persistence problems observable.
+            if self._total_cycles % 10 == 9:  # Pre-increment: total_cycles hasn't been bumped yet
+                logger.info(
+                    "BehavioralAccuracyTracker: cycle %d found 0 surfaced predictions "
+                    "— accuracy learning loop idle (cold-start or prediction persistence issue)",
+                    self._total_cycles + 1,
+                )
+
+        # Record timestamp of this cycle's completion.
+        self._last_cycle_timestamp = datetime.now(timezone.utc).isoformat()
+
+        # Cache cycle stats for diagnostics observability (include predictions_queried count).
+        stats['predictions_queried'] = predictions_queried
         self._last_cycle_stats = dict(stats)
         self._total_cycles += 1
 
@@ -679,6 +703,52 @@ class BehavioralAccuracyTracker:
         diagnostics["recommendations"] = recommendations
 
         return diagnostics
+
+    def get_pipeline_health(self) -> dict:
+        """Return a concise snapshot of the tracker's pipeline health.
+
+        Designed for quick operational checks — distinguishes normal cold-start
+        (no predictions yet) from a broken state where predictions exist but
+        are not being tracked.
+
+        Returns:
+            Dictionary with structure::
+
+                {
+                    'total_cycles': int,              # Inference cycles run so far
+                    'cycles_with_no_predictions': int,# Cycles that found 0 surfaced predictions
+                    'last_cycle_stats': dict | None,  # Stats from most recent cycle
+                    'last_cycle_timestamp': str | None, # ISO-8601 UTC timestamp of last cycle
+                    'cold_start_detected': bool,      # True when ALL cycles found 0 predictions
+                    'predictions_table_count': int,   # Total rows in predictions table
+                }
+
+        ``cold_start_detected=True`` means the tracker has run at least once but
+        has never seen a prediction — indicating either a brand-new system
+        (expected) or that predictions are not being persisted (needs fixing).
+        """
+        # Query the raw count of all rows in predictions table so the caller
+        # can tell whether the table is empty or populated.
+        predictions_table_count = 0
+        try:
+            with self.db.get_connection("user_model") as conn:
+                row = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()
+                if row:
+                    predictions_table_count = row[0]
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            pass  # Unavailable DB is non-fatal; caller sees count=0
+
+        return {
+            "total_cycles": self._total_cycles,
+            "cycles_with_no_predictions": self._cycles_with_no_predictions,
+            "last_cycle_stats": self._last_cycle_stats,
+            "last_cycle_timestamp": self._last_cycle_timestamp,
+            "cold_start_detected": (
+                self._cycles_with_no_predictions == self._total_cycles
+                and self._total_cycles > 0
+            ),
+            "predictions_table_count": predictions_table_count,
+        }
 
     def _get_resolution_reason(self, prediction: dict, was_accurate: bool) -> Optional[str]:
         """Determine the machine-readable reason a prediction was resolved.
