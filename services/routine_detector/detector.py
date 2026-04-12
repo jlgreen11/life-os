@@ -74,6 +74,28 @@ class RoutineDetector:
         "AND interaction_type NOT LIKE 'test%'"
     )
 
+    # Interaction types that represent high-volume passive events whose arrival
+    # patterns are driven by external senders rather than the user's deliberate
+    # behavior.  Email arrives when others send it, not when the user acts, so
+    # a 60% consistency threshold is too strict: an inbox with 30 messages/day
+    # spread across morning and afternoon won't reliably hit the morning bucket
+    # on more than ~50-60% of days even with a strong morning skew.
+    HIGH_VOLUME_PASSIVE_TYPES: frozenset[str] = frozenset(
+        {
+            "email_received",
+            "email_sent",
+            "message_received",
+            "notification_received",
+        }
+    )
+
+    # Upper-bound consistency threshold applied to HIGH_VOLUME_PASSIVE_TYPES.
+    # 0.4 means "this bucket must be active on at least 40% of all active days"
+    # — achievable for genuine morning-email patterns while still excluding
+    # uniformly distributed noise.  Applied as a cap (min) so that cold-start
+    # scaling (which may already be lower) is never overridden upward.
+    PASSIVE_TYPE_CONSISTENCY_THRESHOLD: float = 0.4
+
     def __init__(self, db: DatabaseManager, user_model_store: UserModelStore, timezone: str = "UTC"):
         """Initialize the routine detector.
 
@@ -98,8 +120,12 @@ class RoutineDetector:
         self._last_detection_count: int | None = None
         self._last_detection_time: str | None = None
 
-    def _effective_consistency_threshold(self, active_days: int) -> float:
-        """Return a consistency threshold scaled by data maturity.
+    def _effective_consistency_threshold(
+        self,
+        active_days: int,
+        interaction_type: str | None = None,
+    ) -> float:
+        """Return a consistency threshold scaled by data maturity and interaction type.
 
         During cold-start (few active days), the base threshold of 0.6 is too
         strict — a pattern must appear on 60 % of active days, which is nearly
@@ -107,14 +133,29 @@ class RoutineDetector:
         applies a graduated scale so that the system can surface provisional
         routines early while converging to full strictness as data matures.
 
-        Scaling tiers:
+        Additionally, ``HIGH_VOLUME_PASSIVE_TYPES`` (e.g. ``email_received``)
+        receive a lower cap (``PASSIVE_TYPE_CONSISTENCY_THRESHOLD = 0.4``)
+        because their arrival time is driven by external senders, not by the
+        user's deliberate schedule.  Thirty emails per day spread across morning
+        and afternoon will never achieve 60 % morning-bucket consistency even
+        when the user genuinely has a morning-email habit; the lower cap makes
+        these patterns detectable.
+
+        Scaling tiers (applied before the type-aware cap):
             active_days < 7   → 0.3  (very lenient — system just started)
             active_days < 14  → 0.4  (moderate — building data)
             active_days < 30  → 0.5  (approaching maturity)
             active_days >= 30 → self.consistency_threshold (0.6 — full strictness)
 
+        Type-aware cap (applied after day-scaling):
+            interaction_type in HIGH_VOLUME_PASSIVE_TYPES →
+                min(day_tier_threshold, PASSIVE_TYPE_CONSISTENCY_THRESHOLD)
+            This ensures cold-start scaling (already lower) is never overridden.
+
         Args:
             active_days: Number of distinct calendar days with episode data.
+            interaction_type: The dominant interaction type for the current
+                detection bucket.  ``None`` means no type-aware override.
 
         Returns:
             The effective threshold to use for consistency filtering.
@@ -128,11 +169,18 @@ class RoutineDetector:
         else:
             threshold = self.consistency_threshold
 
+        # For high-volume passive types, cap the threshold to avoid requiring
+        # unreachable consistency for bursty external-signal types.  We use
+        # min() so cold-start scaling (already at or below 0.4) is preserved.
+        if interaction_type in self.HIGH_VOLUME_PASSIVE_TYPES:
+            threshold = min(threshold, self.PASSIVE_TYPE_CONSISTENCY_THRESHOLD)
+
         logger.info(
-            "Effective consistency threshold: %.2f (active_days=%d, base=%.2f)",
+            "Effective consistency threshold: %.2f (active_days=%d, base=%.2f, type=%s)",
             threshold,
             active_days,
             self.consistency_threshold,
+            interaction_type or "none",
         )
         return threshold
 
@@ -1223,7 +1271,12 @@ class RoutineDetector:
                 max_day_count = max(dc for _, dc, _ in actions)
                 consistency = min(1.0, max_day_count / active_days)
 
-                effective_threshold = self._effective_consistency_threshold(active_days)
+                # Pass the dominant (most-frequent) interaction type so that the
+                # threshold can be lowered for high-volume passive types such as
+                # email_received, whose arrival time is externally driven and
+                # therefore won't achieve the default 0.6 consistency.
+                dominant_type = actions[0][0] if actions else None
+                effective_threshold = self._effective_consistency_threshold(active_days, dominant_type)
                 is_cold_start = effective_threshold < self.consistency_threshold
 
                 logger.info(
