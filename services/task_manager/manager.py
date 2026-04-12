@@ -106,6 +106,8 @@ class TaskManager:
         self._last_extraction_time: str | None = None  # ISO timestamp: last successful extraction
         self._last_ai_check_time: str | None = None    # ISO timestamp: last AI availability check
         self._ai_engine_available: bool = self.ai_engine is not None  # Current AI status
+        self._tasks_regex_extracted: int = 0     # Tasks extracted by regex fallback (no AI)
+        self._events_regex_fallback: int = 0     # Events processed via regex fallback path
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -146,8 +148,8 @@ class TaskManager:
             self._ai_engine_skip_count += 1  # Legacy counter
             if self._ai_engine_skip_count == 1 or self._ai_engine_skip_count % 100 == 0:
                 logger.warning(
-                    'task_manager: AI engine not available — automatic task extraction disabled '
-                    '(%d events skipped so far)', self._ai_engine_skip_count
+                    'task_manager: AI engine not available — falling back to regex extraction '
+                    '(%d events without AI so far)', self._ai_engine_skip_count
                 )
             # Publish a degraded-pipeline telemetry event every 500 skips so
             # external health monitors can detect prolonged AI unavailability
@@ -159,7 +161,7 @@ class TaskManager:
                     "skip_rate": self._events_skipped_no_ai / max(self._events_processed, 1),
                     "reason": "ai_engine_unavailable",
                 })
-            return
+            # Fall through to text extraction and regex fallback — do NOT return.
 
         event_type = event.get("type", "")
         payload = event.get("payload", {})
@@ -224,22 +226,42 @@ class TaskManager:
             self._events_skipped_marketing += 1
             return
 
-        # --- Call AI engine to extract action items ---
+        # --- Call AI engine or regex fallback to extract action items ---
         # The AI engine returns a list of dicts: [{title, due_hint, priority}, ...]
         # Empty list means no action items were found (which is normal).
-        try:
-            action_items = await self.ai_engine.extract_action_items(text, event_type)
-        except Exception as e:
-            # Graceful degradation: if the AI engine fails (model down, parsing
-            # error, etc.), log the error but don't crash the pipeline.
-            # Task extraction is nice-to-have, not mission-critical.
-            self._extraction_errors += 1
-            logger.error("AI extraction failed for event %s: %s", event.get("id"), e, exc_info=True)
-            return
+        # When AI is unavailable or raises, the regex fallback is used instead.
+        if self.ai_engine:
+            try:
+                action_items = await self.ai_engine.extract_action_items(text, event_type)
+            except Exception as e:
+                # Graceful degradation: if the AI engine fails (model down, parsing
+                # error, etc.), fall back to regex extraction so obvious action items
+                # (TODO markers, explicit requests) are still captured.
+                self._extraction_errors += 1
+                logger.error("AI extraction failed for event %s: %s", event.get("id"), e, exc_info=True)
+                action_items = self._regex_extract_tasks(text, event_type)
+                if action_items:
+                    self._events_regex_fallback += 1
+                    self._tasks_regex_extracted += len(action_items)
+                    logger.debug(
+                        "task_manager: regex fallback extracted %d task(s) after AI failure for event %s",
+                        len(action_items), event.get("id"),
+                    )
+        else:
+            # No AI engine configured — use regex extraction for obvious action items.
+            action_items = self._regex_extract_tasks(text, event_type)
+            if action_items:
+                self._events_regex_fallback += 1
+                self._tasks_regex_extracted += len(action_items)
+                logger.debug(
+                    "task_manager: regex fallback extracted %d task(s) for event %s (no AI engine)",
+                    len(action_items), event.get("id"),
+                )
 
         # --- Ingest extracted tasks into the database ---
         # Each task is linked back to the source event for full provenance.
         # The ingest_ai_extracted_tasks method handles the database writes.
+        # This path is shared between AI and regex extractions.
         if action_items:
             self._tasks_extracted += len(action_items)
             self._last_extraction_time = datetime.now(timezone.utc).isoformat()
@@ -777,6 +799,9 @@ class TaskManager:
             "ai_engine_type": type(ai_engine).__name__ if ai_engine is not None else None,
             "skip_rate": round(skip_rate, 4),
             "extraction_rate": round(extraction_rate, 4),
+            # Regex fallback counters — non-zero indicates AI was unavailable/failing
+            "events_regex_fallback": self._events_regex_fallback,
+            "tasks_regex_extracted": self._tasks_regex_extracted,
         }
 
         diagnostics: dict = {
@@ -863,6 +888,109 @@ class TaskManager:
             diagnostics["health"] = "degraded"
 
         return diagnostics
+
+    def _regex_extract_tasks(self, text: str, event_type: str) -> list[dict]:
+        """Extract action items using regex patterns when the AI engine is unavailable.
+
+        This is a best-effort fallback that catches the most common explicit task
+        signals (TODO markers, direct requests, imperative phrases) without
+        requiring an LLM.  It trades recall for precision: it only extracts tasks
+        it is fairly confident about, so expect false negatives.  False positives
+        are minimised by the skip-pattern guard (FYI / no-action messages).
+
+        Extracted task dicts match the AI engine contract exactly so they can be
+        fed directly into ``ingest_ai_extracted_tasks``:
+            {
+                "title":    str,           # Cleaned, capitalised, max 80 chars
+                "due_hint": str | None,    # Deadline phrase from the message, or None
+                "priority": "high" | "normal",  # Elevated when urgency markers found
+                "completed": bool,         # True when completion signals detected
+            }
+
+        Args:
+            text:       Plain text content already stripped of HTML.
+            event_type: Originating event type (e.g. ``"email.received"``).
+                        Unused at present but kept for future event-type-specific
+                        tuning without breaking the call sites.
+
+        Returns:
+            List of task dicts (may be empty if no patterns matched or if the
+            message was detected as informational/FYI).
+        """
+        # --- Skip patterns: informational messages that never warrant tasks ---
+        # Checked first to avoid generating noise from FYI/heads-up emails.
+        _SKIP_RE = re.compile(
+            r'\b(?:FYI|for your (?:information|records|reference)'
+            r'|no action (?:needed|required)'
+            r'|just (?:letting you know|a heads up))\b',
+            re.IGNORECASE,
+        )
+        if _SKIP_RE.search(text):
+            return []
+
+        # --- Priority: elevated when urgency markers are present ---
+        _URGENCY_RE = re.compile(
+            r'\b(?:urgent|ASAP|critical|immediately|time[- ]sensitive)\b',
+            re.IGNORECASE,
+        )
+        priority = 'high' if _URGENCY_RE.search(text) else 'normal'
+
+        # --- Due hint: extract the first deadline phrase found ---
+        _DEADLINE_RE = re.compile(
+            r'(?:by|before|due|deadline)\s+'
+            r'((?:\w+day|EOD|end of (?:day|week)|tomorrow|today|ASAP|\d{1,2}/\d{1,2}))',
+            re.IGNORECASE,
+        )
+        deadline_match = _DEADLINE_RE.search(text)
+        due_hint: str | None = deadline_match.group(1) if deadline_match else None
+
+        # --- Completion signals: task is already done ---
+        # Detects outgoing phrases like "I've already submitted the report".
+        _COMPLETED_RE = re.compile(
+            r"(?:I've|I have|we've|already|just)\s+"
+            r"(?:sent|completed|finished|submitted|done|reviewed|updated|fixed)",
+            re.IGNORECASE,
+        )
+        completed = bool(_COMPLETED_RE.search(text))
+
+        # --- Task detection patterns (order matters: more specific first) ---
+        # Each pattern must have exactly one capture group containing the task title.
+        _TASK_PATTERNS = [
+            # Explicit markers: "TODO: update spreadsheet", "ACTION: call Alice"
+            re.compile(r'(?:TODO|ACTION|TASK)[:\s]+(.+?)(?:\.|$)', re.IGNORECASE | re.MULTILINE),
+            # Imperative requests: "please review the proposal", "kindly send the invoice"
+            re.compile(r'(?:please|pls|kindly)\s+(\w+.*?)(?:\.|$)', re.IGNORECASE | re.MULTILINE),
+            # Direct requests: "can you update the config", "need you to review this"
+            re.compile(
+                r'(?:can you|could you|would you|need you to|need to)\s+(\w+.*?)(?:\.|$)',
+                re.IGNORECASE | re.MULTILINE,
+            ),
+        ]
+
+        tasks: list[dict] = []
+        seen_normalized: set[str] = set()
+
+        for pattern in _TASK_PATTERNS:
+            for match in pattern.finditer(text):
+                raw_title = match.group(1).strip()
+                # Enforce max length then capitalise the first letter
+                title = raw_title[:80].strip()
+                if not title:
+                    continue
+                title = title[0].upper() + title[1:]
+                # Deduplicate within this extraction run (case-insensitive)
+                normalized = title.lower()
+                if normalized in seen_normalized:
+                    continue
+                seen_normalized.add(normalized)
+                tasks.append({
+                    "title": title,
+                    "due_hint": due_hint,
+                    "priority": priority,
+                    "completed": completed,
+                })
+
+        return tasks
 
     @staticmethod
     def _is_marketing_email(payload: dict) -> bool:
