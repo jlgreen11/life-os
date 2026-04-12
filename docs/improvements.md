@@ -45,10 +45,8 @@ Feel free to hand-add items above or below whatever the agent writes._
 - **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
 - **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` — Open PR #701 awaiting merge. Adds freshness/staleness tracking per profile to get_data_sufficiency_report().
 - **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` — Open PR #702 awaiting merge. Adds try/except guards and structured JSON 500 responses.
-- **Add rule-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Task extraction requires Ollama but AI is frequently unavailable. A regex-based fallback would capture obvious action items without AI.
-- **Add system health status card to dashboard** · `missing_feature` — /api/health/summary endpoint exists (PR #698) but dashboard doesn't display it. Users see empty widgets with no explanation.
-- **Add cold-start cycle diagnostics to behavioral accuracy tracker** · `code_quality` — Tracker runs inference cycles but with 0 predictions silently does nothing. No diagnostics to distinguish cold-start from broken.
-- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` — Analyzer reports 0 episodes/templates but doesn't flag ratio to qualifying events or check backfill status.
+- **Add prediction generation monitoring dashboard to admin UI** · `missing_feature` — 0 stored predictions despite 243 generation events. Admin UI should show prediction pipeline health with generation/dedup/persistence counts.
+- **Add event pipeline throughput metrics to /api/health/summary** · `code_quality` — Track events_published/consumed/errored per minute in the event bus for real-time pipeline health monitoring.
 
 ## In Progress
 
@@ -56,13 +54,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add cache_age_seconds to /api/insights/summary response** · `code_quality` (wave 7, slot 1)
-- **Fix communication template backfill DB connection reuse and WAL checkpoint** · `broken_feature` (wave 7, slot 2)
-- **Fix episode backfill missing post-write verification and WAL checkpoint** · `broken_feature` (wave 7, slot 3)
-- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 7, slot 4)
-- **Add system health status card to dashboard** · `missing_feature` (wave 7, slot 5)
-- **Add cold-start cycle diagnostics to behavioral accuracy tracker** · `code_quality` (wave 7, slot 6)
-- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` (wave 7, slot 7)
+- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 8, slot 1)
+- **Add diagnostic banner to dashboard when user model is empty** · `missing_feature` (wave 8, slot 2)
+- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` (wave 8, slot 3)
+- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` (wave 8, slot 4)
+- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` (wave 8, slot 5)
+- **Add vector store health diagnostics and stale embedding detection** · `code_quality` (wave 8, slot 6)
+- **Reduce notification expiry rate with shorter delivery thresholds** · `broken_feature` (wave 8, slot 7)
 
 ## Completed
 
@@ -70,6 +68,10 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Add cache_age_seconds to /api/insights/summary response** · `code_quality` — wave 7, PR #720
+- **Fix communication template backfill DB connection reuse and WAL checkpoint** · `broken_feature` — wave 7, PR #722
+- **Fix episode backfill missing post-write verification and WAL checkpoint** · `broken_feature` — wave 7, PR #719
+- **Add cold-start cycle diagnostics to behavioral accuracy tracker** · `code_quality` — wave 7, PR #721
 - **Fix episode store phantom telemetry and add WAL checkpoint resilience** · `broken_feature` — wave 6, PR #714
 - **Fix linguistic_inbound profile persistence with write verification and data compaction** · `broken_feature` — wave 6, PR #717
 - **Add structured error reporting to dashboard calendar and insights loaders** · `code_quality` — wave 6, PR #713
