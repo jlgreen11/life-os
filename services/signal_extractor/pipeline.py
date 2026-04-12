@@ -202,6 +202,22 @@ class SignalExtractorPipeline:
         # and invalidated after _EVENT_COUNT_CACHE_TTL_SECONDS.
         self._event_count_cache: dict[str, tuple[int, float]] = {}
 
+        # Per-extractor hit counter for process_event() calls.  Incremented each
+        # time an extractor's can_process() returns True, before extract() is called.
+        # A non-zero hit count with a missing profile signals a persistence failure;
+        # a zero hit count signals events never reached the extractor at all.
+        self._extractor_hit_counts: dict[str, int] = {}
+
+        # Per-extractor error counter for process_event() calls.  Incremented in
+        # the except block when extract() raises.  Helps distinguish silent failures
+        # (extractor error + missing profile) from routing gaps (zero hits).
+        self._extractor_error_counts: dict[str, int] = {}
+
+        # Unix timestamp of the last successful extract() call for each extractor.
+        # Allows diagnostics to surface extractors that haven't received any events
+        # since startup — a signal that can_process is filtering all events.
+        self._extractor_last_hit_ts: dict[str, float] = {}
+
     async def process_event(self, event: dict) -> list[dict]:
         """
         Process an event through all applicable extractors.
@@ -219,15 +235,28 @@ class SignalExtractorPipeline:
         for extractor in self.extractors:
             # Route: let each extractor decide if this event type is relevant.
             if extractor.can_process(event):
+                extractor_name = type(extractor).__name__
+                # Count events routed to this extractor so diagnostics can show
+                # whether the extractor is receiving events at all.  A non-zero
+                # count with a still-missing profile points to a persistence bug.
+                self._extractor_hit_counts[extractor_name] = (
+                    self._extractor_hit_counts.get(extractor_name, 0) + 1
+                )
                 try:
                     # extract() both returns signals AND persists them into the
                     # extractor's own profile store as a side-effect.
                     signals = extractor.extract(event)
                     all_signals.extend(signals)
+                    # Record when this extractor last successfully processed an
+                    # event so diagnostics can show idle-since-startup extractors.
+                    self._extractor_last_hit_ts[extractor_name] = time.time()
                 except Exception as e:
                     # Fail-open: signal extraction must never block or crash the
                     # main event processing loop.  Log and continue.
-                    logger.error("Extractor %s error: %s", type(extractor).__name__, e, exc_info=True)
+                    logger.error("Extractor %s error: %s", extractor_name, e, exc_info=True)
+                    self._extractor_error_counts[extractor_name] = (
+                        self._extractor_error_counts.get(extractor_name, 0) + 1
+                    )
 
         return all_signals
 
@@ -298,12 +327,25 @@ class SignalExtractorPipeline:
             try:
                 profile = self.ums.get_signal_profile(ptype)
                 if profile is None:
-                    result[ptype] = {"status": "missing", "samples": 0, "data_keys": []}
+                    # Include the extractor hit count for missing profiles so
+                    # diagnostics can distinguish 'no events reached extractor'
+                    # (hits=0) from 'extractor ran but profile never persisted'
+                    # (hits>0).  Uses _profile_extractor_hits() to sum across
+                    # all extractors that write this profile.
+                    extractor_hits = _profile_extractor_hits(ptype, self._extractor_hit_counts)
+                    result[ptype] = {
+                        "status": "missing",
+                        "samples": 0,
+                        "data_keys": [],
+                        "extractor_hits": extractor_hits,
+                    }
                 elif _is_profile_stale(profile):
+                    extractor_hits = _profile_extractor_hits(ptype, self._extractor_hit_counts)
                     result[ptype] = {
                         "status": "stale",
                         "samples": profile.get("samples_count", 0),
                         "data_keys": list((profile.get("data") or {}).keys())[:5],
+                        "extractor_hits": extractor_hits,
                     }
                 else:
                     result[ptype] = {
@@ -349,6 +391,45 @@ class SignalExtractorPipeline:
         if self._last_rebuild_result is None:
             return {"status": "no_rebuild_performed"}
         return self._last_rebuild_result
+
+    def get_extractor_diagnostics(self) -> dict:
+        """Return per-extractor runtime diagnostics since process startup.
+
+        Provides visibility into whether individual extractors are receiving
+        events during live operation.  This is the primary tool for diagnosing
+        the 'extractor receiving events but profiles not persisting' failure mode:
+        if ``extractor_hit_counts`` shows thousands of hits for an extractor but
+        the corresponding profile is still missing, ``update_signal_profile()``
+        is silently failing.  Conversely, zero hit counts across all extractors
+        indicates that events are not reaching the pipeline at all.
+
+        Returns:
+            A dict with keys:
+
+            - ``extractor_hit_counts``: dict mapping extractor class name to
+              the number of events routed to that extractor (``can_process``
+              returned True) since the pipeline started.
+            - ``extractor_error_counts``: dict mapping extractor class name to
+              the number of exceptions raised during ``extract()`` calls since
+              startup.  A non-zero value paired with a missing profile is a
+              clear indicator of a silent extraction failure.
+            - ``extractor_last_hit_ts``: dict mapping extractor class name to
+              the Unix timestamp of the last successfully completed ``extract()``
+              call.  Extractors absent from this dict have never successfully
+              processed an event since startup.
+            - ``profile_to_extractor``: the ``_PROFILE_TO_EXTRACTOR`` mapping
+              so callers can correlate missing profiles to the extractors that
+              would populate them without needing to know the internal mapping.
+            - ``registered_extractors``: list of extractor class names in
+              pipeline registration order.
+        """
+        return {
+            "extractor_hit_counts": dict(self._extractor_hit_counts),
+            "extractor_error_counts": dict(self._extractor_error_counts),
+            "extractor_last_hit_ts": dict(self._extractor_last_hit_ts),
+            "profile_to_extractor": dict(_PROFILE_TO_EXTRACTOR),
+            "registered_extractors": [type(e).__name__ for e in self.extractors],
+        }
 
     def check_and_rebuild_missing_profiles(self) -> dict:
         """Check for missing signal profiles and rebuild them from historical events if needed.
@@ -677,7 +758,7 @@ class SignalExtractorPipeline:
 
         if not rows:
             logger.info("rebuild_profiles_from_events: no events found in events.db")
-            return {"events_processed": 0, "profiles_rebuilt": [], "errors": []}
+            return {"events_processed": 0, "profiles_rebuilt": [], "errors": [], "extractor_event_counts": {}}
 
         # Reverse to chronological order so profiles accumulate correctly.
         rows = list(reversed(rows))
@@ -791,6 +872,10 @@ class SignalExtractorPipeline:
             "profiles_rebuilt": profiles_rebuilt,
             "errors": errors,
             "extractor_error_counts": extractor_error_counts,
+            # Per-extractor event counts from this rebuild run.  Included so
+            # callers can correlate extractor activity with profile persistence
+            # outcomes without re-running get_extractor_diagnostics().
+            "extractor_event_counts": dict(extractor_hits),
             "write_failures": write_failures,
         }
         self._last_rebuild_result = result
