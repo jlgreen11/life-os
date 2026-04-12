@@ -10,7 +10,6 @@ Tests verify:
   6. Multiple visits to the same place aggregate correctly
 """
 
-import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -113,12 +112,8 @@ def test_spatial_profile_accumulates_visits(db, user_model_store):
     profile = user_model_store.get_signal_profile("spatial")
     assert profile is not None
 
-    # Deserialize place_behaviors
-    place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-    if isinstance(place_behaviors_raw, str):
-        place_behaviors = json.loads(place_behaviors_raw)
-    else:
-        place_behaviors = place_behaviors_raw
+    # place_behaviors is already a plain dict (no json.loads needed)
+    place_behaviors = profile.get("data", {}).get("place_behaviors", {})
 
     # Assert: Office Building 5 has 3 visits
     office_key = "office building 5"
@@ -168,8 +163,7 @@ def test_spatial_profile_tracks_dominant_domain(db, user_model_store):
 
     # Retrieve spatial profile
     profile = user_model_store.get_signal_profile("spatial")
-    place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-    place_behaviors = json.loads(place_behaviors_raw) if isinstance(place_behaviors_raw, str) else place_behaviors_raw
+    place_behaviors = profile.get("data", {}).get("place_behaviors", {})
 
     # Assert: Coffee Shop has "work" as dominant domain (5 work > 2 personal)
     coffee_key = "coffee shop downtown"
@@ -202,8 +196,7 @@ def test_spatial_profile_tracks_typical_activities(db, user_model_store):
 
     # Retrieve spatial profile
     profile = user_model_store.get_signal_profile("spatial")
-    place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-    place_behaviors = json.loads(place_behaviors_raw) if isinstance(place_behaviors_raw, str) else place_behaviors_raw
+    place_behaviors = profile.get("data", {}).get("place_behaviors", {})
 
     # Assert: Conference Center has "calendar_event" as typical activity
     conf_key = "conference center"
@@ -347,8 +340,7 @@ def test_spatial_profile_first_and_last_visit_timestamps(db, user_model_store):
 
     # Retrieve spatial profile
     profile = user_model_store.get_signal_profile("spatial")
-    place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-    place_behaviors = json.loads(place_behaviors_raw) if isinstance(place_behaviors_raw, str) else place_behaviors_raw
+    place_behaviors = profile.get("data", {}).get("place_behaviors", {})
 
     library_place = place_behaviors["library"]
 
@@ -392,8 +384,7 @@ def test_spatial_profile_survives_pipeline_restarts(db, user_model_store):
 
     # Retrieve spatial profile
     profile = user_model_store.get_signal_profile("spatial")
-    place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-    place_behaviors = json.loads(place_behaviors_raw) if isinstance(place_behaviors_raw, str) else place_behaviors_raw
+    place_behaviors = profile.get("data", {}).get("place_behaviors", {})
 
     # Assert: Building 7 has 2 visits (accumulated across instances)
     building_place = place_behaviors["building 7"]
@@ -466,8 +457,7 @@ def test_ios_context_device_proximity_updates_profile(db, user_model_store):
         extractor.extract(event)
 
     profile = user_model_store.get_signal_profile("spatial")
-    place_behaviors_raw = profile.get("data", {}).get("place_behaviors", {})
-    place_behaviors = json.loads(place_behaviors_raw) if isinstance(place_behaviors_raw, str) else place_behaviors_raw
+    place_behaviors = profile.get("data", {}).get("place_behaviors", {})
 
     device_key = "device:macbook_pro"
     assert device_key in place_behaviors
@@ -645,7 +635,7 @@ def test_domain_shifts_from_personal_to_work(db, user_model_store):
 
     # Check current dominant domain is personal
     profile = user_model_store.get_signal_profile("spatial")
-    pb = json.loads(profile["data"]["place_behaviors"])
+    pb = profile["data"]["place_behaviors"]
     assert pb["bean counter cafe"]["dominant_domain"] == "personal"
 
     # 5 work visits to same coffee shop (with attendees → domain=work)
@@ -665,7 +655,7 @@ def test_domain_shifts_from_personal_to_work(db, user_model_store):
 
     # Now work (5) > personal (2), dominant should be "work"
     profile = user_model_store.get_signal_profile("spatial")
-    pb = json.loads(profile["data"]["place_behaviors"])
+    pb = profile["data"]["place_behaviors"]
     assert pb["bean counter cafe"]["dominant_domain"] == "work"
     assert pb["bean counter cafe"]["visit_count"] == 7
 
@@ -745,7 +735,7 @@ def test_multiple_activity_types_at_same_place(db, user_model_store):
     extractor.extract(loc_event)
 
     profile = user_model_store.get_signal_profile("spatial")
-    pb = json.loads(profile["data"]["place_behaviors"])
+    pb = profile["data"]["place_behaviors"]
     place = pb["community center"]
 
     # Both activity types should be recorded
@@ -883,7 +873,7 @@ def test_duration_aggregation_across_visits(db, user_model_store):
         extractor.extract(event)
 
     profile = user_model_store.get_signal_profile("spatial")
-    pb = json.loads(profile["data"]["place_behaviors"])
+    pb = profile["data"]["place_behaviors"]
     place = pb["training room"]
 
     assert place["visit_count"] == 3
