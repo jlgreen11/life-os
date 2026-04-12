@@ -959,6 +959,7 @@ class DatabaseManager:
                     read_at         TEXT,
                     acted_on_at     TEXT,
                     dismissed_at    TEXT,
+                    expiry_reason   TEXT,
                     action_url      TEXT,
                     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 );
@@ -998,6 +999,15 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_published_conflicts_detected
                     ON published_conflicts(detected_at);
             """)
+
+        # Migration: add expiry_reason column to notifications if it doesn't exist yet.
+        # This handles existing databases created before this column was introduced.
+        # The try/except pattern avoids a version table dependency for state.db.
+        try:
+            with self.get_connection("state") as conn:
+                conn.execute("ALTER TABLE notifications ADD COLUMN expiry_reason TEXT")
+        except Exception:
+            pass  # Column already exists — safe to ignore
 
     # -----------------------------------------------------------------------
     # user_model.db — The user model and all memory layers

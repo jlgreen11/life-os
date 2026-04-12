@@ -76,7 +76,8 @@ class NotificationManager:
 
                 result = conn.execute(
                     """UPDATE notifications
-                       SET status = 'expired'
+                       SET status = 'expired',
+                           expiry_reason = 'age_exceeded'
                        WHERE status IN ('pending', 'batched')
                          AND created_at < ?""",
                     (cutoff,),
@@ -935,6 +936,55 @@ class NotificationManager:
             "pending": pending,
             "other": other,
             "delivery_rate": round(delivery_rate, 4),
+        }
+
+    def delivery_diagnostics(self) -> dict:
+        """Return a breakdown of notification expiry reasons for diagnostics.
+
+        With high expiry rates (historically ~87%), understanding *why*
+        notifications expired is critical to improving delivery.  This method
+        queries the ``expiry_reason`` column added in the notifications table
+        migration and groups expired notifications by reason so operators can
+        distinguish between:
+
+        - ``age_exceeded``  — Notification timed out after 48 h without delivery
+        - ``quiet_hours``   — Future: expired because user was in quiet hours
+        - ``no_channel``    — Future: expired because no delivery channel was available
+        - ``unknown``       — Expired before the expiry_reason column existed (NULL)
+
+        Returns:
+            A dict with the following structure::
+
+                {
+                    "expiry_reason_breakdown": {
+                        "age_exceeded": int,
+                        "quiet_hours":  int,
+                        "no_channel":   int,
+                        "unknown":      int,
+                        ...
+                    },
+                    "total_expired": int,
+                }
+        """
+        try:
+            with self.db.get_connection("state") as conn:
+                rows = conn.execute(
+                    """SELECT
+                           COALESCE(expiry_reason, 'unknown') AS reason,
+                           COUNT(*) AS cnt
+                       FROM notifications
+                       WHERE status = 'expired'
+                       GROUP BY expiry_reason"""
+                ).fetchall()
+        except Exception:
+            logger.warning("Failed to query expiry reason breakdown", exc_info=True)
+            return {"expiry_reason_breakdown": {}, "total_expired": 0}
+
+        breakdown = {row["reason"]: row["cnt"] for row in rows}
+        total_expired = sum(breakdown.values())
+        return {
+            "expiry_reason_breakdown": breakdown,
+            "total_expired": total_expired,
         }
 
     async def auto_resolve_stale_predictions(self, timeout_hours: int = 24):
