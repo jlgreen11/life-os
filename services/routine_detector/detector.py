@@ -184,6 +184,52 @@ class RoutineDetector:
         )
         return threshold
 
+    def _effective_min_episodes(self, episode_count: int, data_age_days: int) -> int:
+        """Return an adaptive minimum-episodes threshold scaled by data maturity.
+
+        During cold-start (first few days of data), requiring 50 episodes before
+        triggering the fallback path is too strict — email-only installations may
+        take weeks to accumulate that many typed episodes.  This method scales the
+        threshold down during early operation so that cold-start systems can still
+        detect routines.
+
+        This mirrors the scaling tiers used by ``_effective_consistency_threshold()``
+        so that both gates open and close at the same data-maturity milestones:
+
+        Scaling tiers:
+            data_age_days < 7   → 10  (very lenient — first week)
+            data_age_days < 14  → 20  (second week)
+            data_age_days < 30  → 35  (first month)
+            data_age_days >= 30 → self.min_episodes_for_detection (50 — mature system)
+
+        Args:
+            episode_count: Number of episodes that passed the interaction_type filter.
+                Included for diagnostic logging; not used in the threshold calculation.
+            data_age_days: Age of the oldest typed episode in days, used to
+                determine data maturity tier.  Pass 0 when no typed episodes exist
+                (cold-start assumption — most lenient tier).
+
+        Returns:
+            Effective minimum episode count before the fallback path is triggered.
+        """
+        if data_age_days < 7:
+            threshold = 10
+        elif data_age_days < 14:
+            threshold = 20
+        elif data_age_days < 30:
+            threshold = 35
+        else:
+            threshold = self.min_episodes_for_detection
+
+        logger.info(
+            "Effective min_episodes threshold: %d (data_age_days=%d, primary_episodes=%d, base=%d)",
+            threshold,
+            data_age_days,
+            episode_count,
+            self.min_episodes_for_detection,
+        )
+        return threshold
+
     def _compute_adaptive_lookback_days(self, lookback_days: int) -> int:
         """Compute an adaptive lookback window that extends when recent episodes are sparse.
 
@@ -1161,13 +1207,30 @@ class RoutineDetector:
             len(raw_episodes),
         )
 
+        # Compute data_age_days from the earliest typed episode in the query results.
+        # When raw_episodes is empty (full cold-start), default to 0 so the most
+        # lenient tier (threshold=10) applies — we're definitely in cold-start.
+        if raw_episodes:
+            try:
+                earliest_dt = datetime.fromisoformat(raw_episodes[0][0])
+                if earliest_dt.tzinfo is None:
+                    earliest_dt = earliest_dt.replace(tzinfo=UTC)
+                data_age_days = (datetime.now(UTC) - earliest_dt).days
+            except (ValueError, TypeError):
+                data_age_days = 0
+        else:
+            # No typed episodes → cold-start assumption
+            data_age_days = 0
+
+        effective_min_episodes = self._effective_min_episodes(len(raw_episodes), data_age_days)
+
         # Fallback: if too few episodes have a usable interaction_type, re-query
         # WITHOUT the filter and derive classification from the linked event.
-        # A handful of episodes (< min_episodes_for_detection) is insufficient for
-        # reliable routine detection, so we supplement with fallback-derived episodes.
-        if len(raw_episodes) < self.min_episodes_for_detection:
+        # The threshold is adaptive (see _effective_min_episodes) so that cold-start
+        # email-dominated installations trigger the fallback sooner.
+        if len(raw_episodes) < effective_min_episodes:
             fallback_reason = "full fallback (0 primary)" if not raw_episodes else (
-                f"supplemental fallback ({len(raw_episodes)} primary < {self.min_episodes_for_detection} threshold)"
+                f"supplemental fallback ({len(raw_episodes)} primary < {effective_min_episodes} threshold)"
             )
             try:
                 fallback_episodes = self._fallback_temporal_episodes(cutoff)
