@@ -41,10 +41,7 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Add pre-write serialization guard to linguistic outbound profile** · `broken_feature` — Returned from wave 10 (no PR created). Only 11 qualifying outbound events; may need more data before this becomes impactful.
-- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Returned from wave 10 (no PR created). Admin connector cards lack actionable error recovery guidance.
-- **Reduce notification expiry rate with shorter delivery thresholds** · `broken_feature` — Returned from wave 10 (no PR created). 159 expired vs 27 delivered; graduated delivery thresholds need tuning.
-- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` — Returned from wave 10 (no PR created). User model shows 0 episodes, 0 templates, 0 routines with no diagnostic visibility.
+- **Add prediction pipeline health section to admin UI** · `missing_feature` — Returned from wave 11 (no PR created). Surface prediction generation/persistence stats on admin dashboard.
 - **Add event bus throughput counters and get_metrics() method** · `code_quality` — Open PR #725 awaiting merge. Returned from wave 10.
 - **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Open PR #724 awaiting merge. Returned from wave 8 (not merged).
 - **Add diagnostic banner to dashboard when user model is empty** · `missing_feature` — Open PR #723 awaiting merge. Returned from wave 8 (not merged).
@@ -60,13 +57,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add pre-write JSON serialization guard to topic extractor** · `broken_feature` (wave 11, slot 1)
-- **Add pre-write JSON serialization guard to spatial extractor** · `broken_feature` (wave 11, slot 2)
-- **Add pre-write JSON serialization guard to cadence extractor** · `broken_feature` (wave 11, slot 3)
-- **Add prediction pipeline health section to admin UI** · `missing_feature` (wave 11, slot 4)
-- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` (wave 11, slot 5)
-- **Add vector store health diagnostics and stale embedding detection** · `code_quality` (wave 11, slot 6)
-- **Add insight engine correlator execution tracking and failure logging** · `code_quality` (wave 11, slot 7)
+- **Add pre-write JSON serialization guard to cadence extractor** · `broken_feature` (wave 13, slot 1)
+- **Add pre-write serialization guard to linguistic outbound profile** · `broken_feature` (wave 13, slot 2)
+- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` (wave 13, slot 3)
+- **Reduce notification expiry rate with graduated delivery thresholds** · `broken_feature` (wave 13, slot 4)
+- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` (wave 13, slot 5)
+- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` (wave 13, slot 6)
+- **Add insight engine correlator execution tracking and failure logging** · `code_quality` (wave 13, slot 7)
 
 ## Completed
 
@@ -74,6 +71,9 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Add pre-write JSON serialization guard to topic extractor** · `broken_feature` — wave 11, PR #727
+- **Add pre-write JSON serialization guard to spatial extractor** · `broken_feature` — wave 11, PR #728
+- **Add vector store health diagnostics and stale embedding detection** · `code_quality` — wave 11, PR #726
 - **Add notification suppression telemetry and feedback logging** · `broken_feature` — wave 9 (verified already implemented: _log_automatic_feedback and dismissal suppression exist in notification_manager)
 - **Set prediction persistence failure flag immediately on store exceptions** · `broken_feature` — wave 9 (verified already implemented: _persistence_failure_detected flag with full recovery in prediction_engine)
 - **Add cache_age_seconds to /api/insights/summary response** · `code_quality` — wave 7, PR #720
