@@ -9,16 +9,23 @@ Covers:
 - force_rebuild=True → always rebuilds regardless of prior state
 - linguistic missing with linguistic_inbound present → annotated as expected
 - _last_health_check_missing state management across checks
+- Persistent missing with high event counts → retry after backoff
+- Persistent missing with low event counts → no retry (stays degraded)
+- Retry counter increments correctly across consecutive degraded checks
 
 Follows patterns from tests/test_signal_extractor_pipeline.py:
 - Real DatabaseManager/UserModelStore via db/user_model_store fixtures
 - No mocking of the storage layer
-- Mock only the rebuild helper to keep tests focused
+- Mock only the rebuild helper and event count query to keep tests focused
 """
 
 import pytest
 
-from services.signal_extractor.pipeline import SignalExtractorPipeline
+from services.signal_extractor.pipeline import (
+    SignalExtractorPipeline,
+    _RETRY_EVERY_N_CHECKS,
+    _RETRY_EVENT_COUNT_THRESHOLD,
+)
 
 
 class TestPeriodicHealthCheck:
@@ -331,3 +338,251 @@ class TestGetProfileHealthLinguisticAnnotation:
 
         # Note must reference the inbound profile being ok to help operators understand.
         assert "inbound" in note.lower()
+
+
+class TestPeriodicHealthCheckPersistentRetry:
+    """Tests for the persistent missing profile retry-with-backoff logic.
+
+    When the same profiles remain missing across multiple consecutive health
+    checks (because the first rebuild did not fix them), periodic_health_check()
+    should eventually retry the rebuild — but only for profiles that have enough
+    qualifying events to make a retry worthwhile.
+
+    The test strategy:
+    - Use a fresh pipeline (empty DB) so all profiles are missing from the start.
+    - Mock check_and_rebuild_missing_profiles to avoid expensive event replay.
+    - Mock _count_qualifying_events to control event-count thresholds.
+    - Pre-seed _rebuild_retry_count to simulate N previous degraded checks so
+      the "second check" in the test can reach the backoff threshold without
+      running N-1 actual health checks.
+    """
+
+    @pytest.fixture
+    def pipeline(self, db, user_model_store):
+        """Create a SignalExtractorPipeline backed by test databases."""
+        return SignalExtractorPipeline(db, user_model_store)
+
+    def _install_mock_rebuild(self, pipeline, call_log):
+        """Replace check_and_rebuild_missing_profiles with a no-op that records calls."""
+        def mock_rebuild():
+            call_log.append(True)
+            return {"missing_before": [], "rebuilt": [], "skipped": False}
+        pipeline.check_and_rebuild_missing_profiles = mock_rebuild
+
+    # --- Initial first-check behavior (regression guard) ---
+
+    def test_first_check_triggers_rebuild(self, pipeline):
+        """On the very first health check, any missing profiles trigger a rebuild.
+
+        This is a regression guard: the persistent retry logic must not
+        interfere with the original first-detection rebuild behaviour.
+        """
+        rebuild_called = []
+        self._install_mock_rebuild(pipeline, rebuild_called)
+
+        result = pipeline.periodic_health_check()
+
+        assert result["status"] == "rebuilt"
+        assert len(rebuild_called) == 1
+
+    # --- High event count → retry after backoff ---
+
+    def test_persistent_missing_high_event_count_retries_at_backoff_threshold(self, pipeline):
+        """A persistently missing profile with >_RETRY_EVENT_COUNT_THRESHOLD events
+        triggers a rebuild when its retry counter reaches a multiple of
+        _RETRY_EVERY_N_CHECKS.
+
+        Setup: run a first check (rebuild fires, leaving profiles still missing),
+        then pre-set the retry counter so the immediately following check lands
+        on the backoff threshold.  Mock event count to be well above the threshold.
+        """
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        # First check: all newly missing → rebuild fires.
+        result1 = pipeline.periodic_health_check()
+        assert result1["status"] == "rebuilt"
+        assert len(rebuild_calls) == 1
+
+        # Simulate (_RETRY_EVERY_N_CHECKS - 1) degraded checks having already
+        # elapsed by pre-seeding the retry counter.  The next increment will
+        # bring each profile's count to exactly _RETRY_EVERY_N_CHECKS, which
+        # is a multiple of _RETRY_EVERY_N_CHECKS → retry fires.
+        for profile_name in pipeline._last_health_check_missing:
+            pipeline._rebuild_retry_count[profile_name] = _RETRY_EVERY_N_CHECKS - 1
+
+        # Override event count to report a high number (well above threshold).
+        pipeline._count_qualifying_events = lambda p: _RETRY_EVENT_COUNT_THRESHOLD + 500
+
+        # Second check: same profiles still missing, event count is high, backoff
+        # threshold reached → rebuild should fire again.
+        result2 = pipeline.periodic_health_check()
+
+        assert result2["status"] == "rebuilt", (
+            f"Expected 'rebuilt' but got {result2['status']!r}. "
+            "Persistent missing profile with high event count should retry at backoff threshold."
+        )
+        assert len(rebuild_calls) == 2
+
+    def test_persistent_missing_high_event_count_rebuild_result_in_response(self, pipeline):
+        """When a persistent retry fires, the rebuild result is included in the response."""
+        rebuild_calls = []
+        expected_result = {"missing_before": ["temporal"], "rebuilt": [], "skipped": False}
+        pipeline.check_and_rebuild_missing_profiles = lambda: rebuild_calls.append(True) or expected_result
+
+        pipeline.periodic_health_check()  # First: newly missing → rebuild.
+
+        for profile_name in pipeline._last_health_check_missing:
+            pipeline._rebuild_retry_count[profile_name] = _RETRY_EVERY_N_CHECKS - 1
+        pipeline._count_qualifying_events = lambda p: _RETRY_EVENT_COUNT_THRESHOLD + 500
+
+        result2 = pipeline.periodic_health_check()
+
+        assert result2["status"] == "rebuilt"
+        assert result2["rebuild_result"] == expected_result
+
+    # --- Low event count → no retry ---
+
+    def test_persistent_missing_low_event_count_stays_degraded(self, pipeline):
+        """A persistently missing profile with <=_RETRY_EVENT_COUNT_THRESHOLD events
+        does NOT trigger a rebuild, even when the backoff counter is at threshold.
+
+        This is the key guard that prevents wasted rebuilds for profiles like
+        'linguistic' on inbound-only systems that have only a handful of qualifying
+        (outbound) events.
+        """
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        # First check: newly missing → rebuild fires.
+        pipeline.periodic_health_check()
+        assert len(rebuild_calls) == 1
+
+        # Bring counter to backoff threshold.
+        for profile_name in pipeline._last_health_check_missing:
+            pipeline._rebuild_retry_count[profile_name] = _RETRY_EVERY_N_CHECKS - 1
+
+        # Override event count to report a LOW number (at or below threshold).
+        pipeline._count_qualifying_events = lambda p: _RETRY_EVENT_COUNT_THRESHOLD
+
+        # Second check: same profiles still missing, event count is low → no retry.
+        result2 = pipeline.periodic_health_check()
+
+        assert result2["status"] == "degraded", (
+            f"Expected 'degraded' but got {result2['status']!r}. "
+            "Persistent missing profile with low event count should NOT retry."
+        )
+        assert len(rebuild_calls) == 1  # No additional rebuild.
+
+    def test_persistent_missing_zero_event_count_stays_degraded(self, pipeline):
+        """A persistently missing profile with 0 qualifying events stays degraded.
+
+        Covers the inbound-only linguistic case (0 sent messages ever).
+        """
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        pipeline.periodic_health_check()
+
+        for profile_name in pipeline._last_health_check_missing:
+            pipeline._rebuild_retry_count[profile_name] = _RETRY_EVERY_N_CHECKS - 1
+        pipeline._count_qualifying_events = lambda p: 0
+
+        result = pipeline.periodic_health_check()
+
+        assert result["status"] == "degraded"
+        assert len(rebuild_calls) == 1
+
+    # --- Counter increment behaviour ---
+
+    def test_retry_counter_increments_each_degraded_check(self, pipeline):
+        """The retry counter increments on every check where the profile is
+        persistently missing and NOT in the retry-fire window.
+
+        Verifies that the counter accumulates correctly so that after exactly
+        _RETRY_EVERY_N_CHECKS degraded checks the retry will fire.
+        """
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        # First check: newly missing → rebuild fires.
+        pipeline.periodic_health_check()
+
+        # Override to low event count so no retries fire (counter increments only).
+        pipeline._count_qualifying_events = lambda p: 0
+
+        # Run (_RETRY_EVERY_N_CHECKS - 1) more checks; all should be degraded.
+        for expected_count in range(1, _RETRY_EVERY_N_CHECKS):
+            result = pipeline.periodic_health_check()
+            assert result["status"] == "degraded"
+            # Each profile's counter should equal expected_count.
+            for profile_name in result["missing"]:
+                assert pipeline._rebuild_retry_count.get(profile_name, 0) == expected_count
+
+        assert len(rebuild_calls) == 1  # Only the initial newly-missing rebuild.
+
+    def test_retry_does_not_fire_below_backoff_threshold(self, pipeline):
+        """The retry must not fire until the counter is a multiple of _RETRY_EVERY_N_CHECKS.
+
+        Runs exactly (_RETRY_EVERY_N_CHECKS - 1) degraded checks with high event
+        count and verifies that rebuild is still suppressed on all of them.
+        """
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        # First check: newly missing → rebuild.
+        pipeline.periodic_health_check()
+
+        # High event count but counter not yet at threshold.
+        pipeline._count_qualifying_events = lambda p: _RETRY_EVENT_COUNT_THRESHOLD + 500
+
+        for _ in range(_RETRY_EVERY_N_CHECKS - 1):
+            result = pipeline.periodic_health_check()
+            assert result["status"] == "degraded", (
+                "Rebuild should NOT fire until counter reaches a multiple of _RETRY_EVERY_N_CHECKS"
+            )
+
+        assert len(rebuild_calls) == 1  # Only the initial rebuild.
+
+    def test_retry_fires_exactly_at_backoff_threshold(self, pipeline):
+        """After exactly _RETRY_EVERY_N_CHECKS degraded checks with high event count,
+        the rebuild fires on the next check.
+
+        This confirms the boundary condition: the Nth degraded check fires,
+        not the (N-1)th.
+        """
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        # First check: rebuild fires.
+        pipeline.periodic_health_check()
+
+        # Run (_RETRY_EVERY_N_CHECKS - 1) silent checks (low event count).
+        pipeline._count_qualifying_events = lambda p: 0
+        for _ in range(_RETRY_EVERY_N_CHECKS - 1):
+            pipeline.periodic_health_check()
+
+        # Switch to high event count.  The next check is the Nth degraded check
+        # and must fire the retry.
+        pipeline._count_qualifying_events = lambda p: _RETRY_EVENT_COUNT_THRESHOLD + 500
+        result = pipeline.periodic_health_check()
+
+        assert result["status"] == "rebuilt"
+        assert len(rebuild_calls) == 2
+
+    # --- Degraded note preserved ---
+
+    def test_degraded_note_present_when_retry_not_fired(self, pipeline):
+        """When a persistently missing profile doesn't trigger a retry, the
+        explanatory 'note' key is still present in the degraded response."""
+        rebuild_calls = []
+        self._install_mock_rebuild(pipeline, rebuild_calls)
+
+        pipeline.periodic_health_check()  # First: newly missing.
+
+        pipeline._count_qualifying_events = lambda p: 0  # Low event count.
+        result = pipeline.periodic_health_check()
+
+        assert result["status"] == "degraded"
+        assert "note" in result
+        assert "same profiles missing" in result["note"]
