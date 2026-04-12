@@ -1014,11 +1014,153 @@ class WorkflowDetector:
 
         return workflows
 
+    def _detect_interaction_workflows_from_events(self, lookback_days: int) -> list[dict[str, Any]]:
+        """Fallback: detect interaction workflows by querying events.db directly.
+
+        Called by _detect_interaction_workflows() when the episodes table has 0
+        qualifying rows (e.g. after a database rebuild or connector outage that
+        prevented episode creation).
+
+        Algorithm:
+        1. Query email.received events grouped by sender (email_from column).
+        2. Segment each sender's events into *sessions* — consecutive emails
+           that arrive within max_step_gap_hours of each other.
+        3. A session with >= min_steps emails counts as one multi-step instance.
+        4. A sender with >= min_occurrences such instances is reported as a
+           recurring email-thread communication workflow.
+        5. min_completions is also applied as an absolute floor.
+
+        The INTERNAL_TYPE_PREFIXES filter is adapted for the events.type column
+        (the original INTERNAL_TYPE_SQL_FILTER targets the episodes.interaction_type
+        column, so we replicate the same pattern here).
+
+        Args:
+            lookback_days: Days of history to analyze.
+
+        Returns:
+            List of interaction workflow dicts with the same schema as other
+            detection strategies.
+        """
+        workflows: list[dict[str, Any]] = []
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
+        max_gap = timedelta(hours=self.max_step_gap_hours)
+
+        # Events-table adaptation of INTERNAL_TYPE_SQL_FILTER.
+        # INTERNAL_TYPE_SQL_FILTER references `interaction_type` (episodes column);
+        # here we replicate the same prefix exclusions for `type` (events column).
+        events_internal_filter = (
+            "AND type NOT LIKE 'usermodel_%' "
+            "AND type NOT LIKE 'system_%' "
+            "AND type NOT LIKE 'test%'"
+        )
+
+        # Query qualifying email.received events from events.db.
+        try:
+            with self.db.get_connection("events") as conn:
+                cursor = conn.execute(
+                    f"""
+                    SELECT id, type, timestamp, email_from
+                    FROM events
+                    WHERE julianday(timestamp) > julianday(?)
+                      AND type = 'email.received'
+                      AND email_from IS NOT NULL
+                      {events_internal_filter}
+                    ORDER BY email_from, timestamp ASC
+                    """,
+                    (cutoff.isoformat(),),
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            logger.warning("WorkflowDetector: fallback events.db query failed — returning empty list")
+            return []
+
+        n_events = len(rows)
+        logger.info(
+            "WorkflowDetector: 0 episodes, falling back to events.db sequence analysis (%d qualifying events)",
+            n_events,
+        )
+
+        if n_events == 0:
+            return []
+
+        # Group email timestamps by sender.
+        sender_timestamps: dict[str, list[datetime]] = defaultdict(list)
+        for _event_id, _event_type, timestamp_str, email_from in rows:
+            try:
+                ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                sender_timestamps[email_from].append(ts)
+            except (ValueError, AttributeError):
+                continue
+
+        # For each sender, segment their timestamps into sessions.
+        # A session is a run of consecutive emails each within max_gap of the
+        # previous one.  Sessions with >= min_steps emails represent a genuine
+        # multi-step thread pattern.
+        for sender, timestamps in sender_timestamps.items():
+            timestamps.sort()
+
+            # Segment into sessions using a single linear pass.
+            sessions: list[list[datetime]] = []
+            current_session: list[datetime] = [timestamps[0]]
+            for i in range(1, len(timestamps)):
+                if timestamps[i] - current_session[-1] <= max_gap:
+                    current_session.append(timestamps[i])
+                else:
+                    sessions.append(current_session)
+                    current_session = [timestamps[i]]
+            sessions.append(current_session)
+
+            # Keep only sessions that satisfy the min_steps threshold.
+            multi_step_sessions = [s for s in sessions if len(s) >= self.min_steps]
+            completion_count = len(multi_step_sessions)
+
+            # Apply both occurrence and completion thresholds.
+            if completion_count < self.min_occurrences:
+                continue
+            if completion_count < self.min_completions:
+                continue
+
+            # Build workflow steps from the median session depth.
+            # Cap at 5 named steps to keep workflow names readable.
+            max_steps_seen = max(len(s) for s in multi_step_sessions)
+            steps = ["email_received"]
+            for i in range(1, min(max_steps_seen, 5)):
+                steps.append(f"email_received_thread_{i}")
+
+            workflow: dict[str, Any] = {
+                "name": f"Email thread from {sender}",
+                "trigger_conditions": [f"email.received.from.{sender}"],
+                "steps": steps,
+                "typical_duration_minutes": None,
+                "tools_used": ["email"],
+                "success_rate": 1.0,
+                "times_observed": completion_count,
+            }
+            workflows.append(workflow)
+            logger.debug(
+                "WorkflowDetector: fallback detected email thread workflow for %s: "
+                "%d sessions, %d steps",
+                sender,
+                completion_count,
+                len(steps),
+            )
+
+        # Return top 20 senders by session count.
+        workflows.sort(key=lambda w: w["times_observed"], reverse=True)
+        return workflows[:20]
+
     def _detect_interaction_workflows(self, lookback_days: int) -> list[dict[str, Any]]:
         """Detect workflows from episodic interaction sequences using sliding window.
 
         Uses the episodes table to find recurring multi-step interaction patterns
         that don't fit into email/task/calendar categories.
+
+        When the episodes table contains 0 qualifying rows (e.g. after a DB
+        rebuild), automatically falls back to
+        _detect_interaction_workflows_from_events() which queries events.db
+        directly for recurring email-thread patterns.
 
         SLIDING WINDOW ALGORITHM:
         Processes episodes chronologically, tracking interaction types and
@@ -1045,6 +1187,25 @@ class WorkflowDetector:
         # list instead of crashing the entire workflow detection pipeline.
         try:
             with self.db.get_connection("user_model") as conn:
+                # Count qualifying episodes first.  If there are none, fall back
+                # to events.db sequence analysis so that the procedural user model
+                # layer is still populated even after a database rebuild.
+                count_row = conn.execute(
+                    f"""
+                    SELECT COUNT(*) FROM episodes
+                    WHERE julianday(timestamp) > julianday(?)
+                      AND interaction_type IS NOT NULL
+                      AND interaction_type NOT IN ('unknown', 'communication')
+                      {self.INTERNAL_TYPE_SQL_FILTER}
+                    """,
+                    (cutoff.isoformat(),),
+                ).fetchone()
+                episode_count = count_row[0] if count_row else 0
+
+                if episode_count == 0:
+                    # No episodes available — use the events.db fallback path.
+                    return self._detect_interaction_workflows_from_events(lookback_days)
+
                 cursor = conn.cursor()
                 cursor.execute(f"""
                     SELECT id, interaction_type, timestamp
