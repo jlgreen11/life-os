@@ -346,4 +346,4 @@ class TestFunnelInReturnDict:
         assert "funnel" in result
         assert result["funnel"]["total_contacts"] == 2
         assert result["funnel"]["inbound_only_after_filter"] == 2
-        assert result["facts_stored"] >= 1
+        assert result["facts_written"] >= 1

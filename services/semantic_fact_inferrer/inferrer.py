@@ -471,8 +471,21 @@ class SemanticFactInferrer:
         )
 
         if not human_contacts:
-            logger.info("No human bidirectional contacts found after marketing filter — trying inbound-only fallback")
-            return self._infer_from_inbound_only_contacts(contacts, base_confidence)
+            logger.info("No human bidirectional contacts found after marketing filter — running inbound-only inference")
+            inbound_result = self._infer_from_inbound_only_contacts(contacts, base_confidence)
+            # Even with no bidirectional contacts, domain breadth is a meaningful aggregate
+            # fact: it measures whether the user's contact network spans many organisations
+            # (indicating broad professional/social reach). Call aggregate with empty
+            # human_contacts — it will only write domain breadth facts (which use all_contacts
+            # and the shared marketing filter) and skip activity/network-size facts that
+            # require bidirectional data.
+            agg_count = self._infer_aggregate_relationship_facts(
+                human_contacts={},
+                all_contacts=contacts,
+                base_confidence=base_confidence,
+            )
+            inbound_result["facts_written"] = inbound_result.get("facts_written", 0) + agg_count
+            return inbound_result
 
         # Calculate average interaction count across human contacts only.
         # Previously this was computed over all bidirectional contacts, which
@@ -586,7 +599,7 @@ class SemanticFactInferrer:
                     len(inbound_only_contacts),
                 )
                 fallback_result = self._infer_from_inbound_only_contacts(contacts, base_confidence)
-                facts_written += fallback_result.get("facts_stored", 0)
+                facts_written += fallback_result.get("facts_written", 0)
 
         logger.info(
             "Inferred %d semantic facts from relationship profile (samples=%s)",
@@ -637,7 +650,7 @@ class SemanticFactInferrer:
             )
             return {"type": "relationship", "processed": True, "reason": "too_few_inbound_only"}
 
-        facts_stored = 0
+        facts_written = 0
 
         # --- Communication volume category ---
         count = len(inbound_only)
@@ -655,7 +668,7 @@ class SemanticFactInferrer:
             confidence=min(0.9, base_confidence + 0.2),
             episode_id=None,
         )
-        facts_stored += 1
+        facts_written += 1
 
         # --- Top frequent personal senders ---
         # Even without outbound messages, contacts who send frequently
@@ -682,17 +695,17 @@ class SemanticFactInferrer:
                 confidence=min(0.8, base_confidence + min(0.3, inbound_count / 50)),
                 episode_id=episode_id,
             )
-            facts_stored += 1
+            facts_written += 1
 
         logger.info(
             "Inferred %d facts from %d inbound-only human contacts (fallback path)",
-            facts_stored, len(inbound_only),
+            facts_written, len(inbound_only),
         )
         return {
             "type": "relationship",
             "processed": True,
             "reason": None,
-            "facts_stored": facts_stored,
+            "facts_written": facts_written,
             "funnel": {
                 "total_contacts": len(contacts),
                 "inbound_only_after_filter": len(inbound_only),
@@ -1904,16 +1917,30 @@ class SemanticFactInferrer:
         operators can tell whether the cognitive pipeline is actually running
         or still waiting for sufficient data.
 
+        The per-method breakdown in the log line is the key diagnostic for
+        "why are there 0 facts?": it shows which methods ran, which were
+        skipped, and how many new facts each method produced this cycle.
+
         Args:
             results: List of status dicts from each infer_from_* method, each
                 containing 'type', 'processed' (bool), 'reason' (str or None),
-                and optionally 'facts_written' (int) counting DB writes.
+                and 'facts_written' (int) counting new fact insertions.
         """
         processed = [r["type"] for r in results if r.get("processed")]
         skipped = [(r["type"], r.get("reason", "unknown")) for r in results if not r.get("processed")]
 
-        # Sum facts_written across all results that reported it
+        # Sum facts_written across all results
         total_facts = sum(r.get("facts_written", 0) for r in results)
+
+        # Per-method breakdown: "linguistic=0, relationship=3, topic=1, ..."
+        # This is the first place to look when total_facts=0 despite data existing:
+        # a method with processed=True but facts_written=0 indicates a threshold
+        # or filter issue rather than missing data.
+        per_method_parts = [
+            f"{r['type']}={'skipped' if not r.get('processed') else r.get('facts_written', '?')}"
+            for r in results
+        ]
+        per_method_str = ", ".join(per_method_parts)
 
         processed_str = ", ".join(processed) if processed else "none"
         if skipped:
@@ -1923,10 +1950,13 @@ class SemanticFactInferrer:
             skipped_str = "none"
 
         logger.info(
-            "SemanticFactInferrer: inference cycle complete — processed: %s; skipped: %s; total_facts_written: %d",
+            "SemanticFactInferrer: inference cycle complete — "
+            "processed: %s; skipped: %s; total_facts_written: %d; "
+            "per_method: [%s]",
             processed_str,
             skipped_str,
             total_facts,
+            per_method_str,
         )
 
     def run_all_inference(self):
@@ -1942,8 +1972,55 @@ class SemanticFactInferrer:
           - Periodically (e.g., every 6 hours via background task)
           - After significant data ingestion (e.g., after syncing 1000+ new events)
           - On-demand via admin endpoint for testing
+
+        Cold-start diagnostics:
+          Before running inference, logs each profile's sample count so operators
+          can immediately see which profiles have data and which are empty. When
+          facts = 0 despite having data, check this log line first — it will show
+          whether the issue is missing data (all counts = 0) or a threshold/filter
+          bug (counts > 0 but facts still not written).
         """
         logger.info("Starting semantic fact inference across all profiles")
+
+        # --- Cold-start profile availability diagnostics ---
+        # Log sample counts for all profiles BEFORE running inference.  This
+        # single log line is the first place to look when semantic facts remain
+        # at 0 despite the system having processed many events.
+        # Format: "linguistic=0, relationship=220351, topic=95000, ..."
+        _PROFILE_TYPE_MAP = [
+            ("linguistic", "linguistic"),
+            ("inbound_linguistic", "linguistic_inbound"),
+            ("relationship", "relationships"),
+            ("topic", "topics"),
+            ("cadence", "cadence"),
+            ("mood", "mood_signals"),
+            ("temporal", "temporal"),
+            ("spatial", "spatial"),
+            ("decision", "decision"),
+        ]
+        profile_samples: dict[str, int] = {}
+        for method_name, profile_type in _PROFILE_TYPE_MAP:
+            try:
+                p = self.ums.get_signal_profile(profile_type)
+                profile_samples[method_name] = p.get("samples_count", 0) if p else 0
+            except Exception:
+                # Fail-open: log -1 to signal a read error rather than "no data"
+                profile_samples[method_name] = -1
+
+        sample_summary = ", ".join(f"{k}={v}" for k, v in profile_samples.items())
+        logger.info(
+            "SemanticFactInferrer cold-start diagnostics — profile sample counts: %s",
+            sample_summary,
+        )
+
+        # Snapshot current fact count for per-cycle delta tracking
+        try:
+            with self.ums.db.get_connection("user_model") as conn:
+                _total_facts_before = conn.execute(
+                    "SELECT COUNT(*) FROM semantic_facts"
+                ).fetchone()[0]
+        except Exception:
+            _total_facts_before = 0
 
         methods = [
             ("linguistic", self.infer_from_linguistic_profile),
@@ -1958,17 +2035,61 @@ class SemanticFactInferrer:
         ]
         results = []
         for name, method in methods:
+            # Snapshot per-method fact count so we can compute an accurate delta
+            # even for methods that don't return a facts_written key themselves.
             try:
-                results.append(method())
+                with self.ums.db.get_connection("user_model") as conn:
+                    _facts_before_method = conn.execute(
+                        "SELECT COUNT(*) FROM semantic_facts"
+                    ).fetchone()[0]
+            except Exception:
+                _facts_before_method = 0
+
+            try:
+                result = method()
+                if result is None:
+                    result = {"type": name, "processed": False, "reason": "no result returned"}
             except Exception:
                 logger.exception(
                     "SemanticFactInferrer: infer_from_%s_profile failed, continuing with remaining profiles", name
                 )
-                results.append({"type": name, "processed": False, "reason": "error"})
+                result = {"type": name, "processed": False, "reason": "error", "facts_written": 0}
+
+            # Compute per-method facts_written as a DB delta when the method
+            # didn't report it directly.  This captures new fact insertions
+            # (existing facts only get confidence-bumped, so COUNT(*) won't
+            # rise for them — but even 0 delta is informative for cold-start
+            # debugging: it shows the method ran without errors or skips).
+            if "facts_written" not in result:
+                try:
+                    with self.ums.db.get_connection("user_model") as conn:
+                        _facts_after_method = conn.execute(
+                            "SELECT COUNT(*) FROM semantic_facts"
+                        ).fetchone()[0]
+                    result["facts_written"] = max(0, _facts_after_method - _facts_before_method)
+                except Exception:
+                    result["facts_written"] = 0
+
+            results.append(result)
 
         self._log_inference_summary(results)
 
-        # Cache results for diagnostics
+        # Log overall cycle delta (new facts inserted this cycle vs. total in DB)
+        try:
+            with self.ums.db.get_connection("user_model") as conn:
+                _total_facts_after = conn.execute(
+                    "SELECT COUNT(*) FROM semantic_facts"
+                ).fetchone()[0]
+            logger.info(
+                "SemanticFactInferrer cycle complete — new_facts_inserted=%d, "
+                "total_facts_in_db=%d",
+                max(0, _total_facts_after - _total_facts_before),
+                _total_facts_after,
+            )
+        except Exception:
+            pass  # Fail-open: don't crash the inference loop on a diagnostic query
+
+        # Cache results for diagnostics endpoint (/health, /admin)
         self._last_inference_results = results
         self._last_inference_time = datetime.now(timezone.utc).isoformat()
         self._total_facts_written_last_cycle = sum(r.get("facts_written", 0) for r in results)
