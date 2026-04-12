@@ -71,18 +71,31 @@ class TestStoreEpisodeResilience:
         assert any("store_episode" in record.message for record in caplog.records)
         assert any("malformed" in record.message for record in caplog.records)
 
-    def test_telemetry_still_emitted_on_db_error(self, corrupt_store, event_store):
-        """Telemetry event is emitted even when DB write fails."""
+    def test_no_telemetry_on_db_error(self, corrupt_store, event_store):
+        """Telemetry must NOT fire when the DB write fails (phantom telemetry fix).
+
+        Previously, ``_emit_telemetry()`` was called OUTSIDE the try/except block
+        in ``store_episode()``, so it fired even when the INSERT failed — producing
+        1,865 phantom ``usermodel.episode.stored`` events while 0 actual episode rows
+        existed in user_model.db.
+
+        After the fix (mirroring ``update_signal_profile`` and
+        ``update_semantic_fact``), telemetry is only emitted after a successful
+        write.  This test guards against a regression to the old phantom-telemetry
+        behavior.
+        """
         episode = _make_episode()
         corrupt_store.store_episode(episode)
 
         # Telemetry falls back to event_store when event_bus is None.
-        # Check that the telemetry event was written to events.db.
+        # Since the DB write failed, NO telemetry event should be written.
         with event_store.db.get_connection("events") as conn:
             rows = conn.execute(
                 "SELECT * FROM events WHERE type = 'usermodel.episode.stored'"
             ).fetchall()
-        assert len(rows) >= 1
+        assert len(rows) == 0, (
+            "Telemetry was emitted despite DB write failure — phantom telemetry regression"
+        )
 
 
 class TestUpdateSignalProfileResilience:

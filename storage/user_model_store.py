@@ -41,8 +41,10 @@ class UserModelStore:
         # Write counters for throttled WAL checkpointing.
         # Signal profiles are written very frequently (63K+ events observed),
         # so we checkpoint every 50 writes rather than every write.
+        # Episodes are written on every incoming event, same throttling applies.
         # Templates are written infrequently, so we checkpoint on every write.
         self._signal_profile_write_count = 0
+        self._episode_write_count = 0
         self._template_write_count = 0
 
     def _emit_telemetry(self, event_type: str, payload: dict):
@@ -171,24 +173,59 @@ class UserModelStore:
                         episode.get("embedding_id"),
                     ),
                 )
+            # `with` block has exited — transaction committed.
+
+            # Post-write verification: read the row back to confirm it actually
+            # landed in the DB.  Guards against INSERT OR REPLACE appearing to
+            # succeed at the connection level while silently failing to persist
+            # (e.g., WAL corruption or constraint violation swallowed upstream).
+            with self.db.get_connection("user_model") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM episodes WHERE id = ?", (episode["id"],)
+                ).fetchone()[0]
+            if count == 0:
+                logger.critical(
+                    "UserModelStore.store_episode: post-write verification FAILED "
+                    "for episode %s — row not found after INSERT OR REPLACE; "
+                    "user_model.db may be corrupt or schema migration is incomplete",
+                    episode["id"],
+                )
+
+            # Throttled WAL checkpoint: episodes are written on every incoming
+            # event (high-frequency), so checkpoint every 50 writes to bound WAL
+            # file growth and reduce data-loss exposure from WAL corruption.
+            self._episode_write_count += 1
+            if self._episode_write_count % 50 == 0:
+                try:
+                    self.db.checkpoint_wal("user_model")
+                except Exception as wal_err:
+                    logger.warning(
+                        "UserModelStore: WAL checkpoint after episode write failed: %s",
+                        wal_err,
+                    )
+
+            # Telemetry fires only after the DB write committed successfully.
+            # Previously this was OUTSIDE the try/except block, which caused
+            # phantom telemetry: 1,865 `usermodel.episode.stored` events in the
+            # event log while 0 actual episode rows existed in user_model.db.
+            # Mirroring the fix applied to update_signal_profile() and
+            # update_semantic_fact() — telemetry is evidence of a successful
+            # write, not a signal that a write was attempted.
+            self._emit_telemetry("usermodel.episode.stored", {
+                "episode_id": episode["id"],
+                "event_id": episode["event_id"],
+                "interaction_type": episode.get("interaction_type", "unknown"),
+                "active_domain": episode.get("active_domain"),
+                # Use the normalized list values (not raw episode dict) to avoid
+                # len(None) error when contacts/topics are None
+                "contacts_count": len(contacts_involved),
+                "topics_count": len(topics),
+                "stored_at": episode["timestamp"],
+            })
         except Exception as e:
             logger.warning(
                 "UserModelStore.store_episode failed (user_model.db may be corrupt): %s", e
             )
-
-        # Telemetry runs outside the try/except so it fires even when the
-        # DB write fails — this helps the health loop detect degradation.
-        self._emit_telemetry("usermodel.episode.stored", {
-            "episode_id": episode["id"],
-            "event_id": episode["event_id"],
-            "interaction_type": episode.get("interaction_type", "unknown"),
-            "active_domain": episode.get("active_domain"),
-            # Use the normalized list values (not raw episode dict) to avoid
-            # len(None) error when contacts/topics are None
-            "contacts_count": len(contacts_involved),
-            "topics_count": len(topics),
-            "stored_at": episode["timestamp"],
-        })
 
     def update_episode(
         self,
