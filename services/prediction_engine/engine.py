@@ -150,6 +150,13 @@ class PredictionEngine:
         # a silent persistence failure (e.g. WAL not checkpointed, DB recovery).
         self._persistence_failure_detected: bool = False
 
+        # Counts the number of successful WAL checkpoints this engine has
+        # performed (one per generate_predictions() cycle that stored ≥1 row).
+        # Exposed via get_runtime_diagnostics() so operators can verify that
+        # checkpointing is happening regularly and diagnose WAL-growth or
+        # corruption-recovery scenarios.
+        self._wal_checkpoint_count: int = 0
+
         # Per-check generation breakdown from the last generate_predictions() run.
         # Persisted to prediction_engine_state so it survives restarts and is
         # available in diagnostics for debugging 0-prediction anomalies.
@@ -411,6 +418,7 @@ class PredictionEngine:
                 "recent_errors": self._last_store_errors,
             },
             "persistence_failure_detected": self._persistence_failure_detected,
+            "wal_checkpoint_count": self._wal_checkpoint_count,
             "zero_surfacing_cycles": self._zero_surfacing_cycles,
             "surfacing": self._surfacing_diagnostics,
             "last_generation_breakdown": self._last_generation_stats or None,
@@ -561,6 +569,44 @@ class PredictionEngine:
                         conn.execute('DELETE FROM predictions WHERE id = ?', (test_id,))
                         logger.info('Persistence recovery: DB write test PASSED — clearing failure flag')
                         self._persistence_failure_detected = False
+
+                        # Poisoned pre-filter cache detection: if the predictions
+                        # table is actually empty (0 unresolved rows) but the
+                        # in-memory cache still has entries, those entries reference
+                        # rows that were lost when the WAL was truncated before
+                        # checkpoint.  A non-empty cache would block regeneration
+                        # of those predictions on this cycle, perpetuating the
+                        # 0-prediction stall.  Clear them and remove any persisted
+                        # 'prefilter_cache' key from prediction_engine_state so a
+                        # future restart cannot restore stale entries.
+                        #
+                        # IMPLEMENTATION NOTE: all queries here reuse the already-open
+                        # *conn* to avoid nested get_connection() calls on the same
+                        # database, which would cause "database is locked" under WAL
+                        # mode because the current write transaction is not yet committed.
+                        try:
+                            pred_count = conn.execute(
+                                'SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL'
+                            ).fetchone()[0]
+                            if pred_count == 0 and self._prefilter_cache:
+                                logger.warning(
+                                    'Persistence recovery: predictions table is empty but '
+                                    'prefilter_cache has %d entries — cache is poisoned '
+                                    '(WAL rows lost before checkpoint). Clearing cache and '
+                                    'deleting any persisted prefilter_cache state.',
+                                    len(self._prefilter_cache),
+                                )
+                                conn.execute(
+                                    "DELETE FROM prediction_engine_state "
+                                    "WHERE key = 'prefilter_cache'"
+                                )
+                        except Exception as _exc:
+                            logger.warning(
+                                'Persistence recovery: prefilter cache poison check failed '
+                                '(non-fatal): %s',
+                                _exc,
+                            )
+
                         # Reset the pre-filter cache so this cycle does a full DB
                         # refresh — the table may have changed during DB recovery.
                         self._prefilter_cache = set()
@@ -1082,6 +1128,7 @@ class PredictionEngine:
         if stored_count > 0:
             try:
                 self.db.checkpoint_wal("user_model")
+                self._wal_checkpoint_count += 1
             except Exception as e:
                 logger.warning("WAL checkpoint failed after prediction storage: %s", e)
 
