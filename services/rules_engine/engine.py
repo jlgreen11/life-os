@@ -171,7 +171,45 @@ class RulesEngine:
     async def add_rule(self, name: str, trigger_event: str,
                        conditions: list[dict], actions: list[dict],
                        created_by: str = "user") -> str:
-        """Add a new rule and reload the cache so it takes effect immediately."""
+        """Add a new rule and reload the cache so it takes effect immediately.
+
+        Raises ValueError for invalid inputs:
+        - An action dict that is missing a required ``type`` key.
+        - A condition using the ``regex`` operator with an invalid pattern.
+
+        Emits a logger.warning (but does NOT raise) when ``conditions`` is
+        empty, because an empty conditions list means the rule matches every
+        event of the trigger type — intentional for wildcard catch-all rules
+        but almost certainly a misconfiguration for user-created automation.
+        """
+        # --- Input validation (runs before any DB write) ---
+
+        # Empty conditions means the rule fires on EVERY event of trigger_event.
+        # This is intentional for system/wildcard rules but warn so it's visible.
+        if not conditions:
+            logger.warning(
+                'Rule "%s" has empty conditions — it will match ALL %s events',
+                name, trigger_event,
+            )
+
+        # Pre-validate regex patterns so invalid patterns are rejected at
+        # creation time rather than failing silently on every event evaluation.
+        for i, cond in enumerate(conditions):
+            if cond.get("op") == "regex":
+                pattern = cond.get("value", "")
+                try:
+                    re.compile(pattern)
+                except re.error as exc:
+                    raise ValueError(
+                        f"Invalid regex in condition {i} (field={cond.get('field')}): "
+                        f"{pattern!r} — {exc}"
+                    ) from exc
+
+        # Every action must declare its type so the action dispatcher can route it.
+        for i, action in enumerate(actions):
+            if "type" not in action:
+                raise ValueError(f"Action {i} missing required \"type\" field")
+
         rule_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
 
@@ -230,6 +268,71 @@ class RulesEngine:
                 rules.append(rule)
             return rules
 
+    def get_diagnostics(self) -> dict:
+        """Return rules engine diagnostic information.
+
+        Scans the in-memory rules cache and reports:
+        - Aggregate counts per trigger event type.
+        - Rules with empty conditions (match ALL events of their trigger type).
+        - Rules containing invalid regex patterns (these fail silently at
+          evaluation time — diagnosing them here makes them findable).
+        - An overall ``health`` field: ``"ok"`` or ``"degraded"`` (invalid regex).
+
+        The caller does not need to call ``load_rules()`` first; the cache is
+        automatically populated during normal operation.  For an up-to-date
+        snapshot before ``evaluate()`` has run, call ``load_rules()`` manually.
+        """
+        diagnostics: dict = {
+            "total_rules": len(self._rules_cache),
+            "cache_loaded_at": self._cache_loaded_at.isoformat() if self._cache_loaded_at else None,
+            "rules_by_trigger": {},
+            "empty_condition_rules": [],
+            "invalid_regex_rules": [],
+            "health": "ok",
+        }
+
+        for rule in self._rules_cache:
+            trigger = rule.get("trigger_event", "unknown")
+            # Tally rules per trigger type
+            diagnostics["rules_by_trigger"][trigger] = (
+                diagnostics["rules_by_trigger"].get(trigger, 0) + 1
+            )
+
+            # Flag rules whose conditions list is empty
+            if not rule.get("conditions"):
+                diagnostics["empty_condition_rules"].append({
+                    "id": rule["id"],
+                    "name": rule["name"],
+                    "trigger": trigger,
+                })
+
+            # Find regex conditions with patterns that fail to compile
+            for cond in rule.get("conditions", []):
+                if cond.get("op") == "regex":
+                    try:
+                        re.compile(cond.get("value", ""))
+                    except re.error as exc:
+                        diagnostics["invalid_regex_rules"].append({
+                            "rule_id": rule["id"],
+                            "rule_name": rule["name"],
+                            "field": cond.get("field"),
+                            "pattern": cond.get("value"),
+                            "error": str(exc),
+                        })
+
+        # Degrade health when any regex pattern is known-broken
+        if diagnostics["invalid_regex_rules"]:
+            diagnostics["health"] = "degraded"
+
+        # Surface human-readable recommendations for empty-condition rules
+        if diagnostics["empty_condition_rules"]:
+            diagnostics["recommendations"] = [
+                f'Rule "{r["name"]}" has empty conditions — matches all {r["trigger"]} events'
+                for r in diagnostics["empty_condition_rules"]
+            ]
+
+        return diagnostics
+
     # -------------------------------------------------------------------
     # Evaluation logic
     # -------------------------------------------------------------------
@@ -253,7 +356,16 @@ class RulesEngine:
         return trigger == event_type  # Exact match
 
     def _evaluate_conditions(self, conditions: list[dict], event: dict) -> bool:
-        """Evaluate all conditions against an event. All must be true (AND logic)."""
+        """Evaluate all conditions against an event. All must be true (AND logic).
+
+        An empty ``conditions`` list returns True — this is intentional for
+        wildcard catch-all rules (e.g. "notify on every calendar conflict").
+        A warning is emitted at rule creation time via ``add_rule()`` so that
+        unintentional empty-condition rules are visible without altering their
+        runtime behaviour.
+        """
+        # Empty conditions = match everything. Intentional for wildcard rules;
+        # a creation-time warning in add_rule() flags likely misconfigurations.
         for condition in conditions:
             if not self._evaluate_single_condition(condition, event):
                 return False
