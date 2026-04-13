@@ -41,7 +41,10 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Add prediction pipeline health section to admin UI** · `missing_feature` — Returned from wave 11 (no PR created). Surface prediction generation/persistence stats on admin dashboard.
+- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Returned from wave 13 (no PR created). Add error diagnosis hints and one-click retry to connector cards in admin UI.
+- **Reduce notification expiry rate with graduated delivery thresholds** · `broken_feature` — Returned from wave 13 (no PR created). 159 expired vs 27 delivered; graduated strategy needs tuning.
+- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` — Returned from wave 13 (no PR created). Surface backfill status in analyze-data-quality.py output.
+- **Add insight engine correlator execution tracking and failure logging** · `code_quality` — Returned from wave 13 (no PR created). Add per-correlator timing and error capture.
 - **Add event bus throughput counters and get_metrics() method** · `code_quality` — Open PR #725 awaiting merge. Returned from wave 10.
 - **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Open PR #724 awaiting merge. Returned from wave 8 (not merged).
 - **Add diagnostic banner to dashboard when user model is empty** · `missing_feature` — Open PR #723 awaiting merge. Returned from wave 8 (not merged).
@@ -57,13 +60,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add pre-write JSON serialization guard to cadence extractor** · `broken_feature` (wave 13, slot 1)
-- **Add pre-write serialization guard to linguistic outbound profile** · `broken_feature` (wave 13, slot 2)
-- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` (wave 13, slot 3)
-- **Reduce notification expiry rate with graduated delivery thresholds** · `broken_feature` (wave 13, slot 4)
-- **Add episode and template backfill diagnostics to data quality analyzer** · `data_quality` (wave 13, slot 5)
-- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` (wave 13, slot 6)
-- **Add insight engine correlator execution tracking and failure logging** · `code_quality` (wave 13, slot 7)
+- **Add prediction pipeline health section to admin UI** · `missing_feature` (wave 14, slot 1)
+- **Add post-write verification and WAL checkpoint to store_routine() and store_prediction()** · `code_quality` (wave 14, slot 2)
+- **Add post-execution verification to semantic inference and routine detection loops** · `code_quality` (wave 14, slot 3)
+- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` (wave 14, slot 4)
+- **Add feedback collector per-source and per-type diagnostic expansion** · `code_quality` (wave 14, slot 5)
+- **Add pre-write serialization guard and post-write verification to linguistic outbound profile** · `broken_feature` (wave 14, slot 6)
+- **Add notification delivery failure diagnostics and stale notification recovery logging** · `broken_feature` (wave 14, slot 7)
 
 ## Completed
 
@@ -71,6 +74,7 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Add pre-write JSON serialization guard to cadence extractor** · `broken_feature` — wave 13 (verified already implemented: cadence extractor uses plain dicts instead of defaultdict, confirmed in cadence.py:230-233)
 - **Add pre-write JSON serialization guard to topic extractor** · `broken_feature` — wave 11, PR #727
 - **Add pre-write JSON serialization guard to spatial extractor** · `broken_feature` — wave 11, PR #728
 - **Add vector store health diagnostics and stale embedding detection** · `code_quality` — wave 11, PR #726
