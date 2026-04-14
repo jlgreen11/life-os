@@ -1,6 +1,6 @@
 # Life OS Unused Capability Audit
 
-**Date:** 2026-02-15
+**Date:** 2026-02-15 (updated 2026-04-14)
 **Scope:** Full codebase review for stubbed, dead, or underutilized features
 
 ---
@@ -120,6 +120,62 @@ These columns support the confidence-growth loop described in the architecture d
   advanced fields like `hedge_words_ratio`, `question_ratio`, `emoji_density`, etc.
 - **Recommendation:** Implement incrementally — each field is a straightforward text
   analysis that can be added to `LinguisticExtractor.extract()` one at a time.
+
+---
+
+---
+
+## Added 2026-04-14 — Insight Engine Population Layer
+
+### 11. `insight_outcomes` Write Path (FIXED 2026-04-14)
+
+- **Files:** `services/insight_engine/engine.py`
+- **Symptom:** The `insight_outcomes` table had a complete schema and a reader
+  (`_insight_effectiveness_insights`) but zero writes anywhere. The effectiveness
+  correlator always returned `[]`.
+- **Fix:** `_record_outcome_baseline()` writes a `days_after=0` baseline row whenever
+  an insight with `metric_key` in its evidence is stored. `measure_pending_outcomes()`
+  fills 7/14/30-day post rows with signed delta (positive = improvement). Called from
+  `_insight_loop` each cycle via `asyncio.to_thread`. The effectiveness correlator
+  now has real data after ~7 days of operation.
+
+### 12. `generate_insights` Blocked the Event Loop (FIXED 2026-04-14)
+
+- **File:** `services/insight_engine/engine.py`
+- **Symptom:** All 28 correlators ran synchronously on the event loop thread. During
+  the multi-second DB scan, WebSocket pushes and HTTP responses were delayed.
+- **Fix:** Extracted correlator loop into `_run_correlators_sync()`, called via
+  `asyncio.to_thread` from `generate_insights`. The event loop is now free during
+  correlation scans.
+
+### 13. `contribution_queue` — Never Written To
+
+- **Files:** `storage/manager.py`, `storage/population_baselines.py`
+- **Symptom:** The table and `update_from_peer()` method exist but nothing writes to
+  `contribution_queue`. There is no peer network, no aggregation server, and no
+  differential-privacy noise addition. Pure scaffolding.
+- **Recommendation:** Either remove until a real peer network exists, or implement a
+  local simulation so the differential-privacy mechanics can be tested in isolation.
+
+### 14. Cohort Key Computed but Never Used
+
+- **File:** `services/insight_engine/cohort.py`
+- **Symptom:** `CohortProfiler` computes a SHA-256 cohort key and stores 6 dimension
+  buckets, but nothing reads the key back. Population baselines are all seeded as
+  `general` or `knowledge_worker` — there are no cohort-specific baseline variants
+  for the key to select between.
+- **Recommendation:** Add cohort-specific baseline variants (e.g., by stress profile
+  or communication volume), then wire `get_cohort_key()` into the comparative
+  correlator to select the most specific matching baseline.
+
+### 15. `email.avg_response_minutes` Baseline Has No Materializer
+
+- **Files:** `services/insight_engine/metric_materializer.py`, `storage/population_baselines.py`
+- **Symptom:** `email.avg_response_minutes` is seeded in `population_baselines` but
+  `MetricMaterializer` never writes it to `metric_time_series`. The cadence signal
+  extractor computes per-contact response times but not a daily aggregate.
+- **Recommendation:** Add `_materialize_response_time_metrics()` to `MetricMaterializer`
+  that reads from the cadence signal profile and computes a daily average response time.
 
 ---
 
