@@ -27,6 +27,7 @@ Insight Types:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -293,7 +294,7 @@ class InsightEngine:
             "min_required": 20,
         }
 
-        # Comparative population: needs materialized metrics
+        # Personal trend + comparative population: both need materialized metrics
         try:
             with self.db.get_connection("user_model") as conn:
                 mts_count = conn.execute(
@@ -301,9 +302,16 @@ class InsightEngine:
                 ).fetchone()[0]
         except Exception:
             mts_count = -1
+        _mts_status = "ready" if mts_count >= 3 else ("error" if mts_count < 0 else ("partial" if mts_count > 0 else "no_data"))
+        report["_personal_trend_insights"] = {
+            "source": "metric_time_series (personal baseline)",
+            "status": _mts_status,
+            "count": mts_count,
+            "min_required": 3,
+        }
         report["_comparative_population_insights"] = {
             "source": "metric_time_series + population_baselines",
-            "status": "ready" if mts_count >= 3 else ("error" if mts_count < 0 else ("partial" if mts_count > 0 else "no_data")),
+            "status": _mts_status,
             "count": mts_count,
             "min_required": 3,
         }
@@ -340,25 +348,14 @@ class InsightEngine:
 
         return report
 
-    async def generate_insights(self) -> list[Insight]:
-        """Main loop: run all correlators, deduplicate, store, return new insights.
+    def _run_correlators_sync(self) -> tuple[list[Insight], dict[str, int | str]]:
+        """Run all correlators synchronously. Intended to be called via asyncio.to_thread.
 
-        Skips correlator execution if the last successful run was within
-        ``_insight_cache_ttl`` seconds.  The caller (e.g. the ``/api/insights/summary``
-        route) still reads stored insights from the database, so returning an
-        empty list here simply means "no new insights computed this call".
+        Returns (raw_insights, per_correlator_stats).
         """
-        if self._insight_cache_ttl > 0 and (time.monotonic() - self._last_insight_run) < self._insight_cache_ttl:
-            logger.debug("Skipping correlator run — last run %.1fs ago (TTL %.0fs)",
-                         time.monotonic() - self._last_insight_run, self._insight_cache_ttl)
-            return []
-
         raw: list[Insight] = []
-        correlator_stats: dict[str, int | str] = {}
+        stats: dict[str, int | str] = {}
 
-        # Each correlator handles its own errors gracefully and returns
-        # an empty list when there is insufficient data.  Per-correlator
-        # result counts are tracked for diagnostics.
         correlators = [
             ("place_frequency", self._place_frequency_insights),
             ("contact_gap", self._contact_gap_insights),
@@ -384,6 +381,7 @@ class InsightEngine:
             ("weekly_mood_cycle", self._weekly_mood_cycle_insights),
             ("prediction_accuracy", self._prediction_accuracy_insights),
             ("episode_satisfaction", self._episode_satisfaction_insights),
+            ("personal_trend", self._personal_trend_insights),
             ("comparative_population", self._comparative_population_insights),
             ("cross_metric_correlation", self._cross_metric_correlation_insights),
             ("insight_effectiveness", self._insight_effectiveness_insights),
@@ -392,11 +390,30 @@ class InsightEngine:
         for name, method in correlators:
             try:
                 results = method()
-                correlator_stats[name] = len(results)
+                stats[name] = len(results)
                 raw.extend(results)
             except Exception:
-                correlator_stats[name] = "error"
+                stats[name] = "error"
                 logger.exception("%s correlator failed", name)
+
+        return raw, stats
+
+    async def generate_insights(self) -> list[Insight]:
+        """Main loop: run all correlators, deduplicate, store, return new insights.
+
+        Skips correlator execution if the last successful run was within
+        ``_insight_cache_ttl`` seconds.  The caller (e.g. the ``/api/insights/summary``
+        route) still reads stored insights from the database, so returning an
+        empty list here simply means "no new insights computed this call".
+        """
+        if self._insight_cache_ttl > 0 and (time.monotonic() - self._last_insight_run) < self._insight_cache_ttl:
+            logger.debug("Skipping correlator run — last run %.1fs ago (TTL %.0fs)",
+                         time.monotonic() - self._last_insight_run, self._insight_cache_ttl)
+            return []
+
+        # Run all correlators in a thread pool worker so DB queries
+        # do not block the event loop during the multi-second scan.
+        raw, correlator_stats = await asyncio.to_thread(self._run_correlators_sync)
 
         logger.info("InsightEngine: correlator results — %s", correlator_stats)
 
@@ -619,6 +636,8 @@ class InsightEngine:
             "population_percentile_task": "email.work",
             "population_percentile_finance": "finance.transactions",
             "population_percentile_social": "messaging.direct",
+            # Personal trend: weighted by the domain of the metric being trended.
+            "personal_trend": "email.work",
             # Cross-metric correlations: not tied to a single source.
             "cross_metric_correlation": "email.work",
             # Insight effectiveness: not source-weighted (meta-insight).
@@ -4549,6 +4568,84 @@ class InsightEngine:
         return insights
 
     # ------------------------------------------------------------------
+    # Correlator: Personal Trend Baselines
+    # ------------------------------------------------------------------
+
+    def _personal_trend_insights(self) -> list[Insight]:
+        """Compare each metric's recent 14-day average against the user's own
+        90-day personal baseline.
+
+        Fires when the recent window deviates more than 20% from the user's
+        own historical norm -- answering "is this unusual *for me*?" before
+        comparing to population.
+
+        Thresholds:
+            >20% change: insight fires
+            >40% change: confidence bumped
+        """
+        insights: list[Insight] = []
+
+        recent_cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")
+        baseline_cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).strftime("%Y-%m-%d")
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT metric_key,
+                              AVG(CASE WHEN period >= :rc THEN value END) as recent_avg,
+                              COUNT(CASE WHEN period >= :rc THEN 1 END) as recent_count,
+                              AVG(CASE WHEN period < :rc AND period >= :bc THEN value END) as baseline_avg,
+                              COUNT(CASE WHEN period < :rc AND period >= :bc THEN 1 END) as baseline_count
+                       FROM metric_time_series
+                       WHERE granularity = 'daily' AND period >= :bc
+                       GROUP BY metric_key
+                       HAVING recent_count >= 5 AND baseline_count >= 14""",
+                    {"rc": recent_cutoff, "bc": baseline_cutoff},
+                ).fetchall()
+        except Exception:
+            logger.debug("personal_trend: could not query metric_time_series")
+            return []
+
+        for row in rows:
+            baseline_avg = row["baseline_avg"]
+            recent_avg = row["recent_avg"]
+            if baseline_avg is None or baseline_avg == 0 or recent_avg is None:
+                continue
+
+            pct_change = (recent_avg - baseline_avg) / abs(baseline_avg)
+            if abs(pct_change) < 0.20:
+                continue
+
+            metric_key = row["metric_key"]
+            readable = metric_key.replace(".", " ").replace("_", " ")
+            direction = "up" if pct_change > 0 else "down"
+            confidence = min(0.80, 0.45 + abs(pct_change) * 0.5)
+
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your {readable} is {direction} {abs(pct_change):.0%} from your personal "
+                    f"90-day baseline ({recent_avg:.1f} now vs {baseline_avg:.1f} average)."
+                ),
+                confidence=confidence,
+                evidence=[
+                    f"metric_key={metric_key}",
+                    f"recent_avg={recent_avg:.3f}",
+                    f"personal_baseline={baseline_avg:.3f}",
+                    f"pct_change={pct_change:.3f}",
+                    f"recent_days={row['recent_count']}",
+                    f"baseline_days={row['baseline_count']}",
+                ],
+                category="personal_trend",
+                entity=metric_key,
+                staleness_ttl_hours=72,
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
     # Correlator: Comparative Population Insights
     # ------------------------------------------------------------------
 
@@ -5057,3 +5154,126 @@ class InsightEngine:
                     insight.created_at,
                 ),
             )
+        # Record baseline metric value so we can measure outcome later
+        self._record_outcome_baseline(insight)
+
+    def _record_outcome_baseline(self, insight: Insight) -> None:
+        """Record the current metric value as the baseline when an insight is stored.
+
+        Only applies to insights that reference a specific metric_key in their
+        evidence (population-comparison and personal-trend insights).  The
+        baseline row (days_after=0) is what measure_pending_outcomes compares
+        against at 7, 14, and 30 days later.
+        """
+        metric_key = None
+        baseline_value = None
+        for ev in insight.evidence:
+            if ev.startswith("metric_key="):
+                metric_key = ev.split("=", 1)[1]
+            elif ev.startswith("user_avg=") or ev.startswith("recent_avg="):
+                try:
+                    baseline_value = float(ev.split("=", 1)[1])
+                except ValueError:
+                    pass
+
+        if not metric_key or baseline_value is None:
+            return
+
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    """INSERT OR IGNORE INTO insight_outcomes
+                       (insight_id, metric_key, baseline_value, days_after, measured_at)
+                       VALUES (?, ?, ?, 0, ?)""",
+                    (insight.id, metric_key, baseline_value, now),
+                )
+        except Exception:
+            logger.debug("_record_outcome_baseline: could not write for %s", insight.id)
+
+    def measure_pending_outcomes(self) -> int:
+        """Measure outcomes for insights at 7, 14, and 30-day checkpoints.
+
+        For each insight that has a baseline row (days_after=0) and is now
+        7, 14, or 30 days old, fetches the current metric value and writes
+        a post row with delta.  Called periodically from the insight loop.
+
+        Returns the number of outcome rows written.
+        """
+        now = datetime.now(timezone.utc)
+        written = 0
+
+        # Which direction is "improvement" for each metric domain.
+        # True = higher is better, False = lower is better.
+        higher_is_better: dict[str, bool] = {
+            "email.daily_received_count": False,   # less inbox pressure = better
+            "email.daily_sent_count": True,
+            "mood.energy_daily_avg": True,
+            "mood.stress_daily_avg": False,
+            "mood.social_battery_daily_avg": True,
+            "mood.valence_daily_avg": True,
+            "mood.cognitive_load_daily_avg": False,
+            "task.daily_completed_count": True,
+            "finance.daily_spend_total": False,
+            "social.unique_contacts_daily": True,
+            "calendar.daily_meeting_count": False,
+        }
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                for days in [7, 14, 30]:
+                    window_start = (now - timedelta(days=days + 1)).isoformat()
+                    window_end = (now - timedelta(days=days - 1)).isoformat()
+
+                    pending = conn.execute(
+                        """SELECT io.insight_id, io.metric_key, io.baseline_value
+                           FROM insight_outcomes io
+                           JOIN insights i ON i.id = io.insight_id
+                           WHERE io.days_after = 0
+                             AND io.baseline_value IS NOT NULL
+                             AND i.created_at BETWEEN ? AND ?
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM insight_outcomes io2
+                                 WHERE io2.insight_id = io.insight_id
+                                   AND io2.metric_key = io.metric_key
+                                   AND io2.days_after = ?
+                             )""",
+                        (window_start, window_end, days),
+                    ).fetchall()
+
+                    for row in pending:
+                        metric_row = conn.execute(
+                            """SELECT AVG(value) as avg_val
+                               FROM metric_time_series
+                               WHERE metric_key = ? AND granularity = 'daily'
+                                 AND period >= ?""",
+                            (row["metric_key"],
+                             (now - timedelta(days=7)).strftime("%Y-%m-%d")),
+                        ).fetchone()
+
+                        if not metric_row or metric_row["avg_val"] is None:
+                            continue
+
+                        post_value = metric_row["avg_val"]
+                        baseline = row["baseline_value"]
+                        raw_delta = post_value - baseline
+                        # Sign delta so positive always means improvement
+                        good_direction = higher_is_better.get(row["metric_key"], True)
+                        delta = raw_delta if good_direction else -raw_delta
+
+                        conn.execute(
+                            """INSERT OR IGNORE INTO insight_outcomes
+                               (insight_id, metric_key, baseline_value, post_value,
+                                delta, days_after, measured_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            (row["insight_id"], row["metric_key"], baseline,
+                             post_value, delta, days, now.isoformat()),
+                        )
+                        written += 1
+
+        except Exception:
+            logger.debug("measure_pending_outcomes: error", exc_info=True)
+
+        if written:
+            logger.info("InsightEngine: measured %d outcome checkpoints", written)
+        return written

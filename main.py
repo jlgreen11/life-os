@@ -3705,6 +3705,14 @@ class LifeOS:
             except Exception as e:
                 logger.error("Insight engine error: %s", e)
 
+            # Step 2b: Measure outcomes for insights at 7/14/30-day checkpoints
+            try:
+                measured = await asyncio.to_thread(self.insight_engine.measure_pending_outcomes)
+                if measured:
+                    logger.info("  InsightEngine: measured %d outcome checkpoints", measured)
+            except Exception as e:
+                logger.error("Outcome measurement error: %s", e)
+
             # Step 3: Recalculate AI drift based on engagement ratios
             try:
                 await asyncio.to_thread(self.source_weight_manager.bulk_recalculate_drift)
