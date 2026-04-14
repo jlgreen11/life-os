@@ -33,13 +33,14 @@ import logging
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from services.insight_engine.models import Insight
 from services.insight_engine.source_weights import SourceWeightManager
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 from storage.manager import DatabaseManager
+from storage.population_baselines import PopulationBaselineStore
 from storage.user_model_store import UserModelStore
 
 logger = logging.getLogger(__name__)
@@ -95,16 +96,27 @@ def _routine_trigger_label(trigger: str) -> str:
     return f"{trigger.replace('_', ' ')} routine"
 
 
+def _ordinal(n: int) -> str:
+    """Return the ordinal string for an integer (1st, 2nd, 3rd, etc.)."""
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 class InsightEngine:
     """Cross-correlates signal profiles to produce human-readable insights."""
 
     def __init__(self, db: DatabaseManager, ums: UserModelStore,
                  source_weight_manager: Optional[SourceWeightManager] = None,
+                 population_baseline_store: Optional[PopulationBaselineStore] = None,
                  timezone: str = "America/Los_Angeles",
                  cache_ttl_seconds: float = 300.0):
         self.db = db
         self.ums = ums
         self.swm = source_weight_manager
+        self.pbs = population_baseline_store or PopulationBaselineStore(db)
         self._tz = ZoneInfo(timezone)
         self._insight_cache_ttl: float = cache_ttl_seconds
         self._last_insight_run: float = 0.0
@@ -281,6 +293,51 @@ class InsightEngine:
             "min_required": 20,
         }
 
+        # Comparative population: needs materialized metrics
+        try:
+            with self.db.get_connection("user_model") as conn:
+                mts_count = conn.execute(
+                    "SELECT COUNT(DISTINCT metric_key) FROM metric_time_series"
+                ).fetchone()[0]
+        except Exception:
+            mts_count = -1
+        report["_comparative_population_insights"] = {
+            "source": "metric_time_series + population_baselines",
+            "status": "ready" if mts_count >= 3 else ("error" if mts_count < 0 else ("partial" if mts_count > 0 else "no_data")),
+            "count": mts_count,
+            "min_required": 3,
+        }
+
+        # Cross-metric correlation: needs correlation rows
+        try:
+            with self.db.get_connection("user_model") as conn:
+                corr_count = conn.execute(
+                    "SELECT COUNT(*) FROM metric_correlations WHERE ABS(correlation) >= 0.4"
+                ).fetchone()[0]
+        except Exception:
+            corr_count = -1
+        report["_cross_metric_correlation_insights"] = {
+            "source": "metric_correlations",
+            "status": "ready" if corr_count >= 1 else ("error" if corr_count < 0 else "no_data"),
+            "count": corr_count,
+            "min_required": 1,
+        }
+
+        # Insight effectiveness: needs outcome rows
+        try:
+            with self.db.get_connection("user_model") as conn:
+                outcome_count = conn.execute(
+                    "SELECT COUNT(*) FROM insight_outcomes WHERE days_after >= 7"
+                ).fetchone()[0]
+        except Exception:
+            outcome_count = -1
+        report["_insight_effectiveness_insights"] = {
+            "source": "insight_outcomes",
+            "status": "ready" if outcome_count >= 3 else ("error" if outcome_count < 0 else ("partial" if outcome_count > 0 else "no_data")),
+            "count": outcome_count,
+            "min_required": 3,
+        }
+
         return report
 
     async def generate_insights(self) -> list[Insight]:
@@ -327,6 +384,9 @@ class InsightEngine:
             ("weekly_mood_cycle", self._weekly_mood_cycle_insights),
             ("prediction_accuracy", self._prediction_accuracy_insights),
             ("episode_satisfaction", self._episode_satisfaction_insights),
+            ("comparative_population", self._comparative_population_insights),
+            ("cross_metric_correlation", self._cross_metric_correlation_insights),
+            ("insight_effectiveness", self._insight_effectiveness_insights),
         ]
 
         for name, method in correlators:
@@ -551,6 +611,17 @@ class InsightEngine:
             "high_satisfaction_contact": "messaging.direct",
             "low_satisfaction_contact": "messaging.direct",
             "interaction_type_satisfaction": "messaging.direct",
+            # Comparative population insights: weighted by the domain of the
+            # specific metric being compared (email metrics -> email.work, etc.)
+            "population_percentile_email": "email.work",
+            "population_percentile_calendar": "calendar.meetings",
+            "population_percentile_mood": "messaging.direct",
+            "population_percentile_task": "email.work",
+            "population_percentile_finance": "finance.transactions",
+            "population_percentile_social": "messaging.direct",
+            # Cross-metric correlations: not tied to a single source.
+            "cross_metric_correlation": "email.work",
+            # Insight effectiveness: not source-weighted (meta-insight).
         }
 
         weighted: list[Insight] = []
@@ -4475,6 +4546,316 @@ class InsightEngine:
             "episode_satisfaction_insights: %d insights (contacts + interaction types)",
             len(insights),
         )
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Comparative Population Insights
+    # ------------------------------------------------------------------
+
+    def _comparative_population_insights(self) -> list[Insight]:
+        """Compare user's actual metrics against population baselines.
+
+        Reads materialized metrics from metric_time_series, computes the
+        user's recent average for each metric, and looks up their percentile
+        rank in the population_baselines table.
+
+        Surfaces an insight when the user is above the 80th or below the
+        20th percentile -- the ranges where the answer to "is this normal?"
+        is meaningfully "no".
+
+        Metric-to-category mapping determines which population_percentile_*
+        category (and therefore source weight key) is used for each insight.
+        """
+        insights: list[Insight] = []
+
+        # Define which metrics to compare and their insight categories
+        metric_configs: list[tuple[str, str, str]] = [
+            # (metric_key, population_baseline_key, insight_category)
+            ("email.daily_received_count", "email.daily_received_count", "population_percentile_email"),
+            ("email.daily_sent_count", "email.daily_sent_count", "population_percentile_email"),
+            ("calendar.daily_meeting_count", "calendar.daily_meeting_count", "population_percentile_calendar"),
+            ("mood.stress_daily_avg", "mood.stress_daily_avg", "population_percentile_mood"),
+            ("mood.energy_daily_avg", "mood.energy_daily_avg", "population_percentile_mood"),
+            ("mood.social_battery_daily_avg", "mood.social_battery_daily_avg", "population_percentile_mood"),
+            ("task.daily_completed_count", "task.daily_completed_count", "population_percentile_task"),
+            ("finance.daily_spend_total", "finance.daily_spend_total", "population_percentile_finance"),
+            ("finance.daily_transaction_count", "finance.daily_transaction_count", "population_percentile_finance"),
+            ("social.unique_contacts_daily", "social.unique_contacts_daily", "population_percentile_social"),
+        ]
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%d")
+
+        for metric_key, baseline_key, category in metric_configs:
+            try:
+                with self.db.get_connection("user_model") as conn:
+                    row = conn.execute(
+                        """SELECT AVG(value) as avg_val, COUNT(*) as cnt
+                           FROM metric_time_series
+                           WHERE metric_key = ? AND granularity = 'daily'
+                             AND period >= ?""",
+                        (metric_key, cutoff),
+                    ).fetchone()
+
+                if not row or (row["cnt"] or 0) < 5 or row["avg_val"] is None:
+                    continue
+
+                user_avg = row["avg_val"]
+                baseline = self.pbs.get_baseline(baseline_key)
+                if not baseline:
+                    continue
+
+                percentile = self.pbs.get_percentile(baseline_key, user_avg)
+                if percentile is None:
+                    continue
+
+                median = baseline.get("p50")
+                unit = baseline.get("unit", "")
+
+                # Only surface for notable percentiles
+                if 20 <= percentile <= 80:
+                    continue
+
+                # Format the metric name for human readability
+                readable = baseline_key.replace(".", " ").replace("_", " ")
+
+                if percentile > 80:
+                    descriptor = f"higher than {percentile}% of"
+                else:
+                    descriptor = f"lower than {100 - percentile}% of"
+
+                # Value formatting
+                if "minutes" in unit:
+                    val_str = f"{user_avg:.0f} min"
+                    med_str = f"{median:.0f} min" if median else "N/A"
+                elif "dollars" in unit:
+                    val_str = f"${user_avg:.0f}"
+                    med_str = f"${median:.0f}" if median else "N/A"
+                elif "score_0_1" in unit:
+                    val_str = f"{user_avg:.2f}"
+                    med_str = f"{median:.2f}" if median else "N/A"
+                elif "hours" in unit:
+                    val_str = f"{user_avg:.1f}h"
+                    med_str = f"{median:.1f}h" if median else "N/A"
+                else:
+                    val_str = f"{user_avg:.1f}"
+                    med_str = f"{median:.1f}" if median else "N/A"
+
+                cohort = baseline.get("cohort", "general")
+                cohort_label = cohort.replace("_", " ")
+
+                confidence = min(0.82, 0.45 + abs(percentile - 50) * 0.007)
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"Your {readable} ({val_str}) is {descriptor} "
+                        f"{cohort_label} peers (median {med_str}). "
+                        f"You're at the {_ordinal(percentile)} percentile."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"metric_key={baseline_key}",
+                        f"user_avg={user_avg:.3f}",
+                        f"population_median={median}",
+                        f"percentile={percentile}",
+                        f"cohort={cohort}",
+                        f"sample_days={row['cnt']}",
+                        f"population_sample_size={baseline.get('sample_size', 'unknown')}",
+                    ],
+                    category=category,
+                    entity=baseline_key,
+                    staleness_ttl_hours=168,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            except Exception:
+                logger.debug(
+                    "comparative_population: error processing %s", metric_key,
+                    exc_info=True,
+                )
+                continue
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Cross-Metric Correlations
+    # ------------------------------------------------------------------
+
+    def _cross_metric_correlation_insights(self) -> list[Insight]:
+        """Surface significant correlations between different metric pairs.
+
+        Reads from the metric_correlations table (populated by
+        MetricMaterializer.compute_correlations) and surfaces the strongest
+        cross-domain correlations as insights.
+
+        Only surfaces correlations that cross domain boundaries (e.g.
+        mood x finance, but not email.sent x email.received) to ensure
+        the insight is genuinely novel rather than tautological.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT metric_a, metric_b, correlation, sample_size, p_value
+                       FROM metric_correlations
+                       WHERE ABS(correlation) >= 0.4
+                         AND sample_size >= 14
+                       ORDER BY ABS(correlation) DESC
+                       LIMIT 10"""
+                ).fetchall()
+        except Exception:
+            logger.debug("cross_metric_correlation: could not query metric_correlations")
+            return []
+
+        for row in rows:
+            metric_a = row["metric_a"]
+            metric_b = row["metric_b"]
+            r = row["correlation"]
+            n = row["sample_size"]
+
+            # Skip same-domain correlations (tautological)
+            domain_a = metric_a.split(".")[0]
+            domain_b = metric_b.split(".")[0]
+            if domain_a == domain_b:
+                continue
+
+            readable_a = metric_a.replace(".", " ").replace("_", " ")
+            readable_b = metric_b.replace(".", " ").replace("_", " ")
+
+            direction = "positively" if r > 0 else "inversely"
+            strength = "strongly" if abs(r) >= 0.7 else "moderately"
+
+            # Interpret the correlation for human understanding
+            if r > 0:
+                interpretation = f"when {readable_a} increases, {readable_b} tends to increase too"
+            else:
+                interpretation = f"when {readable_a} increases, {readable_b} tends to decrease"
+
+            confidence = min(0.80, 0.40 + abs(r) * 0.5)
+            insight = Insight(
+                type="behavioral_pattern",
+                summary=(
+                    f"Your {readable_a} and {readable_b} are {strength} "
+                    f"{direction} correlated (r={r:.2f}, {n} days of data). "
+                    f"Pattern: {interpretation}."
+                ),
+                confidence=confidence,
+                evidence=[
+                    f"metric_a={metric_a}",
+                    f"metric_b={metric_b}",
+                    f"correlation={r:.3f}",
+                    f"sample_size={n}",
+                    f"p_value={row['p_value']:.4f}" if row["p_value"] else "p_value=N/A",
+                ],
+                category="cross_metric_correlation",
+                entity=f"{metric_a}:{metric_b}",
+                staleness_ttl_hours=336,  # 2 weeks
+            )
+            insight.compute_dedup_key()
+            insights.append(insight)
+
+        return insights
+
+    # ------------------------------------------------------------------
+    # Correlator: Insight Effectiveness
+    # ------------------------------------------------------------------
+
+    def _insight_effectiveness_insights(self) -> list[Insight]:
+        """Measure whether surfaced insights led to behavior change.
+
+        For each insight that was surfaced >= 7 days ago, checks whether
+        the referenced metric improved (moved toward population median)
+        or stayed the same.  Surfaces a meta-insight summarizing which
+        insight types are driving real change vs. being ignored.
+        """
+        insights: list[Insight] = []
+
+        try:
+            with self.db.get_connection("user_model") as conn:
+                rows = conn.execute(
+                    """SELECT io.insight_id, io.metric_key,
+                              io.baseline_value, io.post_value, io.delta,
+                              io.days_after, i.type as insight_type, i.category
+                       FROM insight_outcomes io
+                       JOIN insights i ON i.id = io.insight_id
+                       WHERE io.days_after >= 7
+                         AND io.baseline_value IS NOT NULL
+                         AND io.post_value IS NOT NULL"""
+                ).fetchall()
+        except Exception:
+            logger.debug("insight_effectiveness: could not query insight_outcomes")
+            return []
+
+        if len(rows) < 3:
+            return []
+
+        # Group by insight category and compute improvement rate
+        category_outcomes: dict[str, list[float]] = {}
+        for row in rows:
+            cat = row["category"] or row["insight_type"]
+            delta = row["delta"] or 0
+            baseline = row["baseline_value"] or 0
+            if baseline != 0:
+                pct_change = delta / abs(baseline)
+            else:
+                pct_change = 0
+            category_outcomes.setdefault(cat, []).append(pct_change)
+
+        for cat, changes in category_outcomes.items():
+            if len(changes) < 3:
+                continue
+
+            avg_change = sum(changes) / len(changes)
+            improved_count = sum(1 for c in changes if c > 0.05)
+            improved_rate = improved_count / len(changes)
+
+            if improved_rate >= 0.60:
+                confidence = min(0.75, 0.40 + improved_rate * 0.4)
+                readable_cat = cat.replace("_", " ")
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"'{readable_cat}' insights are driving change: "
+                        f"{int(improved_rate * 100)}% led to measurable improvement "
+                        f"(avg {avg_change:+.1%} shift across {len(changes)} insights)."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"category={cat}",
+                        f"improved_rate={improved_rate:.2f}",
+                        f"avg_change={avg_change:.3f}",
+                        f"sample_count={len(changes)}",
+                    ],
+                    category="insight_effectiveness",
+                    entity=cat,
+                    staleness_ttl_hours=336,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+            elif improved_rate <= 0.25 and len(changes) >= 5:
+                confidence = min(0.70, 0.40 + (1 - improved_rate) * 0.3)
+                readable_cat = cat.replace("_", " ")
+                insight = Insight(
+                    type="behavioral_pattern",
+                    summary=(
+                        f"'{readable_cat}' insights rarely lead to change: "
+                        f"only {int(improved_rate * 100)}% showed improvement "
+                        f"across {len(changes)} insights."
+                    ),
+                    confidence=confidence,
+                    evidence=[
+                        f"category={cat}",
+                        f"improved_rate={improved_rate:.2f}",
+                        f"avg_change={avg_change:.3f}",
+                        f"sample_count={len(changes)}",
+                    ],
+                    category="insight_effectiveness",
+                    entity=cat,
+                    staleness_ttl_hours=336,
+                )
+                insight.compute_dedup_key()
+                insights.append(insight)
+
         return insights
 
     # ------------------------------------------------------------------

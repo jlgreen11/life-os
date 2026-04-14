@@ -45,10 +45,13 @@ from connectors.registry import CONNECTOR_REGISTRY, get_connector_class
 from connectors.crypto import ConfigEncryptor
 from services.onboarding.manager import OnboardingManager
 from services.insight_engine.engine import InsightEngine
+from services.insight_engine.metric_materializer import MetricMaterializer
+from services.insight_engine.cohort import CohortProfiler
 from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 from services.routine_detector.detector import RoutineDetector
 from services.workflow_detector.detector import WorkflowDetector
 from services.insight_engine.source_weights import SourceWeightManager
+from storage.population_baselines import PopulationBaselineStore
 from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTracker
 from services.task_completion_detector.detector import TaskCompletionDetector
 from services.conflict_detector.detector import ConflictDetector
@@ -137,9 +140,13 @@ class LifeOS:
         self.prediction_engine = PredictionEngine(
             self.db, self.user_model_store, timezone=self.user_tz
         )
+        self.population_baseline_store = PopulationBaselineStore(self.db)
+        self.metric_materializer = MetricMaterializer(self.db)
+        self.cohort_profiler = CohortProfiler(self.db, self.user_model_store)
         self.insight_engine = InsightEngine(
             self.db, self.user_model_store,
             source_weight_manager=self.source_weight_manager,
+            population_baseline_store=self.population_baseline_store,
             timezone=self.user_tz,
         )
         # SemanticFactInferrer derives high-level facts from signal profiles
@@ -3659,9 +3666,14 @@ class LifeOS:
     async def _insight_loop(self):
         """Run the insight engine every 15 minutes.
 
-        Also runs the source weight bulk drift recalculation once per
-        cycle so that AI drift adjusts based on aggregate engagement
-        patterns, not just individual feedback events.
+        Pipeline per cycle:
+        1. Materialize metrics — aggregate raw events into metric_time_series
+           and compute cross-metric correlations for the comparative correlators.
+        2. Generate insights — run all correlators including the new comparative
+           population, cross-metric correlation, and insight effectiveness ones.
+        3. Recalculate AI drift — adjust source weights from engagement ratios.
+        4. Update cohort profile — reclassify the user's anonymous cohort
+           (runs every 4th cycle ~ once per hour to limit churn).
 
         Includes a 180-second warmup delay on startup to allow connector
         syncs and signal extraction to populate data before the first
@@ -3670,7 +3682,22 @@ class LifeOS:
         logger.info("InsightLoop: warming up for 180s to allow data population...")
         await asyncio.sleep(180)
 
+        cycle_count = 0
         while not self.shutdown_event.is_set():
+            cycle_count += 1
+
+            # Step 1: Materialize metrics into time-series + compute correlations
+            try:
+                rows = await asyncio.to_thread(self.metric_materializer.materialize)
+                if rows:
+                    logger.info("  MetricMaterializer: upserted %d time-series rows", rows)
+                corrs = await asyncio.to_thread(self.metric_materializer.compute_correlations)
+                if corrs:
+                    logger.info("  MetricMaterializer: stored %d correlations", corrs)
+            except Exception as e:
+                logger.error("Metric materializer error: %s", e)
+
+            # Step 2: Generate insights (now includes comparative + correlation correlators)
             try:
                 insights = await self.insight_engine.generate_insights()
                 if insights:
@@ -3678,11 +3705,20 @@ class LifeOS:
             except Exception as e:
                 logger.error("Insight engine error: %s", e)
 
-            # Recalculate AI drift based on engagement ratios
+            # Step 3: Recalculate AI drift based on engagement ratios
             try:
                 await asyncio.to_thread(self.source_weight_manager.bulk_recalculate_drift)
             except Exception as e:
                 logger.error("Source weight drift recalc error: %s", e)
+
+            # Step 4: Update cohort profile (every 4th cycle ~ once per hour)
+            if cycle_count % 4 == 0:
+                try:
+                    cohort_key = await asyncio.to_thread(self.cohort_profiler.compute_and_store)
+                    if cohort_key:
+                        logger.info("  CohortProfiler: cohort_key=%s", cohort_key)
+                except Exception as e:
+                    logger.error("Cohort profiler error: %s", e)
 
             await asyncio.sleep(900)  # 15 minutes
 

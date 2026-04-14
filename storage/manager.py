@@ -1044,7 +1044,7 @@ class DatabaseManager:
         self._check_and_recover_db("user_model")
 
         # Current schema version (increment when making schema changes)
-        CURRENT_VERSION = 4
+        CURRENT_VERSION = 5
 
         with self.get_connection("user_model") as conn:
             # Create schema_version table if it doesn't exist
@@ -1214,6 +1214,117 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_insights_type ON insights(type);
                 CREATE INDEX IF NOT EXISTS idx_insights_dedup ON insights(dedup_key);
                 CREATE INDEX IF NOT EXISTS idx_insights_created ON insights(created_at);
+
+                -- ============================================================
+                -- Cross-user insight layer (v5)
+                -- ============================================================
+
+                -- Materialized time-series of computed daily/hourly metrics.
+                -- Eliminates expensive full-table scans of events.db by
+                -- pre-aggregating key metrics (email count, meeting hours,
+                -- task completion rate, etc.) into a queryable time-series.
+                -- Correlators read from here instead of raw events.
+                CREATE TABLE IF NOT EXISTS metric_time_series (
+                    metric_key      TEXT NOT NULL,
+                    period          TEXT NOT NULL,
+                    granularity     TEXT NOT NULL DEFAULT 'daily',
+                    value           REAL NOT NULL,
+                    sample_count    INTEGER DEFAULT 1,
+                    metadata        TEXT DEFAULT '{}',
+                    computed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (metric_key, period, granularity)
+                );
+                CREATE INDEX IF NOT EXISTS idx_mts_key_period
+                    ON metric_time_series(metric_key, period);
+
+                -- Research-seeded population percentile benchmarks.
+                -- Enables "you are in the Nth percentile for X" insights
+                -- that contextualize individual metrics against population
+                -- distributions.  Seeded from published research on first
+                -- run; updatable from optional peer network contributions.
+                CREATE TABLE IF NOT EXISTS population_baselines (
+                    metric_key      TEXT NOT NULL,
+                    cohort          TEXT NOT NULL DEFAULT 'general',
+                    description     TEXT,
+                    p10             REAL,
+                    p25             REAL,
+                    p50             REAL,
+                    p75             REAL,
+                    p90             REAL,
+                    mean            REAL,
+                    std_dev         REAL,
+                    unit            TEXT,
+                    source          TEXT,
+                    sample_size     INTEGER,
+                    last_updated    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (metric_key, cohort)
+                );
+
+                -- Auto-discovered cross-metric correlations.
+                -- MetricMaterializer periodically computes Pearson correlations
+                -- between all metric pairs in metric_time_series and stores
+                -- significant ones (|r| >= 0.4, p < 0.05) here.  Enables
+                -- "your stress correlates with spending (r=0.72)" insights
+                -- that no single-signal correlator can produce.
+                CREATE TABLE IF NOT EXISTS metric_correlations (
+                    metric_a        TEXT NOT NULL,
+                    metric_b        TEXT NOT NULL,
+                    correlation     REAL NOT NULL,
+                    lag_periods     INTEGER DEFAULT 0,
+                    granularity     TEXT NOT NULL DEFAULT 'daily',
+                    sample_size     INTEGER NOT NULL,
+                    p_value         REAL,
+                    computed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (metric_a, metric_b, lag_periods)
+                );
+
+                -- Anonymous cohort classification for baseline matching.
+                -- Each dimension (chronotype, communication volume, etc.) is
+                -- bucketed into a small set of categories.  The combined
+                -- vector is hashed into a cohort_key for privacy-preserving
+                -- peer network matching without exposing any individual data.
+                CREATE TABLE IF NOT EXISTS cohort_profiles (
+                    profile_version INTEGER NOT NULL,
+                    dimension       TEXT NOT NULL,
+                    bucket          TEXT NOT NULL,
+                    computed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    evidence_count  INTEGER DEFAULT 0,
+                    confidence      REAL DEFAULT 0.5,
+                    PRIMARY KEY (profile_version, dimension)
+                );
+
+                -- Insight effectiveness tracking.
+                -- When an insight is surfaced, records the referenced metric
+                -- value at that time and again N days later, enabling "did
+                -- this insight actually change behavior?" measurement.
+                CREATE TABLE IF NOT EXISTS insight_outcomes (
+                    insight_id      TEXT NOT NULL,
+                    metric_key      TEXT NOT NULL,
+                    baseline_value  REAL,
+                    post_value      REAL,
+                    delta           REAL,
+                    days_after      INTEGER NOT NULL,
+                    measured_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                    PRIMARY KEY (insight_id, metric_key, days_after)
+                );
+
+                -- Outbound queue for optional peer network contribution.
+                -- Differential-privacy noise is applied before any metric
+                -- leaves the device.  The sync service drains this queue
+                -- and pushes anonymous aggregates to the peer endpoint.
+                CREATE TABLE IF NOT EXISTS contribution_queue (
+                    id              TEXT PRIMARY KEY,
+                    cohort_key      TEXT NOT NULL,
+                    metric_key      TEXT NOT NULL,
+                    aggregate_value REAL NOT NULL,
+                    noise_epsilon   REAL NOT NULL,
+                    window_start    TEXT NOT NULL,
+                    window_end      TEXT NOT NULL,
+                    status          TEXT NOT NULL DEFAULT 'pending',
+                    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_cq_status
+                    ON contribution_queue(status);
             """)
 
         # --- Post-initialisation functional verification ---
@@ -1386,6 +1497,32 @@ class DatabaseManager:
                         "user-behavior signals in accuracy calculations"
                     )
                     conn.execute("ALTER TABLE predictions ADD COLUMN resolution_reason TEXT")
+
+        if from_version < 5 and to_version >= 5:
+            # Migration 4 -> 5: Cross-user insight layer.
+            #
+            # Adds six tables that enable population-contextualized insights:
+            #
+            # 1. metric_time_series  — materialized daily/hourly metrics so
+            #    correlators don't rescan events.db on every run.
+            # 2. population_baselines — research-seeded percentile benchmarks
+            #    (email volume, stress, response time, meeting load, etc.)
+            #    so insights can answer "is this normal?" not just "is this
+            #    normal for you?"
+            # 3. metric_correlations — auto-discovered cross-metric
+            #    relationships (e.g. stress x spending r=0.72).
+            # 4. cohort_profiles — anonymous user classification so
+            #    baselines can be narrowed to "people like you".
+            # 5. insight_outcomes — tracks whether surfaced insights led to
+            #    measurable behavior change (the missing feedback loop).
+            # 6. contribution_queue — outbound differential-privacy-noised
+            #    aggregates for optional peer network sharing.
+            #
+            # All tables use CREATE TABLE IF NOT EXISTS and are also in the
+            # main schema block that follows, so this migration is a no-op
+            # for fresh installs.  For existing v4 databases, the main
+            # schema block will create the tables.
+            pass
 
     def _migrate_events_db(self, conn: sqlite3.Connection, from_version: int, to_version: int):
         """Apply schema migrations to events.db.
