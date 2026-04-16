@@ -620,20 +620,37 @@ def analyze(data_dir: str = "./data") -> dict:
                    WHERE type = 'email.sent'
                      AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
             )
+            # top_senders groups email.received events by sender address. The
+            # email payload field is named ``from_address`` (never ``email_from``);
+            # an older version of this query used ``$.email_from`` which silently
+            # returned NULL for every row, so ``top_senders`` was always ``{}``.
             top_senders = _query(
                 ev_conn,
-                """SELECT json_extract(payload, '$.email_from') as sender, COUNT(*) as c
+                """SELECT json_extract(payload, '$.from_address') as sender, COUNT(*) as c
                    FROM events
                    WHERE type = 'email.received'
                      AND julianday(timestamp) > julianday(datetime('now', '-30 days'))
-                     AND json_extract(payload, '$.email_from') IS NOT NULL
+                     AND json_extract(payload, '$.from_address') IS NOT NULL
                    GROUP BY sender ORDER BY c DESC LIMIT 5""",
                 [],
+            )
+            # last_*_at fields give the human reader context when the 30-day
+            # counts are 0 — the difference between "no activity yet" and
+            # "connector has been down for weeks" is otherwise invisible.
+            last_received_at = _query_one(
+                ev_conn,
+                "SELECT MAX(timestamp) as ts FROM events WHERE type = 'email.received'",
+            )
+            last_sent_at = _query_one(
+                ev_conn,
+                "SELECT MAX(timestamp) as ts FROM events WHERE type = 'email.sent'",
             )
             wf_diag["email"] = {
                 "received_30d": email_received_30d["c"] if email_received_30d else 0,
                 "sent_30d": email_sent_30d["c"] if email_sent_30d else 0,
                 "top_senders": {r["sender"]: r["c"] for r in top_senders} if top_senders else {},
+                "last_received_at": last_received_at["ts"] if last_received_at else None,
+                "last_sent_at": last_sent_at["ts"] if last_sent_at else None,
             }
 
             # Task workflow data
@@ -643,8 +660,13 @@ def analyze(data_dir: str = "./data") -> dict:
                    WHERE type = 'task.created'
                      AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
             )
+            last_task_at = _query_one(
+                ev_conn,
+                "SELECT MAX(timestamp) as ts FROM events WHERE type = 'task.created'",
+            )
             wf_diag["tasks"] = {
                 "created_30d": tasks_created_30d["c"] if tasks_created_30d else 0,
+                "last_created_at": last_task_at["ts"] if last_task_at else None,
             }
 
             # Calendar workflow data
@@ -654,8 +676,13 @@ def analyze(data_dir: str = "./data") -> dict:
                    WHERE type = 'calendar.event.created'
                      AND julianday(timestamp) > julianday(datetime('now', '-30 days'))""",
             )
+            last_calendar_at = _query_one(
+                ev_conn,
+                "SELECT MAX(timestamp) as ts FROM events WHERE type = 'calendar.event.created'",
+            )
             wf_diag["calendar"] = {
                 "events_created_30d": calendar_events_30d["c"] if calendar_events_30d else 0,
+                "last_event_at": last_calendar_at["ts"] if last_calendar_at else None,
             }
         else:
             wf_diag["email"] = {"error": "could not connect to events.db"}
