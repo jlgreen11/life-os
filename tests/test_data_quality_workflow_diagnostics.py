@@ -162,11 +162,11 @@ class TestWorkflowDiagnosticsEmailCounts:
         events = []
         # 15 received emails from 3 senders
         for i in range(10):
-            events.append(("email.received", now, '{"email_from": "alice@example.com"}'))
+            events.append(("email.received", now, '{"from_address": "alice@example.com"}'))
         for i in range(3):
-            events.append(("email.received", now, '{"email_from": "bob@example.com"}'))
+            events.append(("email.received", now, '{"from_address": "bob@example.com"}'))
         for i in range(2):
-            events.append(("email.received", now, '{"email_from": "carol@example.com"}'))
+            events.append(("email.received", now, '{"from_address": "carol@example.com"}'))
         # 4 sent emails
         for i in range(4):
             events.append(("email.sent", now, "{}"))
@@ -202,6 +202,51 @@ class TestWorkflowDiagnosticsEmailCounts:
         assert wf["tasks"]["created_30d"] == 3
         assert wf["calendar"]["events_created_30d"] == 2
 
+    def test_last_event_timestamps_reported(self, tmp_path):
+        """last_*_at fields must reflect the most recent event per type.
+
+        These timestamps give human readers context when 30-day counts are 0
+        (e.g. "received_30d: 0, last_received_at: 2026-02-20" tells them the
+        connector was active 2 months ago, not that the DB is empty).
+        """
+        analyze = _get_analyze()
+        _setup_minimal_dbs(tmp_path)
+
+        # Seed one event of each type at distinct timestamps so we can
+        # verify MAX(timestamp) returns the expected value per type.
+        recv_ts = "2026-02-20T10:00:00+00:00"
+        sent_ts = "2026-02-21T10:00:00+00:00"
+        task_ts = "2026-03-01T10:00:00+00:00"
+        cal_ts = "2026-03-05T10:00:00+00:00"
+        _insert_events(
+            tmp_path,
+            [
+                ("email.received", recv_ts, '{"from_address": "a@b.com"}'),
+                ("email.sent", sent_ts, "{}"),
+                ("task.created", task_ts, "{}"),
+                ("calendar.event.created", cal_ts, "{}"),
+            ],
+        )
+
+        wf = analyze(str(tmp_path))["sections"]["workflow_diagnostics"]
+
+        assert wf["email"]["last_received_at"] == recv_ts
+        assert wf["email"]["last_sent_at"] == sent_ts
+        assert wf["tasks"]["last_created_at"] == task_ts
+        assert wf["calendar"]["last_event_at"] == cal_ts
+
+    def test_last_event_timestamps_null_when_empty(self, tmp_path):
+        """last_*_at must be None (not absent) when no events exist for that type."""
+        analyze = _get_analyze()
+        _setup_minimal_dbs(tmp_path)
+
+        wf = analyze(str(tmp_path))["sections"]["workflow_diagnostics"]
+
+        assert wf["email"]["last_received_at"] is None
+        assert wf["email"]["last_sent_at"] is None
+        assert wf["tasks"]["last_created_at"] is None
+        assert wf["calendar"]["last_event_at"] is None
+
 
 class TestWorkflowDiagnosticsLowSentAnomaly:
     """Anomaly must fire when email.sent is low relative to email.received."""
@@ -214,7 +259,7 @@ class TestWorkflowDiagnosticsLowSentAnomaly:
         now = datetime.now(timezone.utc).isoformat()
         events = []
         for _ in range(200):
-            events.append(("email.received", now, '{"email_from": "sender@example.com"}'))
+            events.append(("email.received", now, '{"from_address": "sender@example.com"}'))
         for _ in range(2):
             events.append(("email.sent", now, "{}"))
         _insert_events(tmp_path, events)
@@ -239,7 +284,7 @@ class TestWorkflowDiagnosticsLowSentAnomaly:
         now = datetime.now(timezone.utc).isoformat()
         events = []
         for _ in range(200):
-            events.append(("email.received", now, '{"email_from": "sender@example.com"}'))
+            events.append(("email.received", now, '{"from_address": "sender@example.com"}'))
         for _ in range(10):
             events.append(("email.sent", now, "{}"))
         _insert_events(tmp_path, events)
