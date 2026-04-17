@@ -2,6 +2,7 @@ import Foundation
 
 final class WebSocketManager: NSObject {
     private let baseURL: String
+    private let apiKey: String?
     private var webSocketTask: URLSessionWebSocketTask?
     private var session: URLSession?
     private var isConnected = false
@@ -13,18 +14,26 @@ final class WebSocketManager: NSObject {
     var onMessage: ((WebSocketMessage) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
 
-    init(baseURL: String) {
+    init(baseURL: String, apiKey: String? = nil) {
         let cleaned = baseURL
             .replacingOccurrences(of: "http://", with: "ws://")
             .replacingOccurrences(of: "https://", with: "wss://")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.baseURL = cleaned
+        let trimmedKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiKey = (trimmedKey?.isEmpty == false) ? trimmedKey : nil
         super.init()
         self.session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
 
     func connect() {
-        guard let url = URL(string: "\(baseURL)/ws") else { return }
+        // URLSessionWebSocketTask can't reliably set custom handshake headers,
+        // so the API key is passed as a query parameter (?api_key=...).
+        var urlString = "\(baseURL)/ws"
+        if let key = apiKey, let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            urlString += "?api_key=\(encoded)"
+        }
+        guard let url = URL(string: urlString) else { return }
         webSocketTask = session?.webSocketTask(with: url)
         webSocketTask?.resume()
         reconnectAttempts = 0

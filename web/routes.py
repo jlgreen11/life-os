@@ -3875,6 +3875,17 @@ def register_routes(app: FastAPI, life_os) -> None:
         Meanwhile, server-side services can call ``ws_manager.broadcast(...)``
         at any time to push notifications/events to all connected clients.
         """
+        from web.auth import verify_api_key
+
+        expected_key = getattr(app.state, "api_key", None)
+        if expected_key:
+            provided = (
+                websocket.headers.get("x-api-key")
+                or websocket.query_params.get("api_key")
+            )
+            if not verify_api_key(provided, expected_key):
+                await websocket.close(code=4401, reason="Invalid API key")
+                return
         await ws_manager.connect(websocket)
         try:
             while True:

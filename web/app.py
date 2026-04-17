@@ -7,10 +7,15 @@ Routes, schemas, websocket, and templates are in separate modules.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from web.auth import APIKeyAuthMiddleware
 from web.routes import register_routes
+
+logger = logging.getLogger(__name__)
 
 
 def create_web_app(life_os) -> FastAPI:
@@ -98,6 +103,22 @@ def create_web_app(life_os) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # --- Optional API Key Authentication ---
+    # When ``auth.api_key`` is set in settings.yaml, require all requests to
+    # include it via X-API-Key header, Authorization: Bearer, or ?api_key=.
+    # Off by default so local installs keep working. Enable before exposing
+    # Life OS beyond localhost (LAN, Tailscale, reverse proxy, tunnel).
+    auth_config = config.get("auth", {}) or {}
+    api_key = auth_config.get("api_key")
+    if isinstance(api_key, str) and api_key.strip():
+        app.add_middleware(APIKeyAuthMiddleware, expected_key=api_key.strip())
+        app.state.api_key = api_key.strip()
+        logger.info("API key authentication enabled")
+    else:
+        app.state.api_key = None
+        if api_key:
+            logger.warning("auth.api_key is set but not a non-empty string — auth disabled")
 
     # Attach the Life OS instance to ``app.state`` so that route handlers can
     # access all services (event_store, vector_store, ai_engine, task_manager,

@@ -2,16 +2,25 @@ import Foundation
 
 actor APIClient {
     private let baseURL: String
+    private let apiKey: String?
     private let session: URLSession
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(baseURL: String) {
+    init(baseURL: String, apiKey: String? = nil) {
         self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let trimmedKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiKey = (trimmedKey?.isEmpty == false) ? trimmedKey : nil
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
         self.session = URLSession(configuration: config)
+    }
+
+    private func applyAuth(_ request: inout URLRequest) {
+        if let key = apiKey {
+            request.setValue(key, forHTTPHeaderField: "X-API-Key")
+        }
     }
 
     // MARK: - Health & Status
@@ -98,6 +107,7 @@ actor APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyAuth(&request)
 
         let (data, response) = try await session.data(for: request)
         try validateResponse(response)
@@ -110,6 +120,7 @@ actor APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyAuth(&request)
         request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await session.data(for: request)
@@ -122,6 +133,7 @@ actor APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyAuth(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: request)

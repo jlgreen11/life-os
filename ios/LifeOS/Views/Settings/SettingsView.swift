@@ -4,6 +4,7 @@ struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var contextEngine: ContextEngine
     @State private var serverURL: String = ""
+    @State private var apiKey: String = ""
     @State private var contextCollectionEnabled = true
     @State private var locationTrackingEnabled = true
     @State private var deviceDiscoveryEnabled = true
@@ -19,6 +20,12 @@ struct SettingsView: View {
                         .textContentType(.URL)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                    SecureField("API Key (optional)", text: $apiKey)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Text("Required when your server has auth.api_key set (recommended for LAN / Tailscale / public access).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     HStack {
                         Circle()
                             .fill(appState.isConnected ? Color.green : Color.red)
@@ -28,6 +35,7 @@ struct SettingsView: View {
                     }
                     Button("Connect") {
                         appState.serverURL = serverURL
+                        appState.apiKey = apiKey
                         appState.setupAPIClient()
                         contextEngine.configure(serverURL: serverURL)
                     }
@@ -114,6 +122,7 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .onAppear {
                 serverURL = appState.serverURL
+                apiKey = appState.apiKey
                 // Load persisted snapshot interval from ContextEngine
                 contextInterval = contextEngine.snapshotInterval
             }
@@ -121,7 +130,9 @@ struct SettingsView: View {
                 Button("Reset", role: .destructive) {
                     UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "")
                     serverURL = "http://localhost:8080"
+                    apiKey = ""
                     appState.serverURL = serverURL
+                    appState.apiKey = ""
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {

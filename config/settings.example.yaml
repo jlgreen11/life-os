@@ -13,8 +13,39 @@ timezone: "America/Los_Angeles"
 nats_url: "nats://localhost:4222"
 
 # Web server
+# web_host: "0.0.0.0" binds to all network interfaces so the server is
+# reachable from other devices on your LAN (phone, laptop, etc.). Combine
+# with CORS + auth below before exposing beyond localhost.
 web_host: "0.0.0.0"
 web_port: 8080
+
+# ---------------------------------------------------------------------------
+# Remote access
+# ---------------------------------------------------------------------------
+# To reach Life OS from your phone or another device you need THREE things:
+#   1. A network path to the server (LAN IP, Tailscale, or a tunnel)
+#   2. The client's origin allow-listed in CORS (if using a browser client)
+#   3. An API key set below (REQUIRED before exposing beyond localhost)
+#
+# Recommended approaches:
+#   * LAN only           — use http://<mac-mini-lan-ip>:8080
+#   * Remote (secure)    — install Tailscale, use http://<tailscale-ip>:8080
+#   * Public URL         — `cloudflared tunnel --url http://localhost:8080`
+#                          or put Caddy/nginx in front with HTTPS
+#
+# There is NO authentication when `auth.api_key` is empty, so anyone who can
+# reach the port can read your data. Set a long random key before exposing.
+# ---------------------------------------------------------------------------
+
+# Optional API key authentication
+# When set, all requests (REST + WebSocket) must include the key via:
+#   - X-API-Key: <key>                  (preferred for REST)
+#   - Authorization: Bearer <key>
+#   - ?api_key=<key>                    (required for WebSocket in browsers)
+# /health is exempt so status checks work without the key.
+# Generate a key with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+auth:
+  api_key: ""                           # Empty = auth disabled (localhost only!)
 
 # CORS (Cross-Origin Resource Sharing) security
 # Controls which domains can make requests to your Life OS API.
@@ -23,7 +54,9 @@ cors:
   # Allowed origins (exact match required)
   # Examples:
   #   - "http://localhost:3000"           # Local dev frontend
-  #   - "https://myapp.example.com"       # Production frontend
+  #   - "http://192.168.1.42:8080"        # Your Mac Mini on the LAN
+  #   - "http://100.64.1.5:8080"          # Tailscale IP
+  #   - "https://lifeos.example.com"      # Public domain behind a tunnel
   # Special values:
   #   - "*" allows all origins (INSECURE — dev only!)
   allowed_origins:

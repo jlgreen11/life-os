@@ -7,6 +7,9 @@ final class AppState: ObservableObject {
     @Published var serverURL: String {
         didSet { UserDefaults.standard.set(serverURL, forKey: "serverURL") }
     }
+    @Published var apiKey: String {
+        didSet { UserDefaults.standard.set(apiKey, forKey: "apiKey") }
+    }
     @Published var notifications: [LifeOSNotification] = []
     @Published var tasks: [LifeOSTask] = []
     @Published var currentTab: Tab = .dashboard
@@ -24,13 +27,15 @@ final class AppState: ObservableObject {
 
     init() {
         self.serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? "http://localhost:8080"
+        self.apiKey = UserDefaults.standard.string(forKey: "apiKey") ?? ""
         setupAPIClient()
     }
 
     func setupAPIClient() {
-        apiClient = APIClient(baseURL: serverURL)
+        let key = apiKey.isEmpty ? nil : apiKey
+        apiClient = APIClient(baseURL: serverURL, apiKey: key)
         webSocket?.disconnect()
-        webSocket = WebSocketManager(baseURL: serverURL)
+        webSocket = WebSocketManager(baseURL: serverURL, apiKey: key)
         webSocket?.onMessage = { [weak self] message in
             Task { @MainActor in
                 self?.handleWebSocketMessage(message)
