@@ -34,17 +34,6 @@
 
 ## Week 4 — Producer base + 3 producers
 
-- [ ] **Cadence producer (`producers/cadence.py`).** InsightType.CADENCE:
-  - Observes `email.received` and `message.received`
-  - Reads cadence profile from signal_profiles (scope_key=contact_id)
-  - If `days_since_last_inbound > expected_cadence * 1.3` AND `count >= 5` historical → emit Moment:
-    - insight: "{N} days since you've heard from {Name}. Usual cadence {X} days."
-    - proposed_action: ActionKind.NUDGE, params {contact_id, channel}
-    - confidence: `min(0.9, days_since / expected_cadence / 2)`
-    - evidence: last 3 inbound events
-    - Microcopy: "cadence dropped {N}% below {X}-day norm"
-  Tests: no Moment with <5 history, fires at 1.3× expected, dedup via evidence_hash.
-
 - [ ] **Relationship producer (`producers/relationship.py`).** InsightType.RELATIONSHIP:
   - Tracks reciprocity drift: if outbound/inbound ratio for a contact drops below 0.3 over last 4 weeks (previously > 0.5) → Moment
   - Insight: "You've been replying less to {Name}. Outbound dropped {X}%."
