@@ -51,6 +51,12 @@ from core.moment.types import (
     StateHistoryEntry,
 )
 
+# User-driven action endpoints only mutate state through the state machine,
+# but the ``snooze`` transition also carries a side column (``snooze_until``)
+# that expires_at must bound. The scheduler uses this column to wake the
+# Moment back into SUGGESTED; a snooze past expires_at is coerced to EXPIRED
+# per eng plan § "State-machine transitions → Snooze semantics".
+
 _SELECT_COLUMNS = (
     "id, created_at, scheduled_for, expires_at, context_trigger, insight, "
     "evidence, evidence_hash, proposed_action, state, snooze_until, confidence, "
@@ -287,6 +293,119 @@ class MomentRepository:
         if hydrated is None:
             # Should be unreachable — we just updated the row and it's
             # not a legacy_task (transition requires a real InsightType).
+            raise RuntimeError(f"moment {moment_id!r} vanished after commit")
+        return hydrated
+
+    def snooze(
+        self,
+        moment_id: str,
+        snooze_until: int,
+        annotation: str | None = None,
+    ) -> Moment:
+        """Transition ``moment_id`` to ``SNOOZED`` and set ``snooze_until``.
+
+        Wraps the state transition and the ``snooze_until`` column update
+        in one ``BEGIN IMMEDIATE`` transaction so that a scheduler that
+        wakes on the column can never see a row whose state and wake-time
+        disagree. If ``snooze_until`` is at or past the row's
+        ``expires_at``, the method coerces the Moment to ``EXPIRED``
+        instead (eng plan § "Snooze semantics") and leaves
+        ``snooze_until`` untouched — the expiry column is authoritative.
+
+        Raises
+        ------
+        KeyError
+            If ``moment_id`` does not exist.
+        core.moment.state.IllegalTransition
+            If the current state cannot move to ``SNOOZED``.
+        """
+        now = self._now()
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT state, expires_at FROM moments WHERE id=?",
+                (moment_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"moment {moment_id!r} not found")
+            current = MomentState(row["state"])
+            expires_at = int(row["expires_at"])
+            target = MomentState.EXPIRED if snooze_until >= expires_at else MomentState.SNOOZED
+            validate_transition(current, target)
+
+            if target is MomentState.SNOOZED:
+                self._conn.execute(
+                    "UPDATE moments SET state=?, snooze_until=?, updated_at=? WHERE id=?",
+                    (target.value, snooze_until, now, moment_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE moments SET state=?, updated_at=? WHERE id=?",
+                    (target.value, now, moment_id),
+                )
+            self._conn.execute(
+                "INSERT INTO moment_state_history "
+                "(moment_id, from_state, to_state, ts, annotation) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (moment_id, current.value, target.value, now, annotation),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+        hydrated = self.get(moment_id)
+        if hydrated is None:
+            raise RuntimeError(f"moment {moment_id!r} vanished after commit")
+        return hydrated
+
+    def update_action_params(
+        self,
+        moment_id: str,
+        params: dict,
+    ) -> Moment:
+        """Replace ``proposed_action.params`` in place; keep the state.
+
+        Used by the ``POST /api/moments/{id}/edit`` endpoint: the user
+        tweaks a draft body (or other per-``kind`` action params) before
+        accepting. The Moment's state is untouched — edit is an in-place
+        payload update, not a state transition.
+
+        Read-modify-write is wrapped in ``BEGIN IMMEDIATE`` so two
+        concurrent edits cannot drop one another's params. ``updated_at``
+        is bumped so downstream watchers (scheduler, websocket push) see
+        the change.
+
+        Raises
+        ------
+        KeyError
+            If ``moment_id`` does not exist.
+        """
+        now = self._now()
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT proposed_action FROM moments WHERE id=?",
+                (moment_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"moment {moment_id!r} not found")
+            existing = json.loads(row["proposed_action"])
+            new_action = Action(
+                kind=ActionKind(existing["kind"]),
+                params=dict(params),
+            )
+            self._conn.execute(
+                "UPDATE moments SET proposed_action=?, updated_at=? WHERE id=?",
+                (self._serialize_action(new_action), now, moment_id),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+        hydrated = self.get(moment_id)
+        if hydrated is None:
             raise RuntimeError(f"moment {moment_id!r} vanished after commit")
         return hydrated
 

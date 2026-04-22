@@ -120,9 +120,21 @@ def test_create_app_tolerates_life_os_without_config_attribute():
     ]
 
 
-def test_create_app_registers_no_routes_yet():
+def test_create_app_registers_now_router():
+    """Factory mounts the Week 8 Now-tab router.
+
+    Earlier phases asserted *no* custom routes were wired; once the
+    Now router lands it becomes the baseline assertion. Subsequent
+    Week-8 tasks will add to this set (`/api/you`, `/api/people`, …).
+    """
     app = create_app()
 
-    # The only routes FastAPI adds by default are the OpenAPI/docs ones.
     custom_paths = {r.path for r in app.routes}
-    assert custom_paths == {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+    expected_now_paths = {
+        "/api/now",
+        "/api/moments/{moment_id}/accept",
+        "/api/moments/{moment_id}/dismiss",
+        "/api/moments/{moment_id}/snooze",
+        "/api/moments/{moment_id}/edit",
+    }
+    assert expected_now_paths.issubset(custom_paths)

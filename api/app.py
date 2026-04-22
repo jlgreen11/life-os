@@ -100,6 +100,15 @@ def create_app(life_os: Any | None = None) -> FastAPI:
     )
 
     app.state.life_os = life_os
+
+    # Route registration is deferred to keep ``api.app`` importable from
+    # schema-only contexts. Each router is imported here, not at module
+    # top-level, so test suites that only build the factory don't drag
+    # route modules they're not exercising.
+    from api.routes.now import router as now_router
+
+    app.include_router(now_router)
+
     return app
 
 

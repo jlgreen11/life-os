@@ -502,3 +502,77 @@ def test_legacy_task_rows_are_filtered_from_get_and_list(repo, conn):
     assert repo.get("legacy-1") is None
     pending = repo.list_pending()
     assert [m.id for m in pending] == [real.id]
+
+
+# ---------------------------------------------------------------------------
+# snooze
+# ---------------------------------------------------------------------------
+
+
+def test_snooze_transitions_state_and_persists_snooze_until(repo, clock):
+    m = _make_moment(expires_at=REF_NOW + 24 * 3600)
+    repo.create(m)
+    clock.t = REF_NOW + 5
+
+    until = REF_NOW + 3600
+    snoozed = repo.snooze(m.id, until, annotation="user_picked_1h")
+    assert snoozed.state == MomentState.SNOOZED
+    assert snoozed.snooze_until == until
+    assert snoozed.state_history[-1].from_state == MomentState.SUGGESTED
+    assert snoozed.state_history[-1].to_state == MomentState.SNOOZED
+    assert snoozed.state_history[-1].annotation == "user_picked_1h"
+    assert snoozed.state_history[-1].ts == REF_NOW + 5
+
+
+def test_snooze_past_expires_at_coerces_to_expired(repo):
+    """Per eng plan § 'Snooze semantics'."""
+    m = _make_moment(expires_at=REF_NOW + 60)
+    repo.create(m)
+
+    out = repo.snooze(m.id, REF_NOW + 999)
+    assert out.state == MomentState.EXPIRED
+    # snooze_until is not overwritten — the column stays NULL since the
+    # row was expired straight out of SUGGESTED.
+    assert out.snooze_until is None
+
+
+def test_snooze_missing_raises_keyerror(repo):
+    with pytest.raises(KeyError):
+        repo.snooze("ghost", REF_NOW + 60)
+
+
+def test_snooze_illegal_from_terminal_state_raises(repo):
+    m = _make_moment()
+    repo.create(m)
+    repo.transition(m.id, MomentState.DISMISSED)
+
+    with pytest.raises(IllegalTransition):
+        repo.snooze(m.id, REF_NOW + 60)
+
+    # Terminal state untouched; no snooze_until side-effect either.
+    loaded = repo.get(m.id)
+    assert loaded is not None
+    assert loaded.state == MomentState.DISMISSED
+    assert loaded.snooze_until is None
+
+
+# ---------------------------------------------------------------------------
+# update_action_params
+# ---------------------------------------------------------------------------
+
+
+def test_update_action_params_replaces_params_without_moving_state(repo):
+    m = _make_moment()
+    repo.create(m)
+
+    updated = repo.update_action_params(m.id, {"contact_id": "c2", "extra": "ok"})
+    assert updated.state == MomentState.SUGGESTED
+    assert updated.proposed_action.kind == ActionKind.NUDGE  # kind preserved
+    assert updated.proposed_action.params == {"contact_id": "c2", "extra": "ok"}
+    # No history row appended — edit is not a transition.
+    assert len(updated.state_history) == 1
+
+
+def test_update_action_params_missing_raises_keyerror(repo):
+    with pytest.raises(KeyError):
+        repo.update_action_params("ghost", {"x": 1})
