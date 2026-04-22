@@ -45,13 +45,8 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- DONE (see DONE_TASKS.md): `NowTabView.swift` + `MomentCardView.swift` + `Previews/MockData.swift` + `NowTabViewTests.swift`. Full NOW / UP NEXT / DONE TODAY (collapsed default) sections, 22pt insight, evidence sheet, draft block (Radius.lg, draft tints), primary-action + ghost Edit/Snooze + dismiss buttons. 6 test classes / 26 tests covering MockData shape, section splitting, up-next prefix, primary labels (every ActionKind), draft body predicate, evidence copy + accessibility label. -->
 
+<!-- DONE (see DONE_TASKS.md): `YouTabView.swift` + 4-section self-portrait + 22 tests. Header line ("Observed N months · M interactions"), four sections (WHEN YOU'RE AT YOUR BEST / HOW YOU WRITE / YOUR ROUTINES / DRIFTING) locked via `YouSection.allCases`, plain-text rows on bgRaised tiles (no mood bars, no progress bars, no charts), calm empty-state copy per DESIGN.md. `MockData.selfPortrait` + `MockData.emptySelfPortrait` fixtures. -->
 
-- [ ] **`YouTabView.swift`.** Per DESIGN.md You-tab wireframe:
-  - Header with "Observed {N} months · {M} interactions"
-  - 4 sections: WHEN YOU'RE AT YOUR BEST / HOW YOU WRITE / YOUR ROUTINES / DRIFTING
-  - NO mood bars, NO progress bars, NO pie charts
-  Placeholder data via MockData.
-  Tests: preview renders; section order matches wireframe.
 
 - [ ] **`PeopleTabView.swift` + `ContactDossierView.swift`.** Per DESIGN.md:
   - `PeopleTabView` — search field, YOU first entry, NEEDS ATTENTION + ACTIVE THIS WEEK sections
