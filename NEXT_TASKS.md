@@ -42,13 +42,6 @@
 
 ## Week 8 — API surface
 
-- [ ] **API skeleton (`api/app.py` + `api/schemas.py`).** FastAPI factory + Pydantic request/response schemas:
-  - `MomentOut`, `MomentListOut`, `MomentActionIn`
-  - `YouOut`, `PeopleListOut`, `ContactDossierOut`
-  - `ConnectorOut`, `ConnectorConfigIn`
-  - `HealthOut`, `MetricsOut`
-  No route logic yet. Tests: schemas round-trip, validation rejects malformed input.
-
 - [ ] **`api/routes/now.py` (Now tab + moment actions).** 5 REST endpoints:
   - `GET /api/now` → `{pending: [], scheduled: [], done: []}` limits 20/10/10
   - `POST /api/moments/{id}/accept` → SUGGESTED → ACCEPTED, triggers action (stub in Week 11)
