@@ -1,0 +1,71 @@
+{#
+  Life OS v2 — People tab.
+
+  Sections (DESIGN.md § "People: contact list"):
+
+  - Header               — page title + HTMX-debounced search input.
+  - YOU pinned           — always first row, links to /you (self-portrait).
+  - NEEDS ATTENTION      — drifting contacts; positive deviation in days.
+  - ACTIVE THIS WEEK     — contacts whose last_contact_ts is ≤ 7 days old.
+
+  Context (set by ``api.routes.people.people_page``):
+
+    people: dict — matches :class:`api.schemas.PeopleListOut`
+      you              : dict   — same shape as YouOut (see you.html)
+      needs_attention  : list[ContactSummaryOut]
+      active_this_week : list[ContactSummaryOut]
+      total            : int    — full post-filter roster
+      query            : str|None
+
+  HTMX search wiring:
+    The ``input[name="q"]`` debounces 200 ms and POSTs nothing — it does a
+    GET to ``/api/people?q=...``. The route detects ``HX-Request`` and
+    returns ``partials/people_results.html`` (the two sub-list section)
+    so the swap is scoped to ``#people-results``. Non-HTMX clients keep
+    getting JSON ``PeopleListOut``.
+
+  No avatars, no SVG bars (DESIGN.md § "What's NOT in Phase 1" + "No
+  horoscope"). Right-aligned monospace stats per DESIGN.md § "People tab".
+#}
+{% extends "base.html" %}
+
+{% block title %}People · Life OS{% endblock %}
+
+{% set active_tab = "people" %}
+
+{% block content %}
+<section data-section="people-header" class="mb-[var(--s-6)]">
+    <h1 class="font-display text-[length:var(--t-28)] font-semibold tracking-tight text-[color:var(--text-primary)] m-0">
+        People
+    </h1>
+    <p class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] mt-[var(--s-2)] m-0">
+        <span data-slot="people-total">{{ people.total|default(0) }}</span>
+        {{ 'contact' if (people.total|default(0)) == 1 else 'contacts' }}
+        observed
+    </p>
+
+    <form role="search"
+          data-section="people-search"
+          class="mt-[var(--s-4)]"
+          onsubmit="return false;">
+        <label for="people-search-input" class="sr-only">Search contacts</label>
+        <input id="people-search-input"
+               type="search"
+               name="q"
+               value="{{ people.query or '' }}"
+               placeholder="Search contacts"
+               autocomplete="off"
+               data-slot="search-input"
+               hx-get="/api/people"
+               hx-trigger="keyup changed delay:200ms, search"
+               hx-target="#people-results"
+               hx-swap="innerHTML"
+               hx-push-url="false"
+               class="w-full bg-[color:var(--bg-raised)] border border-[color:var(--border-subtle)] rounded-[var(--r-sm)] px-[var(--s-3)] py-[var(--s-2)] text-[length:var(--t-15)] text-[color:var(--text-primary)] placeholder:text-[color:var(--text-tertiary)] focus:outline-none focus:border-[color:var(--border-focus)]">
+    </form>
+</section>
+
+<div id="people-results">
+    {% include "partials/people_results.html" %}
+</div>
+{% endblock %}

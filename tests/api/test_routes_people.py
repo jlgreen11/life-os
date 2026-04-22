@@ -312,3 +312,135 @@ def test_get_dossier_returns_503_when_repo_missing() -> None:
     app = create_app(DummyLifeOS(people_repo=None))
     resp = TestClient(app).get("/api/people/alice")
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# HTML pages: GET /people, GET /people/{id}
+# ---------------------------------------------------------------------------
+
+
+def test_people_page_renders_html_with_search_input(client: TestClient, conn) -> None:
+    _insert_contact(conn, "alice", "Alice")
+    _insert_profile(
+        conn,
+        "cadence",
+        "alice",
+        {
+            "expected_cadence_days": 7.0,
+            "count": 12,
+            "last_inbound_ts": REF_NOW - 1 * 86400,
+            "contact_name": "Alice",
+            "last_inbound_event_ids": ["e"],
+        },
+    )
+    resp = client.get("/people")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert 'id="people-results"' in body
+    assert 'hx-get="/api/people"' in body
+    assert 'data-active-tab="people"' in body
+    # Roster row is server-rendered for the no-JS first paint.
+    assert "Alice" in body
+
+
+def test_people_page_returns_503_when_repo_missing() -> None:
+    app = create_app(DummyLifeOS(people_repo=None))
+    resp = TestClient(app).get("/people")
+    assert resp.status_code == 503
+
+
+def test_list_people_htmx_returns_partial(client: TestClient, conn) -> None:
+    _insert_contact(conn, "alice", "Alice")
+    _insert_profile(
+        conn,
+        "cadence",
+        "alice",
+        {
+            "expected_cadence_days": 7.0,
+            "count": 12,
+            "last_inbound_ts": REF_NOW - 1 * 86400,
+            "contact_name": "Alice",
+            "last_inbound_event_ids": ["e"],
+        },
+    )
+    resp = client.get("/api/people", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    # Partial returns the YOU pinned row + the two sub-list sections,
+    # but NOT the page chrome (no <html> / no nav).
+    assert 'data-section="you-pinned"' in body
+    assert 'data-section="active-this-week"' in body
+    assert "<html" not in body
+    assert 'data-section="people-header"' not in body
+
+
+def test_list_people_htmx_search_filters(client: TestClient, conn) -> None:
+    _insert_contact(conn, "alice", "Alice Smith")
+    _insert_contact(conn, "bob", "Bob Jones")
+    for cid, name in [("alice", "Alice Smith"), ("bob", "Bob Jones")]:
+        _insert_profile(
+            conn,
+            "cadence",
+            cid,
+            {
+                "expected_cadence_days": 7.0,
+                "count": 12,
+                "last_inbound_ts": REF_NOW - 1 * 86400,
+                "contact_name": name,
+                "last_inbound_event_ids": ["e"],
+            },
+        )
+    resp = client.get(
+        "/api/people",
+        headers={"HX-Request": "true"},
+        params={"q": "alice"},
+    )
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Alice Smith" in body
+    assert "Bob Jones" not in body
+
+
+def test_contact_page_renders_dossier_html(client: TestClient, conn) -> None:
+    _insert_contact(conn, "alice", "Alice")
+    _insert_profile(
+        conn,
+        "cadence",
+        "alice",
+        {
+            "expected_cadence_days": 7.0,
+            "count": 12,
+            "last_inbound_ts": REF_NOW - 3 * 86400,
+            "contact_name": "Alice",
+            "last_inbound_event_ids": ["e"],
+        },
+    )
+    resp = client.get("/people/alice")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert 'data-active-tab="people"' in body
+    assert 'data-slot="dossier-name">Alice<' in body
+    assert 'data-section="dossier-cadence"' in body
+
+
+def test_contact_page_unknown_contact_returns_404(client: TestClient) -> None:
+    resp = client.get("/people/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_contact_page_returns_503_when_repo_missing() -> None:
+    app = create_app(DummyLifeOS(people_repo=None))
+    resp = TestClient(app).get("/people/alice")
+    assert resp.status_code == 503
+
+
+def test_list_people_non_htmx_still_returns_json(client: TestClient) -> None:
+    """Plain GET /api/people without HX-Request must keep JSON shape."""
+    resp = client.get("/api/people")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    data = resp.json()
+    assert set(data.keys()) >= {"you", "needs_attention", "active_this_week", "total", "query"}

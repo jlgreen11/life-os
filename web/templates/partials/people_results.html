@@ -1,0 +1,138 @@
+{#
+  Life OS v2 — People-tab results partial.
+
+  Rendered standalone by the HTMX search swap (target: ``#people-results``)
+  and via ``{% include %}`` inside the full page render. Owns three
+  sections plus an empty state for "no matches":
+
+    1. YOU pinned row — links to /you for the self-portrait.
+    2. NEEDS ATTENTION — drifting contacts (positive deviation).
+    3. ACTIVE THIS WEEK — recent contacts (last_contact_ts ≤ 7d).
+
+  Context (same shape as people.html):
+
+    people: dict
+      you              : dict | YouOut
+      needs_attention  : list[ContactSummaryOut]
+      active_this_week : list[ContactSummaryOut]
+      total            : int
+      query            : str | None
+
+  Each contact row links to ``/people/{contact_id}`` for the dossier.
+  Right-aligned monospace stats per DESIGN.md § "People: contact list":
+  the deviation is rendered as ``+18d`` for needs-attention and the
+  last-contact day for active-this-week.
+#}
+<section data-section="you-pinned"
+         class="mb-[var(--s-6)] border-y border-[color:var(--border-subtle)]">
+    <a href="/you"
+       data-slot="you-link"
+       class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-3)] hover:bg-[color:var(--bg-raised-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]">
+        <div class="min-w-0 flex-1">
+            <div class="text-[length:var(--t-15)] font-medium text-[color:var(--text-primary)] uppercase tracking-[var(--ls-caps)]">
+                You
+            </div>
+            <div class="text-[length:var(--t-13)] text-[color:var(--text-secondary)]"
+                 data-slot="you-summary">
+                Observed
+                <span data-slot="you-observed-months">{{ people.you.observed_months|default(0) }}</span>
+                {{ 'month' if (people.you.observed_months|default(0)) == 1 else 'months' }}
+                <span aria-hidden="true">·</span>
+                <span data-slot="you-interactions">{{ people.you.interactions_count|default(0) }}</span>
+                interactions
+            </div>
+        </div>
+        <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)] shrink-0">
+            self →
+        </span>
+    </a>
+</section>
+
+<section aria-labelledby="people-needs-heading"
+         data-section="needs-attention"
+         class="mb-[var(--s-8)]">
+    <h2 id="people-needs-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Needs attention
+    </h2>
+    {% if people.needs_attention %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for contact in people.needs_attention %}
+                <li class="border-b border-[color:var(--border-subtle)]"
+                    data-slot="needs-row"
+                    data-contact-id="{{ contact.contact_id }}">
+                    <a href="/people/{{ contact.contact_id }}"
+                       class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] hover:bg-[color:var(--bg-raised-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]">
+                        <span class="text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                              data-slot="needs-name">{{ contact.name }}</span>
+                        <span class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] font-mono shrink-0"
+                              data-slot="needs-meta">
+                            {% if contact.cadence_deviation_days is not none %}
+                                {% set dev = contact.cadence_deviation_days %}
+                                {% if dev > 0 %}+{{ dev }}d{% else %}{{ dev }}d{% endif %}
+                            {% elif contact.last_contact_ts %}
+                                {{ contact.last_contact_ts|unix_date }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </span>
+                    </a>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0"
+           data-empty="needs-attention">
+            Nobody's slipping right now.
+        </p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="people-active-heading"
+         data-section="active-this-week">
+    <h2 id="people-active-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Active this week
+    </h2>
+    {% if people.active_this_week %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for contact in people.active_this_week %}
+                <li class="border-b border-[color:var(--border-subtle)]"
+                    data-slot="active-row"
+                    data-contact-id="{{ contact.contact_id }}">
+                    <a href="/people/{{ contact.contact_id }}"
+                       class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] hover:bg-[color:var(--bg-raised-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]">
+                        <span class="text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                              data-slot="active-name">{{ contact.name }}</span>
+                        <span class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] font-mono shrink-0"
+                              data-slot="active-meta">
+                            {% if contact.last_contact_ts %}
+                                {{ contact.last_contact_ts|unix_date }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </span>
+                    </a>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0"
+           data-empty="active-this-week">
+            No recent activity.
+        </p>
+    {% endif %}
+</section>
+
+{% if people.query and not people.needs_attention and not people.active_this_week %}
+    <section data-section="people-no-matches"
+             class="mt-[var(--s-6)]">
+        <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0"
+           data-empty="no-matches">
+            No contacts match “{{ people.query }}”.
+        </p>
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+            Try a shorter search or clear the input to see everyone.
+        </p>
+    </section>
+{% endif %}

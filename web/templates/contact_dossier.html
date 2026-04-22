@@ -1,0 +1,131 @@
+{#
+  Life OS v2 — per-contact dossier (`/people/{contact_id}`).
+
+  Sections (matches DESIGN.md § "People: contact list" wireframe):
+
+  - Header                  — back link to /people, contact name, last-seen
+                              microcopy, predicted-next microcopy.
+  - CADENCE (last 14 days)  — text/Unicode sparkline; no SVG bars.
+  - RECENT TOPICS           — list (or empty state).
+  - HOW YOU TYPICALLY WRITE — comm_template body (or empty state).
+
+  Context (set by ``api.routes.people.contact_page``):
+
+    contact: dict — matches :class:`api.schemas.ContactDossierOut`
+      contact_id        : str
+      name              : str
+      last_contact_ts   : int | None
+      usual_cadence_days: int | None
+      comm_template     : str | None
+      cadence_sparkline : list[int]   — 14 days, oldest first
+      recent_topics     : list[str]
+      predicted_next    : str | None  — already-formatted human string
+
+  No avatars (DESIGN.md § "What's NOT in Phase 1"). Sparkline uses block
+  Unicode characters from web.rendering._sparkline_text — text-only,
+  honest about silent stretches (all-zero shows a flat baseline).
+#}
+{% extends "base.html" %}
+
+{% block title %}{{ contact.name }} · People · Life OS{% endblock %}
+
+{% set active_tab = "people" %}
+
+{% block content %}
+<section data-section="dossier-header" class="mb-[var(--s-8)]">
+    <p class="text-[length:var(--t-13)] m-0">
+        <a href="/people"
+           data-slot="dossier-back"
+           class="text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]">
+            ← People
+        </a>
+    </p>
+    <h1 class="font-display text-[length:var(--t-28)] font-semibold tracking-tight text-[color:var(--text-primary)] m-0 mt-[var(--s-2)]"
+        data-slot="dossier-name">{{ contact.name }}</h1>
+    <p class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] mt-[var(--s-2)] m-0"
+       data-slot="dossier-summary">
+        {% if contact.last_contact_ts %}
+            Last seen
+            <span data-slot="dossier-last-ts">{{ contact.last_contact_ts|unix_date('%b %-d, %Y') }}</span>
+        {% else %}
+            Not yet observed.
+        {% endif %}
+        {% if contact.usual_cadence_days %}
+            <span aria-hidden="true">·</span>
+            usual cadence
+            <span data-slot="dossier-cadence">{{ contact.usual_cadence_days }}</span>
+            {{ 'day' if contact.usual_cadence_days == 1 else 'days' }}
+        {% endif %}
+    </p>
+    {% if contact.predicted_next %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0"
+           data-slot="dossier-predicted">{{ contact.predicted_next }}</p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="dossier-cadence-heading"
+         data-section="dossier-cadence"
+         class="mb-[var(--s-8)]">
+    <h2 id="dossier-cadence-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Cadence (last 14 days)
+    </h2>
+    {% set spark = contact.cadence_sparkline|sparkline_text %}
+    {% if spark %}
+        <p class="text-[length:var(--t-22)] text-[color:var(--text-primary)] font-mono leading-none m-0 select-all"
+           data-slot="dossier-sparkline"
+           aria-label="Daily contact counts for the last 14 days, oldest first">
+            {{ spark }}
+        </p>
+        <p class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)] mt-[var(--s-2)] m-0">
+            {{ contact.cadence_sparkline|sum }}
+            {{ 'event' if (contact.cadence_sparkline|sum) == 1 else 'events' }}
+            in window
+        </p>
+    {% else %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0"
+           data-empty="dossier-cadence">
+            No events in the last 14 days.
+        </p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="dossier-topics-heading"
+         data-section="dossier-topics"
+         class="mb-[var(--s-8)]">
+    <h2 id="dossier-topics-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Recent topics
+    </h2>
+    {% if contact.recent_topics %}
+        <ul class="flex flex-wrap gap-[var(--s-2)] list-none p-0 m-0">
+            {% for topic in contact.recent_topics %}
+                <li class="text-[length:var(--t-13)] text-[color:var(--text-primary)] bg-[color:var(--bg-overlay)] border border-[color:var(--border-subtle)] rounded-[var(--r-pill)] px-[var(--s-3)] py-[var(--s-1)]"
+                    data-slot="dossier-topic">{{ topic }}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0"
+           data-empty="dossier-topics">
+            No topics extracted yet.
+        </p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="dossier-template-heading"
+         data-section="dossier-template">
+    <h2 id="dossier-template-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        How you typically write
+    </h2>
+    {% if contact.comm_template %}
+        <pre class="text-[length:var(--t-15)] text-[color:var(--text-primary)] bg-[color:var(--bg-raised)] border border-[color:var(--border-subtle)] rounded-[var(--r-md)] p-[var(--s-4)] whitespace-pre-wrap font-text m-0"
+             data-slot="dossier-template">{{ contact.comm_template }}</pre>
+    {% else %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0"
+           data-empty="dossier-template">
+            No outbound style detected yet.
+        </p>
+    {% endif %}
+</section>
+{% endblock %}
