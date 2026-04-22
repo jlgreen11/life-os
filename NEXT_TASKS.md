@@ -73,34 +73,32 @@ Splitting the original task into the well-defined slices below; the two
 slices that depend on the undo design land last and carry their own
 NOTE flagging the blocker. -->
 
-- [ ] **DESIGN: Undo toast + deferred dispatch — write design note.**
-  This is a planning task (writes docs/plans/2026-04-22-undo-grace.md), not
-  code. Resolve the open questions above:
-  (1) preferred state-machine model for undo (new edges vs. new
-  in-flight state); (2) outbox extension (`not_before TIMESTAMP NULL`
-  column vs. separate scheduler dispatch); (3) what happens if the
-  process dies during the 3 s grace window (boot recovery should
-  re-enqueue / re-dispatch / surface to user?). One short doc, ~150
-  lines. After it lands the next two tasks become unblocked.
-
 - [ ] **Undo toast — POST endpoint + state-machine edge.**
-  DEPENDS ON design note above. Add `POST /api/moments/{id}/undo` that
-  reverses the most recent terminal/snooze transition within a 3 s
-  grace window (server-enforced via `state_history.ts` check); 410 Gone
-  if outside window; 409 if not in an undoable state. Add the legal
-  transition edges decided in the design note. Wire the existing
+  Per design note at `docs/plans/2026-04-22-undo-grace.md` § "Decision 1".
+  Add `POST /api/moments/{id}/undo` that reverses the most recent
+  terminal/snooze transition within a 3 s grace window (server-enforced
+  via `state_history.ts` check); 410 Gone if outside window; 409 if not
+  in an undoable state. Add the legal transition edges
+  (ACCEPTED→SUGGESTED, DISMISSED→SUGGESTED — SNOOZED→SUGGESTED already
+  legal) and an ``annotation='undo'`` stamp on the bounce row.
+  Compensate feedback weight with the inverse signal. Wire the existing
   `data-undo` button in `base.html` to call it (replace the current
   `toast.remove()` no-op with an `htmx:trigger`).
-  Tests: state-machine fanout + route-level grace-window enforcement.
+  Tests: state-machine fanout + route-level grace-window enforcement
+  (404/409/410/200 branches from design note § "Test plan").
 
 - [ ] **Deferred outbox dispatch (3 s grace).**
-  DEPENDS ON design note above. Implement the chosen pattern (e.g.
-  `outbox.not_before` column or scheduler-mediated enqueue). `accept`
-  enqueues a side-effect with `not_before = now() + 3s`; outbox claim
-  loop refuses to claim rows whose `not_before` is in the future; undo
-  during grace deletes the row pre-claim.
+  Per design note at `docs/plans/2026-04-22-undo-grace.md` § "Decision 2".
+  Add `not_before INTEGER NULL` column to `outbox`; `enqueue(...,
+  not_before=)` kwarg; `claim_batch` filters rows whose `not_before >
+  now()`; `cancel_pending(event_id, subject)` repo method. `accept`
+  enqueues with `not_before = now() + 3`. Undo calls `cancel_pending`
+  inside the same txn as the state reversal. Replace
+  `idx_outbox_state_created` with `idx_outbox_state_notbefore_created`
+  per design note.
   Tests: claim_batch respects not_before; undo within grace cancels;
-  undo after claim is a 410.
+  undo after claim is a 410; boot recovery test per design note
+  § "Decision 3".
 
 - [ ] **Now-tab E2E tests.**
   Five DESIGN.md "test plan" critical paths: (1) accept moves card
