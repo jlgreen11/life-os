@@ -14,8 +14,6 @@
 
 ## Week 0 — prework (safe for agent)
 
-- [ ] **Profile the 5 existing SQLite DBs.** Write `scripts/profile_v1_dbs.py` that opens events.db, entities.db, state.db, user_model.db, preferences.db (READ-ONLY) and emits `MIGRATION_PROFILE.md` at repo root containing: per-DB file size, WAL size, per-table row counts, per-table byte size, top 5 largest tables overall, FK graph (parse `pragma foreign_key_list` on each table), per-connector event counts (`SELECT source, COUNT(*) FROM events GROUP BY source`), and a summary. Script must open DBs read-only (`sqlite3.connect('file:path?mode=ro', uri=True)`). Commit script + generated MIGRATION_PROFILE.md together. Do NOT open the live production DB path; use the local `./data/` copy only if it exists, otherwise emit a stub MIGRATION_PROFILE.md that says "no local data/; run this on the Mac Mini."
-
 - [ ] **Promote engineering plan into the repo.** Read the CEO plan at `~/.gstack/projects/jlgreen11-life-os/ceo-plans/2026-04-21-life-os-rewrite-mvp.md` (the file exists on the reviewer's machine; if it's not accessible from inside the agent sandbox, skip this task and leave a NOTE). If accessible, create `docs/plans/2026-04-21-v2-rewrite-plan.md` containing a condensed engineering-plan view: week-by-week sequence, 14-endpoint API contract table, 13-table schema DDL block, outbox pattern spec, Moment primitive state-transition table. Link back to the CEO plan.
 
 ## Week 1 — Ollama measurement + schema DDL + migration dry-run
