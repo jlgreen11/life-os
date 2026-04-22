@@ -41,12 +41,9 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- NOTE (2026-04-22): WebSocketManager rewrite changed the public contract from `WebSocketMessage` to `WebSocketEvent` and `onMessage` to `onEvent`. `AppState.swift` still references the old shape via `webSocket?.onMessage = ...` + `handleWebSocketMessage(message: WebSocketMessage)` and WILL NOT COMPILE until the Views-restructure task below lands. The legacy `WebSocketMessage` struct in `Models/Models.swift` is now unreferenced by the manager but kept until that task wholesale-deletes the v1 view layer. -->
 
-- [ ] **Restructure `ios/LifeOS/Views/` around 4-tab IA.** Scaffold:
-  - Move/rename existing `DashboardView.swift` → `Views/Now/NowTabView.swift` (stub body — real impl next task)
-  - Create `Views/You/`, `Views/People/`, `Views/Settings/` directories with empty scaffold views
-  - Create `Views/Root/RootTabView.swift` with `TabView` + 4 tabs (`.tabItem` + SF Symbol icons)
-  - Entry point `LifeOSApp.swift` points at `RootTabView`
-  Tests: `RootTabViewTests.swift` verifies 4 tabs present, correct icons.
+<!-- DONE (see DONE_TASKS.md): Restructure `ios/LifeOS/Views/` around 4-tab IA. Stub `NowTabView`/`YouTabView`/`PeopleTabView`/`SettingsTabView` + new `RootTabView` with 4 tabs (tray.full / person.crop.circle / person.2 / gear). Legacy v1 views (Dashboard/Chat/Context/Components/Settings/SettingsView), `ContentView.swift`, AppState.sendCommand/getNotifications wiring, and the `WebSocketMessage` legacy struct deleted. `RootTabViewTests.swift` covers tab order, titles, icons. -->
+
+
 
 - [ ] **`NowTabView.swift` + `MomentCardView.swift`.** Per DESIGN.md Now-tab wireframe:
   - `NowTabView` — sections: NOW (2-3 cards), UP NEXT (compact list), DONE TODAY (collapsed default)
