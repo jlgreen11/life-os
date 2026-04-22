@@ -30,13 +30,7 @@
 
 ## Week 2 — Moment primitive (complete, see DONE_TASKS.md)
 
-## Week 3 — outbox + scheduler + WAL integrity
-
-- [ ] **Scheduler wall-clock firing loop (`core/moment/scheduler.py`).** `class Scheduler(moment_repo, outbox_repo, bus)`:
-  - `async run_forever(tick_seconds=30)`: each tick, SELECT suggested+snoozed Moments with scheduled_for <= NOW; for each: if snoozed transition→suggested with annotation='scheduler_fire'; enqueue notification event to outbox; log fire latency
-  - `async boot_recovery()`: past-due Moments — fire if expires_at > now (annotation='boot_recovery'), else transition → expired
-  - `_matches_trigger(moment, event) -> bool`: parse ContextTrigger grammar; return bool
-  Tests: past-due fires via boot_recovery; snoozed past wake-time transitions; expired is terminal; fire latency recorded. Use `time.monotonic()` injection (stdlib only; no freezegun).
+## Week 3 — outbox + scheduler + WAL integrity (complete, see DONE_TASKS.md)
 
 ## Week 4 — Producer base + 3 producers
 
