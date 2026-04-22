@@ -42,13 +42,7 @@
 
 ## Week 8 — API surface
 
-## Week 9 — Web: base + Now tab
-
-- [ ] **HTMX wiring: accept / dismiss / snooze.** Each action button:
-  - `<button hx-post="/api/moments/{id}/accept" hx-swap="outerHTML" hx-target="closest .moment-card">`
-  - On success: card fades + server returns next pending Moment partial; swap replaces it
-  - Snooze duration picker: chip row popover `[1h][3h][Tonight][Tomorrow][3d][Custom]`
-  Tests: each action POSTs correctly; swap target updates; Undo toast appears 3s (vanilla JS, no framework).
+## Week 9 — Web: base + Now tab (complete, see DONE_TASKS.md)
 
 ## Week 10 — Web: You, People, Settings
 
