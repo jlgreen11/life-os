@@ -44,12 +44,6 @@
 
 ## Week 9 — Web: base + Now tab
 
-- [ ] **Web base template + design tokens (`web/templates/base.html`, `web/static/tokens.css`).** Implement DESIGN.md:
-  - `tokens.css` — all CSS custom properties from DESIGN.md (color, typography, spacing, elevation, radius, motion)
-  - `base.html` — HTMX + `hx-ws` extension, Tailwind CDN, SF font stack, Lucide icons helper, top nav Now/You/People/⚙ with active-tab underline, header with date/time
-  - A11y: `<nav aria-label>`, `<main>`, skip-link, `prefers-reduced-motion` respected
-  Render smoke test: template renders with fixture data, no Jinja errors, tokens load.
-
 - [ ] **Now tab + Moment card primitive (`web/templates/now.html` + partials).**
   - Page sections: NOW (2–3 cards) / UP NEXT (compact list) / DONE TODAY (collapsed default)
   - `partials/moment_card.html`: insight (22pt display), evidence link (HTMX reveal), draft block (recessed bg), action buttons (one primary filled + 2–3 ghost)
