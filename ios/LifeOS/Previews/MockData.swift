@@ -236,4 +236,129 @@ enum MockData {
     /// Fresh-install `SelfPortrait` — every list empty, header counters at
     /// zero. Drives the You-tab empty-state path.
     static let emptySelfPortrait = SelfPortrait()
+
+    // MARK: - People tab
+
+    /// "Dad" contact row — drives NEEDS ATTENTION in the People list. The
+    /// `lastContactTs` and `cadenceDeviationDays` values are locked so
+    /// tests can assert on derived labels (`"9d ago"`, `"+4d"`) against
+    /// the fixed anchor `MockData.anchorDate`.
+    static let contactDad = ContactSummary(
+        contactId: "contact:dad",
+        name: "Dad",
+        lastContactTs: Int(anchorDate.timeIntervalSince1970) - 9 * 86_400,
+        cadenceDeviationDays: 4,
+        needsAttention: true
+    )
+
+    static let contactMaya = ContactSummary(
+        contactId: "contact:maya",
+        name: "Maya",
+        lastContactTs: Int(anchorDate.timeIntervalSince1970) - 11 * 86_400,
+        cadenceDeviationDays: 6,
+        needsAttention: true
+    )
+
+    static let contactSam = ContactSummary(
+        contactId: "contact:sam-okonkwo",
+        name: "Sam",
+        lastContactTs: Int(anchorDate.timeIntervalSince1970) - 2 * 86_400,
+        cadenceDeviationDays: 0,
+        needsAttention: false
+    )
+
+    static let contactDevon = ContactSummary(
+        contactId: "contact:devon",
+        name: "Devon",
+        lastContactTs: Int(anchorDate.timeIntervalSince1970) - 3 * 86_400,
+        cadenceDeviationDays: -1,
+        needsAttention: false
+    )
+
+    /// `PeopleList` matching the `/api/people` response. YOU pinned at top
+    /// (via ``selfPortrait``), two rows under NEEDS ATTENTION, two under
+    /// ACTIVE THIS WEEK.
+    static let peopleList = PeopleList(
+        you: selfPortrait,
+        needsAttention: [contactDad, contactMaya],
+        activeThisWeek: [contactSam, contactDevon],
+        total: 4,
+        query: nil
+    )
+
+    /// Empty `PeopleList` — fresh install. YOU still present, everything
+    /// else empty.
+    static let emptyPeopleList = PeopleList(
+        you: emptySelfPortrait,
+        needsAttention: [],
+        activeThisWeek: [],
+        total: 0,
+        query: nil
+    )
+
+    /// Per-contact dossier — drives the `ContactDossierView` populated
+    /// preview + tests. Sparkline is 14 days of contact counts with a
+    /// visible peak (so tests can assert min/max normalization works).
+    static let contactDossierDad = ContactDossier(
+        contactId: "contact:dad",
+        name: "Dad",
+        lastContactTs: Int(anchorDate.timeIntervalSince1970) - 9 * 86_400,
+        usualCadenceDays: 5,
+        commTemplate: "Short, warm check-ins. Ask about the garden.",
+        cadenceSparkline: [0, 1, 0, 0, 2, 1, 0, 0, 3, 1, 0, 0, 0, 0],
+        recentTopics: [
+            "Garden tomato harvest",
+            "Sunday dinner plans",
+            "Fixing the back fence",
+        ],
+        predictedNext: "Likely worth reaching out in the next 1–2 days."
+    )
+
+    /// Sparse dossier — nil `commTemplate`, empty topics list, empty
+    /// sparkline. Drives the fallback-copy path in `ContactDossierView`.
+    static let contactDossierSparse = ContactDossier(
+        contactId: "contact:new",
+        name: "Noor",
+        lastContactTs: nil,
+        usualCadenceDays: nil,
+        commTemplate: nil,
+        cadenceSparkline: [],
+        recentTopics: [],
+        predictedNext: nil
+    )
+
+    // MARK: - Anchor date
+
+    /// Fixed reference "now" used by every fixture whose derived labels
+    /// are time-dependent (last-contact recency, predicted-next delta).
+    /// Matches the Moment timestamps above — `Date(timeIntervalSince1970:
+    /// 1_777_204_800)` is `2026-04-26 13:20:00 UTC`.
+    static let anchorDate = Date(timeIntervalSince1970: 1_777_204_800)
+}
+
+// MARK: - ContactDossier convenience init (test-only)
+
+/// `ContactDossier`'s compiler-synthesized memberwise init isn't internal
+/// because the struct ships a custom `init(from decoder:)`. This extension
+/// re-exposes a memberwise init for fixtures + tests.
+extension ContactDossier {
+    init(
+        contactId: String,
+        name: String,
+        lastContactTs: Int? = nil,
+        usualCadenceDays: Int? = nil,
+        commTemplate: String? = nil,
+        cadenceSparkline: [Int] = [],
+        recentTopics: [String] = [],
+        predictedNext: String? = nil
+    ) {
+        self.contactId = contactId
+        self.name = name
+        self.lastContactTs = lastContactTs
+        self.usualCadenceDays = usualCadenceDays
+        self.commTemplate = commTemplate
+        self.cadenceSparkline = cadenceSparkline
+        self.recentTopics = recentTopics
+        self.predictedNext = predictedNext
+    }
 }
