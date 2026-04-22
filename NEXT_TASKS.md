@@ -42,12 +42,6 @@
 
 ## Week 8 — API surface
 
-- [ ] **`api/routes/you.py` + `api/routes/people.py`.**
-  - `GET /api/you` → self-portrait: when_at_best, how_you_write, your_routines, drifting
-  - `GET /api/people` → paginated + search (q); YOU first entry; NEEDS_ATTENTION + ACTIVE_THIS_WEEK sections
-  - `GET /api/people/{contact_id}` → full dossier: comm_template, cadence sparkline, recent_topics, predicted_next
-  Tests: empty-state returns empty lists (never None); large-set pagination.
-
 - [ ] **`api/routes/settings.py` + `api/routes/health.py`.**
   - `GET /api/connectors`: list + status + last_sync + last_error
   - `PATCH /api/connectors/{id}`: update config (Fernet creds never returned raw)
