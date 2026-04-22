@@ -9,11 +9,14 @@ Currently exported:
 
 - :class:`storage.repos.moments.MomentRepository` — the Moment primitive
   store, including the ``moment_state_history`` append-only audit log.
+- :class:`storage.repos.outbox.OutboxRepository` — transactional outbox
+  for side-effecting events (send_message, create_calendar_entry, …).
 
-Later waves add: ``outbox``, ``feedback_weights``, ``signal_profiles``,
+Later waves add: ``feedback_weights``, ``signal_profiles``,
 ``connector_state``, etc.
 """
 
 from storage.repos.moments import MomentRepository
+from storage.repos.outbox import OutboxEntry, OutboxRepository
 
-__all__ = ["MomentRepository"]
+__all__ = ["MomentRepository", "OutboxEntry", "OutboxRepository"]
