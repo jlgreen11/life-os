@@ -16,11 +16,14 @@ Phase 1 set (CEO plan § "Producers retained"):
 """
 
 from producers.cadence import CADENCE_PRODUCER_KEY, CadenceProducer
+from producers.comm_template import COMM_TEMPLATE_PRODUCER_KEY, CommTemplateProducer
 from producers.relationship import RELATIONSHIP_PRODUCER_KEY, RelationshipProducer
 
 __all__ = [
     "CADENCE_PRODUCER_KEY",
+    "COMM_TEMPLATE_PRODUCER_KEY",
     "RELATIONSHIP_PRODUCER_KEY",
     "CadenceProducer",
+    "CommTemplateProducer",
     "RelationshipProducer",
 ]
