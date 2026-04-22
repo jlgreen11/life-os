@@ -33,18 +33,9 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- DONE (see DONE_TASKS.md): Port DESIGN.md tokens → Swift. 5 Swift files in ios/LifeOS/DesignSystem/, committed in 43887cc. -->
 
+<!-- DONE (see DONE_TASKS.md): Regenerate APIClient.swift against v2 endpoints (with APITypes.swift + APIClientTests.swift using URLProtocol mock). -->
 
-- [ ] **Regenerate `APIClient.swift` against v2 endpoints.** Fix existing mismatches + add new endpoints:
-  - `GET /api/now` → `MomentFeed` (pending, scheduled, done)
-  - `POST /api/moments/{id}/accept|dismiss|snooze|edit`
-  - `GET /api/you` → `SelfPortrait`
-  - `GET /api/people`, `GET /api/people/{id}` → `PeopleList`, `ContactDossier`
-  - `GET /api/connectors`, `PATCH /api/connectors/{id}`, `POST /api/connectors/{id}/test`
-  - `GET /api/health`, `GET /api/status`
-  - `GET /api/briefing` (legacy proxy, same shape as v1)
-  - Keep existing: `/api/context/*`, `/api/feedback`, `/api/preferences`
-  - **Remove** from the client: old `/api/task` (singular — the known bug), `/api/command`, `/api/notifications`, `/api/tasks`, `/api/search` (all 501'd in v2 shim)
-  Unit tests: `APIClientTests.swift` using `URLProtocol` stubbing, one test per endpoint.
+<!-- NOTE (2026-04-22): APIClient regen removed `sendCommand` / `getNotifications` / `getTasks` / `createTask` / `search` as specified. The legacy iOS views under `ios/LifeOS/Views/{Dashboard,Chat,Components}/` and `ios/LifeOS/App/AppState.swift` still reference these methods and WILL NOT COMPILE until the next task (Views restructure) lands. The Python test suite is unaffected; iOS is a scaffold-in-progress. -->
 
 - [ ] **Update `WebSocketManager.swift` for v2 Moment protocol.** Adapt to v2 `/ws`:
   - Decode incoming messages as typed events: `MomentCreated`, `MomentStateChanged`, `ConnectorStatusChanged`
