@@ -38,13 +38,6 @@
 
 ## Week 6 — feedback + wiring
 
-- [ ] **Feedback-weight EWMA (`core/moment/feedback_weight.py`).** Per eng review §1d:
-  - `class FeedbackWeightStore` (owns feedback_weights table)
-  - `update(insight_type, moment_state)`: signal = 1.0 ACCEPTED / 0.0 DISMISSED / 0.5 SNOOZED / no-update EXPIRED|DONE; alpha=0.1; `w_new = alpha*signal + (1-alpha)*w_old`; sample_count++
-  - `get(insight_type) -> (weight, sample_count)` — defaults (0.5, 0)
-  - `get_threshold_for(insight_type) -> float`: `base (0.6) + (1.0 - weight)` — higher bar when user rejects a lot
-  Tests: happy path, update sequence converges predictably, unknown type returns defaults.
-
 - [ ] **MomentEngine wiring (`core/moment/engine.py`).**
   - `class MomentEngine(producers, moment_repo, feedback_weight_store)`
   - `async def on_event(event)`: for each producer → observe(event); filter by confidence >= threshold_for(insight_type); create via moment_repo
