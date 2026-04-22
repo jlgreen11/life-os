@@ -42,14 +42,6 @@
 
 ## Week 8 — API surface
 
-- [ ] **`api/routes/settings.py` + `api/routes/health.py`.**
-  - `GET /api/connectors`: list + status + last_sync + last_error
-  - `PATCH /api/connectors/{id}`: update config (Fernet creds never returned raw)
-  - `POST /api/connectors/{id}/test`: dry-run sync
-  - `GET /api/health`: deep-health multi-key (connectors, DB last-write, scheduler heartbeat, producer activity, pending count)
-  - `GET /metrics`: Prometheus text + daily jsonl dump to `./data/metrics/metrics-YYYYMMDD.jsonl` for `lifeos-report` CLI
-  Tests: Fernet creds never serialize; health returns multi-key response; /metrics parses with prometheus-client.
-
 - [ ] **iOS compat shim (`api/routes/context.py` + legacy proxies).** Per eng review §1g. Preserve for the existing iOS app:
   - `POST /api/context/event` + `/batch` + `GET /api/context/summary` (context pipeline)
   - `GET /api/status` (smoke)
