@@ -26,15 +26,7 @@
 
 ## Week 1 — migration dry-run
 
-- [ ] **Write `scripts/migrate_v1_to_v2.py` (dry-run only).** Reads v1 DBs read-only from `./data/*.db` if present (`sqlite3.connect('file:...?mode=ro', uri=True)`) and writes NEW `./data/lifeos_v2_dryrun.db` using `storage/schema.py`. Translations:
-  - v1 events → events (schema-compatible pass-through; coerce any missing columns)
-  - v1 entities.db (contacts + places + subscriptions) → entities rows (`kind` in {contact, place, topic})
-  - v1 state.db tasks → synthetic Moments with `source_insight_type='legacy_task'`, state='suggested', evidence=[]
-  - v1 user_model.db signal_profiles → signal_profiles (remap profile_type: mood→DROP, decision→DROP, expertise→DROP, values→DROP; keep cadence/relationship/temporal/spatial/comm_template/routine)
-  - v1 preferences.db → preferences (key/value passthrough)
-  - v1 notification feedback → feedback_events (timestamp, moment_id=NULL for legacy)
-  Log every translation decision to stdout. Verify row-count invariants per table after write. NEVER touches live production DBs.
-  Synthetic fixtures: create `tests/fixtures/v1_sample/` with tiny in-memory v1 DBs (10 events, 3 entities, 2 profiles). Tests: `tests/scripts/test_migrate.py` round-trips through fixtures, asserts row counts match expected transforms, asserts no dropped profile types appear in output.
+<!-- NOTE (2026-04-22, follow-up to SHA of this commit): v2 schema has no `feedback_events` table (only `feedback_weights` EWMA). The migration script skips v1 `feedback_log` rows with a logged warning and surfaces the count in `MigrationReport.notification_feedback_skipped`. Before cutover, either (a) add `feedback_events` to `storage/schema.py` or (b) decide legacy feedback is intentionally not carried forward. Tracked as an open design decision on the engineering plan. -->
 
 ## Week 2 — Moment primitive
 
