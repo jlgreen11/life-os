@@ -221,6 +221,17 @@
             }
         };
 
+        // Focusable elements inside a snooze popover for the focus trap.
+        // Computed fresh each Tab keydown so the dynamic Custom-time form
+        // (input + Set button) participates only while it is visible.
+        window.lifeos._snoozeFocusables = function (popover) {
+            return Array.from(
+                popover.querySelectorAll(
+                    'button:not([disabled]), input:not([disabled]):not([type="hidden"])'
+                )
+            ).filter((el) => !el.closest('[hidden]'));
+        };
+
         window.lifeos.toggleSnoozePopover = function (btn) {
             const wrapper = btn.closest('[data-snooze-wrapper]');
             if (!wrapper) return;
@@ -230,18 +241,76 @@
             // Close any other open popover first; only one at a time.
             document.querySelectorAll('[data-snooze-popover]').forEach((p) => {
                 if (p !== popover) {
-                    p.setAttribute('hidden', '');
-                    const trigger = p.closest('[data-snooze-wrapper]')
-                        ?.querySelector('[data-snooze-popover-trigger]');
-                    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+                    window.lifeos._closeSnoozePopover(p);
                 }
             });
             if (isOpen) {
-                popover.setAttribute('hidden', '');
-                btn.setAttribute('aria-expanded', 'false');
+                window.lifeos._closeSnoozePopover(popover);
             } else {
                 popover.removeAttribute('hidden');
                 btn.setAttribute('aria-expanded', 'true');
+                // Per DESIGN.md § WCAG ("Tab to reach, Enter to accept"):
+                // when a menu opens via the keyboard or a click, focus
+                // moves to the first menuitem so the user does not have
+                // to chase it with the cursor.
+                const focusables = window.lifeos._snoozeFocusables(popover);
+                if (focusables.length > 0) focusables[0].focus();
+            }
+        };
+
+        // Internal: collapse a popover and reset its Custom-time form so a
+        // re-open shows chips first, not the editor mid-entry.
+        window.lifeos._closeSnoozePopover = function (popover) {
+            popover.setAttribute('hidden', '');
+            const trigger = popover.closest('[data-snooze-wrapper]')
+                ?.querySelector('[data-snooze-popover-trigger]');
+            if (trigger) trigger.setAttribute('aria-expanded', 'false');
+            const form = popover.querySelector('[data-snooze-custom-form]');
+            if (form && !form.hasAttribute('hidden')) {
+                form.setAttribute('hidden', '');
+                const customBtn = popover.querySelector('[data-snooze-custom]');
+                if (customBtn) customBtn.setAttribute('aria-expanded', 'false');
+            }
+        };
+
+        // Reveal the inline datetime-local editor for the Custom chip and
+        // move focus to the input so the user can start typing immediately.
+        window.lifeos.openSnoozeCustomEditor = function (btn) {
+            const popover = btn.closest('[data-snooze-popover]');
+            if (!popover) return;
+            const form = popover.querySelector('[data-snooze-custom-form]');
+            if (!form) return;
+            form.removeAttribute('hidden');
+            btn.setAttribute('aria-expanded', 'true');
+            const input = form.querySelector('[data-snooze-custom-input]');
+            if (input) input.focus();
+        };
+
+        // Convert the form's datetime-local value to a unix epoch (seconds)
+        // for the snooze API. Used by `hx-vals` on the form's submit. The
+        // form has `required` so HTMX never fires this without a value.
+        window.lifeos.snoozeCustomUntil = function (form) {
+            const input = form.querySelector('[data-snooze-custom-input]');
+            if (!input || !input.value) return 0;
+            return Math.floor(new Date(input.value).getTime() / 1000);
+        };
+
+        // Focus trap inside an open snooze popover. Tab loops chip → chip;
+        // Shift+Tab reverses. Esc is handled by the global listener below.
+        window.lifeos.handleSnoozePopoverKey = function (event) {
+            if (event.key !== 'Tab') return;
+            const popover = event.currentTarget;
+            const focusables = window.lifeos._snoozeFocusables(popover);
+            if (focusables.length === 0) return;
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            const active = document.activeElement;
+            if (event.shiftKey && active === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
             }
         };
 
@@ -249,22 +318,16 @@
         document.addEventListener('click', function (e) {
             if (e.target.closest('[data-snooze-wrapper]')) return;
             document.querySelectorAll('[data-snooze-popover]').forEach((p) => {
-                p.setAttribute('hidden', '');
-                const trigger = p.closest('[data-snooze-wrapper]')
-                    ?.querySelector('[data-snooze-popover-trigger]');
-                if (trigger) trigger.setAttribute('aria-expanded', 'false');
+                window.lifeos._closeSnoozePopover(p);
             });
         });
         document.addEventListener('keydown', function (e) {
             if (e.key !== 'Escape') return;
             document.querySelectorAll('[data-snooze-popover]:not([hidden])').forEach((p) => {
-                p.setAttribute('hidden', '');
                 const trigger = p.closest('[data-snooze-wrapper]')
                     ?.querySelector('[data-snooze-popover-trigger]');
-                if (trigger) {
-                    trigger.setAttribute('aria-expanded', 'false');
-                    trigger.focus();
-                }
+                window.lifeos._closeSnoozePopover(p);
+                if (trigger) trigger.focus();
             });
         });
 

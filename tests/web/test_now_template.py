@@ -248,3 +248,54 @@ def test_evidence_partial_empty_state() -> None:
     html = render("partials/evidence.html", {"moment": moment})
     assert 'data-slot="evidence-empty"' in html
     assert "No source events recorded." in html
+
+
+# ---------------------------------------------------------------------------
+# Snooze popover — Custom-time editor + ARIA contract
+# ---------------------------------------------------------------------------
+
+
+def test_snooze_popover_trigger_has_menu_aria_contract() -> None:
+    """Trigger button must announce itself as opening a menu (DESIGN.md WCAG)."""
+    moment = _make_moment()
+    html = render("partials/moment_card.html", {"moment": moment})
+    assert "data-snooze-popover-trigger" in html
+    assert 'aria-haspopup="menu"' in html
+    assert f'aria-controls="snooze-popover-{moment.id}"' in html
+    # Popover declares role=menu so AT pairs the trigger with a menu.
+    assert 'role="menu"' in html
+
+
+def test_snooze_popover_chips_are_menu_items() -> None:
+    """Every preset chip + Custom + Set carry role=menuitem for keyboard nav."""
+    moment = _make_moment()
+    html = render("partials/moment_card.html", {"moment": moment})
+    # Five preset chips + Custom toggle + Set submit = 7 menuitems.
+    assert html.count('role="menuitem"') >= 7
+    # Sanity-check the labels survive autoescape unmodified.
+    for label in ("1h", "3h", "Tonight", "Tomorrow", "3d", "Custom", "Set"):
+        assert f">{label}<" in html
+
+
+def test_snooze_popover_custom_form_renders_datetime_input() -> None:
+    """Custom chip is wired to a hidden inline form that posts a unix epoch."""
+    moment = _make_moment()
+    html = render("partials/moment_card.html", {"moment": moment})
+    # The Custom button discloses the form (aria-controls + aria-expanded).
+    assert "data-snooze-custom" in html
+    assert f'aria-controls="snooze-custom-form-{moment.id}"' in html
+    # The form starts hidden (no auto-open on render) and is wired to HTMX.
+    assert f'id="snooze-custom-form-{moment.id}"' in html
+    assert "data-snooze-custom-form" in html
+    assert "data-snooze-custom-input" in html
+    assert 'type="datetime-local"' in html
+    # Submit converts the local datetime to a unix epoch via the JS helper.
+    assert "lifeos.snoozeCustomUntil(event.target)" in html
+    assert f'hx-post="/api/moments/{moment.id}/snooze"' in html
+
+
+def test_snooze_popover_keydown_handler_wired_for_focus_trap() -> None:
+    """The popover declares the focus-trap keydown handler at render time."""
+    moment = _make_moment()
+    html = render("partials/moment_card.html", {"moment": moment})
+    assert "lifeos.handleSnoozePopoverKey(event)" in html

@@ -129,6 +129,7 @@
                  role="menu"
                  data-snooze-popover
                  data-moment-id="{{ moment.id }}"
+                 onkeydown="lifeos.handleSnoozePopoverKey(event)"
                  hidden>
                 {% set chips = [
                     ("1h",       "1h",        3600),
@@ -152,7 +153,33 @@
                         role="menuitem"
                         class="snooze-chip snooze-chip--custom inline-flex items-center justify-center min-h-[32px] px-[var(--s-2)] py-[var(--s-1)] rounded-[var(--r-sm)] text-[length:var(--t-13)] font-medium bg-[color:var(--bg-base)] text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
                         data-snooze-preset="custom"
-                        data-snooze-custom>Custom</button>
+                        data-snooze-custom
+                        aria-expanded="false"
+                        aria-controls="snooze-custom-form-{{ moment.id }}"
+                        onclick="lifeos.openSnoozeCustomEditor(this)">Custom</button>
+                {# Custom-time editor: a tiny inline form revealed when the
+                   user clicks the Custom chip. `basis-full` puts it on its
+                   own row inside the wrapping flex popover so the input
+                   can grow without elbowing the chips. #}
+                <form id="snooze-custom-form-{{ moment.id }}"
+                      class="snooze-custom-form flex items-center gap-[var(--s-1)] basis-full mt-[var(--s-1)]"
+                      data-snooze-custom-form
+                      data-moment-id="{{ moment.id }}"
+                      hx-post="/api/moments/{{ moment.id }}/snooze"
+                      hx-ext="json-enc"
+                      hx-vals='js:{snooze_until: lifeos.snoozeCustomUntil(event.target)}'
+                      hx-swap="outerHTML"
+                      hx-target="closest .moment-card"
+                      hidden>
+                    <input type="datetime-local"
+                           required
+                           data-snooze-custom-input
+                           class="snooze-custom-input flex-1 min-w-0 bg-[color:var(--bg-base)] text-[color:var(--text-primary)] border border-[color:var(--border-strong)] rounded-[var(--r-sm)] px-[var(--s-2)] py-[var(--s-1)] text-[length:var(--t-13)]"
+                           aria-label="Custom snooze time">
+                    <button type="submit"
+                            role="menuitem"
+                            class="snooze-chip snooze-chip--custom-submit inline-flex items-center justify-center min-h-[32px] px-[var(--s-2)] py-[var(--s-1)] rounded-[var(--r-sm)] text-[length:var(--t-13)] font-medium bg-[color:var(--primary-action)] text-white">Set</button>
+                </form>
             </div>
         </div>
 
