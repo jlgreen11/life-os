@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Life OS v2 Autonomous Rewrite Agent — launchd job
+  OFF BY DEFAULT. See AUTONOMOUS.md for start/stop commands.
+
+  Path auto-detection in run-v2-autonomous.sh means this plist works on either
+  the Mac Mini (/Users/jeremygreenwood/life-os) or the workstation
+  (/Users/jlg/Documents/GitHub/life-os). Adjust WorkingDirectory and stdout/
+  stderr paths to the machine you're deploying on before loading.
+
+  Do NOT enable the continuous-improvement-agent plist at the same time as
+  this one. They both assume exclusive use of the repo.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lifeos.v2-autonomous</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>REPLACE_WITH_ABSOLUTE_PATH/scripts/run-v2-autonomous.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>REPLACE_WITH_HOME_PATH</string>
+        <!-- Override model/budget/cooldown via env if desired:
+        <key>V2_MODEL</key><string>opus</string>
+        <key>V2_MAX_BUDGET</key><string>10</string>
+        <key>V2_COOLDOWN</key><string>1800</string>
+        -->
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>REPLACE_WITH_ABSOLUTE_PATH</string>
+
+    <!-- KeepAlive: restart the loop if it ever exits (script bug, OOM, etc.).
+         With 30-min cooldown and partial-backoff, this rarely fires. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Throttle: minimum 60s between restarts. Prevents rapid restart storms. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>REPLACE_WITH_ABSOLUTE_PATH/data/v2-runs/launchd-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>REPLACE_WITH_ABSOLUTE_PATH/data/v2-runs/launchd-stderr.log</string>
+</dict>
+</plist>
