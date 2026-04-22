@@ -36,13 +36,6 @@
 
 ## Week 5 — 3 more producers
 
-- [ ] **Spatial producer (`producers/spatial.py`).** InsightType.SPATIAL:
-  - Observes `context.location.updated` events from iOS compat
-  - Fires on arrival/departure to places in spatial signal profile
-  - Insight examples: "You're at {Place}. Last time here you worked on {topic}." / "You've been at {Place} {X} min, avg {Y}."
-  - Action: ActionKind.NOTE_OBSERVATION (read-only in Phase 1)
-  Tests with fixture iOS context events; dedup within same location visit.
-
 - [ ] **Comm-template producer (`producers/comm_template.py`).** InsightType.COMM_TEMPLATE:
   - Observes inbound email/message; reads per-contact comm template from signal_profiles
   - Week 5 scope: scaffold + stub draft generation (deterministic "Hi {name},"); mark `<!-- NOTE: AI engine integration deferred to Week 7 -->`
