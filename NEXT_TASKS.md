@@ -42,14 +42,6 @@
 
 ## Week 8 — API surface
 
-- [ ] **`api/routes/now.py` (Now tab + moment actions).** 5 REST endpoints:
-  - `GET /api/now` → `{pending: [], scheduled: [], done: []}` limits 20/10/10
-  - `POST /api/moments/{id}/accept` → SUGGESTED → ACCEPTED, triggers action (stub in Week 11)
-  - `POST /api/moments/{id}/dismiss` → DISMISSED + feedback weight update
-  - `POST /api/moments/{id}/snooze` body {until_iso} → SNOOZED + weight update (0.5)
-  - `POST /api/moments/{id}/edit` body {action_params} → updates proposed_action.params (stays SUGGESTED)
-  Tests with TestClient: schema round-trips; 409 on invalid transitions; 404 on missing.
-
 - [ ] **`api/routes/you.py` + `api/routes/people.py`.**
   - `GET /api/you` → self-portrait: when_at_best, how_you_write, your_routines, drifting
   - `GET /api/people` → paginated + search (q); YOU first entry; NEEDS_ATTENTION + ACTIVE_THIS_WEEK sections
