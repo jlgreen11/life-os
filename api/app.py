@@ -110,6 +110,7 @@ def create_app(life_os: Any | None = None) -> FastAPI:
     from api.routes.now import router as now_router
     from api.routes.people import router as people_router
     from api.routes.settings import router as settings_router
+    from api.routes.websocket import router as websocket_router
     from api.routes.you import router as you_router
 
     app.include_router(now_router)
@@ -118,6 +119,7 @@ def create_app(life_os: Any | None = None) -> FastAPI:
     app.include_router(settings_router)
     app.include_router(health_router)
     app.include_router(context_router)
+    app.include_router(websocket_router)
 
     return app
 

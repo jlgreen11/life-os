@@ -93,6 +93,32 @@ def _feedback_store(request: Request):
     return getattr(life_os, "feedback_weight_store", None)
 
 
+def _broadcaster(request: Request):
+    """Fetch the MomentBroadcaster; return ``None`` if missing.
+
+    The broadcaster is optional wiring — every action endpoint still
+    transitions the Moment and returns the usual response even when
+    no broadcaster is attached. Its absence just means no live clients
+    get pushed the update (they'll pick it up on the next page load).
+    """
+    life_os = getattr(request.app.state, "life_os", None)
+    return getattr(life_os, "moment_broadcaster", None)
+
+
+def _broadcast_done(broadcaster, moment: Moment) -> None:
+    """Push the ``partials/ws_moment_done.html`` OOB swap to all clients.
+
+    No-op when the broadcaster is missing or no clients are connected.
+    Called only for terminal states (ACCEPTED / DISMISSED); SNOOZED is
+    not a DONE TODAY event — the Moment will resurface at ``snooze_until``
+    and re-enter the pending feed at that point.
+    """
+    if broadcaster is None:
+        return
+    html = render("partials/ws_moment_done.html", {"moment": moment})
+    broadcaster.notify_sync(html)
+
+
 def _as_moment_out(moment: Moment) -> MomentOut:
     """Convert a :class:`Moment` dataclass into the API schema.
 
@@ -305,6 +331,7 @@ def accept_moment(
     annotation = body.annotation if body is not None else None
     updated = _transition_or_409(repo, moment_id, MomentState.ACCEPTED, annotation)
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.ACCEPTED)
+    _broadcast_done(_broadcaster(request), updated)
     if _is_htmx(request):
         return _next_pending_swap(
             repo,
@@ -334,6 +361,7 @@ def dismiss_moment(
     annotation = body.annotation if body is not None else None
     updated = _transition_or_409(repo, moment_id, MomentState.DISMISSED, annotation)
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.DISMISSED)
+    _broadcast_done(_broadcaster(request), updated)
     if _is_htmx(request):
         return _next_pending_swap(
             repo,

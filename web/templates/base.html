@@ -103,6 +103,7 @@
 </head>
 
 <body hx-ext="ws"
+      ws-connect="/ws"
       class="font-text text-[15px] leading-normal"
       data-active-tab="{{ active_tab|default('now') }}">
 
@@ -308,6 +309,27 @@
         document.body.addEventListener('lifeos:moment-acted', function (e) {
             window.lifeos.showUndoToast(e.detail || {});
         });
+
+        // WebSocket connection status: show the "Reconnecting…" pill in
+        // the header whenever the socket is down or mid-connect, hide
+        // it on clean open. HTMX's ws extension handles the exponential
+        // backoff itself; we just mirror its lifecycle into the UI.
+        //
+        // Events emitted by htmx-ext-ws (per its README):
+        //   htmx:wsConnecting  — dialing
+        //   htmx:wsOpen        — handshake complete
+        //   htmx:wsClose       — clean or abrupt close
+        //   htmx:wsError       — transport error
+        (function () {
+            const pill = document.getElementById('ws-status');
+            if (!pill) return;
+            const show = () => pill.classList.remove('hidden');
+            const hide = () => pill.classList.add('hidden');
+            document.body.addEventListener('htmx:wsConnecting', show);
+            document.body.addEventListener('htmx:wsOpen', hide);
+            document.body.addEventListener('htmx:wsClose', show);
+            document.body.addEventListener('htmx:wsError', show);
+        })();
     </script>
 
     {% block body_end %}{% endblock %}

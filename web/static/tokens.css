@@ -181,3 +181,36 @@ body {
 .skip-link:focus-visible {
     transform: translateY(0);
 }
+
+/*
+ * WebSocket-pushed "new Moment" accent bar.
+ *
+ * DESIGN.md § "Moment: on arrival — subtle accent bar 3s" calls for a
+ * one-shot highlight so a freshly-inserted card does not land silently
+ * in a feed the user may be scrolled past. The `<li data-moment-new>`
+ * wrapper comes from `partials/ws_moment_new.html`; we use a left
+ * border rather than a drop shadow so stacked cards do not nudge
+ * siblings when the animation runs. CSS `forwards` fill keeps the end
+ * state (transparent border) stable after the animation ends.
+ *
+ * Accessibility: `prefers-reduced-motion` collapses the animation to
+ * 1ms below, matching the motion token guarantee.
+ */
+@keyframes lifeos-new-moment {
+    0%   { border-left-color: var(--primary-action); }
+    80%  { border-left-color: var(--primary-action); }
+    100% { border-left-color: transparent; }
+}
+
+[data-moment-new] {
+    border-left: 2px solid transparent;
+    padding-left: var(--s-2);
+    animation: lifeos-new-moment 3s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-moment-new] {
+        animation: none;
+        border-left-color: transparent;
+    }
+}

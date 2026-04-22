@@ -1,0 +1,24 @@
+{#
+  Life OS v2 — WebSocket "new Moment" push partial.
+
+  Delivered to connected clients by
+  :class:`core.moment.broadcaster.MomentBroadcaster` when a producer
+  creates a new SUGGESTED Moment. HTMX's ``ws`` extension processes
+  the received HTML for any element carrying ``hx-swap-oob``; the
+  outer ``<ol>`` here targets the Now-tab pending list (``#now-list``)
+  with an ``afterbegin`` swap so the card slides in at the top of the
+  feed.
+
+  The wrapping ``<li>`` carries ``data-moment-new`` so the
+  ``accent-fade`` animation in ``tokens.css`` fires on insertion
+  (DESIGN.md § "Moment: on arrival — subtle accent bar 3s"). The
+  animation is CSS-only; no extra client JS is required.
+
+  Context:
+    moment : core.moment.types.Moment — the freshly created moment.
+#}
+<ol id="now-list" hx-swap-oob="afterbegin">
+    <li data-moment-new data-moment-id="{{ moment.id }}">
+        {% include "partials/moment_card.html" %}
+    </li>
+</ol>

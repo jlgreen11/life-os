@@ -1,0 +1,27 @@
+{#
+  Life OS v2 — WebSocket "Moment done" push partial.
+
+  Delivered by :class:`core.moment.broadcaster.MomentBroadcaster` when
+  a SUGGESTED Moment transitions to a terminal state (ACCEPTED or
+  DISMISSED) via the action endpoints. HTMX's ``ws`` extension reads
+  the ``hx-swap-oob="afterbegin"`` on the outer ``<ul>`` and prepends
+  the row to ``#done-today-list`` so the user sees the card drop
+  straight into DONE TODAY without a page refresh.
+
+  The row markup is intentionally identical to the static
+  ``now.html`` "Done Today" rendering so the visual hand-off is
+  seamless — no layout shift between "just acted" and "reloaded the
+  page tomorrow".
+
+  Context:
+    moment : core.moment.types.Moment — post-transition snapshot.
+#}
+<ul id="done-today-list" hx-swap-oob="afterbegin">
+    <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] border-b border-[color:var(--border-subtle)] text-[color:var(--text-secondary)]"
+        data-moment-id="{{ moment.id }}"
+        data-moment-done>
+        <span class="text-[length:var(--t-15)]">{{ moment.insight }}</span>
+        <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)]"
+              data-slot="done-state">{{ moment.state }}</span>
+    </li>
+</ul>

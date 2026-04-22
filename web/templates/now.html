@@ -28,13 +28,16 @@
         class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-4)]">
         Now
     </h2>
-    {% if pending %}
-        <ol class="flex flex-col gap-[var(--s-6)] list-none p-0 m-0">
-            {% for moment in pending %}
-                <li>{% include "partials/moment_card.html" %}</li>
-            {% endfor %}
-        </ol>
-    {% else %}
+    {# #now-list is always rendered (even empty) so HTMX `hx-swap-oob`
+       pushes from the WebSocket have a stable afterbegin target. The
+       warm empty-state copy sits next to the list, not inside it, so
+       that once a pushed card lands the list layout is predictable. #}
+    <ol id="now-list" class="flex flex-col gap-[var(--s-6)] list-none p-0 m-0">
+        {% for moment in pending %}
+            <li>{% include "partials/moment_card.html" %}</li>
+        {% endfor %}
+    </ol>
+    {% if not pending %}
         <div data-empty="now">
             <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
                 Nothing pressing right now.
@@ -83,18 +86,19 @@
                 ({{ done|length }})
             </span>
         </summary>
-        {% if done %}
-            <ul class="flex flex-col list-none p-0 mt-[var(--s-3)] border-t border-[color:var(--border-subtle)]">
-                {% for moment in done %}
-                    <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] border-b border-[color:var(--border-subtle)] text-[color:var(--text-secondary)]"
-                        data-moment-id="{{ moment.id }}">
-                        <span class="text-[length:var(--t-15)]">{{ moment.insight }}</span>
-                        <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)]"
-                              data-slot="done-state">{{ moment.state }}</span>
-                    </li>
-                {% endfor %}
-            </ul>
-        {% else %}
+        {# #done-today-list is always rendered so WebSocket OOB pushes
+           have a stable afterbegin target, mirroring #now-list above. #}
+        <ul id="done-today-list" class="flex flex-col list-none p-0 mt-[var(--s-3)] border-t border-[color:var(--border-subtle)]">
+            {% for moment in done %}
+                <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] border-b border-[color:var(--border-subtle)] text-[color:var(--text-secondary)]"
+                    data-moment-id="{{ moment.id }}">
+                    <span class="text-[length:var(--t-15)]">{{ moment.insight }}</span>
+                    <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)]"
+                          data-slot="done-state">{{ moment.state }}</span>
+                </li>
+            {% endfor %}
+        </ul>
+        {% if not done %}
             <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-3)] m-0" data-empty="done-today">
                 Nothing yet today.
             </p>
