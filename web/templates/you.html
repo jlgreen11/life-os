@@ -1,0 +1,198 @@
+{#
+  Life OS v2 — You tab (self-portrait).
+
+  Sections (DESIGN.md § "You: self-portrait" + NEXT_TASKS.md Week 10):
+
+  - Header          — "Observed {N} months · {M} interactions · confidence {X}%"
+  - WHEN YOU'RE AT YOUR BEST  — up to three temporal focus windows
+  - HOW YOU WRITE   — per-audience communication style summaries (3–6)
+  - YOUR ROUTINES   — detected routines; warm empty-state when none
+  - DRIFTING        — contacts with slipped cadence vs usual
+
+  Context (set by ``api.routes.you.you_page``):
+
+    you: dict — matches :class:`api.schemas.YouOut`
+      observed_months   : int
+      interactions_count: int
+      confidence_pct    : int
+      when_at_best      : list[str]
+      how_you_write     : list[dict]   # audience / tone / formality / sample_size
+      your_routines     : list[dict]   # name / detected / description / confidence / sample_size
+      drifting          : list[dict]   # contact_id / name / days_since_last / usual_cadence_days
+
+  No progress bars, no pie charts, no mood bars — DESIGN.md § "Principles: No
+  horoscope". Empty states render a single warm sentence (plus a tertiary
+  subtitle where useful); never a cartoon, never a "Get Started" CTA.
+#}
+{% extends "base.html" %}
+
+{% block title %}You · Life OS{% endblock %}
+
+{% set active_tab = "you" %}
+
+{% block content %}
+<section data-section="you-header" class="mb-[var(--s-8)]">
+    <h1 class="font-display text-[length:var(--t-28)] font-semibold tracking-tight text-[color:var(--text-primary)] m-0">
+        You
+    </h1>
+    <p class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] mt-[var(--s-2)] m-0"
+       data-slot="you-stats">
+        Observed
+        <span data-slot="observed-months">{{ you.observed_months|default(0) }}</span>
+        {{ 'month' if (you.observed_months|default(0)) == 1 else 'months' }}
+        <span aria-hidden="true">·</span>
+        <span data-slot="interactions-count">{{ you.interactions_count|default(0) }}</span>
+        interactions
+        <span aria-hidden="true">·</span>
+        confidence
+        <span data-slot="confidence-pct">{{ you.confidence_pct|default(0) }}</span>%
+    </p>
+</section>
+
+<section aria-labelledby="you-best-heading"
+         data-section="when-at-best"
+         class="mb-[var(--s-8)]">
+    <h2 id="you-best-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-4)]">
+        When you're at your best
+    </h2>
+    {% if you.when_at_best %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for label in you.when_at_best %}
+                <li class="py-[var(--s-2)] border-b border-[color:var(--border-subtle)] text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                    data-slot="best-row">{{ label }}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div data-empty="when-at-best">
+            <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
+                Not enough to call it a pattern yet.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                Your best hours will show up once you've been observed for a few weeks.
+            </p>
+        </div>
+    {% endif %}
+</section>
+
+<section aria-labelledby="you-write-heading"
+         data-section="how-you-write"
+         class="mb-[var(--s-8)]">
+    <h2 id="you-write-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-4)]">
+        How you write
+    </h2>
+    {% if you.how_you_write %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for persona in you.how_you_write %}
+                <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-3)] border-b border-[color:var(--border-subtle)]"
+                    data-slot="persona-row">
+                    <div class="min-w-0 flex-1">
+                        <div class="text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                             data-slot="persona-audience">{{ persona.audience }}</div>
+                        <div class="text-[length:var(--t-13)] text-[color:var(--text-secondary)]"
+                             data-slot="persona-tone">{{ persona.tone }}</div>
+                    </div>
+                    <div class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)] shrink-0"
+                         data-slot="persona-meta">
+                        {{ persona.sample_size|default(0) }} {{ 'sample' if (persona.sample_size|default(0)) == 1 else 'samples' }}
+                    </div>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div data-empty="how-you-write">
+            <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
+                No writing style detected yet.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                A few outbound messages per contact and a shape will emerge.
+            </p>
+        </div>
+    {% endif %}
+</section>
+
+<section aria-labelledby="you-routines-heading"
+         data-section="your-routines"
+         class="mb-[var(--s-8)]">
+    <h2 id="you-routines-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-4)]">
+        Your routines
+    </h2>
+    {% if you.your_routines %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for routine in you.your_routines %}
+                <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-3)] border-b border-[color:var(--border-subtle)]"
+                    data-slot="routine-row">
+                    {% if routine.detected %}
+                        <div class="min-w-0 flex-1">
+                            <div class="text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                                 data-slot="routine-description">
+                                {{ routine.description or routine.name }}
+                            </div>
+                            <div class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)]"
+                                 data-slot="routine-name">{{ routine.name }}</div>
+                        </div>
+                        <div class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)] shrink-0"
+                             data-slot="routine-meta">
+                            {{ routine.sample_size|default(0) }} {{ 'occurrence' if (routine.sample_size|default(0)) == 1 else 'occurrences' }}
+                        </div>
+                    {% else %}
+                        <div class="min-w-0 flex-1 text-[length:var(--t-15)] text-[color:var(--text-secondary)]"
+                             data-slot="routine-empty">
+                            {{ routine.name }}
+                        </div>
+                        <div class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] shrink-0"
+                             data-slot="routine-empty-note">
+                            No routine detected yet
+                        </div>
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div data-empty="your-routines">
+            <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
+                No routine detected yet.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                Patterns that repeat show up here — morning reviews, weekly planning, regular check-ins.
+            </p>
+        </div>
+    {% endif %}
+</section>
+
+<section aria-labelledby="you-drifting-heading"
+         data-section="drifting">
+    <h2 id="you-drifting-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-4)]">
+        Drifting
+    </h2>
+    {% if you.drifting %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for contact in you.drifting %}
+                <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] border-b border-[color:var(--border-subtle)]"
+                    data-slot="drifting-row"
+                    data-contact-id="{{ contact.contact_id }}">
+                    <span class="text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                          data-slot="drifting-name">{{ contact.name }}</span>
+                    <span class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] font-mono shrink-0"
+                          data-slot="drifting-meta">
+                        {{ contact.days_since_last }} {{ 'day' if contact.days_since_last == 1 else 'days' }}
+                        <span class="text-[color:var(--text-tertiary)]">(usual {{ contact.usual_cadence_days }})</span>
+                    </span>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div data-empty="drifting">
+            <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
+                Nobody's slipping right now.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                Contacts who fall behind their usual cadence will appear here.
+            </p>
+        </div>
+    {% endif %}
+</section>
+{% endblock %}

@@ -23,8 +23,10 @@ install and a fully-populated one.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 
 from api.schemas import YouOut
+from web.rendering import render
 
 router = APIRouter()
 
@@ -50,6 +52,27 @@ def get_you(request: Request) -> YouOut:
     any drift between the SQL layer and the wire schema at first request.
     """
     return YouOut(**_people_repo(request).get_you())
+
+
+@router.get("/you", response_class=HTMLResponse)
+def you_page(request: Request) -> HTMLResponse:
+    """Render the You tab as a full HTML page.
+
+    Loads the self-portrait dict straight off the repository (same call
+    the JSON endpoint uses) and hands it to the Jinja template. Missing
+    ``people_repo`` wiring yields 503, matching :func:`get_you` so both
+    the page and the API degrade identically when the orchestrator is
+    half-constructed.
+    """
+    you_data = _people_repo(request).get_you()
+    html = render(
+        "you.html",
+        {
+            "active_tab": "you",
+            "you": you_data,
+        },
+    )
+    return HTMLResponse(html)
 
 
 __all__ = ["router"]
