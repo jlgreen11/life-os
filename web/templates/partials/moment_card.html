@@ -90,12 +90,52 @@
                     aria-label="Edit draft">Edit</button>
         {% endif %}
 
-        <button type="button"
-                class="btn-ghost inline-flex items-center justify-center min-h-[36px] min-w-[36px] px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
-                data-action="snooze"
-                data-snooze-popover-trigger
-                aria-haspopup="menu"
-                aria-label="Snooze">Snooze</button>
+        {# Snooze opens a chip-row popover anchored beneath the button.
+           Toggle is owned by `lifeos.toggleSnoozePopover` (base.html) and
+           uses native `[hidden]` for the disclosure state so screen
+           readers announce the change without us re-implementing ARIA
+           menu semantics. #}
+        <div class="snooze-wrapper relative" data-snooze-wrapper>
+            <button type="button"
+                    class="btn-ghost inline-flex items-center justify-center min-h-[36px] min-w-[36px] px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
+                    data-action="snooze"
+                    data-snooze-popover-trigger
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                    aria-controls="snooze-popover-{{ moment.id }}"
+                    onclick="lifeos.toggleSnoozePopover(this)"
+                    aria-label="Snooze">Snooze</button>
+            <div id="snooze-popover-{{ moment.id }}"
+                 class="snooze-popover absolute z-10 left-0 top-full mt-[var(--s-1)] flex flex-wrap gap-[var(--s-1)] bg-[color:var(--bg-raised)] border border-[color:var(--border-strong)] rounded-[var(--r-md)] shadow-[var(--elev-modal)] p-[var(--s-2)]"
+                 role="menu"
+                 data-snooze-popover
+                 data-moment-id="{{ moment.id }}"
+                 hidden>
+                {% set chips = [
+                    ("1h",       "1h",        3600),
+                    ("3h",       "3h",        10800),
+                    ("tonight",  "Tonight",   0),
+                    ("tomorrow", "Tomorrow",  0),
+                    ("3d",       "3d",        259200),
+                ] %}
+                {% for preset, label, _ in chips %}
+                    <button type="button"
+                            role="menuitem"
+                            class="snooze-chip inline-flex items-center justify-center min-h-[32px] px-[var(--s-2)] py-[var(--s-1)] rounded-[var(--r-sm)] text-[length:var(--t-13)] font-medium bg-[color:var(--bg-base)] text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
+                            data-snooze-preset="{{ preset }}"
+                            hx-post="/api/moments/{{ moment.id }}/snooze"
+                            hx-ext="json-enc"
+                            hx-vals='js:{snooze_until: lifeos.snoozeChipUntil("{{ preset }}")}'
+                            hx-swap="outerHTML"
+                            hx-target="closest .moment-card">{{ label }}</button>
+                {% endfor %}
+                <button type="button"
+                        role="menuitem"
+                        class="snooze-chip snooze-chip--custom inline-flex items-center justify-center min-h-[32px] px-[var(--s-2)] py-[var(--s-1)] rounded-[var(--r-sm)] text-[length:var(--t-13)] font-medium bg-[color:var(--bg-base)] text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
+                        data-snooze-preset="custom"
+                        data-snooze-custom>Custom</button>
+            </div>
+        </div>
 
         <button type="button"
                 class="btn-ghost btn-dismiss inline-flex items-center justify-center min-h-[36px] min-w-[36px] ml-auto px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-secondary)] hover:text-[color:var(--error)] hover:bg-[color:var(--bg-raised-hover)]"

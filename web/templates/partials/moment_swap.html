@@ -1,0 +1,40 @@
+{#
+  Life OS v2 — Moment swap partial.
+
+  Returned by the four HTMX-driven Moment-action endpoints
+  (accept / dismiss / snooze / edit) so the action button's
+  `hx-target="closest .moment-card"` swap replaces the acted-on card
+  with the next thing the user should see.
+
+  Two render branches:
+
+    1. ``next_pending`` (Moment) is set
+       Renders ``partials/moment_card.html`` against it. The slot in
+       the NOW list is filled by the next-highest-confidence pending
+       Moment. The user keeps moving without an empty hole.
+
+    2. No ``next_pending`` (queue is empty)
+       Renders an invisible ``article.moment-card moment-card--empty``
+       sentinel. The parent ``<li>`` in ``now.html`` keeps its slot
+       (so future WebSocket pushes have a target) but the user sees
+       nothing where the acted-on card used to be.
+
+  The vanilla-JS Undo toast is fired separately via the ``HX-Trigger``
+  response header (``lifeos:moment-acted``) added by the route; this
+  partial owns only the visual swap, not the toast.
+#}
+{% if next_pending %}
+    {# Re-render the card primitive against the next pending Moment.
+       The partial's outer element is `<article class="moment-card">`,
+       which matches the swap target in the original card. #}
+    {% set moment = next_pending %}
+    {% include "partials/moment_card.html" %}
+{% else %}
+    {# Empty placeholder — the swap target gets a hidden article so the
+       parent `<li>` slot in `now.html` does not collapse mid-animation.
+       `data-moment-empty` lets the toast handler know the queue is
+       drained without re-querying the DOM. #}
+    <article class="moment-card moment-card--empty hidden"
+             data-moment-empty="true"
+             aria-hidden="true"></article>
+{% endif %}

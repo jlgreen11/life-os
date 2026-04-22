@@ -44,8 +44,10 @@ returns the updated Moment. No external side effects fire yet.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from api.schemas import MomentActionIn, MomentListOut, MomentOut
 from core.moment.state import IllegalTransition
@@ -173,6 +175,78 @@ def _record_feedback(store, insight_type, new_state: MomentState) -> None:
         return
 
 
+def _is_htmx(request: Request) -> bool:
+    """Return True iff the request was issued by HTMX.
+
+    HTMX sets ``HX-Request: true`` on every fetch it makes; the dual
+    JSON / HTML response path keys off this header so non-HTMX API
+    clients keep getting JSON ``MomentOut`` payloads while the Now-tab
+    UI gets a Moment-card swap partial.
+    """
+    return request.headers.get("hx-request", "").lower() == "true"
+
+
+def _next_pending_swap(
+    repo,
+    *,
+    excluding: str,
+    moment_id: str,
+    previous_state: MomentState,
+    new_state: MomentState,
+) -> HTMLResponse:
+    """Build the HTMX swap response for an action endpoint.
+
+    Renders ``partials/moment_swap.html`` against the highest-confidence
+    SUGGESTED Moment that isn't the one we just acted on, falling back
+    to an empty placeholder when the queue is drained. Adds an
+    ``HX-Trigger`` header carrying the moment_id and previous state so
+    the vanilla-JS Undo toast (see ``base.html``) knows what to display
+    and what to roll back to once the undo POST endpoint lands.
+
+    The exclusion guard ("``excluding=moment_id``") protects against a
+    race window where the just-acted Moment is still indexed as
+    SUGGESTED in the read replica — never observed in the synchronous
+    test path, but cheap insurance for the eventual replica setup.
+    """
+    candidates = repo.list_pending(limit=2)
+    next_pending: Moment | None = None
+    for cand in candidates:
+        if cand.id != excluding:
+            next_pending = cand
+            break
+
+    html = render(
+        "partials/moment_swap.html",
+        {"next_pending": next_pending},
+    )
+    headers = {
+        "HX-Trigger": json.dumps(
+            {
+                "lifeos:moment-acted": {
+                    "momentId": moment_id,
+                    "previousState": previous_state.value,
+                    "newState": new_state.value,
+                    "action": _action_label(new_state),
+                }
+            }
+        )
+    }
+    return HTMLResponse(html, headers=headers)
+
+
+_ACTION_LABEL: dict[MomentState, str] = {
+    MomentState.ACCEPTED: "accepted",
+    MomentState.DISMISSED: "dismissed",
+    MomentState.SNOOZED: "snoozed",
+    MomentState.EXPIRED: "snoozed",  # snooze-past-expires path
+}
+
+
+def _action_label(state: MomentState) -> str:
+    """Map terminal/post-action MomentState → toast label slug."""
+    return _ACTION_LABEL.get(state, state.value)
+
+
 # ---------------------------------------------------------------------------
 # GET /api/now
 # ---------------------------------------------------------------------------
@@ -206,60 +280,85 @@ def get_now(request: Request) -> MomentListOut:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/api/moments/{moment_id}/accept", response_model=MomentOut)
+@router.post("/api/moments/{moment_id}/accept")
 def accept_moment(
     moment_id: str,
     request: Request,
     body: MomentActionIn | None = None,
-) -> MomentOut:
+) -> Response:
     """Transition a SUGGESTED moment to ACCEPTED.
+
+    Dual-mode response (engineering plan § "HTMX wiring"):
+
+    - HTMX request (``HX-Request: true``) → ``text/html`` swap partial
+      containing the next pending Moment card (or an empty sentinel),
+      with ``HX-Trigger: lifeos:moment-acted`` so the Undo toast fires.
+    - Anything else (curl, iOS app, JSON test) → ``MomentOut`` JSON.
 
     The actual outbox dispatch (emailing a draft, creating a calendar
     entry, …) lands in Week 11 — this endpoint only records the state
-    change and updates the feedback-weight EWMA. Clients can assume the
-    returned Moment reflects post-commit state.
-
-    409 on any non-SUGGESTED current state.
+    change and updates the feedback-weight EWMA. 409 on any non-
+    SUGGESTED current state.
     """
     repo = _moment_repo(request)
     existing = _load_or_404(repo, moment_id)
     annotation = body.annotation if body is not None else None
     updated = _transition_or_409(repo, moment_id, MomentState.ACCEPTED, annotation)
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.ACCEPTED)
+    if _is_htmx(request):
+        return _next_pending_swap(
+            repo,
+            excluding=moment_id,
+            moment_id=moment_id,
+            previous_state=MomentState.SUGGESTED,
+            new_state=MomentState.ACCEPTED,
+        )
     return _as_moment_out(updated)
 
 
-@router.post("/api/moments/{moment_id}/dismiss", response_model=MomentOut)
+@router.post("/api/moments/{moment_id}/dismiss")
 def dismiss_moment(
     moment_id: str,
     request: Request,
     body: MomentActionIn | None = None,
-) -> MomentOut:
+) -> Response:
     """Transition a SUGGESTED moment to DISMISSED (terminal).
 
-    Feeds signal=0.0 into the feedback weight for this insight type so
-    the threshold drifts up if the user keeps dismissing this producer.
+    Same dual-mode (HTMX HTML / JSON) response shape as
+    :func:`accept_moment`. Feeds signal=0.0 into the feedback weight for
+    this insight type so the threshold drifts up if the user keeps
+    dismissing this producer.
     """
     repo = _moment_repo(request)
     existing = _load_or_404(repo, moment_id)
     annotation = body.annotation if body is not None else None
     updated = _transition_or_409(repo, moment_id, MomentState.DISMISSED, annotation)
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.DISMISSED)
+    if _is_htmx(request):
+        return _next_pending_swap(
+            repo,
+            excluding=moment_id,
+            moment_id=moment_id,
+            previous_state=MomentState.SUGGESTED,
+            new_state=MomentState.DISMISSED,
+        )
     return _as_moment_out(updated)
 
 
-@router.post("/api/moments/{moment_id}/snooze", response_model=MomentOut)
+@router.post("/api/moments/{moment_id}/snooze")
 def snooze_moment(
     moment_id: str,
     request: Request,
     body: MomentActionIn,
-) -> MomentOut:
+) -> Response:
     """Transition a SUGGESTED moment to SNOOZED and set ``snooze_until``.
 
-    Requires ``snooze_until`` (unix seconds). A value past ``expires_at``
-    is coerced to EXPIRED by the repo per engineering plan § "Snooze
-    semantics"; the endpoint still returns 200 with the expired Moment
-    so the client can refresh the row.
+    Same dual-mode (HTMX HTML / JSON) response shape as
+    :func:`accept_moment`. Requires ``snooze_until`` (unix seconds). A
+    value past ``expires_at`` is coerced to EXPIRED by the repo per
+    engineering plan § "Snooze semantics"; the endpoint still returns
+    200 (with the expired Moment in the JSON path, or the next pending
+    swap in the HTMX path) so the client can refresh the row.
     """
     if body.snooze_until is None:
         raise HTTPException(
@@ -278,6 +377,14 @@ def snooze_moment(
             detail=f"moment {moment_id!r} not found",
         ) from exc
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.SNOOZED)
+    if _is_htmx(request):
+        return _next_pending_swap(
+            repo,
+            excluding=moment_id,
+            moment_id=moment_id,
+            previous_state=MomentState.SUGGESTED,
+            new_state=updated.state,
+        )
     return _as_moment_out(updated)
 
 

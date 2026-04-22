@@ -7,7 +7,7 @@ wires a real :class:`~storage.repos.moments.MomentRepository` + a real
 No mocks of the storage layer — same pattern the v1 ``tests/conftest.py``
 established.
 
-Coverage (per NEXT_TASKS.md Week 8 acceptance):
+Coverage (per NEXT_TASKS.md Week 8 + Week 9 acceptance):
 
 - ``GET /api/now`` returns ``{pending, scheduled, done}`` in the schema
   shape, each capped at 20/10/10.
@@ -18,10 +18,14 @@ Coverage (per NEXT_TASKS.md Week 8 acceptance):
 - ``snooze`` without ``snooze_until`` returns 422.
 - ``edit`` updates ``proposed_action.params`` without moving state.
 - 503 when ``moment_repo`` is not wired onto life_os.
+- HTMX (``HX-Request: true``) callers get a Moment-card swap partial
+  with an ``HX-Trigger`` header for the Undo toast; non-HTMX callers
+  keep getting the legacy JSON ``MomentOut`` shape.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 
@@ -459,3 +463,172 @@ def test_now_page_503_when_repo_missing() -> None:
     c = TestClient(app)
     resp = c.get("/")
     assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# HTMX wiring (Week 9 task 3): accept / dismiss / snooze swap response
+# ---------------------------------------------------------------------------
+
+
+HX_HEADERS = {"HX-Request": "true"}
+
+
+def _hx_trigger_payload(resp) -> dict:
+    """Return the parsed ``HX-Trigger`` JSON payload, or fail with context."""
+    assert "hx-trigger" in {k.lower() for k in resp.headers.keys()}, resp.headers
+    raw = resp.headers["hx-trigger"]
+    return json.loads(raw)
+
+
+def test_accept_htmx_returns_html_swap_with_next_pending(client: TestClient, repo) -> None:
+    """HTMX accept replaces the card with the next-highest-confidence pending."""
+    high = _make_moment(confidence=0.9, evidence_hash="h-high", insight="ping mom")
+    mid = _make_moment(confidence=0.5, evidence_hash="h-mid", insight="water plants")
+    repo.create(high)
+    repo.create(mid)
+
+    resp = client.post(f"/api/moments/{high.id}/accept", headers=HX_HEADERS)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    # The swap target is the next pending Moment card (the one we did
+    # NOT just accept).
+    assert "moment-card" in body
+    assert f'data-moment-id="{mid.id}"' in body
+    assert f'data-moment-id="{high.id}"' not in body
+    # And no JSON body shape leaked through.
+    assert "state_history" not in body
+
+
+def test_accept_htmx_empty_queue_returns_placeholder(client: TestClient, repo) -> None:
+    """No more pending → swap returns the empty-card placeholder."""
+    only = _make_moment(confidence=0.9, evidence_hash="h-only")
+    repo.create(only)
+
+    resp = client.post(f"/api/moments/{only.id}/accept", headers=HX_HEADERS)
+    assert resp.status_code == 200
+    body = resp.text
+    assert 'data-moment-empty="true"' in body
+    assert "moment-card--empty" in body
+    # The placeholder must NOT carry the acted-on id (the parent <li>
+    # handles the slot; the card itself is gone).
+    assert f'data-moment-id="{only.id}"' not in body
+
+
+def test_accept_htmx_sets_undo_trigger_header(client: TestClient, repo) -> None:
+    """HX-Trigger fires the Undo toast with moment_id + previous state."""
+    mom = _make_moment(confidence=0.9)
+    repo.create(mom)
+
+    resp = client.post(f"/api/moments/{mom.id}/accept", headers=HX_HEADERS)
+    payload = _hx_trigger_payload(resp)
+    assert "lifeos:moment-acted" in payload
+    detail = payload["lifeos:moment-acted"]
+    assert detail["momentId"] == mom.id
+    assert detail["previousState"] == MomentState.SUGGESTED.value
+    assert detail["newState"] == MomentState.ACCEPTED.value
+    assert detail["action"] == "accepted"
+
+
+def test_dismiss_htmx_returns_html_with_trigger(client: TestClient, repo) -> None:
+    high = _make_moment(confidence=0.9, evidence_hash="h-high", insight="ping mom")
+    low = _make_moment(confidence=0.3, evidence_hash="h-low", insight="archive that")
+    repo.create(high)
+    repo.create(low)
+
+    resp = client.post(f"/api/moments/{high.id}/dismiss", headers=HX_HEADERS)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert f'data-moment-id="{low.id}"' in resp.text
+    detail = _hx_trigger_payload(resp)["lifeos:moment-acted"]
+    assert detail["action"] == "dismissed"
+
+
+def test_snooze_htmx_returns_html_with_trigger(client: TestClient, repo) -> None:
+    mom = _make_moment(confidence=0.9)
+    repo.create(mom)
+
+    resp = client.post(
+        f"/api/moments/{mom.id}/snooze",
+        json={"snooze_until": REF_NOW + 3600},
+        headers=HX_HEADERS,
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    detail = _hx_trigger_payload(resp)["lifeos:moment-acted"]
+    assert detail["momentId"] == mom.id
+    assert detail["action"] == "snoozed"
+    assert detail["newState"] == MomentState.SNOOZED.value
+
+
+def test_non_htmx_accept_still_returns_json_moment_out(client: TestClient, repo) -> None:
+    """Curl / iOS clients without HX-Request still get the typed JSON shape."""
+    mom = _make_moment(confidence=0.9)
+    repo.create(mom)
+
+    resp = client.post(f"/api/moments/{mom.id}/accept")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/json")
+    out = resp.json()
+    # MomentOut shape is preserved.
+    assert out["id"] == mom.id
+    assert out["state"] == MomentState.ACCEPTED.value
+    assert "state_history" in out
+    # No HX-Trigger leaks into the JSON path.
+    assert "hx-trigger" not in {k.lower() for k in resp.headers.keys()}
+
+
+def test_htmx_action_records_feedback_same_as_json_path(client: TestClient, repo, feedback) -> None:
+    """HTMX path must not skip the EWMA update."""
+    mom = _make_moment(insight_type=InsightType.CADENCE, confidence=0.9)
+    repo.create(mom)
+
+    client.post(f"/api/moments/{mom.id}/accept", headers=HX_HEADERS)
+
+    weight, decisions = feedback.get(InsightType.CADENCE.value)
+    assert decisions == 1
+    expected = ALPHA * 1.0 + (1 - ALPHA) * DEFAULT_WEIGHT
+    assert weight == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# Snooze popover + Undo toast — template-level wiring
+# ---------------------------------------------------------------------------
+
+
+def test_moment_card_renders_snooze_popover_with_chip_row(client: TestClient, repo) -> None:
+    """Each rendered Moment card carries the [1h][3h][Tonight][Tomorrow][3d][Custom]
+    chip popover wired with HTMX + json-enc."""
+    mom = _make_moment(insight="ping mom", confidence=0.9)
+    repo.create(mom)
+
+    body = client.get("/").text
+    # Popover container present and hidden by default.
+    assert f'id="snooze-popover-{mom.id}"' in body
+    assert "data-snooze-popover" in body
+    # All five preset chips + the Custom escape hatch.
+    for preset in ("1h", "3h", "tonight", "tomorrow", "3d", "custom"):
+        assert f'data-snooze-preset="{preset}"' in body
+    # Chips POST via HTMX with the json-enc extension and the swap
+    # target is the parent card.
+    assert 'hx-ext="json-enc"' in body
+    assert f'hx-post="/api/moments/{mom.id}/snooze"' in body
+    assert "lifeos.snoozeChipUntil" in body
+    assert 'hx-target="closest .moment-card"' in body
+
+
+def test_base_template_includes_undo_toast_handler(client: TestClient) -> None:
+    """The vanilla-JS Undo toast handler must be wired in base.html so HTMX
+    swaps trigger it without per-page boilerplate."""
+    body = client.get("/").text
+    # json-enc extension is loaded so chip JSON encoding works.
+    assert "htmx-ext-json-enc" in body
+    # Toast region from the original task is still present...
+    assert 'id="toast-region"' in body
+    # ...and the handler that renders Undo toasts is wired to the
+    # `lifeos:moment-acted` event (fired via HX-Trigger from each
+    # action endpoint).
+    assert "lifeos:moment-acted" in body
+    assert "showUndoToast" in body
+    # 3-second auto-dismiss (per DESIGN.md and task spec).
+    assert "3000" in body
