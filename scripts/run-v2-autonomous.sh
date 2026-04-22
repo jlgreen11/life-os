@@ -55,11 +55,11 @@ VENV="$PROJECT_DIR/.venv/bin/activate"
 # ---------------------------------------------------------------------------
 MODEL="${V2_MODEL:-opus}"
 MAX_BUDGET="${V2_MAX_BUDGET:-10}"
-COOLDOWN="${V2_COOLDOWN:-1800}"                # 30 min between iterations
+COOLDOWN="${V2_COOLDOWN:-60}"                  # 60s: FS sync + human-interject window; skip the nap
 CLAUDE_TIMEOUT="${V2_CLAUDE_TIMEOUT:-1800}"    # 30 min hard cap per iteration
 MAX_CONSECUTIVE_FAILURES=3
-PARTIAL_COOLDOWN="${V2_PARTIAL_COOLDOWN:-3600}" # 1h after a partial iteration
-FAIL_BACKOFF="${V2_FAIL_BACKOFF:-900}"         # 15 min after 3 failures
+PARTIAL_COOLDOWN="${V2_PARTIAL_COOLDOWN:-300}" # 5 min after a partial iteration
+FAIL_BACKOFF="${V2_FAIL_BACKOFF:-300}"         # 5 min after 3 consecutive failures
 
 TARGET_BRANCH="v2-rewrite"
 
