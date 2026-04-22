@@ -34,13 +34,7 @@
 
 ## Week 4 — Producer base + 3 producers (complete, see DONE_TASKS.md)
 
-## Week 5 — 3 more producers
-
-- [ ] **Routine producer (`producers/routine.py`).** InsightType.ROUTINE:
-  - Observes event stream; triggers at routine-violation points (e.g., Sunday 5pm if user historically plans week — routine detector writes these into signal_profiles.routine)
-  - Insight: "You usually {routine description}. Want to start now?"
-  - Action: ActionKind.SET_REMINDER or ActionKind.NOTE_OBSERVATION
-  Tests: fires at detected routine times only; evidence includes last 3 occurrences.
+## Week 5 — 3 more producers (complete, see DONE_TASKS.md)
 
 ## Week 6 — feedback + wiring
 
