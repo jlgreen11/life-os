@@ -31,7 +31,7 @@ ignore = [
 "tests/*" = ["B", "SIM"]  # relax bugbear/simplify rules in tests
 
 [tool.ruff.lint.isort]
-known-first-party = ["ai", "connectors", "core", "models", "producers", "services", "storage", "web"]
+known-first-party = ["ai", "api", "connectors", "core", "models", "producers", "services", "storage", "web"]
 
 # =============================================================================
 # Pytest
