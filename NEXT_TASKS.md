@@ -46,14 +46,6 @@
 
 ## Week 10 — Web: You, People, Settings
 
-- [ ] **People tab (`web/templates/people.html`) + per-contact dossier.**
-  - List: YOU first; NEEDS ATTENTION; ACTIVE THIS WEEK
-  - Right-aligned monospace stats
-  - Search: HTMX debounced `hx-get="/api/people?q=..."` `hx-trigger="keyup changed delay:200ms"`
-  - Per-contact (`contact_dossier.html`): matches DESIGN.md wireframe
-  - NO avatars, plain text only
-  Tests: search filters correctly; dossier renders known contact; empty state for new.
-
 - [ ] **Settings tab (`web/templates/settings.html`).**
   - Connector list: status dot + last sync + enabled checkbox
   - Edit form opens in detail pane (not inline expansion)
