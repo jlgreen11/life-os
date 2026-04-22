@@ -40,12 +40,6 @@
 
 ## Week 7 — AI engine extraction
 
-- [ ] **PII shield (`ai/pii.py`).** Port v1 `services/ai_engine/pii.py`:
-  - `class PIIShield` with `redact(text) -> (redacted, mapping)` and `restore(text, mapping) -> text`
-  - Redacts: email, phone, names (from entities table), addresses
-  - Mapping is one-time; discarded after restore
-  Tests: round-trip on samples; no PII leaks in redacted output.
-
 - [ ] **Context assembly (`ai/context.py`).** Port v1 `services/ai_engine/context.py`:
   - `assemble_briefing_context(user_id, date) -> dict` with 11 sections: calendar, moments (was tasks), unread messages, completions, predictions, episodes, facts, insights, routines, habits, preferences
   - REMOVE all references to mood/decision/expertise/values (dropped in v2)
