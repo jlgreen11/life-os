@@ -1,127 +1,164 @@
-# NEXT_TASKS — Life OS v2 Rewrite
+# NEXT_TASKS — Life OS (Phase 2 runway)
 
 > Ordered queue. Autonomous agent takes the **top** unchecked `- [ ]` item.
-> When done, move it to `DONE_TASKS.md` (prepend, most recent first) with
-> commit SHA + date.
+> When done, move it to `DONE_TASKS.md` (prepend, most recent first).
 >
-> **Task sizing:** each item fits ≤ 1 iteration ($10 opus budget, ~15–25 min
-> of Claude work). If a task runs out of budget, agent prints
-> `V2_AUTONOMOUS_ITERATION_PARTIAL: <reason>` and leaves it checked out.
+> **Phase 1 status:** agent-addressable work complete (43 tasks shipped,
+> 30,844 LOC, 123 files). Only human-only Phase 1 tasks remain (cutover,
+> dogfood, Apple Dev enrollment).
 >
-> **Source of truth:** CEO plan at
-> `~/.gstack/projects/jlgreen11-life-os/ceo-plans/2026-04-21-life-os-rewrite-mvp.md`.
-> Design tokens/IA in `DESIGN.md`. Engineering plan in `docs/plans/2026-04-21-v2-rewrite-plan.md`.
+> **This queue runs Phase 2 groundwork + Phase 1 polish + cutover prep —
+> all agent-safe (no Apple Dev account required).**
+>
+> **Task sizing:** each item fits ≤ 1 iteration ($10 opus budget, ~15 min).
+>
+> **Source of truth:**
+> - `~/.gstack/projects/jlgreen11-life-os/ceo-plans/2026-04-21-life-os-rewrite-mvp.md`
+> - `DESIGN.md` (design tokens + IA)
+> - `docs/plans/2026-04-21-v2-rewrite-plan.md` (engineering plan)
 >
 > **Agent rules:**
-> - Never checkout master. Never push (orchestrator handles it). No PRs. No merges.
+> - Branch: v2-rewrite only. Never checkout master. Never push. No PRs, no merges.
 > - Never write to `data/` (production DBs) or edit `config/settings.yaml`.
-> - Working tree clean at iteration end (agent commits everything it touches).
-> - One task per iteration unless the task body says otherwise.
-> - If blocked (missing data/dep, unresolved design), leave `<!-- NOTE: reason -->`
->   above the task, commit the note, move on. Don't guess architectural decisions.
+> - Working tree clean at iteration end.
+> - If blocked, leave `<!-- NOTE: reason -->` above the task, commit the note, move on.
 
 ---
 
-## Week 0 — prework (complete, see DONE_TASKS.md)
+## Category A — iOS foundation (agent-safe; no Apple Dev needed)
 
-## Week 1 — migration dry-run
+These build the iOS app scaffold. Code compiles on any Mac; no device runtime needed. When Apple Dev enrolls post-trip, you plug APNs/widgets/TestFlight on top.
 
-<!-- NOTE (2026-04-22, follow-up to SHA of this commit): v2 schema has no `feedback_events` table (only `feedback_weights` EWMA). The migration script skips v1 `feedback_log` rows with a logged warning and surfaces the count in `MigrationReport.notification_feedback_skipped`. Before cutover, either (a) add `feedback_events` to `storage/schema.py` or (b) decide legacy feedback is intentionally not carried forward. Tracked as an open design decision on the engineering plan. -->
+- [ ] **Port DESIGN.md tokens → Swift.** Create `ios/LifeOS/DesignSystem/`:
+  - `Color+Tokens.swift` — semantic color tokens from DESIGN.md (background, text, primary-action, success/error/warning/info) as `extension Color { static let bgBase = Color(...) ... }`. Use hex values from DESIGN.md exactly.
+  - `Font+Tokens.swift` — type scale 11/13/15/17/22/28 pt + weight ladder + letter-spacing. Use `Font.system(size:, weight:)` wrappers.
+  - `Spacing.swift` — 8pt-base spacing scale as static CGFloat constants `s1 = 4, s2 = 8, s3 = 12, ...`
+  - `Elevation.swift` — shadow helpers (rest / hover / modal) as SwiftUI view modifiers.
+  - `Radius.swift` — r-sm / r-md / r-lg / r-pill constants.
+  Tests in `ios/LifeOSTests/DesignSystemTests.swift`: constants present, values match DESIGN.md.
 
-## Week 2 — Moment primitive (complete, see DONE_TASKS.md)
+- [ ] **Swift `Moment` type + enums (`ios/LifeOS/Models/Moment.swift`).** Codable mirror of Python `core/moment/types.py`:
+  - `enum MomentState: String, Codable` with cases matching Python
+  - `enum InsightType: String, Codable`
+  - `enum ActionKind: String, Codable`
+  - `struct Action: Codable { kind, params }` (params as `[String: AnyCodable]`)
+  - `struct ContextTrigger: Codable { expression }`
+  - `struct Moment: Codable, Identifiable { id, createdAt, scheduledFor?, expiresAt, contextTrigger?, insight, evidence, evidenceHash, proposedAction, state, snoozeUntil?, confidence, feedbackWeight, sourceInsightType }`
+  JSON decode tests with fixtures from `tests/fixtures/v2_moment_sample.json` (create a couple fixtures that match v2 API output).
 
-## Week 3 — outbox + scheduler + WAL integrity (complete, see DONE_TASKS.md)
+- [ ] **Regenerate `APIClient.swift` against v2 endpoints.** Fix existing mismatches + add new endpoints:
+  - `GET /api/now` → `MomentFeed` (pending, scheduled, done)
+  - `POST /api/moments/{id}/accept|dismiss|snooze|edit`
+  - `GET /api/you` → `SelfPortrait`
+  - `GET /api/people`, `GET /api/people/{id}` → `PeopleList`, `ContactDossier`
+  - `GET /api/connectors`, `PATCH /api/connectors/{id}`, `POST /api/connectors/{id}/test`
+  - `GET /api/health`, `GET /api/status`
+  - `GET /api/briefing` (legacy proxy, same shape as v1)
+  - Keep existing: `/api/context/*`, `/api/feedback`, `/api/preferences`
+  - **Remove** from the client: old `/api/task` (singular — the known bug), `/api/command`, `/api/notifications`, `/api/tasks`, `/api/search` (all 501'd in v2 shim)
+  Unit tests: `APIClientTests.swift` using `URLProtocol` stubbing, one test per endpoint.
 
-## Week 4 — Producer base + 3 producers (complete, see DONE_TASKS.md)
+- [ ] **Update `WebSocketManager.swift` for v2 Moment protocol.** Adapt to v2 `/ws`:
+  - Decode incoming messages as typed events: `MomentCreated`, `MomentStateChanged`, `ConnectorStatusChanged`
+  - Exponential-backoff reconnect on drop
+  - Heartbeat ping every 30s
+  Tests: decode fixtures, reconnect logic, message routing.
 
-## Week 5 — 3 more producers (complete, see DONE_TASKS.md)
+- [ ] **Restructure `ios/LifeOS/Views/` around 4-tab IA.** Scaffold:
+  - Move/rename existing `DashboardView.swift` → `Views/Now/NowTabView.swift` (stub body — real impl next task)
+  - Create `Views/You/`, `Views/People/`, `Views/Settings/` directories with empty scaffold views
+  - Create `Views/Root/RootTabView.swift` with `TabView` + 4 tabs (`.tabItem` + SF Symbol icons)
+  - Entry point `LifeOSApp.swift` points at `RootTabView`
+  Tests: `RootTabViewTests.swift` verifies 4 tabs present, correct icons.
 
-## Week 6 — feedback + wiring (complete, see DONE_TASKS.md)
+- [ ] **`NowTabView.swift` + `MomentCardView.swift`.** Per DESIGN.md Now-tab wireframe:
+  - `NowTabView` — sections: NOW (2-3 cards), UP NEXT (compact list), DONE TODAY (collapsed default)
+  - `MomentCardView` — insight (22pt display), evidence link (tap reveals sheet), draft block, action buttons (one primary + secondary ghosts)
+  - Placeholder data from `ios/LifeOS/Previews/MockData.swift`
+  Tests: Xcode preview renders; XCTest on layout.
 
-## Week 7 — AI engine extraction (complete, see DONE_TASKS.md)
+- [ ] **`YouTabView.swift`.** Per DESIGN.md You-tab wireframe:
+  - Header with "Observed {N} months · {M} interactions"
+  - 4 sections: WHEN YOU'RE AT YOUR BEST / HOW YOU WRITE / YOUR ROUTINES / DRIFTING
+  - NO mood bars, NO progress bars, NO pie charts
+  Placeholder data via MockData.
+  Tests: preview renders; section order matches wireframe.
 
-## Week 8 — API surface
+- [ ] **`PeopleTabView.swift` + `ContactDossierView.swift`.** Per DESIGN.md:
+  - `PeopleTabView` — search field, YOU first entry, NEEDS ATTENTION + ACTIVE THIS WEEK sections
+  - Right-aligned monospace stats
+  - Tap row → navigate to `ContactDossierView`
+  - `ContactDossierView` — communication style, recent topics, cadence sparkline (SwiftUI Path), predicted next, [Start a message] primary
+  NO avatars; plain text only.
+  Tests: preview renders; navigation works.
 
-## Week 9 — Web: base + Now tab (complete, see DONE_TASKS.md)
+- [ ] **`SettingsTabView.swift`.** Per DESIGN.md:
+  - Connector list (status dot + last sync + enabled toggle)
+  - Tap connector → `ConnectorEditView` (detail pane with form)
+  - Preferences section (quiet hours, autonomy slider, proactivity)
+  - No raw credentials shown
+  Tests: preview renders; form validation.
 
-## Week 10 — Web: You, People, Settings (complete, see DONE_TASKS.md)
+- [ ] **ViewModels + XCTest unit tests.** Create `ios/LifeOS/ViewModels/`:
+  - `NowViewModel` (fetches `/api/now`, holds `@Published var feed: MomentFeed`)
+  - `YouViewModel`, `PeopleViewModel`, `SettingsViewModel`
+  - Each VM uses `APIClient` via constructor injection; testable with mock client
+  - XCTest: load happy path, error path, action dispatches (`accept()` / `dismiss()` / `snooze()`) update state correctly
 
-## Week 11 — Real-time + full flows
+## Category B — Phase 1 polish (agent-safe)
 
-<!-- NOTE (2026-04-22, iteration 21): the original "E2E action flows + Undo
-toast" task was a $10+ iteration and contained an unresolved design decision
-the CEO/eng plan doesn't cover. Specifically:
+- [ ] **Test coverage audit.** Run `python -m pytest --cov=core --cov=storage --cov=producers --cov=ai --cov=api --cov=web --cov-report=term-missing --cov-report=html` and emit `docs/coverage-report-{date}.md` summarizing: overall %, per-module %, top 10 uncovered branches by importance (prioritize core/moment, storage/repos, outbox, scheduler, producers). Install `pytest-cov` if missing; if install denied, leave NOTE.
 
-  1. The state machine in `core/moment/state.py` has no edge from
-     ACCEPTED → SUGGESTED or DISMISSED → SUGGESTED (DISMISSED is
-     terminal; ACCEPTED can only go to DONE). The original task body
-     asked for "POST /api/moments/{id}/transition back to SUGGESTED" —
-     not implementable without either (a) adding undo edges to
-     `_LEGAL_TRANSITIONS` (CEO plan signoff needed; affects audit log
-     semantics) or (b) modeling deferred dispatch as a new in-flight
-     state (e.g. `ACCEPTED_PENDING_DISPATCH`) so undo means cancelling
-     the outbox enqueue, not reversing state.
+- [ ] **Fix top 5 coverage gaps.** Read the coverage report from prior task; write targeted tests for the 5 highest-priority gaps. Each gap → 1-3 new tests. Commit test file(s) + coverage-report-after-{date}.md showing delta.
 
-  2. The outbox spec in docs/plans/2026-04-21-v2-rewrite-plan.md §
-     "Outbox pattern spec" defines `state IN (pending, in_progress,
-     done, failed, dead)` — there is no "delayed / not-before" column
-     for grace-period dispatch. A 3 s outbox-grace pattern needs either
-     a `not_before TIMESTAMP` column on outbox or a separate scheduling
-     mechanism (cf. moment scheduler). Neither is in the eng plan.
+- [ ] **Ruff + mypy cleanup.** Run `ruff check core/ storage/ producers/ ai/ api/ web/ scripts/ --fix` and `ruff format .`; install mypy if missing and run `mypy --strict core/ storage/repos/ producers/`. Fix auto-fixable; for mypy errors fix top 10; leave remaining in `docs/mypy-gaps.md`.
 
-Splitting the original task into the well-defined slices below; the two
-slices that depend on the undo design land last and carry their own
-NOTE flagging the blocker. -->
+- [ ] **Public API docstrings.** Audit `core/moment/engine.py`, `scheduler.py`, `state.py`, `storage/repos/moments.py`, `outbox.py`, `ai/engine.py`, `api/routes/now.py`, `api/routes/you.py`. Every public class, method, function gets a docstring with: one-line summary, Args, Returns, Raises, and short example for non-trivial APIs. Google style, consistent across files.
 
-## Week 12 — regression + cutover rehearsal
+- [ ] **Scheduler performance profile.** Write `scripts/profile_scheduler.py` that seeds 10,000 synthetic Moments (mix of scheduled + snoozed, time-distributed across next 24h), runs 1 hour of simulated ticks (monotonic clock injection), measures p50/p95/p99 tick latency + throughput. Emit `docs/perf-scheduler-{date}.md`. Acceptance: p99 tick latency < 500ms at 10K-row fleet.
 
-<!-- NOTE (2026-04-22, harness shipped as scaffold): the golden-dataset
-regression harness landed at `tests/regression/test_golden_30day.py` and
-skips cleanly when no v1 snapshot is present at `data/v1-snapshot/` (or the
-path in `LIFEOS_V1_SNAPSHOT_DIR`). Assertions (a) volume, (b) thematic
-coverage via Jaccard ≥ 0.20, (c) zero dedup violations are wired to real
-data via `scripts.migrate_v1_to_v2.run_migration` + the v2 `MomentEngine`
-+ all six Phase 1 producers. Assertion (d) Ollama latency is delegated to
-`scripts/measure_ollama_budget.py` (baseline at
-`docs/plans/2026-04-22-ollama-baseline.md`) and noted in each run report
-rather than asserted in the harness. Operator must drop a snapshot in place
-on the Mac Mini for the harness to run end-to-end; see
-`docs/regression-runs/README.md` for the snapshot layout. -->
+- [ ] **Migration rehearsal at scale.** Extend `tests/fixtures/v1_sample/` with a larger fixture (10K events, 500 entities, 200 signal profile rows). Add `tests/scripts/test_migrate_v1_to_v2_scale.py` that runs the migration and asserts: (a) no memory spike > 512MB, (b) completes in < 2 min on this fixture, (c) all row-count invariants hold. If psutil unavailable, skip memory check with NOTE.
 
+- [ ] **Resolve `feedback_events` table design question.** Currently the migration script skips v1 `feedback_log` rows. Write `docs/adr/2026-04-22-feedback-events-disposition.md` as a proper ADR (Context / Decision / Consequences / Alternatives). Decision: **add `feedback_events` table** (preserves legacy feedback for future analysis). Implement: (a) add DDL to `storage/schema.py`, (b) add `storage/repos/feedback_events.py` with `FeedbackEventsRepository`, (c) update `migrate_v1_to_v2.py` to write feedback rows, (d) tests.
 
-<!-- NOTE (2026-04-22, completed in SHA 30bb232): cutover rehearsal landed
-as `scripts/cutover_rehearsal.py` + `tests/scripts/test_cutover_rehearsal.py`.
-Auto-discovers a v1 backup at `data/backup-YYYYMMDD/` (override via
-`--source-dir`), runs the migration into a tmpdir, then runs the three
-CEO-plan dry-run checks (row-count diff + FK integrity, moment.evidence
-referential integrity, vector-store integrity). Emits a markdown report
-to `docs/cutover-rehearsals/<date>.md` with overall PASS/FAIL, runtime,
-on-disk size, and a DRY-RUN ONLY banner. No-backup branch writes a
-`<date>-skipped.md` stub and exits 0 — the autonomous-agent host has no
-production data; the rehearsal is meaningful only on the Mac Mini. -->
+- [ ] **ADR index + backfill.** Create `docs/adr/README.md` (index) and backfill 6 ADRs for major v2 decisions: (1) Moment primitive as first-class entity, (2) kill soft-insight services, (3) drop NATS for asyncio + outbox, (4) consolidate 5 SQLite DBs → 1, (5) HTMX + Tailwind + Jinja over SPA, (6) web-first Phase 1, iOS Phase 2. Format: Context / Decision / Consequences / Status.
 
+## Category C — Cutover preparation (agent-safe)
 
-## Week 13+ — HUMAN ONLY (agent should skip with NOTE)
+- [ ] **Cutover runbook (`docs/cutover-runbook.md`).** Step-by-step operator guide for the Phase 1 v1→v2 cutover. Content:
+  - Pre-flight (v1 backup + disk-space + health snapshot)
+  - Stop v1 services
+  - Run migration script (exact command + expected runtime + expected output)
+  - Bring up v2 (exact commands)
+  - Verify (`/api/health` expected JSON, sample Moment fires end-to-end, iOS compat shim responds)
+  - 24-hour watch window (what to monitor; alert thresholds)
+  - Rollback trigger criteria + procedure
+  Include timing estimates (total ≤ 30 min RTO target per CEO plan).
 
-<!-- NOTE (2026-04-22, iteration 30): human-only — skip. Supervised v1→v2 production cutover requires the owner on the Mac Mini with the backed-up v1 data dir + decision authority on go/no-go. Agent has no path to complete. Task body explicitly says "Agent: leave NOTE and move on." Not consumed by the autonomous loop; stays unchecked for the human. -->
-- [ ] **MIGRATION CUTOVER — HUMAN.** Supervised v1→v2 production cutover. Not agent work. Agent: leave `<!-- NOTE: human-only — skip -->` and move on.
+- [ ] **Cutover monitor script (`scripts/cutover_monitor.py`).** Continuous loop polling `/api/health` every 10s, logs structured state, alerts (log.error + writes `data/cutover-alerts.jsonl`) on: connector offline > 5 min, DB write lag > 30s, scheduler heartbeat missing > 2 min, pending Moment count growing without accept/dismiss activity. Exit codes: 0 healthy for N min (configurable), 1 alert fired. Tests: simulate each alert scenario with mocks.
 
-<!-- NOTE (2026-04-22, iteration 30): human-only — skip. 2–4 week dogfood period measures lived KPIs (notification precision, undo rate, quiet-hours violations) against real user usage — needs the owner actually using the system on the Mac Mini; agent has no dogfood path. Not consumed by the autonomous loop. -->
-- [ ] **PHASE 1 ACCEPTANCE LOOP — HUMAN.** 2–4 week dogfood period; KPI recalibration at week 2 per CEO plan. Not agent work. Skip with NOTE.
+- [ ] **Cutover rollback script (`scripts/cutover_rollback.py`).** Automates "restore v1 snapshot" path from CEO plan. Inputs: snapshot directory path, target v1 service name. Actions: stop v2, restore v1 DBs from snapshot, restore LanceDB, restart v1 services, verify v1 `/api/status`. Hard-coded RTO target ≤ 30 min. Tests: dry-run mode that logs but doesn't execute; mocked FS.
 
-<!-- NOTE (2026-04-22, iteration 30): human-only — skip. Apple Developer Program enrollment requires the owner's Apple ID, payment method, and legal identity verification. Not Phase 1. Not consumed by the autonomous loop. -->
-- [ ] **APPLE DEV ENROLLMENT — HUMAN.** Phase 2 Week 0 prework. Not Phase 1. Skip with NOTE.
+- [ ] **v1/v2 data diff tool (`scripts/v1_v2_diff.py`).** Post-migration sanity check. Compares: row counts per table, spot-checks (10 random events, match v1 vs v2 by ID + content), FK integrity (every evidence.event_id resolves). Emits `docs/cutover-diffs/{date}.md` with pass/fail per check. Agent-runnable against synthetic fixtures.
+
+- [ ] **Dry-run cutover CI harness (`tests/integration/test_cutover_dryrun.py`).** End-to-end integration test: fresh v1 fixture → run migrate_v1_to_v2.py → bring up v2 (FastAPI TestClient) → hit `/api/health` → create a test Moment → verify scheduler transitions it → shut down v2 → restore v1 snapshot via rollback script → verify v1 comes back. Acceptance: completes in < 2 min in CI; every assertion passes.
+
+## Human-only (Phase 1 cutover-side and Phase 2 real-device work)
+
+- [ ] **MIGRATION CUTOVER — HUMAN OPERATOR.** Live production v1→v2 cutover. Runbook in `docs/cutover-runbook.md`. Agent: skip with NOTE.
+- [ ] **PHASE 1 DOGFOOD ACCEPTANCE LOOP — HUMAN.** 2-4 week dogfood. Agent: skip with NOTE.
+- [ ] **APPLE DEV PROGRAM ENROLLMENT — HUMAN.** Prerequisite for Phase 2 APNs/TestFlight/widgets. Agent: skip with NOTE.
 
 ---
 
 ## When blocked / unclear
 
-If a task mentions something you can't verify (local `data/` not present, ollama not running, hypothesis not installed, etc.), don't guess. Leave a `<!-- NOTE: <reason> -->` above the task, commit the note, move on to the next unchecked task. Don't check the task off.
+If a task mentions something you can't verify (Xcode not installed, `psutil` denied, coverage.py missing), don't guess. Leave `<!-- NOTE: reason -->` above the task, commit the note, move on.
 
-## Guardrails reminder
+## Guardrails
 
-- Never `git checkout master`, never `git push` (orchestrator does it), never `gh pr ...`
+- Never `git checkout master`, never `git push` (orchestrator handles), never `gh pr ...`
 - Never write to `data/` (production DBs); never edit `config/settings.yaml`
 - Everything on `v2-rewrite` branch, committed locally only
-- One task per iteration; if budget runs out, `V2_AUTONOMOUS_ITERATION_PARTIAL`
+- One task per iteration; budget $10; `V2_AUTONOMOUS_ITERATION_PARTIAL` if exceeded
 - No destructive git, no force-push, no `rm`, no `launchctl`/`sudo`/`docker`/`brew`/`pip install`
