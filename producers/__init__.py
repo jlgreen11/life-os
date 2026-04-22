@@ -16,5 +16,11 @@ Phase 1 set (CEO plan § "Producers retained"):
 """
 
 from producers.cadence import CADENCE_PRODUCER_KEY, CadenceProducer
+from producers.relationship import RELATIONSHIP_PRODUCER_KEY, RelationshipProducer
 
-__all__ = ["CADENCE_PRODUCER_KEY", "CadenceProducer"]
+__all__ = [
+    "CADENCE_PRODUCER_KEY",
+    "RELATIONSHIP_PRODUCER_KEY",
+    "CadenceProducer",
+    "RelationshipProducer",
+]
