@@ -45,13 +45,14 @@ returns the updated Moment. No external side effects fire yet.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, Response
 
 from api.schemas import MomentActionIn, MomentListOut, MomentOut
 from core.moment.state import IllegalTransition
-from core.moment.types import Moment, MomentState
+from core.moment.types import ActionKind, Moment, MomentState
 from web.rendering import render
 
 # Engineering plan § "GET /api/now" locks these limits; keep as module
@@ -103,6 +104,20 @@ def _broadcaster(request: Request):
     """
     life_os = getattr(request.app.state, "life_os", None)
     return getattr(life_os, "moment_broadcaster", None)
+
+
+def _outbox_repo(request: Request):
+    """Fetch the OutboxRepository off ``app.state.life_os``; ``None`` if missing.
+
+    Optional wiring — the action endpoints still record state changes
+    even when no outbox is attached. A missing outbox just means the
+    deferred-dispatch half of Accept + the ``cancel_pending`` half of
+    Undo are skipped; Phase 1 cutover flags this as a boot-time warning
+    rather than a hard failure so half-constructed ``LifeOS`` objects
+    (e.g. tests that only exercise the state machine) keep working.
+    """
+    life_os = getattr(request.app.state, "life_os", None)
+    return getattr(life_os, "outbox_repo", None)
 
 
 def _broadcast_done(broadcaster, moment: Moment) -> None:
@@ -167,15 +182,26 @@ def _load_or_404(repo, moment_id: str) -> Moment:
     return moment
 
 
-def _transition_or_409(repo, moment_id: str, target: MomentState, annotation: str | None) -> Moment:
+def _transition_or_409(
+    repo,
+    moment_id: str,
+    target: MomentState,
+    annotation: str | None,
+    *,
+    conn_cb=None,
+) -> Moment:
     """Wrap repo transition; translate ``IllegalTransition`` → 409.
+
+    ``conn_cb`` is forwarded to ``MomentRepository.transition`` so the
+    caller can piggyback atomic writes (outbox enqueue / cancel_pending)
+    inside the same ``BEGIN IMMEDIATE`` block as the state change.
 
     ``KeyError`` from the repo means the row was deleted between the
     initial GET (which returned 200) and the transition call — treat as
     a 404 so clients see the same shape they would have on first load.
     """
     try:
-        return repo.transition(moment_id, target, annotation=annotation)
+        return repo.transition(moment_id, target, annotation=annotation, conn_cb=conn_cb)
     except IllegalTransition as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -276,16 +302,47 @@ def _action_label(state: MomentState) -> str:
 # Undo grace window — 3 seconds from the original transition's
 # ``moment_state_history.ts``. Past this window the route returns
 # 410 Gone; per design note docs/plans/2026-04-22-undo-grace.md
-# § "Decision 1".
+# § "Decision 1". The same 3 s is stamped as ``not_before`` on the
+# outbox row enqueued by Accept, so claim_batch leaves the dispatch
+# pending until the Undo window elapses.
 UNDO_GRACE_SECONDS = 3
+
+
+# ActionKind → outbox subject mapping for Accept dispatch. Keeps the
+# mapping shallow for Phase 1 — communication-shaped actions fan out to
+# ``send_message``, calendar-shaped actions to ``create_event``, and
+# every other kind uses the generic ``moment.action`` subject so the
+# worker layer can route by the moment_id in payload. Out of scope
+# elaboration per design note § "Out of scope".
+_DISPATCH_SUBJECTS: dict[ActionKind, str] = {
+    ActionKind.DRAFT_MESSAGE: "send_message",
+    ActionKind.SEND_MESSAGE: "send_message",
+    ActionKind.NUDGE: "send_message",
+    ActionKind.CREATE_CALENDAR_ENTRY: "create_event",
+    ActionKind.SCHEDULE_BLOCK: "create_event",
+}
+_DEFAULT_DISPATCH_SUBJECT = "moment.action"
+
+
+def _dispatch_subject_for(moment: Moment) -> str:
+    """Return the outbox subject for a Moment's proposed action.
+
+    Stable per Moment (same subject for enqueue and cancel_pending) so
+    the Undo path can tear down exactly the row the Accept path created.
+    """
+    return _DISPATCH_SUBJECTS.get(moment.proposed_action.kind, _DEFAULT_DISPATCH_SUBJECT)
+
+
+def _accept_event_id(moment_id: str) -> str:
+    """Stable ``event_id`` for the Accept dispatch, independent of clock."""
+    return f"moment.accept:{moment_id}"
+
 
 # States from which an undo is meaningful — the three terminal-or-
 # terminal-ish user-driven decisions made from the Now tab. EXPIRED is
 # excluded because the user did not initiate it (time-driven), and DONE
 # is excluded because there is no grace concept post-completion.
-_UNDOABLE_STATES: frozenset[MomentState] = frozenset(
-    {MomentState.ACCEPTED, MomentState.DISMISSED, MomentState.SNOOZED}
-)
+_UNDOABLE_STATES: frozenset[MomentState] = frozenset({MomentState.ACCEPTED, MomentState.DISMISSED, MomentState.SNOOZED})
 
 # Inverse-signal mapping for feedback compensation when undo fires.
 # Per design note § "Audit-log semantics" → "Compensate feedback weight":
@@ -355,7 +412,29 @@ def accept_moment(
     repo = _moment_repo(request)
     existing = _load_or_404(repo, moment_id)
     annotation = body.annotation if body is not None else None
-    updated = _transition_or_409(repo, moment_id, MomentState.ACCEPTED, annotation)
+
+    # Deferred-dispatch enqueue rides the Moment transition's own
+    # BEGIN IMMEDIATE transaction via ``conn_cb`` so a crash between
+    # state update and enqueue can never leave the two desynced.
+    outbox = _outbox_repo(request)
+    conn_cb = None
+    if outbox is not None:
+        dispatch_subject = _dispatch_subject_for(existing)
+        event_id = _accept_event_id(moment_id)
+        not_before = int(repo._now_fn()) + UNDO_GRACE_SECONDS
+
+        def _enqueue_accept(conn: sqlite3.Connection) -> None:
+            outbox.enqueue(
+                event_id=event_id,
+                subject=dispatch_subject,
+                payload={"moment_id": moment_id},
+                conn=conn,
+                not_before=not_before,
+            )
+
+        conn_cb = _enqueue_accept
+
+    updated = _transition_or_409(repo, moment_id, MomentState.ACCEPTED, annotation, conn_cb=conn_cb)
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.ACCEPTED)
     _broadcast_done(_broadcaster(request), updated)
     if _is_htmx(request):
@@ -520,9 +599,13 @@ def undo_moment(moment_id: str, request: Request) -> Response:
       at the top of ``#now-list``, JSON callers get the typed
       ``MomentOut`` payload.
 
-    The outbox cancellation half of the design note (§ "Decision 2"
-    — ``cancel_pending`` + ``not_before``) lands in the next NEXT_TASKS
-    item; this route currently only reverses state and feedback.
+    When ``last.to_state == ACCEPTED`` and an outbox repo is wired on
+    ``life_os``, this route also calls
+    :meth:`OutboxRepository.cancel_pending` **inside** the same
+    transaction as the state reversal (design note
+    ``docs/plans/2026-04-22-undo-grace.md`` § "Decision 2"). Dismiss /
+    snooze undo never enqueued an outbox row so there is nothing to
+    cancel on those paths.
     """
     repo = _moment_repo(request)
     existing = _load_or_404(repo, moment_id)
@@ -551,7 +634,22 @@ def undo_moment(moment_id: str, request: Request) -> Response:
             detail="undo grace window expired",
         )
 
-    updated = _transition_or_409(repo, moment_id, MomentState.SUGGESTED, "undo")
+    outbox = _outbox_repo(request)
+    conn_cb = None
+    if outbox is not None and last.to_state == MomentState.ACCEPTED:
+        dispatch_subject = _dispatch_subject_for(existing)
+        event_id = _accept_event_id(moment_id)
+
+        def _cancel_accept(conn: sqlite3.Connection) -> None:
+            outbox.cancel_pending(
+                event_id=event_id,
+                subject=dispatch_subject,
+                conn=conn,
+            )
+
+        conn_cb = _cancel_accept
+
+    updated = _transition_or_409(repo, moment_id, MomentState.SUGGESTED, "undo", conn_cb=conn_cb)
     inverse_state = _INVERSE_FEEDBACK_STATE[last.to_state]
     _record_feedback(_feedback_store(request), existing.source_insight_type, inverse_state)
 

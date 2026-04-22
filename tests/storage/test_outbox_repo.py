@@ -337,3 +337,178 @@ def test_purge_done_older_than_deletes_only_old_done_rows(repo, conn, clock):
 def test_purge_done_older_than_rejects_negative_days(repo):
     with pytest.raises(ValueError):
         repo.purge_done_older_than(days=-1)
+
+
+# ---------------------------------------------------------------------------
+# not_before — deferred dispatch (Undo grace window)
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_with_not_before_persists_column(repo, conn):
+    """``enqueue(not_before=X)`` stores the value verbatim."""
+    oid = repo.enqueue("evt-1", "s1", not_before=REF_NOW + 3)
+    row = conn.execute("SELECT not_before FROM outbox WHERE id=?", (oid,)).fetchone()
+    assert row["not_before"] == REF_NOW + 3
+
+
+def test_enqueue_without_not_before_defaults_to_null(repo, conn):
+    """Omitting ``not_before`` leaves the column NULL — backwards compatible."""
+    oid = repo.enqueue("evt-1", "s1")
+    row = conn.execute("SELECT not_before FROM outbox WHERE id=?", (oid,)).fetchone()
+    assert row["not_before"] is None
+
+
+def test_claim_batch_skips_deferred_rows(repo, clock):
+    """A row with ``not_before > now()`` is not claim-eligible yet."""
+    clock.t = REF_NOW
+    repo.enqueue("evt-deferred", "s1", not_before=REF_NOW + 60)
+    assert repo.claim_batch(limit=10) == []
+
+
+def test_claim_batch_picks_up_row_once_not_before_elapses(repo, clock):
+    """Same deferred row becomes eligible once ``now >= not_before``."""
+    clock.t = REF_NOW
+    oid = repo.enqueue("evt-deferred", "s1", not_before=REF_NOW + 3)
+    assert repo.claim_batch(limit=10) == []
+
+    # At the exact boundary the row is claim-eligible (<= semantics).
+    clock.t = REF_NOW + 3
+    claimed = repo.claim_batch(limit=10)
+    assert [e.id for e in claimed] == [oid]
+    assert claimed[0].not_before == REF_NOW + 3
+
+
+def test_claim_batch_mixed_immediate_and_deferred(repo, clock):
+    """NULL not_before still claims immediately; deferred stays behind."""
+    clock.t = REF_NOW
+    a = repo.enqueue("evt-a", "s1")  # immediate
+    clock.t = REF_NOW + 1
+    repo.enqueue("evt-b", "s1", not_before=REF_NOW + 60)  # deferred
+    clock.t = REF_NOW + 2
+    c = repo.enqueue("evt-c", "s1")  # immediate
+
+    claimed = repo.claim_batch(limit=10)
+    assert sorted(e.id for e in claimed) == sorted([a, c])
+
+
+def test_cancel_pending_deletes_matching_row(repo, conn):
+    """``cancel_pending`` removes a pending row by (event_id, subject)."""
+    oid = repo.enqueue("evt-1", "send_message", not_before=REF_NOW + 3)
+    assert repo.cancel_pending("evt-1", "send_message") is True
+    row = conn.execute("SELECT id FROM outbox WHERE id=?", (oid,)).fetchone()
+    assert row is None
+
+
+def test_cancel_pending_returns_false_when_missing(repo):
+    """No matching row → ``False`` (no error)."""
+    assert repo.cancel_pending("evt-nope", "s1") is False
+
+
+def test_cancel_pending_returns_false_for_in_progress_row(repo, conn):
+    """An already-claimed row is not cancellable — returns ``False``.
+
+    Matches the design note's § "Worst case" race: claim fired first,
+    state-side grace check still let it through; cancel is a no-op.
+    """
+    oid = repo.enqueue("evt-1", "s1")
+    repo.claim_batch()
+    assert repo.cancel_pending("evt-1", "s1") is False
+    # Row stayed in_progress.
+    state = conn.execute("SELECT state FROM outbox WHERE id=?", (oid,)).fetchone()["state"]
+    assert state == "in_progress"
+
+
+def test_cancel_pending_with_caller_transaction(repo, conn):
+    """``cancel_pending(conn=c)`` rides an existing BEGIN IMMEDIATE block."""
+    oid = repo.enqueue("evt-1", "s1", not_before=REF_NOW + 3)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        assert repo.cancel_pending("evt-1", "s1", conn=conn) is True
+        conn.execute("ROLLBACK")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    # Rollback should have restored the row.
+    row = conn.execute("SELECT id FROM outbox WHERE id=?", (oid,)).fetchone()
+    assert row is not None
+
+
+def test_requeue_in_progress_on_boot_preserves_not_before(repo, conn, clock):
+    """Boot recovery flips in_progress → pending but leaves ``not_before`` alone.
+
+    Scenario: process crashed after claim; the row's original grace
+    window is still whatever it was. Preserving the column means the
+    next claim tick respects the same not_before.
+    """
+    clock.t = REF_NOW
+    oid = repo.enqueue("evt-1", "s1", not_before=REF_NOW + 3)
+    # Force-claim by advancing past the grace window.
+    clock.t = REF_NOW + 3
+    repo.claim_batch()
+    # Simulate crash; not_before stays at REF_NOW + 3.
+    repo.requeue_in_progress_on_boot()
+    row = conn.execute("SELECT state, not_before FROM outbox WHERE id=?", (oid,)).fetchone()
+    assert row["state"] == "pending"
+    assert row["not_before"] == REF_NOW + 3
+
+
+def test_boot_recovery_mid_grace_window_dispatches_on_next_claim(tmp_path):
+    """Crash during the 3 s grace: row resumes pending; claim after reboot succeeds.
+
+    Mirrors design note § "Decision 3 — boot recovery during the 3 s
+    grace window". Uses a file-backed DB because we simulate a process
+    restart by closing + reopening the connection.
+    """
+    db_path = tmp_path / "outbox.db"
+
+    # "Pre-crash" connection: enqueue with a 3 s grace at t=10.
+    pre_clock = Clock(10)
+    pre_conn = sqlite3.connect(db_path)
+    _apply_schema(pre_conn)
+    pre_repo = OutboxRepository(pre_conn, now_fn=pre_clock)
+    pre_repo.enqueue("evt-1", "send_message", not_before=13)
+    # Simulate crash between enqueue and claim.
+    pre_conn.close()
+
+    # "Post-restart" connection: 45 s later the claim loop wakes.
+    post_clock = Clock(45)
+    post_conn = sqlite3.connect(db_path)
+    post_repo = OutboxRepository(post_conn, now_fn=post_clock)
+    post_repo.requeue_in_progress_on_boot()  # no-op here; exercises the call
+    claimed = post_repo.claim_batch(limit=10)
+    assert len(claimed) == 1
+    assert claimed[0].event_id == "evt-1"
+    post_conn.close()
+
+
+def test_boot_recovery_within_grace_window_defers(tmp_path):
+    """Restart still inside the grace window — claim does not fire yet."""
+    db_path = tmp_path / "outbox.db"
+
+    pre_clock = Clock(10)
+    pre_conn = sqlite3.connect(db_path)
+    _apply_schema(pre_conn)
+    pre_repo = OutboxRepository(pre_conn, now_fn=pre_clock)
+    pre_repo.enqueue("evt-1", "send_message", not_before=60)
+    pre_conn.close()
+
+    post_clock = Clock(11)  # 1 s after crash, still pre-grace
+    post_conn = sqlite3.connect(db_path)
+    post_repo = OutboxRepository(post_conn, now_fn=post_clock)
+    assert post_repo.claim_batch(limit=10) == []
+    post_conn.close()
+
+
+def test_purge_done_older_than_ignores_not_before(repo, conn, clock):
+    """Purge predicate is (state='done', updated_at<cutoff). not_before is irrelevant."""
+    oid = repo.enqueue("evt-1", "s1", not_before=REF_NOW + 999)
+    repo.claim_batch()
+    repo.complete(oid)
+    # Age it past the cutoff.
+    conn.execute(
+        "UPDATE outbox SET updated_at=? WHERE id=?",
+        (REF_NOW - 60 * 86400, oid),
+    )
+    conn.commit()
+    removed = repo.purge_done_older_than(days=30)
+    assert removed == 1

@@ -46,6 +46,7 @@ from core.moment.types import (
 )
 from storage import schema
 from storage.repos.moments import MomentRepository
+from storage.repos.outbox import OutboxRepository
 
 REF_NOW = 1_777_204_800
 
@@ -61,10 +62,16 @@ class Clock:
 
 
 class DummyLifeOS:
-    def __init__(self, moment_repo=None, feedback_weight_store=None) -> None:
+    def __init__(
+        self,
+        moment_repo=None,
+        feedback_weight_store=None,
+        outbox_repo=None,
+    ) -> None:
         self.config: dict = {}
         self.moment_repo = moment_repo
         self.feedback_weight_store = feedback_weight_store
+        self.outbox_repo = outbox_repo
 
 
 @pytest.fixture
@@ -94,8 +101,25 @@ def feedback(conn, clock):
 
 
 @pytest.fixture
+def outbox(conn, clock):
+    return OutboxRepository(conn, now_fn=clock)
+
+
+@pytest.fixture
 def client(repo, feedback):
+    """Default client — outbox not wired (exercises the None branch)."""
     life_os = DummyLifeOS(moment_repo=repo, feedback_weight_store=feedback)
+    return TestClient(create_app(life_os))
+
+
+@pytest.fixture
+def client_with_outbox(repo, feedback, outbox):
+    """Client for the outbox-wired paths — Accept enqueues, Undo cancels."""
+    life_os = DummyLifeOS(
+        moment_repo=repo,
+        feedback_weight_store=feedback,
+        outbox_repo=outbox,
+    )
     return TestClient(create_app(life_os))
 
 
@@ -398,6 +422,120 @@ def test_undo_non_htmx_returns_json_moment_out(
 # ---------------------------------------------------------------------------
 # Toast button wiring (template-level smoke)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Outbox integration — Accept enqueues a deferred row; Undo cancels it
+# ---------------------------------------------------------------------------
+
+
+def test_accept_enqueues_outbox_row_with_3s_not_before(
+    client_with_outbox: TestClient,
+    repo,
+    conn,
+    clock,
+) -> None:
+    """Accept within the outbox-wired client enqueues a deferred dispatch row.
+
+    The row's ``not_before`` is ``now() + UNDO_GRACE_SECONDS`` so the
+    claim worker skips it until the Undo window elapses.
+    """
+    mom = _make_moment()
+    repo.create(mom)
+    clock.t = REF_NOW
+
+    resp = client_with_outbox.post(f"/api/moments/{mom.id}/accept")
+    assert resp.status_code == 200
+
+    row = conn.execute(
+        "SELECT state, not_before FROM outbox WHERE event_id=?",
+        (f"moment.accept:{mom.id}",),
+    ).fetchone()
+    assert row is not None
+    assert row["state"] == "pending"
+    assert row["not_before"] == REF_NOW + 3
+
+
+def test_undo_within_grace_cancels_outbox_row(
+    client_with_outbox: TestClient,
+    repo,
+    conn,
+    clock,
+) -> None:
+    """Undo within the grace window removes the deferred outbox row atomically."""
+    mom = _make_moment()
+    repo.create(mom)
+    client_with_outbox.post(f"/api/moments/{mom.id}/accept")
+    # Outbox row exists post-accept.
+    pre = conn.execute(
+        "SELECT COUNT(*) FROM outbox WHERE event_id=?",
+        (f"moment.accept:{mom.id}",),
+    ).fetchone()[0]
+    assert pre == 1
+
+    clock.t = REF_NOW + 1
+    resp = client_with_outbox.post(f"/api/moments/{mom.id}/undo")
+    assert resp.status_code == 200
+
+    # Outbox row is gone — no spurious dispatch on the next claim tick.
+    post = conn.execute(
+        "SELECT COUNT(*) FROM outbox WHERE event_id=?",
+        (f"moment.accept:{mom.id}",),
+    ).fetchone()[0]
+    assert post == 0
+
+
+def test_undo_after_grace_leaves_outbox_row_intact(
+    client_with_outbox: TestClient,
+    repo,
+    conn,
+    clock,
+) -> None:
+    """Undo 410 path: outbox row is untouched (worker will dispatch on next tick).
+
+    Matches design note § "Decision 3" — once the grace window elapses,
+    the user's intent is "accept" and the dispatch proceeds.
+    """
+    mom = _make_moment()
+    repo.create(mom)
+    client_with_outbox.post(f"/api/moments/{mom.id}/accept")
+
+    clock.t = REF_NOW + 5
+    resp = client_with_outbox.post(f"/api/moments/{mom.id}/undo")
+    assert resp.status_code == 410
+
+    row = conn.execute(
+        "SELECT state, not_before FROM outbox WHERE event_id=?",
+        (f"moment.accept:{mom.id}",),
+    ).fetchone()
+    assert row is not None
+    assert row["state"] == "pending"
+    assert row["not_before"] == REF_NOW + 3
+
+
+def test_undo_dismiss_does_not_touch_outbox(
+    client_with_outbox: TestClient,
+    repo,
+    conn,
+    clock,
+) -> None:
+    """Dismiss never enqueues an outbox row; undoing a dismiss is state-only.
+
+    Regression guard: the undo path only invokes ``cancel_pending`` when
+    the reversed transition is ACCEPTED — otherwise the route would
+    silently delete rows that belong to a prior Accept.
+    """
+    mom = _make_moment()
+    repo.create(mom)
+    client_with_outbox.post(f"/api/moments/{mom.id}/dismiss")
+
+    # No outbox row was created by dismiss.
+    assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
+
+    clock.t = REF_NOW + 1
+    resp = client_with_outbox.post(f"/api/moments/{mom.id}/undo")
+    assert resp.status_code == 200
+    assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
 
 
 def test_undo_toast_button_wires_htmx_post(client: TestClient) -> None:

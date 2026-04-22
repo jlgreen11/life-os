@@ -14,15 +14,26 @@ Contract (eng review §1b, engineering plan § "Transactional outbox"):
 - :meth:`enqueue` can run inside an existing transaction when the caller
   passes ``conn=``; this is how the Moment transition + publish stays
   atomic.
+- :meth:`enqueue` accepts ``not_before=`` (epoch seconds) to defer
+  dispatch past a grace window. NULL means "claim-eligible immediately".
+  The accept path uses this for the 3 s Undo window per design note
+  ``docs/plans/2026-04-22-undo-grace.md`` § "Decision 2".
 - :meth:`claim_batch` uses ``BEGIN IMMEDIATE`` so two concurrent workers
   cannot claim the same row — SQLite's single-writer lock serialises the
-  pending → in_progress update.
+  pending → in_progress update. Rows whose ``not_before > now()`` are
+  silently skipped and picked up on a later tick.
 - :meth:`complete` moves in_progress → done and stamps ``updated_at``.
 - :meth:`fail` increments ``retry_count``, stores ``last_error``, and
   either requeues (state → pending) or dead-letters (state → dead) when
   the retry budget of 5 attempts is exhausted.
+- :meth:`cancel_pending` deletes a pending-only row by
+  ``(event_id, subject)``. Used by the Undo route to tear down the
+  deferred dispatch inside the same transaction as the state reversal.
+  Returns ``False`` for ``in_progress`` / terminal rows or missing keys.
 - :meth:`requeue_in_progress_on_boot` covers the "worker died mid-delivery"
   case: any ``in_progress`` row is flipped back to ``pending`` at boot.
+  ``not_before`` is intentionally preserved — a row mid-grace when the
+  process died resumes its grace window on the next boot tick.
 - :meth:`purge_done_older_than` is the daily retention job for rows in
   terminal ``done`` state.
 
@@ -48,7 +59,9 @@ class OutboxEntry:
     """One row claimed from the outbox, as seen by a worker.
 
     Returned by :meth:`OutboxRepository.claim_batch`; the worker should
-    complete or fail each entry via its ``id``.
+    complete or fail each entry via its ``id``. ``not_before`` carries
+    the grace-window stamp so downstream observability can distinguish
+    "deferred-then-claimed" rows from immediate claims.
     """
 
     id: str
@@ -61,6 +74,7 @@ class OutboxEntry:
     created_at: int
     updated_at: int
     claimed_at: int | None
+    not_before: int | None
 
 
 class OutboxRepository:
@@ -99,6 +113,7 @@ class OutboxRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             claimed_at=row["claimed_at"],
+            not_before=row["not_before"],
         )
 
     def enqueue(
@@ -108,6 +123,7 @@ class OutboxRepository:
         payload: dict[str, Any] | None = None,
         *,
         conn: sqlite3.Connection | None = None,
+        not_before: int | None = None,
     ) -> str:
         """Insert a pending outbox row; return existing id on duplicate.
 
@@ -121,6 +137,11 @@ class OutboxRepository:
         transition owns the transaction; ``enqueue(..., conn=c)`` just
         piggybacks on it. When ``conn`` is ``None`` the repository
         manages its own short transaction on ``self._conn``.
+
+        ``not_before`` (epoch seconds) defers dispatch — :meth:`claim_batch`
+        skips rows whose ``not_before > now()`` until the window elapses.
+        ``None`` (the default) is "claim-eligible immediately", matching
+        pre-grace-window producer behaviour.
         """
         target = conn if conn is not None else self._conn
         now = self._now()
@@ -144,10 +165,10 @@ class OutboxRepository:
                 """
                 INSERT INTO outbox (
                     id, event_id, subject, payload, state, retry_count,
-                    last_error, created_at, updated_at, claimed_at
-                ) VALUES (?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
+                    last_error, created_at, updated_at, claimed_at, not_before
+                ) VALUES (?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL, ?)
                 """,
-                (outbox_id, event_id, subject, payload_json, now, now),
+                (outbox_id, event_id, subject, payload_json, now, now, not_before),
             )
             if owns_txn:
                 self._conn.execute("COMMIT")
@@ -158,19 +179,26 @@ class OutboxRepository:
             raise
 
     def claim_batch(self, limit: int = 10) -> list[OutboxEntry]:
-        """Atomically move up to ``limit`` pending rows into in_progress.
+        """Atomically move up to ``limit`` claim-eligible rows into in_progress.
 
         Uses ``BEGIN IMMEDIATE`` so concurrent callers serialise on the
         SQLite writer lock. Ordering is by ``created_at ASC`` (FIFO) —
         older rows are claimed first. ``claimed_at`` is stamped so that
         /health can surface stuck workers.
+
+        A row is claim-eligible iff ``state='pending'`` **and**
+        (``not_before IS NULL`` or ``not_before <= now()``). Deferred
+        rows (grace-window Undo) silently skip this tick and come back on
+        a later one once their ``not_before`` elapses.
         """
         now = self._now()
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             rows = self._conn.execute(
-                "SELECT id FROM outbox WHERE state='pending' ORDER BY created_at ASC, id ASC LIMIT ?",
-                (limit,),
+                "SELECT id FROM outbox "
+                "WHERE state='pending' AND (not_before IS NULL OR not_before <= ?) "
+                "ORDER BY created_at ASC, id ASC LIMIT ?",
+                (now, limit),
             ).fetchall()
             if not rows:
                 self._conn.execute("COMMIT")
@@ -183,7 +211,7 @@ class OutboxRepository:
             )
             claimed = self._conn.execute(
                 "SELECT id, event_id, subject, payload, state, retry_count, "
-                "last_error, created_at, updated_at, claimed_at "
+                "last_error, created_at, updated_at, claimed_at, not_before "
                 f"FROM outbox WHERE id IN ({placeholders}) "
                 "ORDER BY created_at ASC, id ASC",
                 ids,
@@ -252,6 +280,49 @@ class OutboxRepository:
             self._conn.execute("COMMIT")
         except Exception:
             self._conn.execute("ROLLBACK")
+            raise
+
+    def cancel_pending(
+        self,
+        event_id: str,
+        subject: str,
+        *,
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Delete a pending-only outbox row by ``(event_id, subject)``.
+
+        Used by the Undo route to tear down a deferred dispatch row inside
+        the same transaction as the state reversal. Returns ``True`` if a
+        row was deleted, ``False`` if the row is already ``in_progress`` /
+        terminal / missing.
+
+        The ``UNIQUE (event_id, subject)`` constraint guarantees at most
+        one match. The delete is restricted to ``state='pending'`` so a
+        race with the claim loop is safe: an already-claimed row falls
+        through with ``False`` and the route returns 410-equivalent
+        behaviour (the state-side grace check in the route layer fires
+        first, but this second layer protects against clock skew).
+
+        When ``conn`` is passed, the DELETE rides the caller's existing
+        transaction — mirrors :meth:`enqueue` so Undo atomicity is
+        preserved.
+        """
+        target = conn if conn is not None else self._conn
+        owns_txn = conn is None
+        if owns_txn:
+            self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = target.execute(
+                "DELETE FROM outbox WHERE event_id=? AND subject=? AND state='pending'",
+                (event_id, subject),
+            )
+            deleted = cursor.rowcount > 0
+            if owns_txn:
+                self._conn.execute("COMMIT")
+            return deleted
+        except Exception:
+            if owns_txn:
+                self._conn.execute("ROLLBACK")
             raise
 
     def requeue_in_progress_on_boot(self) -> int:

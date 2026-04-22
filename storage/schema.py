@@ -135,6 +135,11 @@ CREATE_MOMENT_STATE_HISTORY_MOMENT_TS_INDEX_SQL = (
 
 # ---------------------------------------------------------------------------
 # 6. outbox — transactional outbox for side-effecting events.
+#    ``not_before`` is the "earliest-dispatchable" epoch-second stamp used by
+#    the 3 s Undo grace window: rows stay un-claimable until
+#    ``not_before <= now()``. NULL means "claim-eligible immediately" — the
+#    default for every producer-side enqueue. See design note
+#    docs/plans/2026-04-22-undo-grace.md § "Decision 2".
 # ---------------------------------------------------------------------------
 CREATE_OUTBOX_SQL = """
 CREATE TABLE outbox (
@@ -150,11 +155,18 @@ CREATE TABLE outbox (
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
     claimed_at INTEGER,
+    not_before INTEGER,
     UNIQUE (event_id, subject)
 )
 """
 
-CREATE_OUTBOX_STATE_CREATED_INDEX_SQL = "CREATE INDEX idx_outbox_state_created ON outbox(state, created_at)"
+# The claim query filters on (state='pending' AND (not_before IS NULL OR
+# not_before <= ?)) ORDER BY created_at — this covering index spans all three
+# columns so the hot path stays index-only. Replaces the original
+# idx_outbox_state_created (design note § "Decision 2 → Index update").
+CREATE_OUTBOX_STATE_NOTBEFORE_CREATED_INDEX_SQL = (
+    "CREATE INDEX idx_outbox_state_notbefore_created ON outbox(state, not_before, created_at)"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +311,10 @@ INDEX_DDL: tuple[tuple[str, str], ...] = (
         "idx_moment_state_history_moment_ts",
         CREATE_MOMENT_STATE_HISTORY_MOMENT_TS_INDEX_SQL,
     ),
-    ("idx_outbox_state_created", CREATE_OUTBOX_STATE_CREATED_INDEX_SQL),
+    (
+        "idx_outbox_state_notbefore_created",
+        CREATE_OUTBOX_STATE_NOTBEFORE_CREATED_INDEX_SQL,
+    ),
     (
         "idx_signal_profiles_producer_key",
         CREATE_SIGNAL_PROFILES_PRODUCER_KEY_INDEX_SQL,

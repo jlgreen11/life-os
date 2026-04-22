@@ -279,6 +279,8 @@ class MomentRepository:
         moment_id: str,
         new_state: MomentState,
         annotation: str | None = None,
+        *,
+        conn_cb: Callable[[sqlite3.Connection], None] | None = None,
     ) -> Moment:
         """Transition ``moment_id`` to ``new_state`` atomically.
 
@@ -286,6 +288,15 @@ class MomentRepository:
         one ``BEGIN IMMEDIATE`` block. On an illegal transition the
         whole transaction rolls back, so the ``moments`` row remains
         in its prior state and no history row is appended.
+
+        ``conn_cb`` is an optional callback invoked **inside** the
+        transaction, after the state update + history append but before
+        ``COMMIT``. It receives the repository's connection so the
+        caller can piggyback additional writes (e.g. outbox enqueue or
+        ``cancel_pending`` for the Undo grace window, design note
+        ``docs/plans/2026-04-22-undo-grace.md`` § "Decision 2"). Any
+        exception raised by the callback rolls the full transaction
+        back.
 
         Raises
         ------
@@ -315,6 +326,8 @@ class MomentRepository:
                 "VALUES (?, ?, ?, ?, ?)",
                 (moment_id, current.value, new_state.value, now, annotation),
             )
+            if conn_cb is not None:
+                conn_cb(self._conn)
             self._conn.execute("COMMIT")
         except Exception:
             self._conn.execute("ROLLBACK")
