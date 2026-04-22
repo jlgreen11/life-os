@@ -42,18 +42,6 @@
 
 ## Week 8 — API surface
 
-- [ ] **iOS compat shim (`api/routes/context.py` + legacy proxies).** Per eng review §1g. Preserve for the existing iOS app:
-  - `POST /api/context/event` + `/batch` + `GET /api/context/summary` (context pipeline)
-  - `GET /api/status` (smoke)
-  - WebSocket `/ws` (Moment push)
-  Proxy to v2:
-  - `GET /api/briefing` → wraps briefing_synthesis + returns v1-shape
-  - `POST /api/feedback` → writes to feedback_events
-  - `POST /api/preferences` → writes to preferences
-  Stub 501:
-  - `POST /api/command`, `GET /api/notifications`, `GET/POST /api/tasks`, `POST /api/search`
-  Tests: compat endpoints with realistic iOS payloads; stubs return 501 with helpful body.
-
 ## Week 9 — Web: base + Now tab
 
 - [ ] **Web base template + design tokens (`web/templates/base.html`, `web/static/tokens.css`).** Implement DESIGN.md:
