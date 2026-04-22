@@ -36,12 +36,6 @@
 
 ## Week 5 — 3 more producers
 
-- [ ] **Comm-template producer (`producers/comm_template.py`).** InsightType.COMM_TEMPLATE:
-  - Observes inbound email/message; reads per-contact comm template from signal_profiles
-  - Week 5 scope: scaffold + stub draft generation (deterministic "Hi {name},"); mark `<!-- NOTE: AI engine integration deferred to Week 7 -->`
-  - After Week 7's AI engine lands, this producer wires draft_reply() in
-  Tests: producer returns stub for known contact, empty for unknown.
-
 - [ ] **Routine producer (`producers/routine.py`).** InsightType.ROUTINE:
   - Observes event stream; triggers at routine-violation points (e.g., Sunday 5pm if user historically plans week — routine detector writes these into signal_profiles.routine)
   - Insight: "You usually {routine description}. Want to start now?"
