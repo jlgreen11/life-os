@@ -37,11 +37,9 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- NOTE (2026-04-22): APIClient regen removed `sendCommand` / `getNotifications` / `getTasks` / `createTask` / `search` as specified. The legacy iOS views under `ios/LifeOS/Views/{Dashboard,Chat,Components}/` and `ios/LifeOS/App/AppState.swift` still reference these methods and WILL NOT COMPILE until the next task (Views restructure) lands. The Python test suite is unaffected; iOS is a scaffold-in-progress. -->
 
-- [ ] **Update `WebSocketManager.swift` for v2 Moment protocol.** Adapt to v2 `/ws`:
-  - Decode incoming messages as typed events: `MomentCreated`, `MomentStateChanged`, `ConnectorStatusChanged`
-  - Exponential-backoff reconnect on drop
-  - Heartbeat ping every 30s
-  Tests: decode fixtures, reconnect logic, message routing.
+<!-- DONE (see DONE_TASKS.md): WebSocketManager.swift v2 rewrite — typed `WebSocketEvent` envelope (moment.created / moment.state_changed / connector.status_changed + forward-compat .unknown bucket), `WebSocketTransport` injection seam, exponential-backoff reconnect (capped 60s), 30s heartbeat ping. -->
+
+<!-- NOTE (2026-04-22): WebSocketManager rewrite changed the public contract from `WebSocketMessage` to `WebSocketEvent` and `onMessage` to `onEvent`. `AppState.swift` still references the old shape via `webSocket?.onMessage = ...` + `handleWebSocketMessage(message: WebSocketMessage)` and WILL NOT COMPILE until the Views-restructure task below lands. The legacy `WebSocketMessage` struct in `Models/Models.swift` is now unreferenced by the manager but kept until that task wholesale-deletes the v1 view layer. -->
 
 - [ ] **Restructure `ios/LifeOS/Views/` around 4-tab IA.** Scaffold:
   - Move/rename existing `DashboardView.swift` → `Views/Now/NowTabView.swift` (stub body — real impl next task)
