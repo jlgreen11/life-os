@@ -40,16 +40,6 @@
 
 ## Week 7 — AI engine extraction
 
-- [ ] **Extract AI engine (`ai/engine.py`).** Pull Ollama + Claude + routing out of v1's `services/ai_engine/engine.py` into fresh module:
-  - `class AIEngine(ollama_url, ollama_model, cloud_api_key=None, use_cloud=False)`
-  - `async briefing_synthesis(context) -> str`
-  - `async task_extraction(event) -> list[dict]`
-  - `async priority_classification(event) -> str`
-  - `async draft_reply(contact_id, recent_messages, user_style) -> str`
-  - `async semantic_search(query, k=5) -> list[SearchResult]`
-  - Each method honors per-operation latency budget from CEO plan §1e; on exceed raises `AIBudgetExceeded`
-  Tests: mock Ollama responses per method, verify `AIBudgetExceeded` on injected delay.
-
 - [ ] **PII shield (`ai/pii.py`).** Port v1 `services/ai_engine/pii.py`:
   - `class PIIShield` with `redact(text) -> (redacted, mapping)` and `restore(text, mapping) -> text`
   - Redacts: email, phone, names (from entities table), addresses
