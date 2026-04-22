@@ -32,11 +32,6 @@
 
 ## Week 3 — outbox + scheduler + WAL integrity
 
-- [ ] **WAL integrity check (critical gap from eng review).** Add `core/integrity.py`:
-  - `def check_sqlite_integrity(db_path: str) -> IntegrityReport` — runs `PRAGMA integrity_check`, returns {ok: bool, errors: list[str]}
-  - Add entry point `scripts/daily_integrity_check.py` that checks `./data/lifeos.db` and enqueues an 'alert' outbox event on failure
-  Tests: healthy DB returns ok=True; corrupted DB returns ok=False with errors.
-
 - [ ] **Transactional outbox (`storage/repos/outbox.py`).** Per eng review §1b:
   - `enqueue(event_id, subject, *, conn=None) -> int`: idempotent on (event_id, subject); callable inside existing transaction for atomicity
   - `claim_batch(limit=10) -> list[OutboxEntry]`: atomic pending→in_progress via BEGIN IMMEDIATE
