@@ -1,0 +1,40 @@
+{
+  "id": "01HXYZ1234567890ABCDEFGHIJ",
+  "created_at": 1777204800,
+  "expires_at": 1777464000,
+  "insight": "You usually text Sam every 4 days — it's been 7.",
+  "evidence": [
+    "Last 8 conversations averaged 4.1 days apart.",
+    "Most recent inbound: 2026-04-15T14:22:00Z."
+  ],
+  "evidence_hash": "sha256:f1d2e3c4b5a697887766554433221100ffeeddccbbaa9988",
+  "proposed_action": {
+    "kind": "draft_message",
+    "params": {
+      "channel": "imessage",
+      "contact_id": "contact:sam-okonkwo",
+      "body": "Hey Sam — saw the link you sent and it made me think of you. How's your week?",
+      "draft_confidence": 0.78,
+      "tags": ["reach-out", "warm-tone"],
+      "metadata": {
+        "tokens_in": 142,
+        "tokens_out": 31
+      }
+    }
+  },
+  "source_insight_type": "cadence",
+  "state": "suggested",
+  "scheduled_for": 1777208400,
+  "context_trigger": "calendar:gap>30m",
+  "snooze_until": null,
+  "confidence": 0.82,
+  "feedback_weight": 1.04,
+  "state_history": [
+    {
+      "from_state": null,
+      "to_state": "suggested",
+      "ts": 1777204800,
+      "annotation": "created by cadence producer"
+    }
+  ]
+}

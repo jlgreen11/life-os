@@ -1,0 +1,61 @@
+{
+  "pending": [
+    {
+      "id": "01HXYZPENDING00000000000001",
+      "created_at": 1777204800,
+      "expires_at": 1777464000,
+      "insight": "Drifting: Maya — usual cadence 5 days, now 11.",
+      "evidence": ["Last contact 2026-04-11."],
+      "evidence_hash": "sha256:11111111111111111111111111111111",
+      "proposed_action": {
+        "kind": "draft_message",
+        "params": {"channel": "imessage", "contact_id": "contact:maya"}
+      },
+      "source_insight_type": "relationship",
+      "state": "suggested",
+      "confidence": 0.71,
+      "feedback_weight": 1.00,
+      "state_history": [
+        {"from_state": null, "to_state": "suggested", "ts": 1777204800, "annotation": null}
+      ]
+    }
+  ],
+  "scheduled": [
+    {
+      "id": "01HXYZSCHEDULED0000000000002",
+      "created_at": 1777200000,
+      "expires_at": 1777459200,
+      "scheduled_for": 1777230000,
+      "context_trigger": "time:09:30",
+      "insight": "Tuesday morning run reminder.",
+      "evidence_hash": "sha256:22222222222222222222222222222222",
+      "proposed_action": {"kind": "nudge", "params": {}},
+      "source_insight_type": "temporal",
+      "state": "suggested",
+      "confidence": 0.65,
+      "feedback_weight": 1.00,
+      "state_history": [
+        {"from_state": null, "to_state": "suggested", "ts": 1777200000, "annotation": null}
+      ]
+    }
+  ],
+  "done": [
+    {
+      "id": "01HXYZDONE00000000000000003",
+      "created_at": 1777180000,
+      "expires_at": 1777439200,
+      "insight": "Reach out to Devon.",
+      "evidence_hash": "sha256:33333333333333333333333333333333",
+      "proposed_action": {"kind": "send_message", "params": {"contact_id": "contact:devon"}},
+      "source_insight_type": "cadence",
+      "state": "done",
+      "confidence": 0.88,
+      "feedback_weight": 1.06,
+      "state_history": [
+        {"from_state": null, "to_state": "suggested", "ts": 1777180000, "annotation": null},
+        {"from_state": "suggested", "to_state": "accepted", "ts": 1777183600, "annotation": "user accepted"},
+        {"from_state": "accepted", "to_state": "done", "ts": 1777190000, "annotation": "outbox dispatched"}
+      ]
+    }
+  ]
+}

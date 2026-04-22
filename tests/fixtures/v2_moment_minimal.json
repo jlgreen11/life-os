@@ -1,0 +1,11 @@
+{
+  "id": "01HXYZMINIMAL00000000000000",
+  "created_at": 1777204800,
+  "expires_at": 1777464000,
+  "insight": "Routine deviation: you usually run on Tuesday mornings.",
+  "evidence_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "proposed_action": {
+    "kind": "nudge"
+  },
+  "source_insight_type": "routine"
+}
