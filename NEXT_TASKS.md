@@ -28,17 +28,7 @@
 
 <!-- NOTE (2026-04-22, follow-up to SHA of this commit): v2 schema has no `feedback_events` table (only `feedback_weights` EWMA). The migration script skips v1 `feedback_log` rows with a logged warning and surfaces the count in `MigrationReport.notification_feedback_skipped`. Before cutover, either (a) add `feedback_events` to `storage/schema.py` or (b) decide legacy feedback is intentionally not carried forward. Tracked as an open design decision on the engineering plan. -->
 
-## Week 2 — Moment primitive
-
-- [ ] **`MomentRepository` (SQLite-backed).** Create `storage/repos/__init__.py` and `storage/repos/moments.py`:
-  - `__init__(conn: sqlite3.Connection)`: constructor injection, no globals
-  - `create(moment) -> str`: idempotent on UNIQUE(source_insight_type, evidence_hash) — returns existing id on collision
-  - `get(id) -> Moment | None`
-  - `transition(id, new_state, annotation=None) -> Moment`: fetch, validate_transition, update + append history in ONE transaction (`BEGIN IMMEDIATE`)
-  - `list_pending(limit=20)`: state='suggested', ORDER BY confidence DESC, scheduled_for
-  - `list_scheduled(horizon_seconds=86400, limit=10)`: state IN ('suggested','snoozed') AND scheduled_for within horizon
-  - `list_done_today(limit=10)`: state='done' AND transition_at today
-  Tests: create/get, transition happy + illegal, idempotency, list queries with fixtures, rollback on illegal transition.
+## Week 2 — Moment primitive (complete, see DONE_TASKS.md)
 
 ## Week 3 — outbox + scheduler + WAL integrity
 
