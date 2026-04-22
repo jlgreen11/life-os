@@ -253,6 +253,14 @@ PROMPT_EOF
         complete)
             log "Iteration $ITERATION: COMPLETE"
             CONSECUTIVE_FAILURES=0
+            # Push v2-rewrite to origin so the owner can monitor remotely.
+            # Failures (network, auth) are non-fatal — next iteration retries.
+            log "Pushing v2-rewrite to origin..."
+            if git push origin "$TARGET_BRANCH" >> "$ITER_LOG" 2>&1; then
+                log "Pushed v2-rewrite successfully."
+            else
+                log "Push failed (network/auth) — continuing. Will retry next iteration."
+            fi
             ;;
         partial)
             REASON=$(grep "^V2_AUTONOMOUS_ITERATION_PARTIAL" "$ITER_LOG" | head -1 | sed 's/^V2_AUTONOMOUS_ITERATION_PARTIAL: //')

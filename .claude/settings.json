@@ -55,12 +55,21 @@
       "Bash(gh pr list:*)",
       "Bash(gh pr diff:*)",
 
+      "Bash(git push origin v2-rewrite)",
+      "Bash(git push origin v2-rewrite:*)",
+      "Bash(git push --set-upstream origin v2-rewrite)",
+
       "WebFetch",
       "WebSearch"
     ],
     "deny": [
-      "Bash(git push:*)",
-      "Bash(git push)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push origin master:*)",
+      "Bash(git push origin master)",
+      "Bash(git push origin main:*)",
+      "Bash(git push origin main)",
+      "Bash(git push --delete:*)",
       "Bash(git reset --hard:*)",
       "Bash(git reset --hard)",
       "Bash(git reset origin:*)",
