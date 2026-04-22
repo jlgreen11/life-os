@@ -43,13 +43,8 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- DONE (see DONE_TASKS.md): Restructure `ios/LifeOS/Views/` around 4-tab IA. Stub `NowTabView`/`YouTabView`/`PeopleTabView`/`SettingsTabView` + new `RootTabView` with 4 tabs (tray.full / person.crop.circle / person.2 / gear). Legacy v1 views (Dashboard/Chat/Context/Components/Settings/SettingsView), `ContentView.swift`, AppState.sendCommand/getNotifications wiring, and the `WebSocketMessage` legacy struct deleted. `RootTabViewTests.swift` covers tab order, titles, icons. -->
 
+<!-- DONE (see DONE_TASKS.md): `NowTabView.swift` + `MomentCardView.swift` + `Previews/MockData.swift` + `NowTabViewTests.swift`. Full NOW / UP NEXT / DONE TODAY (collapsed default) sections, 22pt insight, evidence sheet, draft block (Radius.lg, draft tints), primary-action + ghost Edit/Snooze + dismiss buttons. 6 test classes / 26 tests covering MockData shape, section splitting, up-next prefix, primary labels (every ActionKind), draft body predicate, evidence copy + accessibility label. -->
 
-
-- [ ] **`NowTabView.swift` + `MomentCardView.swift`.** Per DESIGN.md Now-tab wireframe:
-  - `NowTabView` — sections: NOW (2-3 cards), UP NEXT (compact list), DONE TODAY (collapsed default)
-  - `MomentCardView` — insight (22pt display), evidence link (tap reveals sheet), draft block, action buttons (one primary + secondary ghosts)
-  - Placeholder data from `ios/LifeOS/Previews/MockData.swift`
-  Tests: Xcode preview renders; XCTest on layout.
 
 - [ ] **`YouTabView.swift`.** Per DESIGN.md You-tab wireframe:
   - Header with "Observed {N} months · {M} interactions"
