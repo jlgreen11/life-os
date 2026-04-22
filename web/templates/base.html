@@ -1,0 +1,178 @@
+{#
+  Life OS v2 — base layout
+
+  Every v2 page extends this template. It owns:
+
+  - <head>: charset, viewport, theme color, font preload, tokens.css,
+            Tailwind CDN, HTMX core + ws extension, Lucide icons
+  - <body>: skip-link, top navigation (Now · You · People · ⚙),
+            header with date/time, <main> slot, flash region, scripts
+
+  Child templates supply:
+    {% block title %}         — <title> override
+    {% block extra_head %}    — per-page <head> additions
+    {% block content %}       — body content inside <main>
+    {% block body_end %}      — scripts appended before </body>
+
+  Context variables (all optional; defaults keep the template renderable
+  with no context so tests can smoke-render it):
+    active_tab   — one of "now" | "you" | "people" | "settings"
+    page_title   — window title (default: "Life OS")
+    now_date     — already-formatted date string (default: empty)
+    now_time     — already-formatted time string (default: empty)
+
+  Accessibility: `<main>`, `<nav aria-label>`, a visible skip-link, and
+  reduced-motion support are all required by DESIGN.md § "WCAG AA
+  baseline".
+#}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0a0a0c">
+    <meta name="referrer" content="same-origin">
+
+    <title>{% block title %}{{ page_title|default("Life OS") }}{% endblock %}</title>
+
+    {# Design tokens come first so Tailwind's preflight cannot override
+       the palette variables downstream components depend on. #}
+    <link rel="stylesheet" href="/static/tokens.css">
+
+    {# Tailwind Play CDN. Phase 1 uses the runtime build so the shell is
+       dependency-free; a compiled CSS bundle is a Phase 2 optimization.
+       We forward design tokens into Tailwind's theme so utilities like
+       `bg-raised` compose with the rest of the system. #}
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        base: 'var(--bg-base)',
+                        raised: 'var(--bg-raised)',
+                        'raised-hover': 'var(--bg-raised-hover)',
+                        sunken: 'var(--bg-sunken)',
+                        'text-primary': 'var(--text-primary)',
+                        'text-secondary': 'var(--text-secondary)',
+                        'text-tertiary': 'var(--text-tertiary)',
+                        primary: 'var(--primary-action)',
+                        success: 'var(--success)',
+                        warning: 'var(--warning)',
+                        error: 'var(--error)',
+                        info: 'var(--info)',
+                    },
+                    fontFamily: {
+                        display: 'var(--font-display)',
+                        text: 'var(--font-text)',
+                        mono: 'var(--font-mono)',
+                    },
+                    boxShadow: {
+                        card: 'var(--elev-1)',
+                        'card-hover': 'var(--elev-2)',
+                        focus: 'var(--elev-focus)',
+                        modal: 'var(--elev-modal)',
+                    },
+                    borderRadius: {
+                        'card': 'var(--r-md)',
+                        'draft': 'var(--r-lg)',
+                    },
+                },
+            },
+        };
+    </script>
+
+    {# HTMX core + websocket extension. `hx-ext="ws"` on <body> opts the
+       whole tree into the ws extension; individual elements then use
+       `ws-connect="/ws"` (HTMX 2.x) or the legacy `hx-ws="connect:/ws"`
+       (both supported by the ws extension). #}
+    <script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
+    <script src="https://unpkg.com/htmx-ext-ws@2.0.1" defer></script>
+
+    {# Lucide icons: referenced by <i data-lucide="name">. The helper
+       below runs once on DOMContentLoaded and again after every HTMX
+       swap so dynamically inserted cards pick up icons. #}
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+
+    {% block extra_head %}{% endblock %}
+</head>
+
+<body hx-ext="ws"
+      class="font-text text-[15px] leading-normal"
+      data-active-tab="{{ active_tab|default('now') }}">
+
+    <a href="#main" class="skip-link">Skip to main content</a>
+
+    <header class="border-b border-[color:var(--border-subtle)] bg-[color:var(--bg-base)]">
+        <div class="max-w-[760px] mx-auto px-4 py-3 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <span class="font-display text-[22px] font-semibold tracking-tight">Life OS</span>
+            </div>
+            <div class="flex items-center gap-3 text-[13px] text-[color:var(--text-secondary)]" aria-live="polite">
+                {% if now_date %}<span data-slot="now-date">{{ now_date }}</span>{% endif %}
+                {% if now_time %}<span data-slot="now-time">{{ now_time }}</span>{% endif %}
+                <span id="ws-status" class="hidden rounded-full px-2 py-0.5 text-[11px] uppercase tracking-[0.08em] bg-[color:var(--bg-overlay)]">
+                    Reconnecting…
+                </span>
+            </div>
+        </div>
+
+        <nav aria-label="Primary" class="max-w-[760px] mx-auto px-4">
+            <ul class="flex items-stretch gap-6 text-[15px]" role="tablist">
+                {% set tabs = [
+                    ("now",      "Now",      "/"),
+                    ("you",      "You",      "/you"),
+                    ("people",   "People",   "/people"),
+                    ("settings", "Settings", "/settings"),
+                ] %}
+                {% for slug, label, href in tabs %}
+                    {% set is_active = (active_tab|default('now')) == slug %}
+                    <li role="presentation">
+                        <a data-tab="{{ slug }}"
+                           href="{{ href }}"
+                           role="tab"
+                           aria-selected="{{ 'true' if is_active else 'false' }}"
+                           aria-current="{{ 'page' if is_active else '' }}"
+                           class="relative inline-flex items-center py-3
+                                  {% if is_active %}text-[color:var(--text-primary)] font-medium{% else %}text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]{% endif %}">
+                            {{ label }}
+                            {% if is_active %}
+                                <span aria-hidden="true"
+                                      class="absolute left-0 right-0 bottom-0 h-[2px] bg-[color:var(--primary-action)] rounded-[var(--r-sm)]"></span>
+                            {% endif %}
+                        </a>
+                    </li>
+                {% endfor %}
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main" role="main" class="max-w-[760px] mx-auto px-4 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    {# Toast region for Undo and flash messages. Kept out of <main> so
+       screen readers announce it as a complementary live region rather
+       than a content block. #}
+    <div id="toast-region"
+         aria-live="polite"
+         aria-atomic="true"
+         class="fixed bottom-4 right-4 flex flex-col gap-2 pointer-events-none z-50"></div>
+
+    <script>
+        // Lucide initialization: render on initial load and after every
+        // HTMX swap so dynamically added icons pick up their SVG.
+        function renderLucideIcons() {
+            if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                window.lucide.createIcons();
+            }
+        }
+        document.addEventListener('DOMContentLoaded', renderLucideIcons);
+        document.body.addEventListener('htmx:afterSwap', renderLucideIcons);
+    </script>
+
+    {% block body_end %}{% endblock %}
+</body>
+</html>

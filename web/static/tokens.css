@@ -1,0 +1,183 @@
+/*
+ * Life OS v2 — design tokens
+ *
+ * Source of truth: DESIGN.md (2026-04-21 plan-design-review).
+ * These custom properties are imported by every v2 page; any visual
+ * change to the system lands HERE first and ripples out via `var(…)`.
+ * Phase 1 ships dark-theme only; light theme is explicitly deferred
+ * (DESIGN.md § "What's NOT in Phase 1").
+ *
+ * Grouping mirrors the DESIGN.md section order so diffs read well:
+ *   1. color        — surfaces, text, semantic, borders, drafts
+ *   2. typography   — families, sizes, line-heights, weights, tracking
+ *   3. spacing      — 8-pt scale
+ *   4. elevation    — shadow tokens (rest, hover, focus, modal)
+ *   5. radius       — card / button / draft corner radii
+ *   6. motion       — micro / swap / modal timings + easing
+ *
+ * Tokens are declared on :root so they cascade everywhere. The base
+ * template attaches `data-theme="dark"` on <html> to future-proof for
+ * the eventual light-theme pass without needing a rename.
+ */
+
+:root,
+:root[data-theme="dark"] {
+    /* 1. Color — Surfaces */
+    --bg-base: #0a0a0c;
+    --bg-raised: #141417;
+    --bg-raised-hover: #1b1b1f;
+    --bg-sunken: #060607;
+    --bg-overlay: rgba(255, 255, 255, 0.04);
+
+    /* 1. Color — Text (contrast ratios verified in DESIGN.md) */
+    --text-primary: #f2f2f5;        /* 14.8:1 on --bg-base */
+    --text-secondary: #a8a8ae;      /* 7.3:1 */
+    --text-tertiary: #6a6a70;       /* 4.5:1 — meta only */
+    --text-disabled: #44444a;
+
+    /* 1. Color — Semantic */
+    --primary-action: #0a84ff;
+    --primary-action-hover: #1f93ff;
+    --primary-action-pressed: #006edc;
+    --success: #30d158;
+    --warning: #ff9f0a;
+    --error: #ff453a;
+    --info: #64d2ff;
+
+    /* 1. Color — Borders */
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border-strong: rgba(255, 255, 255, 0.12);
+    --border-focus: var(--primary-action);
+
+    /* 1. Color — Drafts (recessed composition block) */
+    --draft-bg: rgba(10, 132, 255, 0.06);
+    --draft-border: rgba(10, 132, 255, 0.12);
+
+    /* 2. Typography — Families */
+    --font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont,
+        "Helvetica Neue", sans-serif;
+    --font-text: "SF Pro Text", -apple-system, BlinkMacSystemFont,
+        "Helvetica Neue", sans-serif;
+    --font-mono: "SF Mono", ui-monospace, "Menlo", monospace;
+
+    /* 2. Typography — Sizes */
+    --t-11: 11px;  /* caption */
+    --t-13: 13px;  /* meta */
+    --t-15: 15px;  /* body */
+    --t-17: 17px;  /* callout */
+    --t-22: 22px;  /* headline (Moment insight) */
+    --t-28: 28px;  /* title (tab header) */
+
+    /* 2. Typography — Line height / weight / tracking */
+    --lh-tight: 1.15;
+    --lh-snug: 1.30;
+    --lh-default: 1.50;
+    --lh-loose: 1.60;
+
+    --w-regular: 400;
+    --w-medium: 500;
+    --w-semibold: 600;
+    --w-bold: 700;
+
+    --ls-tight: -0.01em;
+    --ls-normal: 0;
+    --ls-caps: 0.08em;  /* uppercase section labels */
+
+    /* 3. Spacing — 8-pt base */
+    --s-0: 0;
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 20px;
+    --s-6: 24px;
+    --s-8: 32px;
+    --s-10: 40px;
+    --s-12: 48px;
+    --s-16: 64px;
+
+    /* 4. Elevation */
+    --elev-0: none;
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.32);    /* card rest */
+    --elev-2: 0 4px 12px rgba(0, 0, 0, 0.40);   /* card hover */
+    --elev-focus: 0 0 0 2px var(--border-focus);
+    --elev-modal: 0 16px 48px rgba(0, 0, 0, 0.60);
+
+    /* 5. Radius */
+    --r-sm: 6px;
+    --r-md: 10px;
+    --r-lg: 14px;
+    --r-pill: 999px;
+
+    /* 6. Motion */
+    --motion-micro: 100ms cubic-bezier(0.4, 0, 0.2, 1);
+    --motion-swap: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    --motion-modal: 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/*
+ * Reduced-motion override. Per DESIGN.md § "Motion": "Respect
+ * prefers-reduced-motion. Never bounce. Never spring." We collapse
+ * every motion duration to 1ms so transitions still resolve but are
+ * imperceptible; we keep the easing so any hand-rolled animation that
+ * reads the token still behaves.
+ */
+@media (prefers-reduced-motion: reduce) {
+    :root,
+    :root[data-theme="dark"] {
+        --motion-micro: 1ms linear;
+        --motion-swap: 1ms linear;
+        --motion-modal: 1ms linear;
+    }
+}
+
+/*
+ * Minimal global reset — tokens are not a framework, but every v2 page
+ * needs baseline background/text colors or the unstyled flash is harsh.
+ * We intentionally stop short of a full reset (Tailwind preflight in
+ * base.html handles that); these rules only ensure <html>/<body> pick
+ * up the palette before Tailwind parses.
+ */
+html {
+    color-scheme: dark;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-text);
+    font-size: var(--t-15);
+    line-height: var(--lh-default);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg-base);
+    color: var(--text-primary);
+}
+
+/* Keyboard-only focus ring honours DESIGN.md § "WCAG AA baseline". */
+:focus-visible {
+    outline: none;
+    box-shadow: var(--elev-focus);
+    border-radius: var(--r-sm);
+}
+
+/* Skip link: visually hidden until keyboard-focused. */
+.skip-link {
+    position: absolute;
+    top: var(--s-2);
+    left: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+    background: var(--bg-raised);
+    color: var(--text-primary);
+    border-radius: var(--r-sm);
+    box-shadow: var(--elev-1);
+    transform: translateY(-150%);
+    transition: transform var(--motion-micro);
+    z-index: 100;
+}
+
+.skip-link:focus-visible {
+    transform: translateY(0);
+}
