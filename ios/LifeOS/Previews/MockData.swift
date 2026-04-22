@@ -183,4 +183,57 @@ enum MockData {
 
     /// Empty feed — used by preview/tests to exercise the empty-state path.
     static let emptyFeed = MomentFeed(pending: [], scheduled: [], done: [])
+
+    // MARK: - You-tab self-portrait
+
+    /// Populated `SelfPortrait` matching the You-tab wireframe. Every list
+    /// section carries 2-4 plain-text rows so previews exercise the
+    /// "section header + N rows" path without any chart / bar widgets.
+    static let selfPortrait = SelfPortrait(
+        observedMonths: 9,
+        interactionsCount: 1_842,
+        confidencePct: 71,
+        whenAtBest: [
+            "Tuesday and Wednesday mornings between 9:30 and 11:00.",
+            "After a 20-minute walk, you reply twice as fast.",
+            "Wednesday evening writing sessions average 47 minutes uninterrupted.",
+        ],
+        howYouWrite: [
+            PersonaStyle(audience: "Family",      tone: "Warm, short sentences",   formality: 0.18, sampleSize: 312),
+            PersonaStyle(audience: "Close friends", tone: "Playful, lower-case",   formality: 0.09, sampleSize: 487),
+            PersonaStyle(audience: "Work",        tone: "Direct, structured",      formality: 0.62, sampleSize: 644),
+        ],
+        yourRoutines: [
+            Routine(
+                name: "Tuesday morning run",
+                detected: true,
+                description: "9:15 – 9:45 most weeks",
+                confidence: 0.78,
+                sampleSize: 22
+            ),
+            Routine(
+                name: "Sunday review",
+                detected: true,
+                description: "60-90 minutes, late afternoon",
+                confidence: 0.71,
+                sampleSize: 14
+            ),
+            Routine(
+                name: "Evening reading",
+                detected: false,
+                description: nil,
+                confidence: 0.0,
+                sampleSize: 0
+            ),
+        ],
+        drifting: [
+            DriftingContact(contactId: "contact:dad",   name: "Dad",   daysSinceLast: 9,  usualCadenceDays: 5),
+            DriftingContact(contactId: "contact:maya",  name: "Maya",  daysSinceLast: 11, usualCadenceDays: 5),
+            DriftingContact(contactId: "contact:rohit", name: "Rohit", daysSinceLast: 21, usualCadenceDays: 14),
+        ]
+    )
+
+    /// Fresh-install `SelfPortrait` — every list empty, header counters at
+    /// zero. Drives the You-tab empty-state path.
+    static let emptySelfPortrait = SelfPortrait()
 }
