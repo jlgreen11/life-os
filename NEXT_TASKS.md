@@ -29,13 +29,10 @@
 
 These build the iOS app scaffold. Code compiles on any Mac; no device runtime needed. When Apple Dev enrolls post-trip, you plug APNs/widgets/TestFlight on top.
 
-- [ ] **Port DESIGN.md tokens → Swift.** Create `ios/LifeOS/DesignSystem/`:
-  - `Color+Tokens.swift` — semantic color tokens from DESIGN.md (background, text, primary-action, success/error/warning/info) as `extension Color { static let bgBase = Color(...) ... }`. Use hex values from DESIGN.md exactly.
-  - `Font+Tokens.swift` — type scale 11/13/15/17/22/28 pt + weight ladder + letter-spacing. Use `Font.system(size:, weight:)` wrappers.
-  - `Spacing.swift` — 8pt-base spacing scale as static CGFloat constants `s1 = 4, s2 = 8, s3 = 12, ...`
-  - `Elevation.swift` — shadow helpers (rest / hover / modal) as SwiftUI view modifiers.
-  - `Radius.swift` — r-sm / r-md / r-lg / r-pill constants.
-  Tests in `ios/LifeOSTests/DesignSystemTests.swift`: constants present, values match DESIGN.md.
+<!-- NOTE (2026-04-22): Design-token task landed in commit 43887cc (as part of the docs-refresh sweep). Swift files exist at ios/LifeOS/DesignSystem/{Color+Tokens,Font+Tokens,Spacing,Elevation,Radius}.swift. Follow-up: add DesignSystemTests.swift verifying constants match DESIGN.md exactly — can be a separate small task if desired. -->
+
+<!-- DONE (see DONE_TASKS.md): Port DESIGN.md tokens → Swift. 5 Swift files in ios/LifeOS/DesignSystem/, committed in 43887cc. -->
+
 
 - [ ] **Swift `Moment` type + enums (`ios/LifeOS/Models/Moment.swift`).** Codable mirror of Python `core/moment/types.py`:
   - `enum MomentState: String, Codable` with cases matching Python
