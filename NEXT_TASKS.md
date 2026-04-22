@@ -48,12 +48,88 @@
 
 ## Week 11 — Real-time + full flows
 
-- [ ] **E2E action flows + Undo toast.**
-  - Inline draft editing: clicking draft → textarea; Esc cancels, Cmd+Enter commits via POST /api/moments/{id}/accept with edited action_params
-  - Snooze popover: chip row; selection POSTs + closes
-  - Undo toast: bottom-right, 3s, POST /api/moments/{id}/transition back to SUGGESTED if clicked in time
-  - Deferred send: POST accept returns 202 + toast; actual action dispatched to outbox after 3s grace
-  E2E tests with Playwright if installed; Selenium fallback; if neither: leave NOTE. 5 critical paths from DESIGN.md test plan.
+<!-- NOTE (2026-04-22, iteration 21): the original "E2E action flows + Undo
+toast" task was a $10+ iteration and contained an unresolved design decision
+the CEO/eng plan doesn't cover. Specifically:
+
+  1. The state machine in `core/moment/state.py` has no edge from
+     ACCEPTED → SUGGESTED or DISMISSED → SUGGESTED (DISMISSED is
+     terminal; ACCEPTED can only go to DONE). The original task body
+     asked for "POST /api/moments/{id}/transition back to SUGGESTED" —
+     not implementable without either (a) adding undo edges to
+     `_LEGAL_TRANSITIONS` (CEO plan signoff needed; affects audit log
+     semantics) or (b) modeling deferred dispatch as a new in-flight
+     state (e.g. `ACCEPTED_PENDING_DISPATCH`) so undo means cancelling
+     the outbox enqueue, not reversing state.
+
+  2. The outbox spec in docs/plans/2026-04-21-v2-rewrite-plan.md §
+     "Outbox pattern spec" defines `state IN (pending, in_progress,
+     done, failed, dead)` — there is no "delayed / not-before" column
+     for grace-period dispatch. A 3 s outbox-grace pattern needs either
+     a `not_before TIMESTAMP` column on outbox or a separate scheduling
+     mechanism (cf. moment scheduler). Neither is in the eng plan.
+
+Splitting the original task into the well-defined slices below; the two
+slices that depend on the undo design land last and carry their own
+NOTE flagging the blocker. -->
+
+- [ ] **Inline draft editor on Moment card.** Click draft body → textarea
+  with autosize; Esc cancels (restores prior text); Cmd/Ctrl+Enter commits
+  via `POST /api/moments/{id}/edit` with `{action_params: {body: <new>}}`
+  THEN `POST /api/moments/{id}/accept` (chained via `htmx:afterSwap` or a
+  small JS handler in `base.html`). Tab navigation preserved.
+  Tests: render-time DOM assertions (textarea hidden by default, draft
+  click swaps it in) + `tests/api/test_routes_now.py` confirms the
+  edit→accept chain works end-to-end on the JSON path. No new endpoint
+  needed; both `/edit` and `/accept` already exist.
+
+- [ ] **Snooze popover polish.** Already wired in commit `ba079fc` but two
+  gaps remain per DESIGN.md § "Snooze popover":
+  (a) "Custom" chip currently no-ops — wire it to a small inline
+      `<input type="datetime-local">` that resolves to a unix epoch and
+      POSTs to `/api/moments/{id}/snooze`.
+  (b) Popover should focus first chip on open and trap focus inside the
+      menu (Tab loops chip → chip; Shift+Tab reverse).
+  Tests: render-time DOM (datetime-local present, role=menuitem on chips,
+  aria-haspopup="menu" on trigger).
+
+- [ ] **DESIGN: Undo toast + deferred dispatch — write design note.**
+  This is a planning task (writes docs/plans/2026-04-22-undo-grace.md), not
+  code. Resolve the open questions above:
+  (1) preferred state-machine model for undo (new edges vs. new
+  in-flight state); (2) outbox extension (`not_before TIMESTAMP NULL`
+  column vs. separate scheduler dispatch); (3) what happens if the
+  process dies during the 3 s grace window (boot recovery should
+  re-enqueue / re-dispatch / surface to user?). One short doc, ~150
+  lines. After it lands the next two tasks become unblocked.
+
+- [ ] **Undo toast — POST endpoint + state-machine edge.**
+  DEPENDS ON design note above. Add `POST /api/moments/{id}/undo` that
+  reverses the most recent terminal/snooze transition within a 3 s
+  grace window (server-enforced via `state_history.ts` check); 410 Gone
+  if outside window; 409 if not in an undoable state. Add the legal
+  transition edges decided in the design note. Wire the existing
+  `data-undo` button in `base.html` to call it (replace the current
+  `toast.remove()` no-op with an `htmx:trigger`).
+  Tests: state-machine fanout + route-level grace-window enforcement.
+
+- [ ] **Deferred outbox dispatch (3 s grace).**
+  DEPENDS ON design note above. Implement the chosen pattern (e.g.
+  `outbox.not_before` column or scheduler-mediated enqueue). `accept`
+  enqueues a side-effect with `not_before = now() + 3s`; outbox claim
+  loop refuses to claim rows whose `not_before` is in the future; undo
+  during grace deletes the row pre-claim.
+  Tests: claim_batch respects not_before; undo within grace cancels;
+  undo after claim is a 410.
+
+- [ ] **Now-tab E2E tests.**
+  Five DESIGN.md "test plan" critical paths: (1) accept moves card
+  out, (2) dismiss moves card out, (3) snooze chip sets snooze_until +
+  removes from pending, (4) WS push appends new card, (5) WS push
+  removes accepted card via OOB. Use Playwright if importable (try/except
+  at module top); Selenium fallback; otherwise mark with
+  `pytest.skip("playwright/selenium not installed")` and emit a warning
+  so the orchestrator surfaces it. Tests live in `tests/e2e/`.
 
 ## Week 12 — regression + cutover rehearsal
 
