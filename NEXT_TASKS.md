@@ -32,15 +32,6 @@
 
 ## Week 3 — outbox + scheduler + WAL integrity
 
-- [ ] **Transactional outbox (`storage/repos/outbox.py`).** Per eng review §1b:
-  - `enqueue(event_id, subject, *, conn=None) -> int`: idempotent on (event_id, subject); callable inside existing transaction for atomicity
-  - `claim_batch(limit=10) -> list[OutboxEntry]`: atomic pending→in_progress via BEGIN IMMEDIATE
-  - `complete(outbox_id)`: in_progress → done, set delivered_at
-  - `fail(outbox_id, error_msg)`: retry_count++, transitions to 'dead' if >= 5
-  - `requeue_in_progress_on_boot() -> int`: any 'in_progress' rows → 'pending' (crash recovery)
-  - `purge_done_older_than(days=30) -> int`: bulk delete (daily maintenance)
-  Tests: enqueue idempotency, concurrent claim_batch via threading (exactly one claim per row), retry→dead progression, boot recovery, retention purge.
-
 - [ ] **Scheduler wall-clock firing loop (`core/moment/scheduler.py`).** `class Scheduler(moment_repo, outbox_repo, bus)`:
   - `async run_forever(tick_seconds=30)`: each tick, SELECT suggested+snoozed Moments with scheduled_for <= NOW; for each: if snoozed transition→suggested with annotation='scheduler_fire'; enqueue notification event to outbox; log fire latency
   - `async boot_recovery()`: past-due Moments — fire if expires_at > now (annotation='boot_recovery'), else transition → expired
