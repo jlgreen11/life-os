@@ -36,12 +36,7 @@
 
 ## Week 5 — 3 more producers (complete, see DONE_TASKS.md)
 
-## Week 6 — feedback + wiring
-
-- [ ] **MomentEngine wiring (`core/moment/engine.py`).**
-  - `class MomentEngine(producers, moment_repo, feedback_weight_store)`
-  - `async def on_event(event)`: for each producer → observe(event); filter by confidence >= threshold_for(insight_type); create via moment_repo
-  Integration test: fixture 30-day event stream → verify Moments per producer land, dedup via evidence_hash.
+## Week 6 — feedback + wiring (complete, see DONE_TASKS.md)
 
 ## Week 7 — AI engine extraction
 
