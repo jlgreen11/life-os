@@ -30,13 +30,6 @@
 
 ## Week 2 — Moment primitive
 
-- [ ] **Scaffold `core/moment/` package.** Create `core/__init__.py`, `core/moment/__init__.py`, `core/moment/types.py`:
-  - Enum `MomentState`: SUGGESTED, ACCEPTED, DISMISSED, SNOOZED, DONE, EXPIRED
-  - Enum `InsightType`: CADENCE, RELATIONSHIP, TEMPORAL, SPATIAL, COMM_TEMPLATE, ROUTINE
-  - Enum `ActionKind`: DRAFT_MESSAGE, SEND_MESSAGE, SCHEDULE_BLOCK, ARCHIVE_EVENT, NUDGE, SET_REMINDER, CREATE_CALENDAR_ENTRY, NOTE_OBSERVATION
-  - Dataclasses: `Action(kind, params)`, `ContextTrigger(expression)` (grammar: calendar:gap>Nm, calendar:before_event:Nm, calendar:after_event:Nm, arrive:PLACE, depart:PLACE, time:HH:MM, weekday:DAY, after_inactivity:Nh:CHANNEL, event_type:TYPE), `Moment(id, created_at, scheduled_for, expires_at, context_trigger, insight, evidence, evidence_hash, proposed_action, state, state_history, snooze_until, confidence, feedback_weight, source_insight_type)`
-  Every enum + dataclass has docstring citing CEO plan. No business logic. Tests: enum members present, Moment dataclass defaults, JSON round-trip via `dataclasses.asdict`.
-
 - [ ] **State machine (`core/moment/state.py`).** `_LEGAL_TRANSITIONS: dict[MomentState | None, set[MomentState]]` per CEO plan:
   - None → {SUGGESTED}
   - SUGGESTED → {ACCEPTED, DISMISSED, SNOOZED, EXPIRED}
