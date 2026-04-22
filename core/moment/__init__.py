@@ -19,6 +19,13 @@ This package is split into:
 - ``engine`` — orchestration over producers, repos, feedback weights
 """
 
+from core.moment.producer import (
+    PRODUCERS,
+    Event,
+    Producer,
+    ProducerAlreadyRegistered,
+    register,
+)
 from core.moment.state import IllegalTransition, validate_transition
 from core.moment.types import (
     Action,
@@ -31,13 +38,18 @@ from core.moment.types import (
 )
 
 __all__ = [
+    "PRODUCERS",
     "Action",
     "ActionKind",
     "ContextTrigger",
+    "Event",
     "IllegalTransition",
     "InsightType",
     "Moment",
     "MomentState",
+    "Producer",
+    "ProducerAlreadyRegistered",
     "StateHistoryEntry",
+    "register",
     "validate_transition",
 ]
