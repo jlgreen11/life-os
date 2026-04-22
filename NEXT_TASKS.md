@@ -32,13 +32,7 @@
 
 ## Week 3 — outbox + scheduler + WAL integrity (complete, see DONE_TASKS.md)
 
-## Week 4 — Producer base + 3 producers
-
-- [ ] **Temporal producer (`producers/temporal.py`).** InsightType.TEMPORAL:
-  - Uses detected chronotype (from temporal signal profile) + time + calendar state
-  - Emits Moment when: (a) user enters a historical high-focus window, OR (b) calendar has ≥ 60 min gap opening
-  - Insight: "You have {X} min free. Historical focus pattern at this hour: {description}."
-  Tests: no Moment if temporal profile <2 weeks of data, fires in known focus windows.
+## Week 4 — Producer base + 3 producers (complete, see DONE_TASKS.md)
 
 ## Week 5 — 3 more producers
 
