@@ -65,9 +65,13 @@ def test_legal_transition_table_matches_ceo_plan() -> None:
             MomentState.SNOOZED,
             MomentState.EXPIRED,
         },
-        MomentState.ACCEPTED: {MomentState.DONE},
+        # ACCEPTED → SUGGESTED is the undo edge (design note
+        # docs/plans/2026-04-22-undo-grace.md § "Decision 1").
+        MomentState.ACCEPTED: {MomentState.DONE, MomentState.SUGGESTED},
         MomentState.SNOOZED: {MomentState.SUGGESTED, MomentState.EXPIRED},
-        MomentState.DISMISSED: set(),
+        # DISMISSED → SUGGESTED is the undo edge (same grace-window
+        # contract as the ACCEPTED → SUGGESTED edge).
+        MomentState.DISMISSED: {MomentState.SUGGESTED},
         MomentState.DONE: set(),
         MomentState.EXPIRED: set(),
     }

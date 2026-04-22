@@ -431,13 +431,32 @@
             undo.className = 'underline decoration-dotted text-[color:var(--primary-action)]';
             undo.textContent = 'Undo';
             undo.setAttribute('data-undo', '');
-            // Full undo POST wiring is the next task (Week 11). Until it
-            // lands, the button still removes the toast so the click is
-            // not a dead surface.
-            undo.addEventListener('click', () => toast.remove());
+            // HTMX wiring per docs/plans/2026-04-22-undo-grace.md § "Decision 1".
+            // POST to /undo with hx-swap=none — the response carries an
+            // OOB swap that re-injects the bounced card at the top of
+            // #now-list. The toast is removed in `htmx:afterRequest`
+            // regardless of HTTP status so a 410 (grace expired) still
+            // collapses the toast cleanly.
+            if (detail && detail.momentId) {
+                undo.setAttribute('hx-post', '/api/moments/' + encodeURIComponent(detail.momentId) + '/undo');
+                undo.setAttribute('hx-swap', 'none');
+            } else {
+                // Defensive: with no momentId there's nothing to undo.
+                undo.addEventListener('click', () => toast.remove());
+            }
+            // Always tear down the toast after the request resolves —
+            // success removes the lingering affordance, 410 removes the
+            // now-stale grace prompt.
+            undo.addEventListener('htmx:afterRequest', () => toast.remove());
             toast.appendChild(text);
             toast.appendChild(undo);
             region.appendChild(toast);
+            // htmx.process activates the hx-* attributes on the
+            // dynamically-created button — without it HTMX never sees
+            // the new node and the click is a dead surface.
+            if (window.htmx && typeof window.htmx.process === 'function') {
+                window.htmx.process(toast);
+            }
             setTimeout(() => {
                 if (toast.isConnected) toast.remove();
             }, 3000);

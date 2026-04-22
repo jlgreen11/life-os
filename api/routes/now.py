@@ -273,6 +273,32 @@ def _action_label(state: MomentState) -> str:
     return _ACTION_LABEL.get(state, state.value)
 
 
+# Undo grace window — 3 seconds from the original transition's
+# ``moment_state_history.ts``. Past this window the route returns
+# 410 Gone; per design note docs/plans/2026-04-22-undo-grace.md
+# § "Decision 1".
+UNDO_GRACE_SECONDS = 3
+
+# States from which an undo is meaningful — the three terminal-or-
+# terminal-ish user-driven decisions made from the Now tab. EXPIRED is
+# excluded because the user did not initiate it (time-driven), and DONE
+# is excluded because there is no grace concept post-completion.
+_UNDOABLE_STATES: frozenset[MomentState] = frozenset(
+    {MomentState.ACCEPTED, MomentState.DISMISSED, MomentState.SNOOZED}
+)
+
+# Inverse-signal mapping for feedback compensation when undo fires.
+# Per design note § "Audit-log semantics" → "Compensate feedback weight":
+# we record the inverse signal so the EWMA does not drift on bounced
+# decisions. For SNOOZED the inverse is itself (signal=0.5), which
+# leaves the EWMA's running mean unchanged.
+_INVERSE_FEEDBACK_STATE: dict[MomentState, MomentState] = {
+    MomentState.ACCEPTED: MomentState.DISMISSED,
+    MomentState.DISMISSED: MomentState.ACCEPTED,
+    MomentState.SNOOZED: MomentState.SNOOZED,
+}
+
+
 # ---------------------------------------------------------------------------
 # GET /api/now
 # ---------------------------------------------------------------------------
@@ -467,6 +493,72 @@ def now_page(request: Request) -> HTMLResponse:
         },
     )
     return HTMLResponse(html)
+
+
+@router.post("/api/moments/{moment_id}/undo")
+def undo_moment(moment_id: str, request: Request) -> Response:
+    """Reverse the most recent terminal/snooze transition within 3 s.
+
+    Implements the Undo toast contract (DESIGN.md § "Moment card —
+    actions"; design note ``docs/plans/2026-04-22-undo-grace.md``
+    § "Decision 1"). The endpoint:
+
+    - reads the newest ``moment_state_history`` row for ``moment_id``;
+    - rejects with **409 Conflict** when the row is the creation entry
+      (``to_state == SUGGESTED``) or the current state is otherwise
+      not one we model an undo for;
+    - rejects with **410 Gone** when more than
+      :data:`UNDO_GRACE_SECONDS` seconds have elapsed since that row's
+      ``ts``;
+    - transitions the Moment back to ``SUGGESTED`` with
+      ``annotation='undo'`` so analytics can filter bounce events out
+      of accept-rate statistics;
+    - records the inverse feedback signal (per design note) so the
+      EWMA does not drift on bounced decisions;
+    - dual-modes the response shape just like the action endpoints:
+      HTMX callers get the OOB swap that re-inserts the Moment card
+      at the top of ``#now-list``, JSON callers get the typed
+      ``MomentOut`` payload.
+
+    The outbox cancellation half of the design note (§ "Decision 2"
+    — ``cancel_pending`` + ``not_before``) lands in the next NEXT_TASKS
+    item; this route currently only reverses state and feedback.
+    """
+    repo = _moment_repo(request)
+    existing = _load_or_404(repo, moment_id)
+    last = repo.last_transition(moment_id)
+    # No history is defensive — repo.create always appends a creation
+    # row, so this only fires for hand-inserted rows that bypassed the
+    # repo (legacy migration).
+    if last is None or last.to_state == MomentState.SUGGESTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="nothing to undo",
+        )
+    if last.to_state not in _UNDOABLE_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"state {last.to_state.value!r} is not undoable",
+        )
+
+    # Grace window check uses the repo's clock so tests can advance it
+    # deterministically (no freezegun). ``_now`` returns int seconds and
+    # is the same source the repo stamps into ``moment_state_history.ts``.
+    now_ts = repo._now()
+    if now_ts - int(last.ts) > UNDO_GRACE_SECONDS:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="undo grace window expired",
+        )
+
+    updated = _transition_or_409(repo, moment_id, MomentState.SUGGESTED, "undo")
+    inverse_state = _INVERSE_FEEDBACK_STATE[last.to_state]
+    _record_feedback(_feedback_store(request), existing.source_insight_type, inverse_state)
+
+    if _is_htmx(request):
+        html = render("partials/moment_undo.html", {"moment": updated})
+        return HTMLResponse(html)
+    return _as_moment_out(updated)
 
 
 @router.post("/api/moments/{moment_id}/edit", response_model=MomentOut)

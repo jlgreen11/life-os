@@ -1,0 +1,19 @@
+{#
+  Life OS v2 — Undo HTMX response partial.
+
+  Returned by ``POST /api/moments/{id}/undo`` for HTMX callers. The
+  Undo button (in ``base.html``'s toast region) posts with
+  ``hx-swap="none"`` and removes the toast itself in an
+  ``hx-on::after-request`` handler; this partial re-injects the bounced
+  Moment card at the top of the Now-tab pending list via the same OOB
+  swap pattern used by the WebSocket "new Moment" push.
+
+  Context:
+    moment : core.moment.types.Moment — the moment, freshly returned
+              to ``SUGGESTED`` after the undo transition.
+#}
+<ol id="now-list" hx-swap-oob="afterbegin">
+    <li data-moment-undone data-moment-id="{{ moment.id }}">
+        {% include "partials/moment_card.html" %}
+    </li>
+</ol>

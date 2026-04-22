@@ -43,14 +43,19 @@ _LEGAL_TRANSITIONS: dict[MomentState | None, set[MomentState]] = {
         MomentState.SNOOZED,
         MomentState.EXPIRED,
     },
-    # Once accepted, a Moment either completes or sits unfinished. The CEO
-    # plan only names DONE as the onward edge; stalled acceptance is
-    # modeled via the expires_at column, not a state transition.
-    MomentState.ACCEPTED: {MomentState.DONE},
+    # ACCEPTED → DONE on completion; ACCEPTED → SUGGESTED is the **undo**
+    # edge (3 s grace window enforced at the route layer per design note
+    # docs/plans/2026-04-22-undo-grace.md § "Decision 1"). The undo edge
+    # carries annotation='undo' so analytics can filter bounce events out
+    # of accept-rate statistics.
+    MomentState.ACCEPTED: {MomentState.DONE, MomentState.SUGGESTED},
     # Snoozed Moments wake back into SUGGESTED or time out to EXPIRED.
     MomentState.SNOOZED: {MomentState.SUGGESTED, MomentState.EXPIRED},
+    # DISMISSED → SUGGESTED is the **undo** edge (same grace-window
+    # contract as ACCEPTED → SUGGESTED). Per design note: DISMISSED is
+    # otherwise terminal — no other onward transitions are legal.
+    MomentState.DISMISSED: {MomentState.SUGGESTED},
     # Terminal states — no outbound transitions.
-    MomentState.DISMISSED: set(),
     MomentState.DONE: set(),
     MomentState.EXPIRED: set(),
 }

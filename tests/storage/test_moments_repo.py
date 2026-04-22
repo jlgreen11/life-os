@@ -576,3 +576,60 @@ def test_update_action_params_replaces_params_without_moving_state(repo):
 def test_update_action_params_missing_raises_keyerror(repo):
     with pytest.raises(KeyError):
         repo.update_action_params("ghost", {"x": 1})
+
+
+# ---------------------------------------------------------------------------
+# last_transition — Undo route helper
+# ---------------------------------------------------------------------------
+
+
+def test_last_transition_returns_none_for_unknown_id(repo):
+    assert repo.last_transition("nope") is None
+
+
+def test_last_transition_after_create_is_creation_row(repo):
+    m = _make_moment()
+    repo.create(m)
+    last = repo.last_transition(m.id)
+    assert last is not None
+    assert last.from_state is None
+    assert last.to_state == MomentState.SUGGESTED
+    assert last.annotation == "create"
+
+
+def test_last_transition_returns_newest_row(repo, clock):
+    m = _make_moment()
+    repo.create(m)
+    clock.t = REF_NOW + 10
+    repo.transition(m.id, MomentState.ACCEPTED, annotation="user accepted")
+    last = repo.last_transition(m.id)
+    assert last is not None
+    assert last.from_state == MomentState.SUGGESTED
+    assert last.to_state == MomentState.ACCEPTED
+    assert last.annotation == "user accepted"
+    assert last.ts == REF_NOW + 10
+
+
+def test_last_transition_breaks_ties_by_id(repo):
+    """Two transitions written in the same epoch second still return the latest deterministically.
+
+    Two history rows can share ``ts`` (they were written inside the same
+    second of wall-clock time); the secondary ``id DESC`` tiebreaker on
+    the auto-incrementing ``moment_state_history.id`` column ensures the
+    most recently inserted row is returned even when the timestamps
+    coincide. This matters for the undo route's "what did the user just
+    do?" lookup.
+    """
+    m = _make_moment()
+    repo.create(m)
+    # Both transitions land at the same ts because the repo's now_fn
+    # is fixed; the row inserted second has the higher id.
+    repo.transition(m.id, MomentState.ACCEPTED, annotation="first")
+    # Now poke a SUGGESTED-back history entry directly to mimic an undo
+    # — repo.transition is the only public path, but the new legal edge
+    # ACCEPTED → SUGGESTED supports it.
+    repo.transition(m.id, MomentState.SUGGESTED, annotation="undo")
+    last = repo.last_transition(m.id)
+    assert last is not None
+    assert last.to_state == MomentState.SUGGESTED
+    assert last.annotation == "undo"

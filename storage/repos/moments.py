@@ -243,6 +243,37 @@ class MomentRepository:
             return None
         return self._hydrate(row)
 
+    def last_transition(self, moment_id: str) -> StateHistoryEntry | None:
+        """Return the newest ``moment_state_history`` row, or ``None``.
+
+        Used by the undo route (``POST /api/moments/{id}/undo``) to look
+        up the most recent terminal/snooze transition and check whether
+        it lies inside the 3 s grace window. Returns ``None`` when the
+        Moment has no recorded history at all (defensive — every repo
+        ``create`` appends a creation row, so in practice this only
+        fires for unknown ids).
+
+        ``ORDER BY ts DESC, id DESC`` — the secondary ``id DESC`` tie-
+        breaker matches what :meth:`_load_history` does in reverse, so
+        two transitions written inside the same epoch second still
+        return the latest one deterministically.
+        """
+        row = self._conn.execute(
+            "SELECT from_state, to_state, ts, annotation "
+            "FROM moment_state_history WHERE moment_id=? "
+            "ORDER BY ts DESC, id DESC LIMIT 1",
+            (moment_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        from_raw = row["from_state"]
+        return StateHistoryEntry(
+            from_state=MomentState(from_raw) if from_raw else None,
+            to_state=MomentState(row["to_state"]),
+            ts=row["ts"],
+            annotation=row["annotation"],
+        )
+
     def transition(
         self,
         moment_id: str,
