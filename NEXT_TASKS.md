@@ -73,19 +73,6 @@ Splitting the original task into the well-defined slices below; the two
 slices that depend on the undo design land last and carry their own
 NOTE flagging the blocker. -->
 
-- [ ] **Deferred outbox dispatch (3 s grace).**
-  Per design note at `docs/plans/2026-04-22-undo-grace.md` § "Decision 2".
-  Add `not_before INTEGER NULL` column to `outbox`; `enqueue(...,
-  not_before=)` kwarg; `claim_batch` filters rows whose `not_before >
-  now()`; `cancel_pending(event_id, subject)` repo method. `accept`
-  enqueues with `not_before = now() + 3`. Undo calls `cancel_pending`
-  inside the same txn as the state reversal. Replace
-  `idx_outbox_state_created` with `idx_outbox_state_notbefore_created`
-  per design note.
-  Tests: claim_batch respects not_before; undo within grace cancels;
-  undo after claim is a 410; boot recovery test per design note
-  § "Decision 3".
-
 - [ ] **Now-tab E2E tests.**
   Five DESIGN.md "test plan" critical paths: (1) accept moves card
   out, (2) dismiss moves card out, (3) snooze chip sets snooze_until +
