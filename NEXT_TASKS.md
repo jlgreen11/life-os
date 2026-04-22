@@ -38,12 +38,7 @@
 
 ## Week 6 — feedback + wiring (complete, see DONE_TASKS.md)
 
-## Week 7 — AI engine extraction
-
-- [ ] **Context assembly (`ai/context.py`).** Port v1 `services/ai_engine/context.py`:
-  - `assemble_briefing_context(user_id, date) -> dict` with 11 sections: calendar, moments (was tasks), unread messages, completions, predictions, episodes, facts, insights, routines, habits, preferences
-  - REMOVE all references to mood/decision/expertise/values (dropped in v2)
-  Tests: returns dict with expected keys, empty-state returns empty lists (not None).
+## Week 7 — AI engine extraction (complete, see DONE_TASKS.md)
 
 ## Week 8 — API surface
 
