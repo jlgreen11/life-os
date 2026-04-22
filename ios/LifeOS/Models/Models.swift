@@ -1,126 +1,21 @@
+//
+//  Models.swift
+//  Life OS — context-pipeline value types
+//
+//  These types are the wire shape for `POST /api/context/event` and
+//  `POST /api/context/batch` (see `APIClient.submitContextEvent` /
+//  `submitContextBatch`) plus the in-memory snapshot the
+//  `ContextEngine` aggregates from `LocationManager` and
+//  `DeviceDiscovery`.
+//
+//  v2 API response/request types live in `Models/APITypes.swift` and
+//  `Models/Moment.swift`; this file is intentionally narrow to the
+//  context-ingestion surface so the iOS app keeps shipping mobile
+//  sensor data while the rest of the v2 UI is being scaffolded.
+//
+
 import Foundation
 import CoreLocation
-
-// MARK: - API Response Models
-
-struct HealthResponse: Codable {
-    let status: String
-    let uptime: Double?
-}
-
-struct CommandResponse: Codable {
-    let type: String
-    let content: String
-    let suggestions: [String]?
-    let actions: [ActionItem]?
-}
-
-struct ActionItem: Codable, Identifiable {
-    let id: String
-    let label: String
-    let type: String
-}
-
-struct StatusResponse: Codable {
-    let eventCount: Int?
-    let vectorStoreReady: Bool?
-    let connectors: [String: ConnectorStatus]?
-
-    enum CodingKeys: String, CodingKey {
-        case eventCount = "event_count"
-        case vectorStoreReady = "vector_store_ready"
-        case connectors
-    }
-}
-
-struct ConnectorStatus: Codable {
-    let connected: Bool
-    let lastSync: String?
-
-    enum CodingKeys: String, CodingKey {
-        case connected
-        case lastSync = "last_sync"
-    }
-}
-
-// MARK: - Notification Model
-
-struct LifeOSNotification: Codable, Identifiable {
-    let id: String
-    let title: String
-    let body: String
-    let priority: String
-    let source: String?
-    let timestamp: String
-    let status: String
-    let actions: [ActionItem]?
-
-    var priorityColor: String {
-        switch priority {
-        case "critical": return "red"
-        case "high": return "orange"
-        case "normal": return "blue"
-        case "low": return "gray"
-        default: return "gray"
-        }
-    }
-
-    var relativeTime: String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = formatter.date(from: timestamp) else {
-            // Try without fractional seconds
-            formatter.formatOptions = [.withInternetDateTime]
-            guard let date = formatter.date(from: timestamp) else { return timestamp }
-            return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
-        }
-        return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
-    }
-}
-
-// MARK: - Task Model
-
-struct LifeOSTask: Codable, Identifiable {
-    let id: String
-    let title: String
-    let description: String?
-    let status: String
-    let priority: String
-    let dueDate: String?
-    let relatedContacts: [String]?
-    let source: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id, title, description, status, priority, source
-        case dueDate = "due_date"
-        case relatedContacts = "related_contacts"
-    }
-
-    var isComplete: Bool { status == "completed" }
-
-    var statusIcon: String {
-        switch status {
-        case "completed": return "checkmark.circle.fill"
-        case "in_progress": return "arrow.triangle.2.circlepath"
-        case "pending": return "circle"
-        default: return "circle"
-        }
-    }
-}
-
-// MARK: - Briefing Model
-
-struct Briefing: Codable {
-    let summary: String
-    let sections: [BriefingSection]?
-}
-
-struct BriefingSection: Codable, Identifiable {
-    var id: String { title }
-    let title: String
-    let content: String
-    let priority: String?
-}
 
 // MARK: - Context Event (sent from phone to backend)
 
@@ -190,48 +85,6 @@ struct ContextMetadata: Codable {
     }
 }
 
-// MARK: - Feedback
-
-struct FeedbackPayload: Codable {
-    let type: String
-    let targetId: String?
-    let targetType: String?
-    let value: String?
-
-    enum CodingKeys: String, CodingKey {
-        case type
-        case targetId = "target_id"
-        case targetType = "target_type"
-        case value
-    }
-}
-
-// MARK: - Chat
-
-struct ChatMessage: Identifiable {
-    let id = UUID()
-    let role: Role
-    let content: String
-    let timestamp: Date
-    let suggestions: [String]?
-    let actions: [ActionItem]?
-
-    enum Role {
-        case user
-        case assistant
-        case system
-    }
-}
-
-// MARK: - WebSocket
-
-struct WebSocketMessage: Codable {
-    let type: String
-    let notification: LifeOSNotification?
-    let task: LifeOSTask?
-    let data: [String: String]?
-}
-
 // MARK: - Nearby Device
 
 struct NearbyDevice: Identifiable, Equatable {
@@ -244,10 +97,10 @@ struct NearbyDevice: Identifiable, Equatable {
     var attributedTo: String?
 
     enum DeviceType: String, Codable {
-        case bluetooth = "bluetooth"
-        case wifi = "wifi"
-        case bonjour = "bonjour"
-        case unknown = "unknown"
+        case bluetooth
+        case wifi
+        case bonjour
+        case unknown
     }
 
     var signalLabel: String {
@@ -282,9 +135,9 @@ struct LocationContext: Equatable {
     var wifiSSID: String?
 
     static func == (lhs: LocationContext, rhs: LocationContext) -> Bool {
-        lhs.coordinate.latitude == rhs.coordinate.latitude &&
-        lhs.coordinate.longitude == rhs.coordinate.longitude &&
-        lhs.timestamp == rhs.timestamp
+        lhs.coordinate.latitude == rhs.coordinate.latitude
+            && lhs.coordinate.longitude == rhs.coordinate.longitude
+            && lhs.timestamp == rhs.timestamp
     }
 }
 

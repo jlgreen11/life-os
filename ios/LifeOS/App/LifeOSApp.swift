@@ -7,10 +7,11 @@ struct LifeOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootTabView()
                 .environmentObject(appState)
                 .environmentObject(contextEngine)
                 .onAppear {
+                    contextEngine.configure(serverURL: appState.serverURL)
                     contextEngine.startCollecting()
                 }
                 .preferredColorScheme(.dark)
