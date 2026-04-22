@@ -1,16 +1,15 @@
 """Life OS v2 — AI package.
 
-Fresh-module rewrite of v1's ``services/ai_engine``. Three public
-symbols live in :mod:`ai.engine` (AIEngine + AIBudgetExceeded +
-SearchResult); the PII shield and context assembly will land in
-sibling modules in later Week-7 tasks (see ``NEXT_TASKS.md``).
+Fresh-module rewrite of v1's ``services/ai_engine``. Public symbols
+live in :mod:`ai.engine` (AIEngine + AIBudgetExceeded +
+SearchResult) and :mod:`ai.pii` (PIIShield). Context assembly will
+land in :mod:`ai.context` in a later Week-7 task (see
+``NEXT_TASKS.md``).
 
 The package owns LLM wire-level concerns only: Ollama + Claude
-routing, per-operation latency budgets, and JSON / priority parsing.
-Context assembly (what to feed each call) lives in :mod:`ai.context`;
-PII redaction (what to strip before cloud calls) lives in
-:mod:`ai.pii`. Those modules are still under construction; this
-one stands alone.
+routing, per-operation latency budgets, JSON / priority parsing, and
+PII redaction for cloud calls. Context assembly (what to feed each
+call) lives in :mod:`ai.context` and is still under construction.
 """
 
 from ai.engine import (
@@ -19,10 +18,12 @@ from ai.engine import (
     AIEngineError,
     SearchResult,
 )
+from ai.pii import PIIShield
 
 __all__ = [
     "AIBudgetExceeded",
     "AIEngine",
     "AIEngineError",
+    "PIIShield",
     "SearchResult",
 ]
