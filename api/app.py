@@ -105,6 +105,7 @@ def create_app(life_os: Any | None = None) -> FastAPI:
     # schema-only contexts. Each router is imported here, not at module
     # top-level, so test suites that only build the factory don't drag
     # route modules they're not exercising.
+    from api.routes.context import router as context_router
     from api.routes.health import router as health_router
     from api.routes.now import router as now_router
     from api.routes.people import router as people_router
@@ -116,6 +117,7 @@ def create_app(life_os: Any | None = None) -> FastAPI:
     app.include_router(people_router)
     app.include_router(settings_router)
     app.include_router(health_router)
+    app.include_router(context_router)
 
     return app
 

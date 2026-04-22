@@ -146,3 +146,32 @@ def test_create_app_registers_you_and_people_routers():
 
     custom_paths = {r.path for r in app.routes}
     assert {"/api/you", "/api/people", "/api/people/{contact_id}"}.issubset(custom_paths)
+
+
+def test_create_app_registers_context_shim_router():
+    """Factory mounts the iOS compat shim.
+
+    The context shim contributes the iOS context pipeline endpoints,
+    v1-shape proxies (``/api/briefing``, ``/api/feedback``,
+    ``/api/preferences``, ``/api/status``), the ``/ws`` WebSocket, and
+    501 stubs for endpoints the iOS app still calls but v2 has not
+    ported yet.
+    """
+    app = create_app()
+
+    custom_paths = {r.path for r in app.routes}
+    expected = {
+        "/api/context/event",
+        "/api/context/batch",
+        "/api/context/summary",
+        "/api/status",
+        "/api/briefing",
+        "/api/feedback",
+        "/api/preferences",
+        "/ws",
+        "/api/command",
+        "/api/notifications",
+        "/api/tasks",
+        "/api/search",
+    }
+    assert expected.issubset(custom_paths)
