@@ -1,92 +1,128 @@
-# Life OS — Your Private Command Center
+# Life OS
 
-A local-first, AI-powered personal life management system that connects
-everything in your digital life through a single private intelligence layer.
+A local-first AI that observes your digital life and gives you the right action at the right moment. Nothing fake.
 
-## Architecture
+**Status (2026-04-22):** v2 rewrite in progress on this branch. See [v2-rewrite plan](docs/plans/2026-04-21-v2-rewrite-plan.md). The old v1 still runs in production on `master` until cutover.
+
+---
+
+## What it does
+
+Observes email, messages, calendar, and device context; produces **Moments** — time-anchored, evidence-backed suggestions with one-tap actions. Every insight has a citation. Every action is reversible. No mood bars, no horoscope. Runs on a Mac Mini over Tailscale.
+
+Core primitive:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   CLIENT LAYER                       │
-│        (PWA / CLI / Voice via Whisper)                │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────┐
-│              API GATEWAY (FastAPI)                    │
-└──────────────────────┬──────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────┐
-│            EVENT BUS (NATS JetStream)                │
-└──────────────────────┬──────────────────────────────┘
-                       │
-  ┌────────┬───────────┼───────────┬──────────┐
-  ▼        ▼           ▼           ▼          ▼
-Signal   AI        Rules       Task      Notification
-Extractor Engine   Engine     Manager    Manager
-  │        │           │           │          │
-  ▼        ▼           ▼           ▼          ▼
-┌─────────────────────────────────────────────────────┐
-│               USER MODEL STORE                       │
-│  ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌────────┐  │
-│  │ Episodic │ │ Semantic │ │Procedural│ │Predict-│  │
-│  │ Memory   │ │ Memory   │ │ Memory  │ │  ive   │  │
-│  └──────────┘ └──────────┘ └─────────┘ └────────┘  │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────────────┐  │
-│  │ SQLite   │ │ LanceDB  │ │ File Store          │  │
-│  └──────────┘ └──────────┘ └─────────────────────┘  │
-└─────────────────────────────────────────────────────┘
+Moment = (time + context + evidence + proposed action + state)
 ```
 
-## Quick Start
+## Current architecture (v2, on `v2-rewrite`)
+
+```
+  ┌────────────────────────────────────────────────────┐
+  │              Web (HTMX + Tailwind + Jinja)          │
+  │          iOS (SwiftUI, Phase 2 — in progress)       │
+  └────────────────────────┬───────────────────────────┘
+                           │ REST + WebSocket
+  ┌────────────────────────▼───────────────────────────┐
+  │                   API (FastAPI)                     │
+  │   /api/now  /api/you  /api/people  /api/settings    │
+  │                     /api/context/*                  │
+  └────────────────────────┬───────────────────────────┘
+                           │
+  ┌────────────────────────▼───────────────────────────┐
+  │                 MOMENT ENGINE                       │
+  │   Action Queue ◀──▶ Scheduler (wall-clock + ctx)    │
+  │                           ▲                         │
+  │                   Insight Producers                 │
+  │   cadence · relationship · temporal · spatial       │
+  │       comm-template · routine                       │
+  └────────────────────────┬───────────────────────────┘
+                           │
+  ┌────────────────────────▼───────────────────────────┐
+  │          IN-PROCESS ASYNCIO EVENT BUS               │
+  │           + transactional outbox                    │
+  └────────────────────────┬───────────────────────────┘
+                           │
+  ┌────────────────────────▼───────────────────────────┐
+  │                  Connectors (v1: 4 active)          │
+  │   Proton Mail · iMessage · CalDAV · iOS context     │
+  │      (dormant: Signal, Gmail, Plaid, HA, browser)   │
+  └────────────────────────┬───────────────────────────┘
+                           │
+  ┌────────────────────────▼───────────────────────────┐
+  │         Storage — 1 SQLite file + LanceDB index     │
+  └────────────────────────────────────────────────────┘
+```
+
+## Key docs
+
+| Doc | Purpose |
+|---|---|
+| [DESIGN.md](DESIGN.md) | Design tokens (type, color, spacing, elevation), 4-tab IA, Moment-card states |
+| [docs/plans/2026-04-21-v2-rewrite-plan.md](docs/plans/2026-04-21-v2-rewrite-plan.md) | Engineering plan (14 API endpoints, 13-table schema, outbox spec, state machine) |
+| [NEXT_TASKS.md](NEXT_TASKS.md) | Live task queue the autonomous agent consumes |
+| [DONE_TASKS.md](DONE_TASKS.md) | Append-only log of completed tasks |
+| [AUTONOMOUS.md](AUTONOMOUS.md) | Runbook for the autonomous rewrite agent |
+| [docs/adr/](docs/adr/) | Architecture Decision Records (in progress) |
+| [docs/archive/](docs/archive/) | v1-era docs (preserved for history) |
+
+## Build & run (v2, Phase 1)
+
+> v2 is on `v2-rewrite` and not yet cut over. These commands reflect where it's going; the actual cutover is documented in the forthcoming `docs/cutover-runbook.md`.
 
 ```bash
-# 1. Clone and configure
-cp config/settings.example.yaml config/settings.yaml
-# Edit settings.yaml with your credentials
+# 1. Environment
+cp config/settings.example.yaml config/settings.yaml   # edit with creds
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-# 2. Start everything
-docker compose up -d
+# 2. Migrate v1 → v2 (dry-run first — NEVER touches prod data)
+python scripts/migrate_v1_to_v2.py --dry-run
 
-# 3. Open the web UI
-open https://localhost:8443
+# 3. Run
+python -m life_os         # serves on :8080
 ```
 
-## Build Order
+## Test
 
-1. **Foundation**: Event bus, database schemas, user model store
-2. **First Connector**: Proton Mail via Bridge (IMAP)
-3. **Signal Extractor**: Begin building the user model from email
-4. **AI Engine**: Ollama + morning briefing
-5. **Add Connectors**: Signal, CalDAV, finance
-6. **Prediction Engine**: Proactive suggestions
-7. **Web UI**: Briefing, inbox, command bar
-8. **Refinement**: Feedback loop, rules engine, tuning
-
-## Project Structure
-
+```bash
+source .venv/bin/activate
+python -m pytest tests/ -v
 ```
-life-os/
-├── config/                  # Configuration files
-├── connectors/              # Service connectors (one per external service)
-│   ├── base/                # Base connector framework
-│   ├── proton_mail/         # Proton Mail via Bridge
-│   ├── signal_msg/          # Signal via signal-cli
-│   ├── caldav/              # CalDAV calendars
-│   ├── finance/             # Plaid/bank connectors
-│   └── home_assistant/      # Smart home
-├── models/                  # Data models and schemas
-├── services/                # Core services
-│   ├── event_bus/           # NATS pub/sub wrapper
-│   ├── ai_engine/           # LLM orchestration
-│   ├── signal_extractor/    # Passive signal collection
-│   ├── prediction_engine/   # Forward-looking intelligence
-│   ├── feedback_collector/  # Implicit/explicit feedback
-│   ├── rules_engine/        # Deterministic automations
-│   ├── task_manager/        # Task tracking
-│   └── notification_manager/# Alert routing
-├── storage/                 # Database and vector store management
-├── web/                     # Web UI (FastAPI + templates)
-├── scripts/                 # Utility scripts
-├── docker-compose.yaml
-└── requirements.txt
-```
+
+## Tech choices (v2)
+
+- **Backend:** Python 3.12, asyncio, FastAPI
+- **Storage:** one SQLite file (WAL, synchronous=NORMAL) + LanceDB vector index
+- **Event bus:** in-process asyncio + transactional outbox (no NATS)
+- **AI:** Ollama (mistral, quantized for foreground) + optional PII-shielded Anthropic Claude for complex reasoning
+- **Web UI:** HTMX + Tailwind + modular Jinja (no SPA framework)
+- **iOS:** SwiftUI (Phase 2, after Phase 1 acceptance KPIs converge)
+- **Deployment:** Mac Mini + Tailscale (local-first)
+
+## Killed from v1 (intentional)
+
+Services that produced low-signal / un-falsifiable output are removed:
+
+- Mood inference (progress bars with no grounding)
+- Decision profile (can't measure from inbound email)
+- Expertise map (no evidence path)
+- Values inference (LLM horoscope)
+
+Retained producers are all evidence-backed: cadence, relationship, temporal, spatial, communication-template, routine.
+
+## Privacy model
+
+- **Local-first:** all data in local SQLite + LanceDB; no cloud by default.
+- **Encrypted credentials:** Fernet encryption for connector passwords/API keys at rest.
+- **PII shield:** when the optional cloud AI path runs, names/emails/phones/addresses are tokenized before leaving the device; real values restored on response. Cloud model never sees PII.
+- **Mood privacy:** n/a in v2 (mood tracking was removed entirely).
+
+## Contributing
+
+This is a personal project by [@jlgreen11](https://github.com/jlgreen11). The v2 rewrite is driven by an autonomous Claude Code agent consuming `NEXT_TASKS.md`; see [AUTONOMOUS.md](AUTONOMOUS.md) for how it works.
+
+---
+
+*README last updated 2026-04-22 at v2-rewrite commit `ac139e2`.*
