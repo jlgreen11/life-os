@@ -44,13 +44,6 @@
 
 ## Week 9 — Web: base + Now tab
 
-- [ ] **Now tab + Moment card primitive (`web/templates/now.html` + partials).**
-  - Page sections: NOW (2–3 cards) / UP NEXT (compact list) / DONE TODAY (collapsed default)
-  - `partials/moment_card.html`: insight (22pt display), evidence link (HTMX reveal), draft block (recessed bg), action buttons (one primary filled + 2–3 ghost)
-  - "Why am I seeing this" microcopy under evidence link
-  - Evidence reveal: `GET /api/moments/{id}/evidence` returns partial HTML (event excerpts)
-  Tests: card renders with all states (default, draft-pending, expanded-evidence); manual a11y checklist from DESIGN.md.
-
 - [ ] **HTMX wiring: accept / dismiss / snooze.** Each action button:
   - `<button hx-post="/api/moments/{id}/accept" hx-swap="outerHTML" hx-target="closest .moment-card">`
   - On success: card fades + server returns next pending Moment partial; swap replaces it
