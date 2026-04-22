@@ -30,14 +30,6 @@
 
 ## Week 2 — Moment primitive
 
-- [ ] **State machine (`core/moment/state.py`).** `_LEGAL_TRANSITIONS: dict[MomentState | None, set[MomentState]]` per CEO plan:
-  - None → {SUGGESTED}
-  - SUGGESTED → {ACCEPTED, DISMISSED, SNOOZED, EXPIRED}
-  - ACCEPTED → {DONE}
-  - SNOOZED → {SUGGESTED, EXPIRED}
-  - DISMISSED / DONE / EXPIRED → {} (terminal)
-  Export `class IllegalTransition(ValueError)` and `validate_transition(from_state, to_state) -> None`. Tests: (1) every legal pair succeeds, (2) every (from, to) NOT in legal set raises IllegalTransition. Use stdlib `itertools.product` to enumerate. Don't install `hypothesis`; table-drive is enough.
-
 - [ ] **`MomentRepository` (SQLite-backed).** Create `storage/repos/__init__.py` and `storage/repos/moments.py`:
   - `__init__(conn: sqlite3.Connection)`: constructor injection, no globals
   - `create(moment) -> str`: idempotent on UNIQUE(source_insight_type, evidence_hash) — returns existing id on collision
