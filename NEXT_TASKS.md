@@ -73,15 +73,6 @@ Splitting the original task into the well-defined slices below; the two
 slices that depend on the undo design land last and carry their own
 NOTE flagging the blocker. -->
 
-- [ ] **Now-tab E2E tests.**
-  Five DESIGN.md "test plan" critical paths: (1) accept moves card
-  out, (2) dismiss moves card out, (3) snooze chip sets snooze_until +
-  removes from pending, (4) WS push appends new card, (5) WS push
-  removes accepted card via OOB. Use Playwright if importable (try/except
-  at module top); Selenium fallback; otherwise mark with
-  `pytest.skip("playwright/selenium not installed")` and emit a warning
-  so the orchestrator surfaces it. Tests live in `tests/e2e/`.
-
 ## Week 12 — regression + cutover rehearsal
 
 - [ ] **Golden-dataset regression harness (`tests/regression/test_golden_30day.py`).**
