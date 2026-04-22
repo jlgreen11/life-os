@@ -34,15 +34,6 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 <!-- DONE (see DONE_TASKS.md): Port DESIGN.md tokens → Swift. 5 Swift files in ios/LifeOS/DesignSystem/, committed in 43887cc. -->
 
 
-- [ ] **Swift `Moment` type + enums (`ios/LifeOS/Models/Moment.swift`).** Codable mirror of Python `core/moment/types.py`:
-  - `enum MomentState: String, Codable` with cases matching Python
-  - `enum InsightType: String, Codable`
-  - `enum ActionKind: String, Codable`
-  - `struct Action: Codable { kind, params }` (params as `[String: AnyCodable]`)
-  - `struct ContextTrigger: Codable { expression }`
-  - `struct Moment: Codable, Identifiable { id, createdAt, scheduledFor?, expiresAt, contextTrigger?, insight, evidence, evidenceHash, proposedAction, state, snoozeUntil?, confidence, feedbackWeight, sourceInsightType }`
-  JSON decode tests with fixtures from `tests/fixtures/v2_moment_sample.json` (create a couple fixtures that match v2 API output).
-
 - [ ] **Regenerate `APIClient.swift` against v2 endpoints.** Fix existing mismatches + add new endpoints:
   - `GET /api/now` → `MomentFeed` (pending, scheduled, done)
   - `POST /api/moments/{id}/accept|dismiss|snooze|edit`
