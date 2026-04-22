@@ -73,20 +73,6 @@ Splitting the original task into the well-defined slices below; the two
 slices that depend on the undo design land last and carry their own
 NOTE flagging the blocker. -->
 
-- [ ] **Undo toast — POST endpoint + state-machine edge.**
-  Per design note at `docs/plans/2026-04-22-undo-grace.md` § "Decision 1".
-  Add `POST /api/moments/{id}/undo` that reverses the most recent
-  terminal/snooze transition within a 3 s grace window (server-enforced
-  via `state_history.ts` check); 410 Gone if outside window; 409 if not
-  in an undoable state. Add the legal transition edges
-  (ACCEPTED→SUGGESTED, DISMISSED→SUGGESTED — SNOOZED→SUGGESTED already
-  legal) and an ``annotation='undo'`` stamp on the bounce row.
-  Compensate feedback weight with the inverse signal. Wire the existing
-  `data-undo` button in `base.html` to call it (replace the current
-  `toast.remove()` no-op with an `htmx:trigger`).
-  Tests: state-machine fanout + route-level grace-window enforcement
-  (404/409/410/200 branches from design note § "Test plan").
-
 - [ ] **Deferred outbox dispatch (3 s grace).**
   Per design note at `docs/plans/2026-04-22-undo-grace.md` § "Decision 2".
   Add `not_before INTEGER NULL` column to `outbox`; `enqueue(...,
