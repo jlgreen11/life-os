@@ -19,6 +19,7 @@ This package is split into:
 - ``engine`` — orchestration over producers, repos, feedback weights
 """
 
+from core.moment.state import IllegalTransition, validate_transition
 from core.moment.types import (
     Action,
     ActionKind,
@@ -33,8 +34,10 @@ __all__ = [
     "Action",
     "ActionKind",
     "ContextTrigger",
+    "IllegalTransition",
     "InsightType",
     "Moment",
     "MomentState",
     "StateHistoryEntry",
+    "validate_transition",
 ]
