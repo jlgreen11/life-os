@@ -1,0 +1,132 @@
+{#
+  Life OS v2 — Moment card primitive.
+
+  Renders one Moment in the Now-tab feed. Three render states are
+  supported via context flags so the same partial covers the static
+  page and the HTMX swap target:
+
+    moment            (Moment)  required — dataclass instance.
+    draft_pending     (bool)    optional — show "Writing a draft…" loader
+                                instead of the static draft block.
+    expanded_evidence (bool)    optional — render the evidence partial
+                                inline (no HTMX round-trip needed).
+
+  Visual contract (DESIGN.md § "Moment card — states"):
+    - 22pt insight headline (display font, snug leading)
+    - Optional draft block (recessed bg, --r-lg radius)
+    - Action row: exactly one primary filled button + 2–3 ghost buttons
+    - Evidence link below + "Why am I seeing this" microcopy
+
+  HTMX wiring is wired here but the JSON action endpoints will return
+  HTML partials in the next task (Week 9 task 2). The hx-* attributes
+  are stable so that follow-up adds the response handling, not the
+  attributes.
+#}
+{# why-microcopy table per insight type — see DESIGN.md § "Copy voice".
+   String keys mirror core.moment.types.InsightType (StrEnum values). #}
+{% set why_map = {
+    "cadence":      "This appeared because your usual cadence shifted.",
+    "relationship": "This appeared because you haven't connected in a while.",
+    "temporal":     "This appeared because of your typical schedule.",
+    "spatial":      "This appeared because of a place you visit.",
+    "comm_template":"This appeared because it matches a template you use here.",
+    "routine":      "This appeared because it fits a routine I noticed.",
+} %}
+{# Primary button label per ActionKind. #}
+{% set primary_labels = {
+    "draft_message":         "Send",
+    "send_message":          "Send",
+    "schedule_block":        "Schedule",
+    "archive_event":         "Archive",
+    "nudge":                 "Nudge",
+    "set_reminder":          "Set reminder",
+    "create_calendar_entry": "Add to calendar",
+    "note_observation":      "Note it",
+} %}
+{% set kind_str          = moment.proposed_action.kind|string %}
+{% set insight_type_str  = moment.source_insight_type|string %}
+{% set draft_body        = moment.proposed_action.params.get('body') %}
+{% set primary_label     = primary_labels.get(kind_str, 'Accept') %}
+{% set why               = why_map.get(insight_type_str, 'This appeared from your patterns.') %}
+{% set is_message        = kind_str in ('draft_message', 'send_message') %}
+<article class="moment-card flex flex-col gap-[var(--s-3)] bg-[color:var(--bg-raised)] rounded-[var(--r-md)] shadow-[var(--elev-1)] px-[var(--s-4)] py-[var(--s-5)] transition-shadow duration-[var(--motion-micro)] hover:bg-[color:var(--bg-raised-hover)] hover:shadow-[var(--elev-2)]"
+         data-moment-id="{{ moment.id }}"
+         data-state="{{ moment.state }}"
+         data-insight-type="{{ insight_type_str }}"
+         data-action-kind="{{ kind_str }}"
+         tabindex="0"
+         role="article"
+         aria-label="{{ moment.insight }} — {{ primary_label }}">
+
+    <h3 class="moment-card__insight font-display text-[length:var(--t-22)] leading-[var(--lh-snug)] tracking-[var(--ls-tight)] font-semibold text-[color:var(--text-primary)] m-0">
+        {{ moment.insight }}
+    </h3>
+
+    {% if draft_pending %}
+        <div class="moment-card__draft moment-card__draft--pending bg-[color:var(--draft-bg)] border border-[color:var(--draft-border)] rounded-[var(--r-lg)] px-[var(--s-4)] py-[var(--s-3)] text-[length:var(--t-13)] text-[color:var(--text-secondary)]"
+             data-slot="draft-pending"
+             aria-live="polite">
+            Writing a draft<span class="moment-card__dots" aria-hidden="true">…</span>
+        </div>
+    {% elif draft_body %}
+        <div class="moment-card__draft bg-[color:var(--draft-bg)] border border-[color:var(--draft-border)] rounded-[var(--r-lg)] px-[var(--s-4)] py-[var(--s-3)] text-[length:var(--t-15)] leading-[var(--lh-default)] text-[color:var(--text-primary)] whitespace-pre-wrap"
+             data-slot="draft">{{ draft_body }}</div>
+    {% endif %}
+
+    <div class="moment-card__actions flex items-center flex-wrap gap-[var(--s-2)]"
+         role="group"
+         aria-label="Moment actions">
+        <button type="button"
+                class="btn-primary inline-flex items-center justify-center min-h-[36px] min-w-[36px] px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium bg-[color:var(--primary-action)] text-white transition-colors duration-[var(--motion-micro)] hover:bg-[color:var(--primary-action-hover)] active:bg-[color:var(--primary-action-pressed)]"
+                hx-post="/api/moments/{{ moment.id }}/accept"
+                hx-swap="outerHTML"
+                hx-target="closest .moment-card"
+                data-action="accept">{{ primary_label }}</button>
+
+        {% if is_message %}
+            <button type="button"
+                    class="btn-ghost inline-flex items-center justify-center min-h-[36px] min-w-[36px] px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
+                    data-action="edit"
+                    aria-label="Edit draft">Edit</button>
+        {% endif %}
+
+        <button type="button"
+                class="btn-ghost inline-flex items-center justify-center min-h-[36px] min-w-[36px] px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
+                data-action="snooze"
+                data-snooze-popover-trigger
+                aria-haspopup="menu"
+                aria-label="Snooze">Snooze</button>
+
+        <button type="button"
+                class="btn-ghost btn-dismiss inline-flex items-center justify-center min-h-[36px] min-w-[36px] ml-auto px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-secondary)] hover:text-[color:var(--error)] hover:bg-[color:var(--bg-raised-hover)]"
+                hx-post="/api/moments/{{ moment.id }}/dismiss"
+                hx-swap="outerHTML"
+                hx-target="closest .moment-card"
+                data-action="dismiss"
+                aria-label="Dismiss">Dismiss</button>
+    </div>
+
+    <footer class="moment-card__evidence flex flex-col gap-[var(--s-1)] mt-[var(--s-1)]">
+        <button type="button"
+                class="evidence-toggle self-start inline-flex items-center gap-[var(--s-1)] text-[length:var(--t-13)] text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)]"
+                hx-get="/api/moments/{{ moment.id }}/evidence"
+                hx-target="#evidence-{{ moment.id }}"
+                hx-swap="innerHTML"
+                aria-expanded="{{ 'true' if expanded_evidence else 'false' }}"
+                aria-controls="evidence-{{ moment.id }}"
+                data-slot="evidence-toggle">
+            <span aria-hidden="true" class="evidence-toggle__chevron">▾</span>
+            Evidence ({{ moment.evidence|length }})
+        </button>
+        <p class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] m-0" data-slot="why-microcopy">
+            {{ why }}
+        </p>
+        <div id="evidence-{{ moment.id }}"
+             class="moment-card__evidence-panel"
+             data-slot="evidence-panel">
+            {% if expanded_evidence %}
+                {% include "partials/evidence.html" %}
+            {% endif %}
+        </div>
+    </footer>
+</article>

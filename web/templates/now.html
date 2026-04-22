@@ -1,0 +1,104 @@
+{#
+  Life OS v2 — Now tab.
+
+  Page sections (DESIGN.md § "Information Architecture"):
+
+  - NOW         — pending Moments, rendered as full Moment cards.
+  - UP NEXT     — scheduled Moments, compact one-line list.
+  - DONE TODAY  — collapsed by default, terminal Moments from today.
+
+  Context (set by `api.routes.now.now_page`):
+
+    pending     : list[core.moment.types.Moment]
+    scheduled   : list[core.moment.types.Moment]
+    done        : list[core.moment.types.Moment]
+
+  Empty states render warm one-line copy per DESIGN.md § "Empty states";
+  no cartoons, no "Get Started" buttons (this is a steady-state view).
+#}
+{% extends "base.html" %}
+
+{% block title %}Now · Life OS{% endblock %}
+
+{% block content %}
+<section aria-labelledby="now-heading"
+         data-section="now"
+         class="mb-[var(--s-8)]">
+    <h2 id="now-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-4)]">
+        Now
+    </h2>
+    {% if pending %}
+        <ol class="flex flex-col gap-[var(--s-6)] list-none p-0 m-0">
+            {% for moment in pending %}
+                <li>{% include "partials/moment_card.html" %}</li>
+            {% endfor %}
+        </ol>
+    {% else %}
+        <div data-empty="now">
+            <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
+                Nothing pressing right now.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                New Moments will surface here as they arrive.
+            </p>
+        </div>
+    {% endif %}
+</section>
+
+<section aria-labelledby="upnext-heading"
+         data-section="up-next"
+         class="mb-[var(--s-8)]">
+    <h2 id="upnext-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Up Next
+    </h2>
+    {% if scheduled %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for moment in scheduled %}
+                <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] border-b border-[color:var(--border-subtle)]"
+                    data-moment-id="{{ moment.id }}">
+                    <span class="text-[length:var(--t-15)] text-[color:var(--text-primary)]">{{ moment.insight }}</span>
+                    {% if moment.scheduled_for %}
+                        <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono"
+                              data-slot="scheduled-ts">{{ moment.scheduled_for }}</span>
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0" data-empty="up-next">
+            Nothing queued.
+        </p>
+    {% endif %}
+</section>
+
+<section aria-labelledby="done-heading" data-section="done-today">
+    {# <details> is collapsed by default — DESIGN.md § "Now: DONE TODAY (collapsed)". #}
+    <details>
+        <summary id="done-heading"
+                 class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] cursor-pointer">
+            Done Today
+            <span class="ml-[var(--s-1)] text-[color:var(--text-tertiary)] normal-case tracking-normal font-normal">
+                ({{ done|length }})
+            </span>
+        </summary>
+        {% if done %}
+            <ul class="flex flex-col list-none p-0 mt-[var(--s-3)] border-t border-[color:var(--border-subtle)]">
+                {% for moment in done %}
+                    <li class="flex items-baseline justify-between gap-[var(--s-4)] py-[var(--s-2)] border-b border-[color:var(--border-subtle)] text-[color:var(--text-secondary)]"
+                        data-moment-id="{{ moment.id }}">
+                        <span class="text-[length:var(--t-15)]">{{ moment.insight }}</span>
+                        <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)] font-mono uppercase tracking-[var(--ls-caps)]"
+                              data-slot="done-state">{{ moment.state }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-3)] m-0" data-empty="done-today">
+                Nothing yet today.
+            </p>
+        {% endif %}
+    </details>
+</section>
+{% endblock %}

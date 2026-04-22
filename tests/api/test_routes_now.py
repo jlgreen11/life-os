@@ -381,3 +381,81 @@ def test_snooze_rejects_unknown_fields(client: TestClient, repo) -> None:
         json={"snooze_until": REF_NOW + 60, "unknown": "drop-me"},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /api/moments/{id}/evidence — HTMX reveal partial
+# ---------------------------------------------------------------------------
+
+
+def test_get_evidence_renders_partial_html(client: TestClient, repo) -> None:
+    """The endpoint returns the evidence-list partial as text/html."""
+    mom = _make_moment()
+    repo.create(mom)
+
+    resp = client.get(f"/api/moments/{mom.id}/evidence")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert 'data-slot="evidence-list"' in body
+    # The default fixture moment carries two evidence refs.
+    assert "evt-1" in body
+    assert "evt-2" in body
+
+
+def test_get_evidence_empty_state(client: TestClient, repo) -> None:
+    """A moment with no evidence still 200s and shows the empty row."""
+    mom = _make_moment()
+    # Strip evidence after construction; the repo writes whatever we hand it.
+    mom.evidence.clear()
+    repo.create(mom)
+
+    resp = client.get(f"/api/moments/{mom.id}/evidence")
+    assert resp.status_code == 200
+    assert 'data-slot="evidence-empty"' in resp.text
+    assert "No source events recorded." in resp.text
+
+
+def test_get_evidence_unknown_id_returns_404(client: TestClient) -> None:
+    resp = client.get("/api/moments/missing/evidence")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET / — Now-tab page
+# ---------------------------------------------------------------------------
+
+
+def test_now_page_renders_html(client: TestClient) -> None:
+    """The home route returns full HTML with all three named sections."""
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    body = resp.text
+    assert "<!DOCTYPE html>" in body
+    assert 'data-section="now"' in body
+    assert 'data-section="up-next"' in body
+    assert 'data-section="done-today"' in body
+
+
+def test_now_page_includes_pending_moment_card(client: TestClient, repo) -> None:
+    """A pending moment shows up as a Moment card in the page."""
+    mom = _make_moment(insight="water the plants", confidence=0.9)
+    repo.create(mom)
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "moment-card" in body
+    assert "water the plants" in body
+    assert f'data-moment-id="{mom.id}"' in body
+    # And the page sits under the Now tab in the nav.
+    assert 'data-active-tab="now"' in body
+
+
+def test_now_page_503_when_repo_missing() -> None:
+    """Half-constructed life_os surfaces the same 503 the JSON route does."""
+    app = create_app(DummyLifeOS(moment_repo=None, feedback_weight_store=None))
+    c = TestClient(app)
+    resp = c.get("/")
+    assert resp.status_code == 503

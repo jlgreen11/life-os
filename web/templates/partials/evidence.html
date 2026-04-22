@@ -1,0 +1,32 @@
+{#
+  Life OS v2 — Moment evidence excerpt list.
+
+  Returned by ``GET /api/moments/{id}/evidence`` and HTMX-swapped into
+  the ``#evidence-{id}`` panel inside the Moment card. Renders the raw
+  evidence references attached to the Moment.
+
+  Phase 1 limitation: ``moment.evidence`` is a list of opaque event-id
+  strings. Until the v2 event-store lookup is wired (Week 11+), we
+  display the IDs verbatim in mono. The wireframe target is one short
+  excerpt per row ("From email · Apr 12 · subject…"); that enrichment
+  is additive and does not change the partial's outer shape.
+
+  Context:
+    moment (Moment) — required.
+#}
+{% if not moment.evidence %}
+    <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] m-0 mt-[var(--s-2)]"
+       data-slot="evidence-empty">
+        No source events recorded.
+    </p>
+{% else %}
+    <ul class="evidence-list flex flex-col gap-[var(--s-1)] list-none p-0 mt-[var(--s-2)]"
+        data-slot="evidence-list">
+        {% for ref in moment.evidence %}
+            <li class="evidence-item flex items-baseline gap-[var(--s-2)] text-[length:var(--t-13)] text-[color:var(--text-secondary)]">
+                <span aria-hidden="true" class="text-[color:var(--text-tertiary)]">·</span>
+                <span class="font-mono text-[length:var(--t-11)] text-[color:var(--text-tertiary)] truncate">{{ ref }}</span>
+            </li>
+        {% endfor %}
+    </ul>
+{% endif %}

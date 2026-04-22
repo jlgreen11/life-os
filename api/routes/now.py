@@ -1,8 +1,10 @@
 """Now-tab + moment-action endpoints.
 
-Five REST routes locked by engineering plan § "14-endpoint API contract":
+REST routes locked by engineering plan § "14-endpoint API contract":
 
+- ``GET /``                            → Now-tab page (HTML, full render)
 - ``GET /api/now``                     → pending · scheduled · done-today
+- ``GET /api/moments/{id}/evidence``   → HTML partial (HTMX reveal)
 - ``POST /api/moments/{id}/accept``    → SUGGESTED → ACCEPTED (+ feedback)
 - ``POST /api/moments/{id}/dismiss``   → SUGGESTED → DISMISSED (+ feedback)
 - ``POST /api/moments/{id}/snooze``    → SUGGESTED → SNOOZED  (+ feedback)
@@ -43,10 +45,12 @@ returns the updated Moment. No external side effects fire yet.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
 
 from api.schemas import MomentActionIn, MomentListOut, MomentOut
 from core.moment.state import IllegalTransition
 from core.moment.types import Moment, MomentState
+from web.rendering import render
 
 # Engineering plan § "GET /api/now" locks these limits; keep as module
 # constants so tests can import them if we ever want to parameterise.
@@ -275,6 +279,59 @@ def snooze_moment(
         ) from exc
     _record_feedback(_feedback_store(request), existing.source_insight_type, MomentState.SNOOZED)
     return _as_moment_out(updated)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/moments/{id}/evidence — HTMX reveal partial
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/moments/{moment_id}/evidence", response_class=HTMLResponse)
+def get_moment_evidence(moment_id: str, request: Request) -> HTMLResponse:
+    """Return the evidence-list partial for HTMX reveal.
+
+    Loads the Moment off the repo and renders ``partials/evidence.html``
+    against it. The partial returns a list (or an empty-state row) with
+    no card chrome — the caller swaps it directly into the panel slot
+    inside the parent Moment card.
+
+    Returns 404 if the Moment does not exist (or is a legacy_task row
+    filtered out by the repo). The partial is autoescaped, so any
+    free-form evidence string is safe to render verbatim.
+    """
+    repo = _moment_repo(request)
+    moment = _load_or_404(repo, moment_id)
+    html = render("partials/evidence.html", {"moment": moment})
+    return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
+# GET / — Now-tab page (server-rendered HTML)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/", response_class=HTMLResponse)
+def now_page(request: Request) -> HTMLResponse:
+    """Render the Now tab as a full HTML page.
+
+    Pulls the same three buckets as :func:`get_now` (pending / scheduled /
+    done-today) and hands the raw :class:`Moment` dataclasses to the
+    Jinja template. The template owns the visual contract (DESIGN.md
+    § "Moment card — states"); this handler stays a thin loader so a
+    follow-up swap to a different storage layout never has to touch
+    template logic.
+    """
+    repo = _moment_repo(request)
+    html = render(
+        "now.html",
+        {
+            "active_tab": "now",
+            "pending": list(repo.list_pending(limit=PENDING_LIMIT)),
+            "scheduled": list(repo.list_scheduled(limit=SCHEDULED_LIMIT)),
+            "done": list(repo.list_done_today(limit=DONE_LIMIT)),
+        },
+    )
+    return HTMLResponse(html)
 
 
 @router.post("/api/moments/{moment_id}/edit", response_model=MomentOut)
