@@ -34,12 +34,6 @@
 
 ## Week 4 — Producer base + 3 producers
 
-- [ ] **Relationship producer (`producers/relationship.py`).** InsightType.RELATIONSHIP:
-  - Tracks reciprocity drift: if outbound/inbound ratio for a contact drops below 0.3 over last 4 weeks (previously > 0.5) → Moment
-  - Insight: "You've been replying less to {Name}. Outbound dropped {X}%."
-  - Action: ActionKind.NUDGE or ActionKind.DRAFT_MESSAGE
-  Tests: 0 Moment if <20 interactions, fires on real drop, idempotent per week.
-
 - [ ] **Temporal producer (`producers/temporal.py`).** InsightType.TEMPORAL:
   - Uses detected chronotype (from temporal signal profile) + time + calendar state
   - Emits Moment when: (a) user enters a historical high-focus window, OR (b) calendar has ≥ 60 min gap opening
