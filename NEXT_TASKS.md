@@ -48,14 +48,6 @@
 
 ## Week 11 — Real-time + full flows
 
-- [ ] **WebSocket push (`api/routes/websocket.py` + base wiring).**
-  - Server broadcasts Moment state changes to connected clients
-  - Client: `hx-ws="connect:/ws"` on base; server pushes partial HTML; HTMX swaps
-  - On new pending Moment: insert at top of NOW with subtle accent bar for 3s (client animation)
-  - On done: update DONE TODAY
-  - Reconnect: exponential backoff; "Reconnecting..." pill in header on drop
-  Tests: TestClient WebSocket integration; drop triggers banner; state change pushes partial.
-
 - [ ] **E2E action flows + Undo toast.**
   - Inline draft editing: clicking draft → textarea; Esc cancels, Cmd+Enter commits via POST /api/moments/{id}/accept with edited action_params
   - Snooze popover: chip row; selection POSTs + closes
