@@ -47,14 +47,8 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- DONE (see DONE_TASKS.md): `YouTabView.swift` + 4-section self-portrait + 22 tests. Header line ("Observed N months · M interactions"), four sections (WHEN YOU'RE AT YOUR BEST / HOW YOU WRITE / YOUR ROUTINES / DRIFTING) locked via `YouSection.allCases`, plain-text rows on bgRaised tiles (no mood bars, no progress bars, no charts), calm empty-state copy per DESIGN.md. `MockData.selfPortrait` + `MockData.emptySelfPortrait` fixtures. -->
 
+<!-- DONE (see DONE_TASKS.md): `PeopleTabView.swift` + `ContactDossierView.swift` + `CadenceSparkline` + 43 tests. People tab: `.searchable`-driven query, pinned YOU identity row, NEEDS ATTENTION + ACTIVE THIS WEEK sections with right-aligned SF-Mono stats ("9d ago" + "+4d"), `NavigationLink(value:)` push to per-contact dossier. Dossier: last-contact sentence, commTemplate/fallback, bullet topics, SwiftUI-Path cadence sparkline (no chart libs), predicted-next sentence, single `[Start a message]` primary. Pure static helpers for filter/lastSeenLabel/cadenceLabel/sparklinePoints so XCTest can lock every copy string and the sparkline math against a frozen `MockData.anchorDate`. -->
 
-- [ ] **`PeopleTabView.swift` + `ContactDossierView.swift`.** Per DESIGN.md:
-  - `PeopleTabView` — search field, YOU first entry, NEEDS ATTENTION + ACTIVE THIS WEEK sections
-  - Right-aligned monospace stats
-  - Tap row → navigate to `ContactDossierView`
-  - `ContactDossierView` — communication style, recent topics, cadence sparkline (SwiftUI Path), predicted next, [Start a message] primary
-  NO avatars; plain text only.
-  Tests: preview renders; navigation works.
 
 - [ ] **`SettingsTabView.swift`.** Per DESIGN.md:
   - Connector list (status dot + last sync + enabled toggle)
