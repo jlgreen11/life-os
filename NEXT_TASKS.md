@@ -89,12 +89,17 @@ on the Mac Mini for the harness to run end-to-end; see
 `docs/regression-runs/README.md` for the snapshot layout. -->
 
 
-- [ ] **Cutover rehearsal (full dry-run end-to-end).**
-  - Extends `scripts/migrate_v1_to_v2.py` against full v1 backup (expected at `./data/backup-YYYYMMDD/`)
-  - Verify: 3 dry-run checks from CEO plan data-migration section (row-count diff, FK integrity, vector-store integrity)
-  - Emit `docs/cutover-rehearsals/{date}.md`: pass/fail + runtime + disk used
-  - If no backup: NOTE saying "rehearsal requires local v1 backup; run on Mac Mini"
-  - DOES NOT perform actual cutover (human operator only). Flag in summary.
+<!-- NOTE (2026-04-22, completed in SHA 30bb232): cutover rehearsal landed
+as `scripts/cutover_rehearsal.py` + `tests/scripts/test_cutover_rehearsal.py`.
+Auto-discovers a v1 backup at `data/backup-YYYYMMDD/` (override via
+`--source-dir`), runs the migration into a tmpdir, then runs the three
+CEO-plan dry-run checks (row-count diff + FK integrity, moment.evidence
+referential integrity, vector-store integrity). Emits a markdown report
+to `docs/cutover-rehearsals/<date>.md` with overall PASS/FAIL, runtime,
+on-disk size, and a DRY-RUN ONLY banner. No-backup branch writes a
+`<date>-skipped.md` stub and exits 0 — the autonomous-agent host has no
+production data; the rehearsal is meaningful only on the Mac Mini. -->
+
 
 ## Week 13+ — HUMAN ONLY (agent should skip with NOTE)
 
