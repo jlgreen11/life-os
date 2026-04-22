@@ -632,3 +632,138 @@ def test_base_template_includes_undo_toast_handler(client: TestClient) -> None:
     assert "showUndoToast" in body
     # 3-second auto-dismiss (per DESIGN.md and task spec).
     assert "3000" in body
+
+
+# ---------------------------------------------------------------------------
+# Inline draft editor (Week 11 task 1) — render-time DOM + edit→accept chain
+# ---------------------------------------------------------------------------
+
+
+def test_moment_card_renders_draft_trigger_and_hidden_editor(client: TestClient, repo) -> None:
+    """The draft block is promoted to a clickable trigger and a sibling
+    <textarea data-slot="draft-editor" hidden> lives alongside it. The
+    textarea is hidden by default; clicking the trigger swaps them in JS."""
+    mom = _make_moment(insight="ping mom", draft="hey — been a minute")
+    repo.create(mom)
+
+    body = client.get("/").text
+
+    # Trigger: role=button + tabindex + onclick hooks into lifeos JS.
+    assert 'data-slot="draft"' in body
+    assert 'role="button"' in body
+    assert 'onclick="lifeos.activateDraftEditor(this)"' in body
+    # Enter / Space keyboard activation wired on the trigger.
+    assert "onkeydown=" in body
+    assert "event.key===&#39;Enter&#39;" in body or "event.key==='Enter'" in body
+
+    # Textarea exists, carries the moment id, starts hidden.
+    assert 'data-slot="draft-editor"' in body
+    assert f'data-moment-id="{mom.id}"' in body
+    # Must be present with the hidden attribute so tab order is stable
+    # (not `display:none`, not absent — we toggle `hidden` from JS).
+    assert "hidden>" in body
+    # Keyboard & input handlers for Esc cancel + Cmd/Ctrl+Enter commit.
+    assert "lifeos.handleDraftEditorKey(event)" in body
+    assert "lifeos.autosizeDraftEditor(this)" in body
+
+
+def test_moment_card_draft_editor_preserves_body_text(client: TestClient, repo) -> None:
+    """The textarea's initial content is the draft body so users start
+    editing from the existing text, not a blank box."""
+    draft = "Hey, been a while — want to grab coffee?"
+    mom = _make_moment(draft=draft)
+    repo.create(mom)
+
+    body = client.get("/").text
+    # Body text appears both in the clickable <div> and inside the textarea.
+    assert draft in body
+    # Textarea block contains the draft between its tags.
+    import re
+
+    match = re.search(
+        r'<textarea[^>]*data-slot="draft-editor"[^>]*>([^<]*)</textarea>',
+        body,
+    )
+    assert match is not None
+    assert match.group(1) == draft
+
+
+def test_edit_button_wires_into_draft_editor_activator(client: TestClient, repo) -> None:
+    """The existing Edit ghost button now calls the same activator so
+    mouse users who click Edit get the same textarea as draft-clickers."""
+    mom = _make_moment()
+    repo.create(mom)
+
+    body = client.get("/").text
+    # The Edit button still exists (tab navigation preserved) and now
+    # triggers the inline editor rather than being a dead surface.
+    assert 'data-action="edit"' in body
+    # There is an onclick on the Edit button that calls activateDraftEditor.
+    import re
+
+    edit_btn = re.search(
+        r'<button[^>]*data-action="edit"[^>]*>',
+        body,
+    )
+    assert edit_btn is not None
+    assert "lifeos.activateDraftEditor(this)" in edit_btn.group(0)
+
+
+def test_base_template_includes_inline_draft_editor_handlers(client: TestClient) -> None:
+    """The four vanilla-JS helpers that power the inline editor must be
+    defined on `window.lifeos` so any Moment card can reach them."""
+    body = client.get("/").text
+    for fn in (
+        "activateDraftEditor",
+        "deactivateDraftEditor",
+        "handleDraftEditorKey",
+        "autosizeDraftEditor",
+        "commitDraftEditor",
+    ):
+        assert f"lifeos.{fn}" in body, f"missing helper: {fn}"
+    # Escape cancels + Cmd/Ctrl+Enter commits.
+    assert "event.key === 'Escape'" in body
+    assert "metaKey" in body and "ctrlKey" in body
+    # The chain calls /edit then clicks the Accept button (which rides
+    # the existing HTMX wiring).
+    assert "/api/moments/" in body
+    assert "'[data-action=\"accept\"]'" in body or '"[data-action=\\"accept\\"]"' in body
+
+
+def test_edit_then_accept_chain_persists_new_body_on_json_path(
+    client: TestClient,
+    repo,
+    feedback,
+) -> None:
+    """End-to-end verification of the edit→accept chain on the JSON path.
+    Mirrors what the JS handler does: POST /edit then POST /accept. The
+    accept response must reflect the edited body, proving the chain
+    preserves the rewrite."""
+    mom = _make_moment(insight_type=InsightType.CADENCE, draft="original draft body")
+    repo.create(mom)
+
+    new_body = "rewritten draft body for chained commit"
+
+    edit_resp = client.post(
+        f"/api/moments/{mom.id}/edit",
+        json={"action_params": {"body": new_body}},
+    )
+    assert edit_resp.status_code == 200
+    edited = edit_resp.json()
+    # Edit is not a transition — state stays SUGGESTED.
+    assert edited["state"] == MomentState.SUGGESTED.value
+    assert edited["proposed_action"]["params"] == {"body": new_body}
+
+    accept_resp = client.post(f"/api/moments/{mom.id}/accept")
+    assert accept_resp.status_code == 200
+    accepted = accept_resp.json()
+    assert accepted["state"] == MomentState.ACCEPTED.value
+    # The rewritten body survives the state transition — the accept
+    # handler does not rehydrate from stale in-memory state.
+    assert accepted["proposed_action"]["params"] == {"body": new_body}
+    # History gains the ACCEPTED row appended to the SUGGESTED row.
+    states = [h["to_state"] for h in accepted["state_history"]]
+    assert states == [MomentState.SUGGESTED.value, MomentState.ACCEPTED.value]
+    # And the feedback weight only moved on accept, not on edit.
+    _, decisions = feedback.get(InsightType.CADENCE.value)
+    assert decisions == 1

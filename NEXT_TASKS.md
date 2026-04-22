@@ -73,16 +73,6 @@ Splitting the original task into the well-defined slices below; the two
 slices that depend on the undo design land last and carry their own
 NOTE flagging the blocker. -->
 
-- [ ] **Inline draft editor on Moment card.** Click draft body → textarea
-  with autosize; Esc cancels (restores prior text); Cmd/Ctrl+Enter commits
-  via `POST /api/moments/{id}/edit` with `{action_params: {body: <new>}}`
-  THEN `POST /api/moments/{id}/accept` (chained via `htmx:afterSwap` or a
-  small JS handler in `base.html`). Tab navigation preserved.
-  Tests: render-time DOM assertions (textarea hidden by default, draft
-  click swaps it in) + `tests/api/test_routes_now.py` confirms the
-  edit→accept chain works end-to-end on the JSON path. No new endpoint
-  needed; both `/edit` and `/accept` already exist.
-
 - [ ] **Snooze popover polish.** Already wired in commit `ba079fc` but two
   gaps remain per DESIGN.md § "Snooze popover":
   (a) "Custom" chip currently no-ops — wire it to a small inline

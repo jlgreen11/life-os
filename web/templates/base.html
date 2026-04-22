@@ -268,6 +268,80 @@
             });
         });
 
+        // Inline draft editor. Click (or Enter/Space) on a Moment card's
+        // draft body swaps the <div> for the sibling <textarea>; Esc
+        // cancels and restores the prior text; Cmd/Ctrl+Enter commits
+        // via a chained `POST /edit → POST /accept` pair. The Accept
+        // half rides HTMX so the existing swap/toast plumbing keeps
+        // working; the Edit half uses fetch() because we do not want
+        // an HTMX swap on the edit response (the card stays mounted
+        // until the subsequent accept completes).
+        window.lifeos.activateDraftEditor = function (el) {
+            const card = el.closest('.moment-card');
+            if (!card) return;
+            const trigger = card.querySelector('[data-slot="draft"]');
+            const editor = card.querySelector('[data-slot="draft-editor"]');
+            if (!trigger || !editor) return;
+            editor.dataset.original = editor.value;
+            trigger.setAttribute('hidden', '');
+            editor.removeAttribute('hidden');
+            window.lifeos.autosizeDraftEditor(editor);
+            editor.focus();
+            const end = editor.value.length;
+            editor.setSelectionRange(end, end);
+        };
+
+        window.lifeos.autosizeDraftEditor = function (textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+        };
+
+        window.lifeos.deactivateDraftEditor = function (textarea) {
+            const card = textarea.closest('.moment-card');
+            if (!card) return;
+            const trigger = card.querySelector('[data-slot="draft"]');
+            textarea.setAttribute('hidden', '');
+            if (trigger) {
+                trigger.removeAttribute('hidden');
+                trigger.focus();
+            }
+        };
+
+        window.lifeos.handleDraftEditorKey = function (event) {
+            const textarea = event.currentTarget;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                textarea.value = textarea.dataset.original || '';
+                window.lifeos.deactivateDraftEditor(textarea);
+            } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                window.lifeos.commitDraftEditor(textarea);
+            }
+        };
+
+        window.lifeos.commitDraftEditor = function (textarea) {
+            const momentId = textarea.dataset.momentId;
+            const card = textarea.closest('.moment-card');
+            if (!momentId || !card) return;
+            const newBody = textarea.value;
+            textarea.disabled = true;
+            fetch('/api/moments/' + encodeURIComponent(momentId) + '/edit', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action_params: {body: newBody}}),
+            }).then(function (r) {
+                textarea.disabled = false;
+                if (!r.ok) return;
+                const trigger = card.querySelector('[data-slot="draft"]');
+                if (trigger) trigger.textContent = newBody;
+                textarea.dataset.original = newBody;
+                const accept = card.querySelector('[data-action="accept"]');
+                if (accept) accept.click();
+            }).catch(function () {
+                textarea.disabled = false;
+            });
+        };
+
         window.lifeos.showUndoToast = function (detail) {
             const region = document.getElementById('toast-region');
             if (!region) return;

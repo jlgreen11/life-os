@@ -69,8 +69,26 @@
             Writing a draft<span class="moment-card__dots" aria-hidden="true">…</span>
         </div>
     {% elif draft_body %}
-        <div class="moment-card__draft bg-[color:var(--draft-bg)] border border-[color:var(--draft-border)] rounded-[var(--r-lg)] px-[var(--s-4)] py-[var(--s-3)] text-[length:var(--t-15)] leading-[var(--lh-default)] text-[color:var(--text-primary)] whitespace-pre-wrap"
-             data-slot="draft">{{ draft_body }}</div>
+        {# Clickable draft body — Enter/Space or click promotes it to a
+           textarea editor (see `lifeos.activateDraftEditor` in base.html).
+           The sibling textarea is kept in the DOM but `hidden` so tab
+           order is stable across the hidden/shown swap. #}
+        <div class="moment-card__draft bg-[color:var(--draft-bg)] border border-[color:var(--draft-border)] rounded-[var(--r-lg)] px-[var(--s-4)] py-[var(--s-3)] text-[length:var(--t-15)] leading-[var(--lh-default)] text-[color:var(--text-primary)] whitespace-pre-wrap cursor-text"
+             data-slot="draft"
+             data-moment-id="{{ moment.id }}"
+             role="button"
+             tabindex="0"
+             aria-label="Edit draft"
+             onclick="lifeos.activateDraftEditor(this)"
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();lifeos.activateDraftEditor(this);}">{{ draft_body }}</div>
+        <textarea class="moment-card__draft-editor bg-[color:var(--draft-bg)] border border-[color:var(--draft-border)] rounded-[var(--r-lg)] px-[var(--s-4)] py-[var(--s-3)] text-[length:var(--t-15)] leading-[var(--lh-default)] text-[color:var(--text-primary)] w-full resize-none font-text"
+                  data-slot="draft-editor"
+                  data-moment-id="{{ moment.id }}"
+                  aria-label="Draft text"
+                  rows="3"
+                  onkeydown="lifeos.handleDraftEditorKey(event)"
+                  oninput="lifeos.autosizeDraftEditor(this)"
+                  hidden>{{- draft_body -}}</textarea>
     {% endif %}
 
     <div class="moment-card__actions flex items-center flex-wrap gap-[var(--s-2)]"
@@ -87,6 +105,7 @@
             <button type="button"
                     class="btn-ghost inline-flex items-center justify-center min-h-[36px] min-w-[36px] px-[var(--s-3)] py-[var(--s-2)] rounded-[var(--r-sm)] text-[length:var(--t-15)] font-medium text-[color:var(--text-primary)] hover:bg-[color:var(--bg-raised-hover)]"
                     data-action="edit"
+                    onclick="lifeos.activateDraftEditor(this)"
                     aria-label="Edit draft">Edit</button>
         {% endif %}
 
