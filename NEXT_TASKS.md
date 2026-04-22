@@ -75,12 +75,19 @@ NOTE flagging the blocker. -->
 
 ## Week 12 — regression + cutover rehearsal
 
-- [ ] **Golden-dataset regression harness (`tests/regression/test_golden_30day.py`).**
-  - Requires: v1 snapshot (events.db + user_model.db) at fixed commit; path documented
-  - Replays 30 days through v2 pipeline (all producers + scheduler + outbox)
-  - Asserts: (a) Moment count within ±10% of v1 prediction count same window, (b) every high-signal v1 prediction has v2 Moment equivalent (thematic match via topic overlap), (c) no dedup violations, (d) Ollama latencies within CEO plan §1e budgets
-  - Output: `docs/regression-runs/{date}.md` with pass/fail per assertion
-  - If no v1 snapshot: skip with clear message; leave NOTE that harness needs a real snapshot.
+<!-- NOTE (2026-04-22, harness shipped as scaffold): the golden-dataset
+regression harness landed at `tests/regression/test_golden_30day.py` and
+skips cleanly when no v1 snapshot is present at `data/v1-snapshot/` (or the
+path in `LIFEOS_V1_SNAPSHOT_DIR`). Assertions (a) volume, (b) thematic
+coverage via Jaccard ≥ 0.20, (c) zero dedup violations are wired to real
+data via `scripts.migrate_v1_to_v2.run_migration` + the v2 `MomentEngine`
++ all six Phase 1 producers. Assertion (d) Ollama latency is delegated to
+`scripts/measure_ollama_budget.py` (baseline at
+`docs/plans/2026-04-22-ollama-baseline.md`) and noted in each run report
+rather than asserted in the harness. Operator must drop a snapshot in place
+on the Mac Mini for the harness to run end-to-end; see
+`docs/regression-runs/README.md` for the snapshot layout. -->
+
 
 - [ ] **Cutover rehearsal (full dry-run end-to-end).**
   - Extends `scripts/migrate_v1_to_v2.py` against full v1 backup (expected at `./data/backup-YYYYMMDD/`)
