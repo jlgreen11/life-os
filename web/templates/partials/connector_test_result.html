@@ -1,0 +1,27 @@
+{#
+  Life OS v2 — connector test-result partial.
+
+  Rendered by ``POST /settings/connectors/{id}/test`` and swapped into the
+  per-row ``[data-slot="test-result"]`` target. A deliberately tiny one-line
+  status message; the dry-run result never lives in the detail pane
+  because the user is still "picking" — the edit pane is for active edits.
+
+  Context:
+
+    result: dict | None
+      ok:        bool
+      message:   str
+      details:   dict | None   (optional, rendered as tertiary metadata)
+
+  DESIGN.md § "Calm over urgent": success uses --success, failure uses
+  --error, but neither is an alarm. No icons, no red banners.
+#}
+{% if result is none %}
+    <span class="text-[color:var(--text-tertiary)]">No test result.</span>
+{% elif result.ok %}
+    <span data-slot="test-ok"
+          class="text-[color:var(--success)]">✓ {{ result.message }}</span>
+{% else %}
+    <span data-slot="test-fail"
+          class="text-[color:var(--error)]">✗ {{ result.message }}</span>
+{% endif %}

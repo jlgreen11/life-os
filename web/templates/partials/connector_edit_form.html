@@ -1,0 +1,86 @@
+{#
+  Life OS v2 — connector edit-form partial.
+
+  Rendered by ``GET /settings/connectors/{id}/edit`` into the Settings
+  detail pane. The form itself PATCHes ``/api/connectors/{id}`` with the
+  body shape locked by :class:`api.schemas.ConnectorConfigIn`:
+
+      {"enabled": bool | null, "config": dict | null, "secrets": dict | null}
+
+  Fernet invariant
+  ----------------
+  Secret fields are rendered as empty placeholders; the existing ciphertext
+  NEVER round-trips through the client. An unmodified secret input submits
+  an empty string which the route-layer treats as "keep existing" (the
+  dispatcher strips empty-string values before calling repo.update).
+
+  Context:
+
+    connector: dict
+      id:          str
+      kind:        str
+      enabled:     bool
+      status:      str
+      config:      dict        — non-secret fields (free-form)
+      secret_keys: list[str]   — names of secret fields (values never sent)
+#}
+<form data-slot="edit-form"
+      data-connector-id="{{ connector.id }}"
+      hx-patch="/api/connectors/{{ connector.id }}"
+      hx-ext="json-enc"
+      hx-swap="none"
+      class="flex flex-col gap-[var(--s-3)]">
+
+    <header class="border-b border-[color:var(--border-subtle)] pb-[var(--s-2)]">
+        <div class="text-[length:var(--t-11)] uppercase tracking-[var(--ls-caps)] text-[color:var(--text-tertiary)]">
+            Editing
+        </div>
+        <div class="text-[length:var(--t-17)] text-[color:var(--text-primary)]"
+             data-slot="edit-title">{{ connector.kind }}</div>
+    </header>
+
+    {% for key, value in (connector.config or {}).items() %}
+        <label class="flex flex-col gap-[var(--s-1)]">
+            <span class="text-[length:var(--t-13)] text-[color:var(--text-secondary)]">{{ key }}</span>
+            <input type="text"
+                   name="config.{{ key }}"
+                   value="{{ value }}"
+                   data-slot="config-field"
+                   data-field-key="{{ key }}"
+                   class="bg-[color:var(--bg-base)] border border-[color:var(--border-subtle)] rounded-[var(--r-sm)] px-[var(--s-2)] py-[var(--s-1)] text-[length:var(--t-15)] text-[color:var(--text-primary)] focus-visible:outline-none focus-visible:border-[color:var(--border-focus)]">
+        </label>
+    {% endfor %}
+
+    {% for key in connector.secret_keys or [] %}
+        <label class="flex flex-col gap-[var(--s-1)]">
+            <span class="text-[length:var(--t-13)] text-[color:var(--text-secondary)]">{{ key }}</span>
+            <input type="password"
+                   name="secrets.{{ key }}"
+                   value=""
+                   placeholder="********"
+                   autocomplete="new-password"
+                   data-slot="secret-field"
+                   data-field-key="{{ key }}"
+                   class="bg-[color:var(--bg-base)] border border-[color:var(--border-subtle)] rounded-[var(--r-sm)] px-[var(--s-2)] py-[var(--s-1)] text-[length:var(--t-15)] text-[color:var(--text-primary)] font-mono focus-visible:outline-none focus-visible:border-[color:var(--border-focus)]">
+            <span class="text-[length:var(--t-11)] text-[color:var(--text-tertiary)]">
+                Leave blank to keep the existing value.
+            </span>
+        </label>
+    {% endfor %}
+
+    <div class="flex items-center gap-[var(--s-3)] mt-[var(--s-2)]">
+        <button type="submit"
+                data-slot="save-button"
+                class="text-[length:var(--t-15)] font-medium bg-[color:var(--primary-action)] text-white rounded-[var(--r-sm)] px-[var(--s-3)] py-[var(--s-2)] hover:bg-[color:var(--primary-action-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]">
+            Save
+        </button>
+        <button type="button"
+                data-slot="cancel-button"
+                hx-get="/settings/detail-empty"
+                hx-target="#settings-detail-pane"
+                hx-swap="innerHTML"
+                class="text-[length:var(--t-15)] text-[color:var(--text-secondary)] border border-transparent rounded-[var(--r-sm)] px-[var(--s-3)] py-[var(--s-2)] hover:text-[color:var(--text-primary)]">
+            Cancel
+        </button>
+    </div>
+</form>

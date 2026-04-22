@@ -1,0 +1,299 @@
+{#
+  Life OS v2 — Settings tab.
+
+  Sections (DESIGN.md § "Settings: connectors, preferences, quiet hours,
+  autonomy, data" + NEXT_TASKS.md Week 10 task 3):
+
+  - Header           — page title + one-line status summary.
+  - CONNECTORS       — one row per registered connector with:
+      * status dot  (ok=success, error=error, disabled=tertiary, unknown=warning)
+      * kind + id label
+      * last sync   (relative "never" | unix-date)
+      * enabled toggle (hx-patch → /api/connectors/{id})
+      * Test button  (hx-post → /settings/connectors/{id}/test → result slot)
+      * Edit button  (hx-get  → /settings/connectors/{id}/edit → detail pane)
+  - DETAIL PANE      — initially "Select a connector to edit"; HTMX swaps in
+                        the edit form on click. Lives to the right on ≥ 960px
+                        and below the list on narrower widths.
+  - PREFERENCES      — quiet hours (start/end HH:MM), autonomy (0–1 slider),
+                        proactivity (0–1 slider). Each field is its own tiny
+                        form that POSTs {key, value} to /api/preferences.
+                        Inline "Saved" confirmation via HX-Trigger.
+
+  Context (set by ``api.routes.settings.settings_page``):
+
+    connectors: list[dict]   — each dict matches :class:`api.schemas.ConnectorOut`
+    preferences: dict        — keys: quiet_hours_start, quiet_hours_end,
+                               autonomy_level, proactivity. Missing keys fall
+                               back to the schema-level defaults below.
+
+  Security reminder: Fernet-encrypted credentials NEVER appear here. The
+  status-level fields surfaced by /api/connectors are safe to render; the
+  edit form (partial) re-fetches from /api/connectors/{id}/edit and uses
+  placeholder "********" tokens for secret inputs. The Fernet invariant
+  is enforced route-side — this template just trusts the payload.
+#}
+{% extends "base.html" %}
+
+{% block title %}Settings · Life OS{% endblock %}
+
+{% set active_tab = "settings" %}
+
+{% block content %}
+<section data-section="settings-header" class="mb-[var(--s-6)]">
+    <h1 class="font-display text-[length:var(--t-28)] font-semibold tracking-tight text-[color:var(--text-primary)] m-0">
+        Settings
+    </h1>
+    <p class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] mt-[var(--s-2)] m-0">
+        <span data-slot="connector-total">{{ connectors|length }}</span>
+        {{ 'connector' if connectors|length == 1 else 'connectors' }}
+        <span aria-hidden="true">·</span>
+        Tailscale-only
+    </p>
+</section>
+
+<div class="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-[var(--s-6)]">
+
+<div data-column="list">
+
+<section aria-labelledby="settings-connectors-heading"
+         data-section="connectors"
+         class="mb-[var(--s-8)]">
+    <h2 id="settings-connectors-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Connectors
+    </h2>
+
+    {% if connectors %}
+        <ul class="flex flex-col list-none p-0 m-0 border-t border-[color:var(--border-subtle)]">
+            {% for c in connectors %}
+                {%- set dot_color = (
+                    'var(--success)' if c.status == 'ok'
+                    else 'var(--error)' if c.status == 'error'
+                    else 'var(--text-tertiary)' if c.status == 'disabled'
+                    else 'var(--warning)'
+                ) -%}
+                <li class="py-[var(--s-3)] border-b border-[color:var(--border-subtle)]"
+                    data-slot="connector-row"
+                    data-connector-id="{{ c.id }}"
+                    data-connector-status="{{ c.status }}">
+                    <div class="flex items-center justify-between gap-[var(--s-3)]">
+                        <div class="flex items-center gap-[var(--s-3)] min-w-0 flex-1">
+                            <span aria-hidden="true"
+                                  data-slot="status-dot"
+                                  class="inline-block w-2 h-2 rounded-full shrink-0"
+                                  style="background-color: {{ dot_color }};"></span>
+                            <div class="min-w-0 flex-1">
+                                <div class="text-[length:var(--t-15)] text-[color:var(--text-primary)]"
+                                     data-slot="connector-kind">{{ c.kind }}</div>
+                                <div class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)]"
+                                     data-slot="connector-meta">
+                                    <span data-slot="last-sync">
+                                        {% if c.last_sync_at %}
+                                            Last sync {{ c.last_sync_at|unix_date }}
+                                        {% else %}
+                                            Never synced
+                                        {% endif %}
+                                    </span>
+                                    {% if c.last_error %}
+                                        <span aria-hidden="true">·</span>
+                                        <span data-slot="last-error"
+                                              class="text-[color:var(--error)]">{{ c.last_error }}</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-[var(--s-3)] shrink-0">
+                            {# Enabled toggle — HTMX PATCH with json-enc so the
+                               body matches ConnectorConfigIn exactly. #}
+                            <label class="inline-flex items-center gap-[var(--s-2)] text-[length:var(--t-13)] text-[color:var(--text-secondary)]"
+                                   data-slot="enabled-toggle">
+                                <input type="checkbox"
+                                       name="enabled"
+                                       {% if c.enabled %}checked{% endif %}
+                                       data-slot="enabled-checkbox"
+                                       hx-patch="/api/connectors/{{ c.id }}"
+                                       hx-trigger="change"
+                                       hx-ext="json-enc"
+                                       hx-vals='js:{"enabled": event.target.checked}'
+                                       hx-swap="none"
+                                       class="h-4 w-4 accent-[color:var(--primary-action)]"
+                                       aria-label="Enable {{ c.kind }}">
+                                <span>Enabled</span>
+                            </label>
+
+                            <button type="button"
+                                    data-slot="test-button"
+                                    hx-post="/settings/connectors/{{ c.id }}/test"
+                                    hx-target="[data-slot='test-result'][data-for='{{ c.id }}']"
+                                    hx-swap="innerHTML"
+                                    class="text-[length:var(--t-13)] text-[color:var(--text-primary)] border border-[color:var(--border-strong)] rounded-[var(--r-sm)] px-[var(--s-3)] py-[var(--s-1)] hover:bg-[color:var(--bg-raised-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]">
+                                Test
+                            </button>
+
+                            <button type="button"
+                                    data-slot="edit-button"
+                                    hx-get="/settings/connectors/{{ c.id }}/edit"
+                                    hx-target="#settings-detail-pane"
+                                    hx-swap="innerHTML"
+                                    class="text-[length:var(--t-13)] text-[color:var(--primary-action)] border border-transparent rounded-[var(--r-sm)] px-[var(--s-3)] py-[var(--s-1)] hover:bg-[color:var(--bg-raised-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--border-focus)]">
+                                Edit
+                            </button>
+                        </div>
+                    </div>
+                    {# Per-row inline test result slot. Empty by default;
+                       test button swaps in a small "OK — dry-run complete"
+                       or "Error — <msg>" line. Kept here (not in the
+                       detail pane) so the outcome of a Test click stays
+                       visually tied to its row. #}
+                    <div class="mt-[var(--s-2)] text-[length:var(--t-13)] empty:hidden"
+                         data-slot="test-result"
+                         data-for="{{ c.id }}"
+                         role="status"
+                         aria-live="polite"></div>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <div data-empty="connectors" class="py-[var(--s-3)]">
+            <p class="text-[length:var(--t-17)] text-[color:var(--text-primary)] m-0">
+                No connectors configured yet.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                Add one from the registry to start ingesting your data.
+            </p>
+        </div>
+    {% endif %}
+</section>
+
+<section aria-labelledby="settings-preferences-heading"
+         data-section="preferences">
+    <h2 id="settings-preferences-heading"
+        class="text-[length:var(--t-13)] font-medium uppercase tracking-[var(--ls-caps)] text-[color:var(--text-secondary)] mb-[var(--s-3)]">
+        Preferences
+    </h2>
+
+    {# Quiet hours: two HH:MM inputs. Each posts its own (key, value) so
+       clients never have to PATCH a composite object. #}
+    <div class="py-[var(--s-3)] border-t border-[color:var(--border-subtle)]"
+         data-slot="pref-row"
+         data-pref-key="quiet_hours">
+        <div class="text-[length:var(--t-15)] text-[color:var(--text-primary)]">Quiet hours</div>
+        <div class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mb-[var(--s-2)]">
+            No notifications between these hours.
+        </div>
+        <div class="flex items-center gap-[var(--s-3)]">
+            <label class="flex items-center gap-[var(--s-2)] text-[length:var(--t-13)] text-[color:var(--text-secondary)]">
+                <span>Start</span>
+                <input type="time"
+                       name="value"
+                       value="{{ preferences.quiet_hours_start|default('22:00') }}"
+                       data-slot="quiet-hours-start"
+                       hx-post="/api/preferences"
+                       hx-trigger="change"
+                       hx-ext="json-enc"
+                       hx-vals='js:{"key": "quiet_hours_start", "value": event.target.value}'
+                       hx-swap="none"
+                       class="bg-[color:var(--bg-raised)] border border-[color:var(--border-subtle)] rounded-[var(--r-sm)] px-[var(--s-2)] py-[var(--s-1)] text-[color:var(--text-primary)] font-mono focus-visible:outline-none focus-visible:border-[color:var(--border-focus)]">
+            </label>
+            <label class="flex items-center gap-[var(--s-2)] text-[length:var(--t-13)] text-[color:var(--text-secondary)]">
+                <span>End</span>
+                <input type="time"
+                       name="value"
+                       value="{{ preferences.quiet_hours_end|default('07:00') }}"
+                       data-slot="quiet-hours-end"
+                       hx-post="/api/preferences"
+                       hx-trigger="change"
+                       hx-ext="json-enc"
+                       hx-vals='js:{"key": "quiet_hours_end", "value": event.target.value}'
+                       hx-swap="none"
+                       class="bg-[color:var(--bg-raised)] border border-[color:var(--border-subtle)] rounded-[var(--r-sm)] px-[var(--s-2)] py-[var(--s-1)] text-[color:var(--text-primary)] font-mono focus-visible:outline-none focus-visible:border-[color:var(--border-focus)]">
+            </label>
+        </div>
+    </div>
+
+    {# Autonomy: 0–1 slider. 0 = suggest only, 1 = fully autonomous.
+       Step 0.05 matches the user-model confidence bump rule. #}
+    <div class="py-[var(--s-3)] border-t border-[color:var(--border-subtle)]"
+         data-slot="pref-row"
+         data-pref-key="autonomy_level">
+        <div class="flex items-center justify-between gap-[var(--s-4)]">
+            <div class="min-w-0 flex-1">
+                <div class="text-[length:var(--t-15)] text-[color:var(--text-primary)]">Autonomy</div>
+                <div class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)]">
+                    How far Life OS acts on its own versus asking first.
+                </div>
+            </div>
+            <output data-slot="autonomy-value"
+                    class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] font-mono shrink-0 w-10 text-right">
+                {{ '%.2f' % (preferences.autonomy_level|default(0.5)|float) }}
+            </output>
+        </div>
+        <input type="range"
+               name="value"
+               min="0" max="1" step="0.05"
+               value="{{ preferences.autonomy_level|default(0.5) }}"
+               data-slot="autonomy-slider"
+               hx-post="/api/preferences"
+               hx-trigger="change"
+               hx-ext="json-enc"
+               hx-vals='js:{"key": "autonomy_level", "value": parseFloat(event.target.value)}'
+               hx-swap="none"
+               oninput="this.closest('[data-slot=pref-row]').querySelector('[data-slot=autonomy-value]').textContent = parseFloat(this.value).toFixed(2);"
+               class="w-full mt-[var(--s-2)] accent-[color:var(--primary-action)]"
+               aria-label="Autonomy level from 0 to 1">
+    </div>
+
+    {# Proactivity: 0–1 slider. 0 = never volunteer, 1 = interrupt when
+       confidence clears the gate. #}
+    <div class="py-[var(--s-3)] border-t border-b border-[color:var(--border-subtle)]"
+         data-slot="pref-row"
+         data-pref-key="proactivity">
+        <div class="flex items-center justify-between gap-[var(--s-4)]">
+            <div class="min-w-0 flex-1">
+                <div class="text-[length:var(--t-15)] text-[color:var(--text-primary)]">Proactivity</div>
+                <div class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)]">
+                    How often Life OS volunteers a Moment unprompted.
+                </div>
+            </div>
+            <output data-slot="proactivity-value"
+                    class="text-[length:var(--t-13)] text-[color:var(--text-secondary)] font-mono shrink-0 w-10 text-right">
+                {{ '%.2f' % (preferences.proactivity|default(0.5)|float) }}
+            </output>
+        </div>
+        <input type="range"
+               name="value"
+               min="0" max="1" step="0.05"
+               value="{{ preferences.proactivity|default(0.5) }}"
+               data-slot="proactivity-slider"
+               hx-post="/api/preferences"
+               hx-trigger="change"
+               hx-ext="json-enc"
+               hx-vals='js:{"key": "proactivity", "value": parseFloat(event.target.value)}'
+               hx-swap="none"
+               oninput="this.closest('[data-slot=pref-row]').querySelector('[data-slot=proactivity-value]').textContent = parseFloat(this.value).toFixed(2);"
+               class="w-full mt-[var(--s-2)] accent-[color:var(--primary-action)]"
+               aria-label="Proactivity from 0 to 1">
+    </div>
+</section>
+
+</div>
+
+<aside data-column="detail" aria-label="Connector editor">
+    <div id="settings-detail-pane"
+         data-section="detail-pane"
+         class="sticky top-[var(--s-4)] bg-[color:var(--bg-raised)] border border-[color:var(--border-subtle)] rounded-[var(--r-md)] p-[var(--s-4)] min-h-[120px]">
+        <div data-empty="detail-pane">
+            <p class="text-[length:var(--t-15)] text-[color:var(--text-secondary)] m-0">
+                Select a connector to edit.
+            </p>
+            <p class="text-[length:var(--t-13)] text-[color:var(--text-tertiary)] mt-[var(--s-1)] m-0">
+                Changes save on submit. Credentials are encrypted at rest.
+            </p>
+        </div>
+    </div>
+</aside>
+
+</div>
+{% endblock %}
