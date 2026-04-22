@@ -138,3 +138,11 @@ def test_create_app_registers_now_router():
         "/api/moments/{moment_id}/edit",
     }
     assert expected_now_paths.issubset(custom_paths)
+
+
+def test_create_app_registers_you_and_people_routers():
+    """Factory mounts the Week 8 You + People routers."""
+    app = create_app()
+
+    custom_paths = {r.path for r in app.routes}
+    assert {"/api/you", "/api/people", "/api/people/{contact_id}"}.issubset(custom_paths)

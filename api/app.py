@@ -106,8 +106,12 @@ def create_app(life_os: Any | None = None) -> FastAPI:
     # top-level, so test suites that only build the factory don't drag
     # route modules they're not exercising.
     from api.routes.now import router as now_router
+    from api.routes.people import router as people_router
+    from api.routes.you import router as you_router
 
     app.include_router(now_router)
+    app.include_router(you_router)
+    app.include_router(people_router)
 
     return app
 

@@ -11,12 +11,19 @@ Currently exported:
   store, including the ``moment_state_history`` append-only audit log.
 - :class:`storage.repos.outbox.OutboxRepository` — transactional outbox
   for side-effecting events (send_message, create_calendar_entry, …).
+- :class:`storage.repos.people.PeopleRepository` — read-only façade over
+  the signal-profile tables for the You + People API payloads.
 
-Later waves add: ``feedback_weights``, ``signal_profiles``,
-``connector_state``, etc.
+Later waves add: ``feedback_weights``, ``connector_state``, etc.
 """
 
 from storage.repos.moments import MomentRepository
 from storage.repos.outbox import OutboxEntry, OutboxRepository
+from storage.repos.people import PeopleRepository
 
-__all__ = ["MomentRepository", "OutboxEntry", "OutboxRepository"]
+__all__ = [
+    "MomentRepository",
+    "OutboxEntry",
+    "OutboxRepository",
+    "PeopleRepository",
+]
