@@ -19,6 +19,7 @@ This package is split into:
 - ``engine`` — orchestration over producers, repos, feedback weights
 """
 
+from core.moment.engine import MomentEngine
 from core.moment.producer import (
     PRODUCERS,
     Event,
@@ -46,6 +47,7 @@ __all__ = [
     "IllegalTransition",
     "InsightType",
     "Moment",
+    "MomentEngine",
     "MomentState",
     "Producer",
     "ProducerAlreadyRegistered",
