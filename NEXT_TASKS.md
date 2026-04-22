@@ -103,10 +103,13 @@ production data; the rehearsal is meaningful only on the Mac Mini. -->
 
 ## Week 13+ — HUMAN ONLY (agent should skip with NOTE)
 
+<!-- NOTE (2026-04-22, iteration 30): human-only — skip. Supervised v1→v2 production cutover requires the owner on the Mac Mini with the backed-up v1 data dir + decision authority on go/no-go. Agent has no path to complete. Task body explicitly says "Agent: leave NOTE and move on." Not consumed by the autonomous loop; stays unchecked for the human. -->
 - [ ] **MIGRATION CUTOVER — HUMAN.** Supervised v1→v2 production cutover. Not agent work. Agent: leave `<!-- NOTE: human-only — skip -->` and move on.
 
+<!-- NOTE (2026-04-22, iteration 30): human-only — skip. 2–4 week dogfood period measures lived KPIs (notification precision, undo rate, quiet-hours violations) against real user usage — needs the owner actually using the system on the Mac Mini; agent has no dogfood path. Not consumed by the autonomous loop. -->
 - [ ] **PHASE 1 ACCEPTANCE LOOP — HUMAN.** 2–4 week dogfood period; KPI recalibration at week 2 per CEO plan. Not agent work. Skip with NOTE.
 
+<!-- NOTE (2026-04-22, iteration 30): human-only — skip. Apple Developer Program enrollment requires the owner's Apple ID, payment method, and legal identity verification. Not Phase 1. Not consumed by the autonomous loop. -->
 - [ ] **APPLE DEV ENROLLMENT — HUMAN.** Phase 2 Week 0 prework. Not Phase 1. Skip with NOTE.
 
 ---
