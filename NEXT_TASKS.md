@@ -73,16 +73,6 @@ Splitting the original task into the well-defined slices below; the two
 slices that depend on the undo design land last and carry their own
 NOTE flagging the blocker. -->
 
-- [ ] **Snooze popover polish.** Already wired in commit `ba079fc` but two
-  gaps remain per DESIGN.md § "Snooze popover":
-  (a) "Custom" chip currently no-ops — wire it to a small inline
-      `<input type="datetime-local">` that resolves to a unix epoch and
-      POSTs to `/api/moments/{id}/snooze`.
-  (b) Popover should focus first chip on open and trap focus inside the
-      menu (Tab loops chip → chip; Shift+Tab reverse).
-  Tests: render-time DOM (datetime-local present, role=menuitem on chips,
-  aria-haspopup="menu" on trigger).
-
 - [ ] **DESIGN: Undo toast + deferred dispatch — write design note.**
   This is a planning task (writes docs/plans/2026-04-22-undo-grace.md), not
   code. Resolve the open questions above:
