@@ -44,14 +44,7 @@
 
 ## Week 9 — Web: base + Now tab (complete, see DONE_TASKS.md)
 
-## Week 10 — Web: You, People, Settings
-
-- [ ] **Settings tab (`web/templates/settings.html`).**
-  - Connector list: status dot + last sync + enabled checkbox
-  - Edit form opens in detail pane (not inline expansion)
-  - Per-connector test button: dry-run sync + inline success/failure
-  - Preferences: quiet hours, autonomy level, proactivity slider (all persist to preferences table)
-  Tests: Fernet creds round-trip (no plaintext in response); preferences persist; test button state.
+## Week 10 — Web: You, People, Settings (complete, see DONE_TASKS.md)
 
 ## Week 11 — Real-time + full flows
 
