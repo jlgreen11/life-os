@@ -34,13 +34,6 @@
 
 ## Week 4 — Producer base + 3 producers
 
-- [ ] **Producer base class (`core/moment/producer.py`).**
-  - `class Producer(ABC)` with `insight_type: InsightType` class attr
-  - `async def observe(event: Event) -> list[Moment]`: 0–N candidate Moments per event
-  - `@staticmethod def evidence_hash(event_ids: list[str]) -> str`: stable sorted hash for idempotency
-  - Registry: `PRODUCERS: dict[InsightType, type[Producer]]` + `@register` decorator
-  Tests: abstract non-instantiable, registry decorator works, evidence_hash deterministic across orderings.
-
 - [ ] **Cadence producer (`producers/cadence.py`).** InsightType.CADENCE:
   - Observes `email.received` and `message.received`
   - Reads cadence profile from signal_profiles (scope_key=contact_id)
