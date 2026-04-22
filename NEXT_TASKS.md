@@ -46,12 +46,6 @@
 
 ## Week 10 — Web: You, People, Settings
 
-- [ ] **You tab (`web/templates/you.html`).** Per DESIGN.md:
-  - Header: "Observed {N} months · {M} interactions · confidence {X}%"
-  - Sections: WHEN YOU'RE AT YOUR BEST (top 3 patterns), HOW YOU WRITE (3–6 per-audience summaries), YOUR ROUTINES (detected + "No routine detected yet" per empty pattern), DRIFTING (contact list with days-since vs usual)
-  - NO mood bars, NO progress bars, NO pie charts
-  Tests: empty-state per section <20 samples; rendering with fixture matches DESIGN.md wireframe.
-
 - [ ] **People tab (`web/templates/people.html`) + per-contact dossier.**
   - List: YOU first; NEEDS ATTENTION; ACTIVE THIS WEEK
   - Right-aligned monospace stats
