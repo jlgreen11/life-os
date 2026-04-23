@@ -50,6 +50,15 @@ STATE_FILE="$LOG_DIR/state.json"
 PROMPT_FILE="$PROJECT_DIR/scripts/v2-agent-prompt.md"
 VENV="$PROJECT_DIR/.venv/bin/activate"
 
+# Activate the project venv so Claude inherits PATH with ruff, pytest, mypy,
+# fastapi, and all project dependencies. Without this, Category B tasks
+# (coverage audit, ruff/mypy cleanup, scheduler perf profile) can't run
+# because the tools aren't visible to the Claude invocation.
+if [[ -f "$VENV" ]]; then
+    # shellcheck disable=SC1090
+    source "$VENV"
+fi
+
 # ---------------------------------------------------------------------------
 # Configuration (env-overridable)
 # ---------------------------------------------------------------------------

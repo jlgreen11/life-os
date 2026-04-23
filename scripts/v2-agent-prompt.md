@@ -51,6 +51,22 @@ the owner returns to review.
 - Use WebSearch/WebFetch for engineering references
 - Make commits locally on `v2-rewrite`
 
+## Python env
+
+The orchestrator sources `.venv/bin/activate` before invoking you, so
+`python`, `pytest`, `ruff`, `mypy`, `fastapi` are all in PATH. If you ever
+see `command not found` for these tools, verify `which python` points at
+`/Users/jlg/Documents/GitHub/life-os/.venv/bin/python` — if not, run
+`source .venv/bin/activate` first.
+
+You can also call tools by explicit path when in doubt:
+`.venv/bin/python -m pytest tests/ -v` · `.venv/bin/ruff check . --fix`
+`.venv/bin/mypy --strict core/ storage/ producers/`
+
+The venv is real and complete: fastapi, pytest, pytest-cov, pytest-asyncio,
+ruff, mypy, ollama client, lancedb, sentence-transformers — all installed.
+**Do NOT report "env blocker" when tools exist at `.venv/bin/`.**
+
 ## What you CANNOT do (enforced by `.claude/settings.json` deny list)
 
 - `git push` anything (local only)
