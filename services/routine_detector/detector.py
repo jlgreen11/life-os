@@ -282,12 +282,10 @@ class RoutineDetector:
             if episode_count > 0:
                 return lookback_days
 
-            # Step 3: Find the oldest timestamp among the 200 most recent episodes.
-            # This tells us how far back we need to look to get meaningful data.
+            # Step 3: Find the oldest episode timestamp to discover where data starts.
             with self.db.get_connection("user_model") as conn:
                 row = conn.execute(
-                    """SELECT MIN(timestamp)
-                       FROM (SELECT timestamp FROM episodes ORDER BY timestamp DESC LIMIT 200)""",
+                    "SELECT MIN(timestamp) FROM episodes",
                 ).fetchone()
 
             if not row or not row[0]:
