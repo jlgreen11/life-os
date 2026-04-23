@@ -92,6 +92,19 @@ class OutboxRepository:
         *,
         now_fn: Callable[[], float] | None = None,
     ) -> None:
+        """Wrap ``conn`` with the outbox contract.
+
+        ``now_fn`` is injected for determinism in tests (stdlib only,
+        per eng review — no ``freezegun``). Defaults to
+        :func:`time.time`. Return value is coerced to ``int`` so outbox
+        timestamps match the unix-seconds shape used by the schema.
+
+        The repository flips ``conn.isolation_level`` to ``None`` so it
+        can issue ``BEGIN IMMEDIATE`` explicitly, and sets
+        ``row_factory`` to :class:`sqlite3.Row` so hydrate paths can
+        index by column name. Callers should assume the repository owns
+        the transaction lifecycle on this connection after construction.
+        """
         self._conn = conn
         self._conn.isolation_level = None
         self._conn.row_factory = sqlite3.Row
