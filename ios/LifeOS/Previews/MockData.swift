@@ -334,6 +334,78 @@ enum MockData {
     /// Matches the Moment timestamps above — `Date(timeIntervalSince1970:
     /// 1_777_204_800)` is `2026-04-26 13:20:00 UTC`.
     static let anchorDate = Date(timeIntervalSince1970: 1_777_204_800)
+
+    // MARK: - Settings tab
+
+    /// Proton Mail row — `ready` status, recent sync, enabled. Drives the
+    /// happy-path connector tile on the Settings tab.
+    static let connectorProton = Connector(
+        id: "proton",
+        kind: "proton_mail",
+        enabled: true,
+        status: "ready",
+        lastSyncAt: Int(anchorDate.timeIntervalSince1970) - 180,
+        lastError: nil
+    )
+
+    /// iMessage row — `syncing`, enabled, with an active cursor.
+    static let connectorIMessage = Connector(
+        id: "imessage",
+        kind: "imessage",
+        enabled: true,
+        status: "syncing",
+        lastSyncAt: Int(anchorDate.timeIntervalSince1970) - 45,
+        lastError: nil
+    )
+
+    /// CalDAV row — paused state (``enabled=false``), clean history.
+    static let connectorCalDAV = Connector(
+        id: "caldav",
+        kind: "caldav",
+        enabled: false,
+        status: "paused",
+        lastSyncAt: Int(anchorDate.timeIntervalSince1970) - 86_400 * 3,
+        lastError: nil
+    )
+
+    /// iOS-context row — `error` status so the Settings tile exercises
+    /// the `lastError` rendering path.
+    static let connectorIOSContext = Connector(
+        id: "ios_context",
+        kind: "ios_context",
+        enabled: true,
+        status: "error",
+        lastSyncAt: Int(anchorDate.timeIntervalSince1970) - 3_600,
+        lastError: "Device unreachable since 13:02."
+    )
+
+    /// Full connector roster returned by `/api/connectors`. Four rows —
+    /// one ready, one syncing, one paused, one erroring — so the Settings
+    /// tab exercises every status-dot branch.
+    static let connectors: [Connector] = [
+        connectorProton,
+        connectorIMessage,
+        connectorCalDAV,
+        connectorIOSContext,
+    ]
+
+    /// Fresh-install connector roster — empty list. Drives the Settings
+    /// tab's "no connectors configured" empty state.
+    static let emptyConnectors: [Connector] = []
+
+    /// Populated `Preferences` row. Quiet hours are set to the DESIGN.md
+    /// defaults; autonomy/proactivity are offset from 0.5 so tests can
+    /// round-trip non-default values.
+    static let preferences = Preferences(
+        quietHoursStart: "22:00",
+        quietHoursEnd: "07:00",
+        autonomyLevel: 0.65,
+        proactivity: 0.40
+    )
+
+    /// Default `Preferences` — matches `_PREFERENCE_DEFAULTS` in
+    /// `api/routes/settings.py`. Used by the fresh-install preview.
+    static let defaultPreferences = Preferences.defaults
 }
 
 // MARK: - ContactDossier convenience init (test-only)

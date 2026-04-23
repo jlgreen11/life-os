@@ -432,6 +432,50 @@ struct ConnectorConfigUpdate: Codable, Equatable {
     }
 }
 
+/// Four-key slice of the ``preferences`` table rendered on the Settings
+/// tab (quiet hours + autonomy + proactivity). Matches the constants in
+/// `api/routes/settings.py::_PREFERENCE_DEFAULTS`; when the settings
+/// endpoint gains a typed response this struct mirrors it. Sliders map
+/// 0.0 → 1.0 (same scale as the web UI).
+struct Preferences: Codable, Equatable {
+    let quietHoursStart: String
+    let quietHoursEnd: String
+    let autonomyLevel: Double
+    let proactivity: Double
+
+    enum CodingKeys: String, CodingKey {
+        case quietHoursStart = "quiet_hours_start"
+        case quietHoursEnd = "quiet_hours_end"
+        case autonomyLevel = "autonomy_level"
+        case proactivity
+    }
+
+    init(
+        quietHoursStart: String = "22:00",
+        quietHoursEnd: String = "07:00",
+        autonomyLevel: Double = 0.5,
+        proactivity: Double = 0.5
+    ) {
+        self.quietHoursStart = quietHoursStart
+        self.quietHoursEnd = quietHoursEnd
+        self.autonomyLevel = autonomyLevel
+        self.proactivity = proactivity
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.quietHoursStart = try c.decodeIfPresent(String.self, forKey: .quietHoursStart) ?? "22:00"
+        self.quietHoursEnd = try c.decodeIfPresent(String.self, forKey: .quietHoursEnd) ?? "07:00"
+        self.autonomyLevel = try c.decodeIfPresent(Double.self, forKey: .autonomyLevel) ?? 0.5
+        self.proactivity = try c.decodeIfPresent(Double.self, forKey: .proactivity) ?? 0.5
+    }
+
+    /// Schema-level defaults. Matches `_PREFERENCE_DEFAULTS` in the
+    /// Python route so a fresh install round-trips the same four values
+    /// on both sides of the wire.
+    static let defaults = Preferences()
+}
+
 // MARK: - Moment action body
 
 /// POST-body shared by `/api/moments/{id}/accept|dismiss|snooze|edit`.
