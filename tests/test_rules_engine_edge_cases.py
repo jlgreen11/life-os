@@ -4,11 +4,38 @@ Tests for rules engine edge cases — regex compilation safety and numeric type 
 Validates that invalid regex patterns and type mismatches in numeric comparisons
 are handled gracefully (return False) instead of raising exceptions that cause
 entire rules to be skipped.
+
+Note: ``add_rule()`` now rejects invalid regex patterns at creation time.  Tests
+that exercise runtime tolerance for malformed patterns insert rules directly
+into the DB to simulate patterns that arrived through an older code path or a
+manual DB edit — this is intentional and explicitly documented below.
 """
+
+import json
 
 import pytest
 
 from services.rules_engine.engine import RulesEngine
+
+
+def _insert_rule_with_invalid_regex(db, name: str, trigger_event: str, pattern: str) -> str:
+    """Insert a rule with a regex pattern that bypasses add_rule() validation.
+
+    This helper is used only in tests that verify runtime tolerance: that the
+    evaluation path handles pre-existing malformed patterns gracefully rather
+    than crashing.  It should not be used for anything else.
+    """
+    import uuid
+    rule_id = str(uuid.uuid4())
+    conditions = json.dumps([{"field": "payload.text", "op": "regex", "value": pattern}])
+    actions = json.dumps([{"type": "tag", "value": "matched"}])
+    with db.get_connection("preferences") as conn:
+        conn.execute(
+            """INSERT INTO rules (id, name, trigger_event, conditions, actions, created_by)
+               VALUES (?, ?, ?, ?, ?, 'test')""",
+            (rule_id, name, trigger_event, conditions, actions),
+        )
+    return rule_id
 
 
 # -------------------------------------------------------------------
@@ -18,17 +45,14 @@ from services.rules_engine.engine import RulesEngine
 
 @pytest.mark.asyncio
 async def test_regex_invalid_pattern_unclosed_bracket(db):
-    """Invalid regex pattern '[' should return False, not raise re.error."""
-    engine = RulesEngine(db)
+    """Invalid regex pattern '[' already in the DB should return False, not raise re.error.
 
-    await engine.add_rule(
-        name="Bad regex bracket",
-        trigger_event="test.event",
-        conditions=[
-            {"field": "payload.text", "op": "regex", "value": "["},
-        ],
-        actions=[{"type": "tag", "value": "matched"}],
-    )
+    add_rule() now rejects invalid patterns at creation time, so this test
+    inserts the rule directly to simulate a legacy or manually-edited record.
+    """
+    engine = RulesEngine(db)
+    _insert_rule_with_invalid_regex(db, "Bad regex bracket", "test.event", "[")
+    engine.load_rules()
 
     event = {
         "id": "evt-1",
@@ -41,17 +65,14 @@ async def test_regex_invalid_pattern_unclosed_bracket(db):
 
 @pytest.mark.asyncio
 async def test_regex_invalid_pattern_unmatched_group(db):
-    """Invalid regex pattern '(' should return False, not raise re.error."""
-    engine = RulesEngine(db)
+    """Invalid regex pattern '(' already in the DB should return False, not raise re.error.
 
-    await engine.add_rule(
-        name="Bad regex paren",
-        trigger_event="test.event",
-        conditions=[
-            {"field": "payload.text", "op": "regex", "value": "("},
-        ],
-        actions=[{"type": "tag", "value": "matched"}],
-    )
+    add_rule() now rejects invalid patterns at creation time, so this test
+    inserts the rule directly to simulate a legacy or manually-edited record.
+    """
+    engine = RulesEngine(db)
+    _insert_rule_with_invalid_regex(db, "Bad regex paren", "test.event", "(")
+    engine.load_rules()
 
     event = {
         "id": "evt-1",
@@ -306,20 +327,17 @@ async def test_numeric_operators_none_actual_returns_false(db):
 
 @pytest.mark.asyncio
 async def test_invalid_regex_does_not_skip_other_rules(db):
-    """A rule with an invalid regex should fail gracefully; other rules should still evaluate."""
+    """A rule with an invalid regex should fail gracefully; other rules should still evaluate.
+
+    The bad-regex rule is inserted directly to simulate a legacy record, since
+    add_rule() now rejects invalid patterns at creation time.
+    """
     engine = RulesEngine(db)
 
-    # Rule 1: invalid regex — should fail its condition (return False), not crash
-    await engine.add_rule(
-        name="Bad regex rule",
-        trigger_event="test.event",
-        conditions=[
-            {"field": "payload.text", "op": "regex", "value": "[invalid"},
-        ],
-        actions=[{"type": "tag", "value": "bad-regex"}],
-    )
+    # Rule 1: invalid regex inserted directly — should fail its condition (return False)
+    _insert_rule_with_invalid_regex(db, "Bad regex rule", "test.event", "[invalid")
 
-    # Rule 2: valid rule — should still fire
+    # Rule 2: valid rule added normally — should still fire
     await engine.add_rule(
         name="Good rule",
         trigger_event="test.event",
@@ -329,6 +347,9 @@ async def test_invalid_regex_does_not_skip_other_rules(db):
         actions=[{"type": "tag", "value": "good-rule"}],
     )
 
+    # Force a cache reload so both rules are visible to evaluate()
+    engine.load_rules()
+
     event = {
         "id": "evt-1",
         "type": "test.event",
@@ -336,7 +357,7 @@ async def test_invalid_regex_does_not_skip_other_rules(db):
     }
     actions = await engine.evaluate(event)
 
-    # Only the good rule should fire; the bad regex rule should be skipped
+    # Only the good rule should fire; the bad regex rule should return False
     assert len(actions) == 1
     assert actions[0]["value"] == "good-rule"
 
