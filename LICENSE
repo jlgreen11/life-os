@@ -1,0 +1,38 @@
+Life OS — Proprietary License
+Copyright (c) 2026 Jeremy Greenwood <https://github.com/jlgreen11>
+
+All rights reserved.
+
+This repository is made publicly visible for transparency and portfolio
+purposes. It is NOT open source. No grant of rights is made to anyone.
+
+You may:
+  * Read the code and documentation for reference and learning.
+
+You may NOT, without a separate written agreement with the copyright holder:
+  * Use any portion of this code in another project, commercial or otherwise.
+  * Copy, modify, redistribute, sublicense, or sell any portion of this work.
+  * Create derivative works based on this code.
+  * Run this software as a hosted service for third parties.
+  * Remove or alter any copyright, license, or attribution notices.
+
+The software is provided "AS IS", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose, and non-infringement. In no event shall
+the author be liable for any claim, damages, or other liability arising
+from, out of, or in connection with the software or the use or other
+dealings in the software.
+
+The autonomous agent pattern used to produce parts of this codebase is
+described in ./AUTONOMOUS.md. Reference only.
+
+To discuss licensing, commercial use, or contributions, contact the author
+via GitHub.
+
+-------------------------------------------------------------------------------
+Note on future relicensing: the author reserves the right to relicense this
+work under a permissive or copyleft open-source license (e.g., AGPL-3.0, MIT)
+at any time. Once any release is published under such a license, those
+granted rights remain in effect for that release. This proprietary starting
+point is chosen deliberately to preserve optionality; it is easier to open
+source later than to close an already-opened project.

@@ -1,8 +1,12 @@
 # Life OS
 
-A local-first AI that observes your digital life and gives you the right action at the right moment. Nothing fake.
+![Status](https://img.shields.io/badge/status-v2%20rewrite-orange) ![Python](https://img.shields.io/badge/python-3.12+-blue) ![iOS](https://img.shields.io/badge/iOS-SwiftUI-black) ![License](https://img.shields.io/badge/license-Proprietary-red) ![Local-first](https://img.shields.io/badge/privacy-local--first-green)
 
-**Status (2026-04-22):** v2 rewrite in progress on this branch. See [v2-rewrite plan](docs/plans/2026-04-21-v2-rewrite-plan.md). The old v1 still runs in production on `master` until cutover.
+**A local-first AI that observes your digital life and gives you the right action at the right moment. Nothing fake.**
+
+Life OS watches email, messages, calendar, and device context; produces **Moments** — time-anchored, evidence-backed suggestions with one-tap actions. Every insight is cited. Every action is reversible. No mood bars, no horoscope. Runs on a Mac Mini over Tailscale.
+
+> **Status (2026-04-22)**: v2 rewrite in progress on [`v2-rewrite`](https://github.com/jlgreen11/life-os/tree/v2-rewrite). Built by an autonomous Claude Code agent consuming [`NEXT_TASKS.md`](NEXT_TASKS.md). The v1 implementation still runs in production on `master` until cutover. See the [v2 rewrite plan](docs/plans/2026-04-21-v2-rewrite-plan.md) for scope and schedule.
 
 ---
 
@@ -121,8 +125,16 @@ Retained producers are all evidence-backed: cadence, relationship, temporal, spa
 
 ## Contributing
 
-This is a personal project by [@jlgreen11](https://github.com/jlgreen11). The v2 rewrite is driven by an autonomous Claude Code agent consuming `NEXT_TASKS.md`; see [AUTONOMOUS.md](AUTONOMOUS.md) for how it works.
+Personal project by [@jlgreen11](https://github.com/jlgreen11). The v2 rewrite is driven by an autonomous Claude Code agent consuming [`NEXT_TASKS.md`](NEXT_TASKS.md); see [AUTONOMOUS.md](AUTONOMOUS.md) for how it works. External contributions are not being accepted at this time — the license is Proprietary (see [LICENSE](LICENSE)). If you have feedback or want to discuss commercial use, open a GitHub issue or contact [@jlgreen11](https://github.com/jlgreen11) directly.
+
+## Security
+
+Security reports go through GitHub Security Advisories or directly to [@jlgreen11](https://github.com/jlgreen11). Full policy in [SECURITY.md](SECURITY.md). **Please do not open public issues for security problems.**
+
+## License
+
+Proprietary. All rights reserved. See [LICENSE](LICENSE). The codebase is publicly visible for transparency and portfolio purposes; it is not open source. The author reserves the right to relicense future releases under AGPL-3.0 or another permissive license.
 
 ---
 
-*README last updated 2026-04-22 at v2-rewrite commit `ac139e2`.*
+*README last updated 2026-04-22.*
