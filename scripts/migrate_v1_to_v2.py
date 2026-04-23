@@ -21,10 +21,12 @@ Translations (per NEXT_TASKS Week 1):
   translated 1:1 with ``producer=profile_type`` and ``key='default'``.
 - ``preferences.db.user_preferences`` → ``preferences`` (key/value pass-through;
   ``encrypted=0``).
-- v1 notification feedback (``preferences.db.feedback_log``) → **SKIPPED**:
-  the v2 schema does not yet define a ``feedback_events`` table. This is
-  logged as a translation decision and surfaced in the report. See the note
-  in ``NEXT_TASKS.md``.
+- ``preferences.db.feedback_log`` → ``feedback_events``. Every v1 row is
+  ported verbatim, minus the dropped ``mood_at_time`` column (CEO plan
+  § "Killed from v1: mood inference"). Each translated row is stamped
+  ``source='v1_migration'``. ISO-8601 ``timestamp`` coerces to unix
+  seconds (``ts``); rows whose timestamp cannot be parsed fall back to
+  ``now()``. See ``docs/adr/2026-04-22-feedback-events-disposition.md``.
 
 Every translation decision is logged to stdout. Row-count invariants are
 asserted per table after write. Returns a non-zero exit code if any invariant
@@ -89,7 +91,7 @@ class MigrationReport:
     moments_from_tasks: TableCounts = field(default_factory=TableCounts)
     signal_profiles: TableCounts = field(default_factory=TableCounts)
     preferences: TableCounts = field(default_factory=TableCounts)
-    notification_feedback_skipped: int = 0
+    notification_feedback: TableCounts = field(default_factory=TableCounts)
     missing_source_dbs: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -100,7 +102,7 @@ class MigrationReport:
             "moments_from_tasks": self.moments_from_tasks.as_dict(),
             "signal_profiles": self.signal_profiles.as_dict(),
             "preferences": self.preferences.as_dict(),
-            "notification_feedback_skipped": self.notification_feedback_skipped,
+            "notification_feedback": self.notification_feedback.as_dict(),
             "missing_source_dbs": list(self.missing_source_dbs),
             "notes": list(self.notes),
         }
@@ -573,22 +575,72 @@ def migrate_preferences(
     return counts
 
 
-def skip_notification_feedback(
+def migrate_notification_feedback(
     src: sqlite3.Connection,
+    dst: sqlite3.Connection,
     log: logging.Logger,
-) -> int:
-    """Log the skip decision and return the number of source rows that would
-    need translation if a target table existed."""
+) -> TableCounts:
+    """Copy every ``feedback_log`` row into v2 ``feedback_events``.
+
+    Each target row is stamped ``source='v1_migration'`` and has the v1
+    ``mood_at_time`` column dropped (per ADR). ISO-8601 ``timestamp``
+    coerces to unix seconds; an unparseable or NULL ``timestamp`` falls
+    back to the current ``now()`` so every migrated row carries a valid
+    ``ts`` (the v2 schema requires NOT NULL).
+    """
+    counts = TableCounts()
     if not _table_exists(src, "feedback_log"):
-        log.info("notification_feedback: source feedback_log missing; nothing to skip")
-        return 0
-    (n,) = src.execute("SELECT COUNT(*) FROM feedback_log").fetchone()
-    log.warning(
-        "notification_feedback: SKIPPED %d v1 feedback rows — no feedback_events table in v2 schema "
-        "(see NEXT_TASKS Week 1 task; design decision pending)",
-        n,
+        log.info("notification_feedback: source feedback_log missing; nothing to migrate")
+        return counts
+
+    rows = src.execute(
+        "SELECT id, timestamp, action_id, action_type, feedback_type, "
+        "response_latency_seconds, context, notes FROM feedback_log"
+    ).fetchall()
+    counts.source = len(rows)
+    now_unix = int(time.time())
+
+    with dst:
+        for (
+            row_id,
+            timestamp,
+            action_id,
+            action_type,
+            feedback_type,
+            response_latency_seconds,
+            context,
+            notes,
+        ) in rows:
+            ts_unix = _iso_to_unix(timestamp) or now_unix
+            dst.execute(
+                """
+                INSERT INTO feedback_events (
+                    id, ts, action_id, action_type, feedback_type,
+                    response_latency_seconds, context, notes, source,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'v1_migration', ?)
+                """,
+                (
+                    row_id,
+                    ts_unix,
+                    action_id,
+                    action_type,
+                    feedback_type,
+                    response_latency_seconds,
+                    context,
+                    notes,
+                    now_unix,
+                ),
+            )
+            counts.translated += 1
+
+    log.info(
+        "notification_feedback: read=%d translated=%d dropped=%d",
+        counts.source,
+        counts.translated,
+        counts.dropped,
     )
-    return int(n)
+    return counts
 
 
 def _verify_invariants(
@@ -604,6 +656,7 @@ def _verify_invariants(
         ("moments", report.moments_from_tasks.translated),
         ("signal_profiles", report.signal_profiles.translated),
         ("preferences", report.preferences.translated),
+        ("feedback_events", report.notification_feedback.translated),
     )
     for table, expected in pairs:
         (actual,) = dst.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
@@ -674,17 +727,11 @@ def run_migration(
         if preferences_path.exists():
             with _open_ro(preferences_path) as src:
                 report.preferences = migrate_preferences(src, dst, log)
-                report.notification_feedback_skipped = skip_notification_feedback(src, log)
+                report.notification_feedback = migrate_notification_feedback(src, dst, log)
 
         problems = _verify_invariants(dst, report, log)
         for msg in problems:
             report.notes.append(f"INVARIANT: {msg}")
-
-    if report.notification_feedback_skipped:
-        report.notes.append(
-            f"notification_feedback: {report.notification_feedback_skipped} rows skipped — "
-            "no feedback_events table in v2 schema"
-        )
 
     return report
 

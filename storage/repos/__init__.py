@@ -13,15 +13,21 @@ Currently exported:
   for side-effecting events (send_message, create_calendar_entry, …).
 - :class:`storage.repos.people.PeopleRepository` — read-only façade over
   the signal-profile tables for the You + People API payloads.
+- :class:`storage.repos.feedback_events.FeedbackEventsRepository` —
+  append-only log of user feedback on notifications / predicted
+  actions, seeded by the v1 migration.
 
 Later waves add: ``feedback_weights``, ``connector_state``, etc.
 """
 
+from storage.repos.feedback_events import FeedbackEvent, FeedbackEventsRepository
 from storage.repos.moments import MomentRepository
 from storage.repos.outbox import OutboxEntry, OutboxRepository
 from storage.repos.people import PeopleRepository
 
 __all__ = [
+    "FeedbackEvent",
+    "FeedbackEventsRepository",
     "MomentRepository",
     "OutboxEntry",
     "OutboxRepository",

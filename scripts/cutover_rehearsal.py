@@ -172,10 +172,10 @@ def check_row_counts(
             ("preferences", report.preferences.source, report.preferences.translated, report.preferences.dropped, 0),
             (
                 "notification_feedback",
-                report.notification_feedback_skipped,
+                report.notification_feedback.source,
+                report.notification_feedback.translated,
+                report.notification_feedback.dropped,
                 0,
-                0,
-                report.notification_feedback_skipped,
             ),
         )
         for label, src, translated, dropped, skipped in srcs:
@@ -332,7 +332,7 @@ def write_report(out_dir: Path, report: RehearsalReport) -> Path:
         f"- moments_from_tasks: {report.migration.moments_from_tasks.as_dict()}",
         f"- signal_profiles: {report.migration.signal_profiles.as_dict()}",
         f"- preferences: {report.migration.preferences.as_dict()}",
-        f"- notification_feedback skipped: {report.migration.notification_feedback_skipped}",
+        f"- notification_feedback: {report.migration.notification_feedback.as_dict()}",
         "",
         "## Checks",
         "",

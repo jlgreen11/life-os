@@ -1,7 +1,7 @@
 """Tests for `storage/schema.py` — the v2 consolidated DDL source.
 
 Verifies that every CREATE statement executes on a fresh SQLite instance,
-that the expected 13 tables + all named indexes materialize, and that the
+that the expected 14 tables + all named indexes materialize, and that the
 declared foreign keys actually block invalid writes when `foreign_keys=ON`.
 """
 
@@ -67,8 +67,8 @@ def test_get_all_ddl_is_idempotent_per_run(tmp_path):
         conn.close()
 
 
-def test_all_13_tables_exist(fresh_db):
-    """The schema materializes all 13 expected tables."""
+def test_all_14_tables_exist(fresh_db):
+    """The schema materializes all 14 expected tables."""
     expected = {
         "events",
         "event_tags",
@@ -82,15 +82,47 @@ def test_all_13_tables_exist(fresh_db):
         "preferences",
         "rules",
         "semantic_facts",
+        "feedback_events",
         "schema_version",
     }
-    assert len(expected) == 13
+    assert len(expected) == 14
 
     rows = fresh_db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
     actual = {row[0] for row in rows}
 
     assert actual == expected
     assert set(schema.get_table_names()) == expected
+
+
+def test_feedback_events_source_check_rejects_unknown(fresh_db):
+    """feedback_events.source CHECK rejects values outside {v1_migration, v2}."""
+    with pytest.raises(sqlite3.IntegrityError):
+        fresh_db.execute(
+            "INSERT INTO feedback_events (id, ts, source) VALUES (?, ?, ?)",
+            ("fb-bad", 1_700_000_000, "not-a-source"),
+        )
+
+    # Each allowed source works.
+    for i, source in enumerate(("v1_migration", "v2")):
+        fresh_db.execute(
+            "INSERT INTO feedback_events (id, ts, source) VALUES (?, ?, ?)",
+            (f"fb-{i}", 1_700_000_000 + i, source),
+        )
+    fresh_db.commit()
+
+
+def test_feedback_events_primary_key_blocks_duplicates(fresh_db):
+    """feedback_events.id is the primary key; duplicate inserts raise."""
+    fresh_db.execute(
+        "INSERT INTO feedback_events (id, ts) VALUES (?, ?)",
+        ("fb-dup", 1_700_000_000),
+    )
+    fresh_db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        fresh_db.execute(
+            "INSERT INTO feedback_events (id, ts) VALUES (?, ?)",
+            ("fb-dup", 1_700_000_001),
+        )
 
 
 def test_all_named_indexes_exist(fresh_db):

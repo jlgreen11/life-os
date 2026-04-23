@@ -287,8 +287,10 @@ def test_migration_row_counts(v1_sample_dir: Path, tmp_path: Path) -> None:
     assert report.preferences.source == 2
     assert report.preferences.translated == 2
 
-    # Notification feedback is skipped; count matches source rows.
-    assert report.notification_feedback_skipped == 3
+    # Notification feedback is migrated 1:1 into feedback_events.
+    assert report.notification_feedback.source == 3
+    assert report.notification_feedback.translated == 3
+    assert report.notification_feedback.dropped == 0
 
     # No invariant violations.
     assert not [n for n in report.notes if n.startswith("INVARIANT:")]
@@ -378,3 +380,27 @@ def test_missing_source_dbs_are_noted(tmp_path: Path) -> None:
     assert report.preferences.translated == 2
     assert report.events.translated == 0
     assert report.entities.translated == 0
+
+
+def test_feedback_events_rows_land_in_output_with_v1_source(
+    v1_sample_dir: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "dryrun.db"
+    migrate.run_migration(v1_sample_dir, out)
+
+    with sqlite3.connect(out) as conn:
+        rows = conn.execute(
+            "SELECT id, ts, action_id, action_type, feedback_type, source "
+            "FROM feedback_events ORDER BY id"
+        ).fetchall()
+
+    # 3 fixture rows land as 3 output rows, all tagged as v1_migration.
+    assert len(rows) == 3
+    for fb_id, ts, action_id, action_type, feedback_type, source in rows:
+        assert fb_id.startswith("fb-")
+        assert isinstance(ts, int)
+        assert ts > 1_700_000_000
+        assert action_id == "act-1"
+        assert action_type == "notification"
+        assert feedback_type == "acted_on"
+        assert source == "v1_migration"

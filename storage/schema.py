@@ -1,7 +1,7 @@
 """v2 schema DDL as code.
 
 Single authoritative source for the consolidated SQLite schema used by the v2
-rewrite. All 13 tables (12 domain tables + `schema_version` marker) live in
+rewrite. All 14 tables (13 domain tables + `schema_version` marker) live in
 one `lifeos.db` file; LanceDB stays as a separate index directory.
 
 Reference: `docs/plans/2026-04-21-v2-rewrite-plan.md` § "13-table schema".
@@ -273,7 +273,35 @@ CREATE TABLE semantic_facts (
 
 
 # ---------------------------------------------------------------------------
-# 13. schema_version — single-row migration marker.
+# 13. feedback_events — append-only record of user decisions on notifications /
+#     predictions. v1 `preferences.db.feedback_log` migrates into this table
+#     (minus the dropped `mood_at_time` column). See
+#     `docs/adr/2026-04-22-feedback-events-disposition.md`.
+# ---------------------------------------------------------------------------
+CREATE_FEEDBACK_EVENTS_SQL = """
+CREATE TABLE feedback_events (
+    id TEXT PRIMARY KEY,
+    ts INTEGER NOT NULL,
+    action_id TEXT,
+    action_type TEXT,
+    feedback_type TEXT,
+    response_latency_seconds REAL,
+    context TEXT,
+    notes TEXT,
+    source TEXT NOT NULL DEFAULT 'v2' CHECK (source IN ('v1_migration', 'v2')),
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+)
+"""
+
+CREATE_FEEDBACK_EVENTS_ACTION_TYPE_INDEX_SQL = (
+    "CREATE INDEX idx_feedback_events_action_type "
+    "ON feedback_events(action_id, feedback_type)"
+)
+CREATE_FEEDBACK_EVENTS_TS_INDEX_SQL = "CREATE INDEX idx_feedback_events_ts ON feedback_events(ts)"
+
+
+# ---------------------------------------------------------------------------
+# 14. schema_version — single-row migration marker.
 # ---------------------------------------------------------------------------
 CREATE_SCHEMA_VERSION_SQL = """
 CREATE TABLE schema_version (
@@ -296,6 +324,7 @@ TABLE_DDL: tuple[tuple[str, str], ...] = (
     ("preferences", CREATE_PREFERENCES_SQL),
     ("rules", CREATE_RULES_SQL),
     ("semantic_facts", CREATE_SEMANTIC_FACTS_SQL),
+    ("feedback_events", CREATE_FEEDBACK_EVENTS_SQL),
     ("schema_version", CREATE_SCHEMA_VERSION_SQL),
 )
 
@@ -319,6 +348,11 @@ INDEX_DDL: tuple[tuple[str, str], ...] = (
         "idx_signal_profiles_producer_key",
         CREATE_SIGNAL_PROFILES_PRODUCER_KEY_INDEX_SQL,
     ),
+    (
+        "idx_feedback_events_action_type",
+        CREATE_FEEDBACK_EVENTS_ACTION_TYPE_INDEX_SQL,
+    ),
+    ("idx_feedback_events_ts", CREATE_FEEDBACK_EVENTS_TS_INDEX_SQL),
 )
 
 
@@ -332,7 +366,7 @@ def get_all_ddl() -> list[str]:
 
 
 def get_table_names() -> list[str]:
-    """Return the 13 table names in declaration order."""
+    """Return the 14 table names in declaration order."""
     return [name for name, _ in TABLE_DDL]
 
 

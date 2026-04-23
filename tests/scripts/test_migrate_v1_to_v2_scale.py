@@ -115,7 +115,9 @@ def test_scale_row_count_invariants_hold(
     assert report.preferences.source == counts.preferences
     assert report.preferences.translated == counts.preferences
 
-    assert report.notification_feedback_skipped == counts.feedback_log
+    assert report.notification_feedback.source == counts.feedback_log
+    assert report.notification_feedback.translated == counts.feedback_log
+    assert report.notification_feedback.dropped == 0
 
     assert not [n for n in report.notes if n.startswith("INVARIANT:")]
 
