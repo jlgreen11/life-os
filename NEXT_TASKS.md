@@ -77,7 +77,7 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 <!-- DONE (see DONE_TASKS.md): Resolve feedback_events table design question — ADR at docs/adr/2026-04-22-feedback-events-disposition.md, DDL added to storage/schema.py (13→14 tables), storage/repos/feedback_events.py + FeedbackEventsRepository + 10 tests, migrate_v1_to_v2.py writes v1 feedback_log → feedback_events tagged source='v1_migration', existing migration tests updated (v1/scale/cutover_rehearsal). -->
 
 
-- [ ] **ADR index + backfill.** Create `docs/adr/README.md` (index) and backfill 6 ADRs for major v2 decisions: (1) Moment primitive as first-class entity, (2) kill soft-insight services, (3) drop NATS for asyncio + outbox, (4) consolidate 5 SQLite DBs → 1, (5) HTMX + Tailwind + Jinja over SPA, (6) web-first Phase 1, iOS Phase 2. Format: Context / Decision / Consequences / Status.
+<!-- DONE (see DONE_TASKS.md): ADR index + backfill. `docs/adr/README.md` index + 6 backfilled ADRs (002 Moment primitive, 003 kill soft-insights, 004 asyncio+outbox over NATS, 005 single SQLite, 006 HTMX+Tailwind+Jinja, 007 web-first/iOS Phase 2). Context / Decision / Consequences / Alternatives / Follow-up on each. -->
 
 ## Category C — Cutover preparation (agent-safe)
 
