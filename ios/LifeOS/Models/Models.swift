@@ -86,12 +86,13 @@ struct LifeOSTask: Codable, Identifiable {
     let description: String?
     let status: String
     let priority: String
+    let domain: String?
     let dueDate: String?
     let relatedContacts: [String]?
     let source: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, status, priority, source
+        case id, title, description, status, priority, domain, source
         case dueDate = "due_date"
         case relatedContacts = "related_contacts"
     }

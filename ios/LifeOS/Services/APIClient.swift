@@ -51,14 +51,88 @@ actor APIClient {
         return try await get("/api/tasks")
     }
 
-    func createTask(_ title: String, priority: String = "normal") async throws -> LifeOSTask {
+    /// Create a new task. Only `title` is required; all other fields are optional.
+    ///
+    /// Server schema (TaskCreateRequest in web/schemas.py):
+    ///   - title: str (required)
+    ///   - description: Optional[str]
+    ///   - domain: Optional[str]
+    ///   - priority: str = "normal"
+    ///   - due_date: Optional[str]
+    func createTask(
+        _ title: String,
+        description: String? = nil,
+        domain: String? = nil,
+        priority: String = "normal",
+        dueDate: String? = nil
+    ) async throws -> [String: Any] {
         // The correct endpoint is /api/tasks (plural). /api/task returns 404.
-        let body: [String: Any] = ["title": title, "priority": priority]
-        return try await post("/api/tasks", body: body)
+        // Server returns {"task_id": "<id>"}.
+        var body: [String: Any] = ["title": title, "priority": priority]
+        if let description = description {
+            body["description"] = description
+        }
+        if let domain = domain {
+            body["domain"] = domain
+        }
+        if let dueDate = dueDate {
+            // JSON key is snake_case to match Pydantic model field name
+            body["due_date"] = dueDate
+        }
+        let data = try await post("/api/tasks", body: body)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIError.invalidResponse
+        }
+        return json
+    }
+
+    /// Mark a task as completed.
+    ///
+    /// Server endpoint: POST /api/tasks/{task_id}/complete
+    /// Returns {"status": "completed"} on success.
+    func completeTask(_ taskId: String) async throws {
+        let _: Data = try await post("/api/tasks/\(taskId)/complete", body: [String: Any]())
+    }
+
+    /// Partially update a task. Only supplied fields are changed.
+    ///
+    /// Server schema (TaskUpdateRequest in web/schemas.py):
+    ///   - status: Optional[str]
+    ///   - priority: Optional[str]
+    ///   - due_date: Optional[str]
+    ///   - title: Optional[str]
+    func updateTask(
+        _ taskId: String,
+        title: String? = nil,
+        status: String? = nil,
+        priority: String? = nil,
+        dueDate: String? = nil
+    ) async throws {
+        var body: [String: Any] = [:]
+        if let title = title {
+            body["title"] = title
+        }
+        if let status = status {
+            body["status"] = status
+        }
+        if let priority = priority {
+            body["priority"] = priority
+        }
+        if let dueDate = dueDate {
+            body["due_date"] = dueDate
+        }
+        // PATCH /api/tasks/{task_id} — server returns {"status": "updated"}
+        let _: Data = try await patch("/api/tasks/\(taskId)", body: body)
     }
 
     // MARK: - Search
 
+    /// Semantic vector search across ingested events.
+    ///
+    /// Server schema (SearchRequest in web/schemas.py):
+    ///   - query: str (required) — matches "query" key sent here
+    ///   - limit: int = 10 (optional, not sent — server default used)
+    ///   - filters: Optional[dict] (optional, not sent)
     func search(_ query: String) async throws -> CommandResponse {
         let body = ["query": query]
         return try await post("/api/search", body: body)
@@ -66,6 +140,11 @@ actor APIClient {
 
     // MARK: - Feedback
 
+    /// Submit explicit user feedback.
+    ///
+    /// NOTE: Schema mismatch — FeedbackPayload sends {type, target_id, target_type, value}
+    /// but the server's FeedbackRequest (web/schemas.py) expects only {message: str}.
+    /// The server will return 422 unless FeedbackPayload is updated to match.
     func submitFeedback(_ feedback: FeedbackPayload) async throws {
         let _: EmptyResponse = try await post("/api/feedback", body: feedback)
     }
@@ -87,6 +166,12 @@ actor APIClient {
 
     // MARK: - Preferences
 
+    /// Update user preferences.
+    ///
+    /// NOTE: The server endpoint is PUT /api/preferences (not POST), and expects
+    /// PreferenceUpdate schema: {key: str, value: Any} — a single key-value pair.
+    /// This method sends a POST with a flat dict, which will return 405 Method Not Allowed.
+    /// To fix: change to PUT and send one key-value pair at a time.
     func updatePreferences(_ prefs: [String: String]) async throws {
         let _: EmptyResponse = try await post("/api/preferences", body: prefs)
     }
@@ -121,6 +206,18 @@ actor APIClient {
         let url = URL(string: "\(baseURL)\(path)")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+        try validateResponse(response)
+        return data
+    }
+
+    private func patch(_ path: String, body: [String: Any]) async throws -> Data {
+        let url = URL(string: "\(baseURL)\(path)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
