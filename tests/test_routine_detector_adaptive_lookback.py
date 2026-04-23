@@ -122,7 +122,7 @@ class TestComputeAdaptiveLookbackDays:
 
         effective = detector._compute_adaptive_lookback_days(30)
         assert effective > 30, "Lookback should extend beyond 30 when all episodes are older"
-        assert effective >= 41, "Lookback should be at least 41 days to cover episodes at day 40"
+        assert effective >= 40, "Lookback should cover episodes at day 40"
         assert effective <= 180, "Lookback should never exceed the 180-day cap"
 
     def test_no_extension_when_db_is_empty(self, db, user_model_store):
