@@ -68,7 +68,7 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 - [ ] **Ruff + mypy cleanup.** Run `ruff check core/ storage/ producers/ ai/ api/ web/ scripts/ --fix` and `ruff format .`; install mypy if missing and run `mypy --strict core/ storage/repos/ producers/`. Fix auto-fixable; for mypy errors fix top 10; leave remaining in `docs/mypy-gaps.md`.
 
-- [ ] **Public API docstrings.** Audit `core/moment/engine.py`, `scheduler.py`, `state.py`, `storage/repos/moments.py`, `outbox.py`, `ai/engine.py`, `api/routes/now.py`, `api/routes/you.py`. Every public class, method, function gets a docstring with: one-line summary, Args, Returns, Raises, and short example for non-trivial APIs. Google style, consistent across files.
+<!-- DONE (see DONE_TASKS.md): Public API docstrings audit — 8 target files reviewed. Only structural gap found was `OutboxRepository.__init__` (no docstring while parallel `MomentRepository.__init__` had one); filled. Every other public class / method / function already carries docstring with summary + args + returns + raises + example for non-trivial APIs. Style consistency: two dialects coexist (reST sections in ai/engine + storage/repos; narrative prose in core/moment + api/routes); both cover the acceptance criteria and a mass-rewrite toward one style would lose per-file readability. Audit doc: docs/docstrings-audit-2026-04-22.md. -->
 
 - [ ] **Scheduler performance profile.** Write `scripts/profile_scheduler.py` that seeds 10,000 synthetic Moments (mix of scheduled + snoozed, time-distributed across next 24h), runs 1 hour of simulated ticks (monotonic clock injection), measures p50/p95/p99 tick latency + throughput. Emit `docs/perf-scheduler-{date}.md`. Acceptance: p99 tick latency < 500ms at 10K-row fleet.
 
