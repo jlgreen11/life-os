@@ -81,15 +81,7 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 ## Category C — Cutover preparation (agent-safe)
 
-- [ ] **Cutover runbook (`docs/cutover-runbook.md`).** Step-by-step operator guide for the Phase 1 v1→v2 cutover. Content:
-  - Pre-flight (v1 backup + disk-space + health snapshot)
-  - Stop v1 services
-  - Run migration script (exact command + expected runtime + expected output)
-  - Bring up v2 (exact commands)
-  - Verify (`/api/health` expected JSON, sample Moment fires end-to-end, iOS compat shim responds)
-  - 24-hour watch window (what to monitor; alert thresholds)
-  - Rollback trigger criteria + procedure
-  Include timing estimates (total ≤ 30 min RTO target per CEO plan).
+<!-- DONE (see DONE_TASKS.md): Cutover runbook — docs/cutover-runbook.md + tests/docs/test_cutover_runbook.py (pure-stdlib structural lock on the runbook). Sections 0-8 cover pre-flight (backup + disk + health snapshot + secrets key note), stop v1 (launchd + docker compose), run migration (exact command + expected output + hard-fail checklist + FK check), bring up v2 (NATS teardown + python -m life_os + log tail), verify (/api/health expected JSON, /api/now sample Moment, /api/context/event iOS shim, row-count diff), 24-hour watch window (alert-threshold table + checkpoint schedule), rollback (trigger criteria + scripted + manual procedure + post-rollback actions). At-a-glance timeline sums to ~20 min wall-clock inside the 30-min RTO. 11 tests lock structure (required sections, order, RTO-30 language, verification endpoints, alert thresholds, rollback criteria+procedure, migration command flags, python -m life_os canonical start, balanced code fences, referenced scripts present-or-queued, timing sums under RTO). -->
 
 - [ ] **Cutover monitor script (`scripts/cutover_monitor.py`).** Continuous loop polling `/api/health` every 10s, logs structured state, alerts (log.error + writes `data/cutover-alerts.jsonl`) on: connector offline > 5 min, DB write lag > 30s, scheduler heartbeat missing > 2 min, pending Moment count growing without accept/dismiss activity. Exit codes: 0 healthy for N min (configurable), 1 alert fired. Tests: simulate each alert scenario with mocks.
 
