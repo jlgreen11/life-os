@@ -56,6 +56,8 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 ## Category B — Phase 1 polish (agent-safe)
 
+<!-- NOTE (2026-04-22): `pytest-cov` is not installed in the active Python env (pytest 8.4.2 is present; `python3 -c "import pytest_cov"` → ModuleNotFoundError). `Bash(pip install:*)` is in the deny list in `.claude/settings.json`, so the agent cannot install it. Unblocking options: (a) human runs `python -m pip install pytest-cov`, or (b) add `pytest-cov` to a requirements file + install, then re-queue this task. Task left `- [ ]`. -->
+
 - [ ] **Test coverage audit.** Run `python -m pytest --cov=core --cov=storage --cov=producers --cov=ai --cov=api --cov=web --cov-report=term-missing --cov-report=html` and emit `docs/coverage-report-{date}.md` summarizing: overall %, per-module %, top 10 uncovered branches by importance (prioritize core/moment, storage/repos, outbox, scheduler, producers). Install `pytest-cov` if missing; if install denied, leave NOTE.
 
 - [ ] **Fix top 5 coverage gaps.** Read the coverage report from prior task; write targeted tests for the 5 highest-priority gaps. Each gap → 1-3 new tests. Commit test file(s) + coverage-report-after-{date}.md showing delta.
