@@ -49,13 +49,8 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 <!-- DONE (see DONE_TASKS.md): `PeopleTabView.swift` + `ContactDossierView.swift` + `CadenceSparkline` + 43 tests. People tab: `.searchable`-driven query, pinned YOU identity row, NEEDS ATTENTION + ACTIVE THIS WEEK sections with right-aligned SF-Mono stats ("9d ago" + "+4d"), `NavigationLink(value:)` push to per-contact dossier. Dossier: last-contact sentence, commTemplate/fallback, bullet topics, SwiftUI-Path cadence sparkline (no chart libs), predicted-next sentence, single `[Start a message]` primary. Pure static helpers for filter/lastSeenLabel/cadenceLabel/sparklinePoints so XCTest can lock every copy string and the sparkline math against a frozen `MockData.anchorDate`. -->
 
+<!-- DONE (see DONE_TASKS.md): `SettingsTabView.swift` + `ConnectorEditView.swift` + `Preferences` + 55 tests. Settings tab: CONNECTORS tile list (status dot + display name + "Ready · 3m ago" / "Paused" / "Error · <detail>" statusLine + enabled toggle + chevron) pushing to per-connector detail pane on tap; PREFERENCES card with two HH:MM quiet-hours `TextField`s (with `isValidTime` warning) and autonomy/proactivity `Slider`s showing percent labels. `ConnectorEditView`: header card + enable toggle + CONFIGURATION `TextField`s + CREDENTIALS `SecureField`s with "••• saved" placeholders (raw creds never rendered) + disabled-by-default `[Save changes]` gated by pure `canSave`. New `Preferences` Codable struct mirrors `_PREFERENCE_DEFAULTS` in `api/routes/settings.py`. Four connector fixtures exercise every status-dot branch (ready/syncing/paused/error). Pure static helpers (`statusDotColor`/`displayName`/`statusLine`/`lastSyncLabel`/`isValidTime`/`clampUnit`/`percentLabel` + `ConnectorEditView.{defaultConfigKeys,defaultSecretKeys,labelForKey,isValidDraftValue,headerSubtitle,hasChanges,allEditedValuesValid,canSave}`) locked by XCTest without rendering. -->
 
-- [ ] **`SettingsTabView.swift`.** Per DESIGN.md:
-  - Connector list (status dot + last sync + enabled toggle)
-  - Tap connector → `ConnectorEditView` (detail pane with form)
-  - Preferences section (quiet hours, autonomy slider, proactivity)
-  - No raw credentials shown
-  Tests: preview renders; form validation.
 
 - [ ] **ViewModels + XCTest unit tests.** Create `ios/LifeOS/ViewModels/`:
   - `NowViewModel` (fetches `/api/now`, holds `@Published var feed: MomentFeed`)
