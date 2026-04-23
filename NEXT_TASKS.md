@@ -56,10 +56,10 @@ These build the iOS app scaffold. Code compiles on any Mac; no device runtime ne
 
 ## Category B — Phase 1 polish (agent-safe)
 
-<!-- NOTE (2026-04-22): `pytest-cov` is not installed in the active Python env (pytest 8.4.2 is present; `python3 -c "import pytest_cov"` → ModuleNotFoundError). `Bash(pip install:*)` is in the deny list in `.claude/settings.json`, so the agent cannot install it. Unblocking options: (a) human runs `python -m pip install pytest-cov`, or (b) add `pytest-cov` to a requirements file + install, then re-queue this task. Task left `- [ ]`. -->
-<!-- NOTE (2026-04-22 / last verified 2026-04-23 iter60): Progress on option (b) — `pytest-cov>=5.0.0` now listed in `requirements.txt` (alongside existing pytest / pytest-asyncio). When the human creates `.venv` and runs `pip install -r requirements.txt`, pytest-cov will be available and this task can close. Re-verified through iter29 / iter30 / iter32 / iter45 / iter47 / iter48 / iter49 / iter51 / iter52 / iter55 / iter56 / iter58 / iter59 / iter60 / iter61 / iter62 / iter63: `.venv` still absent, `python3.12 -c "import pytest_cov"` → ModuleNotFoundError, `python3.12 -c "import fastapi"` → ModuleNotFoundError, `which ruff` → not found, `python3.12 -c "import mypy"` → ModuleNotFoundError. Env unchanged since iter30 — agent is exiting PARTIAL each iteration rather than burning cycles; human intervention (create `.venv` + `pip install -r requirements.txt`) required before any of the three Category B tasks can close. -->
+<!-- DONE (see DONE_TASKS.md): Test coverage audit — docs/coverage-report-2026-04-23.md emitted. v2-only coverage ≈ 88%; producers 97%, core 85%, ai 86%, api 81% (dragged by 67 pre-existing route failures), storage v2 repos 88-100% (storage/ rollup 30% because v1 stores included). Top-10 gap list ranked by runtime impact; #1 is core/moment/broadcaster.py at 0%. -->
 
-- [ ] **Test coverage audit.** Run `python -m pytest --cov=core --cov=storage --cov=producers --cov=ai --cov=api --cov=web --cov-report=term-missing --cov-report=html` and emit `docs/coverage-report-{date}.md` summarizing: overall %, per-module %, top 10 uncovered branches by importance (prioritize core/moment, storage/repos, outbox, scheduler, producers). Install `pytest-cov` if missing; if install denied, leave NOTE.
+<!-- NOTE (2026-04-23 iter1): Category B env blocker cleared — venv sourced by orchestrator (commit 7024fc9); pytest-cov 7.1.0, fastapi 0.136.0, ruff 0.15.11, mypy all present. All three Category B tasks unblocked. -->
+
 
 <!-- NOTE (2026-04-22 iter11): Depends on the blocked coverage-audit task above. Until pytest-cov + a working Python env are available, there is no coverage report to read. Keep `- [ ]`. -->
 
