@@ -36,11 +36,17 @@ python main.py
 ```bash
 source .venv/bin/activate
 python -m pytest tests/ -v
+
+# Run a single test file
+python -m pytest tests/test_event_bus.py -v
+
+# Run a single test by name pattern
+python -m pytest tests/ -v -k "test_signal_extraction"
 ```
 
-- **77 test files** in `tests/` covering storage, services, connectors, web routes, signal extractors, and regression fixes
+- ~580 test files in `tests/` (mostly flat; `tests/web/` is the only subdirectory)
 - Pytest with `asyncio_mode = "auto"` (configured in `pyproject.toml`)
-- Fixtures in `tests/conftest.py` provide real `DatabaseManager` instances with temporary SQLite databases — no mocking of the storage layer
+- Fixtures in `tests/conftest.py` provide real `DatabaseManager` instances with temporary SQLite databases — **the storage layer is intentionally not mocked**, so tests exercise real schema migrations and queries
 - Manual verification also available via `/health`, `/admin/db`, and connector test endpoints
 
 ## Linting and Formatting
@@ -90,6 +96,8 @@ No global singletons. Every service receives dependencies via constructor args. 
 Database → Event Bus → Vector Store → Services → Connectors → Web Server
 
 For testing, dependencies can be injected directly via keyword args to `LifeOS.__init__()`.
+
+> **Note on `main.py`:** It is ~4,800 lines — the orchestrator, every background loop, and `master_event_handler` all live in this single module. Don't try to read it end-to-end. Navigate by symbol search (`grep -n "def \|class "`) and only read the section you need.
 
 ### 5-Database Storage (`storage/database.py`)
 
@@ -170,6 +178,9 @@ life-os/
 │   ├── semantic_fact_inferrer/ # High-level fact extraction from episodes
 │   ├── routine_detector/   # Pattern detection from behavioral data
 │   ├── behavioral_accuracy_tracker/ # Prediction calibration
+│   ├── conflict_detector/  # Calendar/task conflict detection
+│   ├── task_completion_detector/ # Infers task completion from event stream
+│   ├── workflow_detector/  # Detects multi-step workflows from event sequences
 │   └── onboarding/         # First-run setup wizard
 ├── models/                 # Data models
 │   ├── core.py             # 81 event types, enums (Priority, ConfidenceGate, etc.)
@@ -188,8 +199,8 @@ life-os/
 │   └── setup_template.py   # First-run setup wizard
 ├── ios/                    # Swift/SwiftUI companion app
 │   └── LifeOS/             # Location, device proximity, context events
-├── tests/                  # 77 test files (pytest)
-├── scripts/                # Setup, backfill, improvement scripts
+├── tests/                  # ~580 test files (pytest)
+├── scripts/                # Setup, backfill, improvement-loop agent prompts and runners
 ├── docs/                   # Documentation and plans
 ├── docker-compose.yaml     # NATS + Ollama + Life OS orchestration
 ├── Dockerfile              # Python 3.12, Playwright, embedding model
@@ -273,10 +284,26 @@ Key sections:
 
 ## Scripts
 
+### Setup & diagnostics
+
 - `scripts/setup.sh` — First-time environment setup
-- `scripts/analyze-data-quality.py` — Data quality analysis
-- `scripts/backfill_reminder_contacts.py` — Backfill contact info for reminder predictions
-- `scripts/backfill_task_extraction.py` — Backfill historical task extraction
+- `scripts/analyze-data-quality.py` — Data quality analysis (the improvement loop reads this output to pick its next target)
+- `scripts/diagnose_prediction_silence.py`, `diagnose_prediction_types.py` — Prediction pipeline introspection
 - `scripts/cleanup_prediction_backlog.py` — Clean up old predictions
-- `scripts/run-improvement.sh` / `run-continuous-improvement.sh` — Improvement loop scripts
-- `scripts/improve-lifeos.md` / `improvement-agent.md` — AI improvement agent instructions
+
+### Backfill ecosystem (~20 scripts)
+
+`scripts/backfill_*.py` retroactively enrich historical events when a new signal extractor, schema column, or profile type is added. Examples: `backfill_episodes_from_events.py`, `backfill_linguistic_profile.py`, `backfill_task_extraction.py`, `backfill_temporal_profile.py`. Always check whether a new signal needs a backfill counterpart.
+
+### Improvement-loop agents
+
+The `improve:` commits in git history come from an autonomous Claude-Code agent loop that ships one PR per cycle. It is the project's primary development workflow. Components:
+
+- `scripts/improve-lifeos.md` — Single-shot agent prompt. Analyzes the system, picks the highest-impact problem, and ships a merged PR.
+- `scripts/improvement-agent.md` — Continuous loop variant. Same agent, runs back-to-back.
+- `scripts/improvement-planner.md`, `scripts/improvement-agent-worker.md` — Planner/worker split for parallel execution.
+- `scripts/loops/loop-{code-quality,functionality,security,testing}.md` — Focused improvement modes targeting a single dimension.
+- Runners: `run-improvement.sh`, `run-continuous-improvement.sh`, `run-continuous-improvement-single.sh`, `run-improvement-worker.sh`, `run-parallel-improvement.sh`.
+- `scripts/com.lifeos.improve.plist`, `com.lifeos.continuous-improve.plist` — launchd agents that run the loop on the Mac Mini host.
+
+When working on a feature manually, expect the improvement loop to interleave its own PRs against `master`. The default branch is **`master`** (not `main`), and improvement PRs use a `improve/<date>-<slug>` branch convention.

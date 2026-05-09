@@ -48,7 +48,7 @@ cp config/settings.example.yaml config/settings.yaml
 docker compose up -d
 
 # 3. Open the web UI
-open https://localhost:8443
+open http://localhost:8080
 ```
 
 ## Build Order
