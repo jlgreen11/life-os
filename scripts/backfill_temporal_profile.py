@@ -166,9 +166,11 @@ def backfill_temporal_profile(
             # Progress reporting every batch
             elapsed = time.time() - start_time
             rate = events_processed / elapsed if elapsed > 0 else 0
-            print(f"[backfill_temporal_profile] Progress: {events_processed} events, "
-                  f"{signals_extracted} signals, {errors} errors "
-                  f"({rate:.1f} events/sec)")
+            print(
+                f"[backfill_temporal_profile] Progress: {events_processed} events, "
+                f"{signals_extracted} signals, {errors} errors "
+                f"({rate:.1f} events/sec)"
+            )
 
     # Get final profile state
     final_profile = ums.get_signal_profile("temporal")
@@ -187,20 +189,24 @@ def backfill_temporal_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_temporal_profile] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_temporal_profile] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_temporal_profile] Events processed: {events_processed}")
     print(f"[backfill_temporal_profile] Signals extracted: {signals_extracted}")
-    print(f"[backfill_temporal_profile] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})")
+    print(
+        f"[backfill_temporal_profile] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})"
+    )
     print(f"[backfill_temporal_profile] Errors: {errors}")
-    print(f"[backfill_temporal_profile] Elapsed: {elapsed_seconds:.1f}s ({events_processed/elapsed_seconds:.1f} events/sec)")
+    print(
+        f"[backfill_temporal_profile] Elapsed: {elapsed_seconds:.1f}s ({events_processed / elapsed_seconds:.1f} events/sec)"
+    )
 
     if dry_run:
-        print(f"[backfill_temporal_profile] DRY RUN - no changes were written to database")
+        print("[backfill_temporal_profile] DRY RUN - no changes were written to database")
 
     # Show sample of the temporal profile data for verification
     if final_profile and not dry_run:
         data = final_profile["data"]
-        print(f"\n[backfill_temporal_profile] ===== TEMPORAL PROFILE SUMMARY =====")
+        print("\n[backfill_temporal_profile] ===== TEMPORAL PROFILE SUMMARY =====")
 
         # Show top 5 most active hours
         if data.get("activity_by_hour"):
@@ -220,16 +226,16 @@ def backfill_temporal_profile(
             planning_days = data["advance_planning_days"]
             if planning_days:
                 avg_advance = sum(planning_days) / len(planning_days)
-                print(f"[backfill_temporal_profile] Advance planning: avg {avg_advance:.1f} days ({len(planning_days)} events)")
+                print(
+                    f"[backfill_temporal_profile] Advance planning: avg {avg_advance:.1f} days ({len(planning_days)} events)"
+                )
 
     return result
 
 
 def main():
     """CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Backfill temporal profile from historical events"
-    )
+    parser = argparse.ArgumentParser(description="Backfill temporal profile from historical events")
     parser.add_argument(
         "--data-dir",
         default="data",
@@ -270,6 +276,7 @@ def main():
     except Exception as e:
         print(f"[backfill_temporal_profile] FATAL ERROR: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

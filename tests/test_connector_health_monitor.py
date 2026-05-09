@@ -68,9 +68,7 @@ async def _run_monitor_iteration(db, event_bus, alerted_connectors):
         The alerted_connectors set (same object, mutated in-place).
     """
     with db.get_connection("state") as conn:
-        cursor = conn.execute(
-            "SELECT connector_id, status, last_sync, last_error FROM connector_state"
-        )
+        cursor = conn.execute("SELECT connector_id, status, last_sync, last_error FROM connector_state")
         rows = cursor.fetchall()
 
     now = datetime.now(timezone.utc)
@@ -84,9 +82,7 @@ async def _run_monitor_iteration(db, event_bus, alerted_connectors):
             reason = f"status=error: {row['last_error'] or 'unknown'}"
         elif row["last_sync"]:
             try:
-                last_sync = datetime.fromisoformat(
-                    row["last_sync"].replace("Z", "+00:00")
-                )
+                last_sync = datetime.fromisoformat(row["last_sync"].replace("Z", "+00:00"))
                 stale_seconds = (now - last_sync).total_seconds()
                 if stale_seconds > 86400:  # 24 hours
                     is_degraded = True
@@ -126,9 +122,7 @@ class TestConnectorHealthMonitor:
 
     async def test_detects_error_status(self, db, mock_event_bus):
         """A connector with status='error' should trigger a health_degraded event."""
-        _insert_connector_state(
-            db, "google", status="error", last_error="Authentication failed"
-        )
+        _insert_connector_state(db, "google", status="error", last_error="Authentication failed")
         alerted = set()
         await _run_monitor_iteration(db, mock_event_bus, alerted)
 
@@ -169,9 +163,7 @@ class TestConnectorHealthMonitor:
 
     async def test_no_duplicate_alerts(self, db, mock_event_bus):
         """Running the monitor twice with the same degraded connector should only publish once."""
-        _insert_connector_state(
-            db, "google", status="error", last_error="Auth expired"
-        )
+        _insert_connector_state(db, "google", status="error", last_error="Auth expired")
         alerted = set()
 
         # First iteration — should publish
@@ -185,9 +177,7 @@ class TestConnectorHealthMonitor:
     async def test_alert_clears_on_recovery(self, db, mock_event_bus):
         """Alert should clear when connector recovers, then re-fire on subsequent degradation."""
         # Step 1: Connector is degraded → alert fires
-        _insert_connector_state(
-            db, "google", status="error", last_error="Auth expired"
-        )
+        _insert_connector_state(db, "google", status="error", last_error="Auth expired")
         alerted = set()
         await _run_monitor_iteration(db, mock_event_bus, alerted)
         assert mock_event_bus.publish.call_count == 1
@@ -202,9 +192,7 @@ class TestConnectorHealthMonitor:
         assert mock_event_bus.publish.call_count == 1
 
         # Step 3: Connector degrades again → alert re-fires
-        _insert_connector_state(
-            db, "google", status="error", last_error="Token revoked"
-        )
+        _insert_connector_state(db, "google", status="error", last_error="Token revoked")
         await _run_monitor_iteration(db, mock_event_bus, alerted)
         assert mock_event_bus.publish.call_count == 2
         assert "google" in alerted
@@ -215,9 +203,7 @@ class TestConnectorHealthMonitor:
 
         # Create a mock DB that raises on get_connection
         broken_db = MagicMock()
-        broken_db.get_connection = MagicMock(
-            side_effect=Exception("DB connection failed")
-        )
+        broken_db.get_connection = MagicMock(side_effect=Exception("DB connection failed"))
 
         # Should not raise — errors are caught
         try:
@@ -238,9 +224,7 @@ class TestConnectorHealthMonitor:
         _insert_connector_state(db, "caldav", status="ok", last_sync=recent)
 
         # Error connector
-        _insert_connector_state(
-            db, "google", status="error", last_error="Auth failed"
-        )
+        _insert_connector_state(db, "google", status="error", last_error="Auth failed")
 
         # Stale connector
         stale = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
@@ -267,9 +251,7 @@ class TestConnectorHealthMonitor:
 
     async def test_stale_sync_z_suffix_timestamp(self, db, mock_event_bus):
         """Timestamps with trailing 'Z' (UTC marker) should be parsed correctly."""
-        stale_time = (datetime.now(timezone.utc) - timedelta(hours=30)).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ"
-        )
+        stale_time = (datetime.now(timezone.utc) - timedelta(hours=30)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         _insert_connector_state(db, "signal", status="ok", last_sync=stale_time)
 
         alerted = set()
@@ -283,9 +265,7 @@ class TestConnectorHealthMonitor:
     async def test_disconnected_event_bus_skips_publish(self, db, mock_event_bus):
         """If the event bus is disconnected, the monitor should skip publishing."""
         mock_event_bus.is_connected = False
-        _insert_connector_state(
-            db, "google", status="error", last_error="Auth failed"
-        )
+        _insert_connector_state(db, "google", status="error", last_error="Auth failed")
 
         alerted = set()
         await _run_monitor_iteration(db, mock_event_bus, alerted)

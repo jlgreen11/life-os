@@ -124,9 +124,7 @@ async def test_sync_contacts_new_contact(signal_connector):
 
         # Verify contact was created
         with signal_connector.db.get_connection("entities") as conn:
-            rows = conn.execute(
-                "SELECT name, phones FROM contacts WHERE name = 'Alice Smith'"
-            ).fetchall()
+            rows = conn.execute("SELECT name, phones FROM contacts WHERE name = 'Alice Smith'").fetchall()
             assert len(rows) == 1
             assert json.loads(rows[0]["phones"]) == ["+12025559999"]
 
@@ -141,12 +139,12 @@ async def test_sync_contacts_update_existing(signal_connector):
         conn.execute(
             """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                VALUES (?, ?, '[]', '{}', '["personal"]', ?, ?)""",
-            (contact_id, "Unknown Contact", now, now)
+            (contact_id, "Unknown Contact", now, now),
         )
         conn.execute(
             """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
                VALUES (?, 'phone', ?)""",
-            ("+12025559999", contact_id)
+            ("+12025559999", contact_id),
         )
 
     contacts = [
@@ -164,9 +162,7 @@ async def test_sync_contacts_update_existing(signal_connector):
 
         # Verify contact was updated
         with signal_connector.db.get_connection("entities") as conn:
-            rows = conn.execute(
-                "SELECT name, phones FROM contacts WHERE id = ?", (contact_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT name, phones FROM contacts WHERE id = ?", (contact_id,)).fetchall()
             assert len(rows) == 1
             assert rows[0]["name"] == "Alice Smith"
             assert json.loads(rows[0]["phones"]) == ["+12025559999"]
@@ -190,9 +186,7 @@ async def test_sync_contacts_skip_self(signal_connector):
 
         # Verify no contact was created
         with signal_connector.db.get_connection("entities") as conn:
-            rows = conn.execute(
-                "SELECT * FROM contacts WHERE name = 'Me'"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM contacts WHERE name = 'Me'").fetchall()
             assert len(rows) == 0
 
 
@@ -236,9 +230,7 @@ async def test_sync_contacts_use_profile_name(signal_connector):
 
         # Verify contact was created with profile name
         with signal_connector.db.get_connection("entities") as conn:
-            rows = conn.execute(
-                "SELECT name FROM contacts WHERE name = 'Alice Profile'"
-            ).fetchall()
+            rows = conn.execute("SELECT name FROM contacts WHERE name = 'Alice Profile'").fetchall()
             assert len(rows) == 1
 
 
@@ -255,12 +247,12 @@ async def test_sync_groups(signal_connector):
             conn.execute(
                 """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                    VALUES (?, ?, ?, '{}', '["personal"]', ?, ?)""",
-                (contact_id, f"Contact {i}", json.dumps([phone]), now, now)
+                (contact_id, f"Contact {i}", json.dumps([phone]), now, now),
             )
             conn.execute(
                 """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
                    VALUES (?, 'phone', ?)""",
-                (phone, contact_id)
+                (phone, contact_id),
             )
 
     contacts = []
@@ -272,7 +264,7 @@ async def test_sync_groups(signal_connector):
                 {"number": "+12025550001"},
                 {"number": "+12025550002"},
                 {"number": "+12025550003"},
-            ]
+            ],
         }
     ]
 
@@ -305,7 +297,7 @@ async def test_sync_contacts_name_matching(signal_connector):
         conn.execute(
             """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                VALUES (?, ?, '[]', '{}', '["personal"]', ?, ?)""",
-            (contact_id, "Alice Johnson", now, now)
+            (contact_id, "Alice Johnson", now, now),
         )
 
     contacts = [
@@ -345,7 +337,7 @@ async def test_sync_receive_single_message(signal_connector, event_bus):
                 "timestamp": 1700000000000,
                 "dataMessage": {
                     "message": "Hello, how are you?",
-                }
+                },
             }
         }
     ]
@@ -383,8 +375,8 @@ async def test_sync_receive_group_message(signal_connector, event_bus):
                     "groupInfo": {
                         "groupId": "group-xyz789",
                         "groupName": "Work Team",
-                    }
-                }
+                    },
+                },
             }
         }
     ]
@@ -414,7 +406,7 @@ async def test_sync_skip_empty_messages(signal_connector):
                 "timestamp": 1700000000000,
                 "dataMessage": {
                     "message": "",  # Empty body
-                }
+                },
             }
         }
     ]
@@ -462,8 +454,8 @@ async def test_sync_reply_detection(signal_connector, event_bus):
                     "quote": {
                         "id": 1699999999000,
                         "text": "Want to grab lunch?",
-                    }
-                }
+                    },
+                },
             }
         }
     ]
@@ -492,10 +484,8 @@ async def test_sync_attachment_detection(signal_connector, event_bus):
                 "timestamp": 1700000000000,
                 "dataMessage": {
                     "message": "Check out this photo",
-                    "attachments": [
-                        {"contentType": "image/jpeg", "filename": "photo.jpg"}
-                    ]
-                }
+                    "attachments": [{"contentType": "image/jpeg", "filename": "photo.jpg"}],
+                },
             }
         }
     ]
@@ -525,7 +515,7 @@ async def test_sync_snippet_truncation(signal_connector, event_bus):
                 "timestamp": 1700000000000,
                 "dataMessage": {
                     "message": long_message,
-                }
+                },
             }
         }
     ]
@@ -566,10 +556,7 @@ async def test_execute_send_single_recipient(signal_connector, event_bus):
     with patch.object(signal_connector, "_rpc_call", new_callable=AsyncMock) as mock_rpc:
         mock_rpc.return_value = None
 
-        result = await signal_connector.execute(
-            "send_message",
-            {"to": "+12025559999", "message": "Hello Alice!"}
-        )
+        result = await signal_connector.execute("send_message", {"to": "+12025559999", "message": "Hello Alice!"})
 
         assert result["status"] == "sent"
         assert result["to"] == "+12025559999"
@@ -600,10 +587,7 @@ async def test_execute_send_multiple_recipients(signal_connector, event_bus):
     with patch.object(signal_connector, "_rpc_call", new_callable=AsyncMock) as mock_rpc:
         mock_rpc.return_value = None
 
-        result = await signal_connector.execute(
-            "send_message",
-            {"to": recipients, "message": "Group announcement"}
-        )
+        result = await signal_connector.execute("send_message", {"to": recipients, "message": "Group announcement"})
 
         assert result["status"] == "sent"
         assert result["to"] == recipients
@@ -659,11 +643,7 @@ async def test_rpc_call_error_response(signal_connector):
     mock_reader = AsyncMock()
     mock_writer = AsyncMock()
 
-    response = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "error": {"code": -32600, "message": "Invalid Request"}
-    }
+    response = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32600, "message": "Invalid Request"}}
     mock_reader.readline.return_value = (json.dumps(response) + "\n").encode()
 
     with patch("asyncio.open_unix_connection", new_callable=AsyncMock) as mock_open:
@@ -805,6 +785,7 @@ async def test_start_triggers_initial_contact_sync(signal_connector):
 @pytest.mark.asyncio
 async def test_stop_cancels_contact_sync_task(signal_connector):
     """Test stopping the connector cancels the contact sync loop."""
+
     # Create a real asyncio task that we can cancel
     async def dummy_task():
         """Dummy coroutine that runs forever until cancelled."""

@@ -108,9 +108,7 @@ def _insert_insight(
     if created_at is not None:
         ts = created_at.isoformat()
     else:
-        ts = (
-            datetime.now(timezone.utc) - timedelta(hours=created_offset_hours)
-        ).isoformat()
+        ts = (datetime.now(timezone.utc) - timedelta(hours=created_offset_hours)).isoformat()
     evidence = json.dumps(["test_evidence"])
     with db.get_connection("user_model") as conn:
         conn.execute(
@@ -145,9 +143,7 @@ def test_cache_age_null_when_no_insights(client):
     response = client.get("/api/insights/summary")
     assert response.status_code == 200
     data = response.json()
-    assert data["cache_age_seconds"] is None, (
-        "cache_age_seconds must be null when there are no insights"
-    )
+    assert data["cache_age_seconds"] is None, "cache_age_seconds must be null when there are no insights"
 
 
 def test_oldest_insight_at_null_when_no_insights(client):
@@ -155,9 +151,7 @@ def test_oldest_insight_at_null_when_no_insights(client):
     response = client.get("/api/insights/summary")
     assert response.status_code == 200
     data = response.json()
-    assert data["oldest_insight_at"] is None, (
-        "oldest_insight_at must be null when there are no insights"
-    )
+    assert data["oldest_insight_at"] is None, "oldest_insight_at must be null when there are no insights"
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +268,7 @@ def test_oldest_insight_at_points_to_oldest_timestamp(client, life_os_mock):
 
     diff = abs((oldest_at_returned - oldest_dt).total_seconds())
     assert diff <= 1.0, (
-        f"oldest_insight_at={oldest_at_str!r} differs from inserted "
-        f"timestamp by {diff}s (expected ≤ 1s)"
+        f"oldest_insight_at={oldest_at_str!r} differs from inserted timestamp by {diff}s (expected ≤ 1s)"
     )
 
 

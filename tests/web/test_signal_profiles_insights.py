@@ -67,8 +67,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -161,9 +166,11 @@ def test_signal_profiles_with_temporal_data(mock_life_os, client):
         "samples_count": 500,
         "updated_at": now_iso,
     }
+
     # Return temporal row when queried, None for other types
     def _get_profile(ptype):
         return temporal_row if ptype == "temporal" else None
+
     mock_life_os.user_model_store.get_signal_profile = Mock(side_effect=_get_profile)
 
     response = client.get("/api/user-model/signal-profiles")
@@ -205,8 +212,15 @@ def test_signal_profiles_all_known_types_queried(mock_life_os, client):
     client.get("/api/user-model/signal-profiles")
 
     expected = {
-        "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-        "relationships", "topics", "temporal", "spatial", "decision",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "topics",
+        "temporal",
+        "spatial",
+        "decision",
     }
     assert expected == set(queried)
 
@@ -257,10 +271,12 @@ def test_routines_returns_detected_routines(mock_life_os, client):
     """Detected routines are returned with name, trigger, and consistency_score."""
     # The routines store returns dicts with consistency_score and times_observed
     # (the route filters on these keys post-query).
-    mock_life_os.user_model_store.get_routines = Mock(return_value=[
-        {"name": "Morning standup", "trigger": "weekday_morning", "consistency_score": 0.85, "times_observed": 22},
-        {"name": "Evening review", "trigger": "weekday_evening", "consistency_score": 0.7, "times_observed": 15},
-    ])
+    mock_life_os.user_model_store.get_routines = Mock(
+        return_value=[
+            {"name": "Morning standup", "trigger": "weekday_morning", "consistency_score": 0.85, "times_observed": 22},
+            {"name": "Evening review", "trigger": "weekday_evening", "consistency_score": 0.7, "times_observed": 15},
+        ]
+    )
     response = client.get("/api/user-model/routines")
     data = response.json()
     assert data["count"] == 2

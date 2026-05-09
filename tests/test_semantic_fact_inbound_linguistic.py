@@ -38,20 +38,23 @@ class TestInboundLinguisticInference:
 
     def test_infer_formal_professional_environment(self, user_model_store):
         """High average inbound formality (>0.7) infers formal professional environment."""
-        self._setup_inbound_profile(user_model_store, {
-            "alice@work.com": {
-                "formality": 0.85,
-                "question_rate": 0.1,
-                "hedge_rate": 0.05,
-                "samples_count": 30,
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "alice@work.com": {
+                    "formality": 0.85,
+                    "question_rate": 0.1,
+                    "hedge_rate": 0.05,
+                    "samples_count": 30,
+                },
+                "bob@work.com": {
+                    "formality": 0.75,
+                    "question_rate": 0.2,
+                    "hedge_rate": 0.03,
+                    "samples_count": 20,
+                },
             },
-            "bob@work.com": {
-                "formality": 0.75,
-                "question_rate": 0.2,
-                "hedge_rate": 0.03,
-                "samples_count": 20,
-            },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         result = inferrer.infer_from_inbound_linguistic_profile()
@@ -67,20 +70,23 @@ class TestInboundLinguisticInference:
 
     def test_infer_casual_informal_environment(self, user_model_store):
         """Low average inbound formality (<0.3) infers casual informal environment."""
-        self._setup_inbound_profile(user_model_store, {
-            "friend1@example.com": {
-                "formality": 0.15,
-                "question_rate": 0.1,
-                "hedge_rate": 0.05,
-                "samples_count": 25,
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "friend1@example.com": {
+                    "formality": 0.15,
+                    "question_rate": 0.1,
+                    "hedge_rate": 0.05,
+                    "samples_count": 25,
+                },
+                "friend2@example.com": {
+                    "formality": 0.2,
+                    "question_rate": 0.15,
+                    "hedge_rate": 0.08,
+                    "samples_count": 25,
+                },
             },
-            "friend2@example.com": {
-                "formality": 0.2,
-                "question_rate": 0.15,
-                "hedge_rate": 0.08,
-                "samples_count": 25,
-            },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_inbound_linguistic_profile()
@@ -96,20 +102,23 @@ class TestInboundLinguisticInference:
 
     def test_infer_frequently_asked_questions(self, user_model_store):
         """High inbound question rate (>0.5) infers user is a go-to expert."""
-        self._setup_inbound_profile(user_model_store, {
-            "colleague@work.com": {
-                "formality": 0.5,
-                "question_rate": 0.7,
-                "hedge_rate": 0.05,
-                "samples_count": 40,
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "colleague@work.com": {
+                    "formality": 0.5,
+                    "question_rate": 0.7,
+                    "hedge_rate": 0.05,
+                    "samples_count": 40,
+                },
+                "intern@work.com": {
+                    "formality": 0.5,
+                    "question_rate": 0.6,
+                    "hedge_rate": 0.1,
+                    "samples_count": 10,
+                },
             },
-            "intern@work.com": {
-                "formality": 0.5,
-                "question_rate": 0.6,
-                "hedge_rate": 0.1,
-                "samples_count": 10,
-            },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_inbound_linguistic_profile()
@@ -121,14 +130,17 @@ class TestInboundLinguisticInference:
 
     def test_no_question_fact_when_rate_is_low(self, user_model_store):
         """Question rate below 0.5 does not produce question intensity fact."""
-        self._setup_inbound_profile(user_model_store, {
-            "contact@example.com": {
-                "formality": 0.5,
-                "question_rate": 0.2,
-                "hedge_rate": 0.05,
-                "samples_count": 50,
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "contact@example.com": {
+                    "formality": 0.5,
+                    "question_rate": 0.2,
+                    "hedge_rate": 0.05,
+                    "samples_count": 50,
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_inbound_linguistic_profile()
@@ -143,14 +155,17 @@ class TestInboundLinguisticInference:
 
     def test_infer_cautious_senders(self, user_model_store):
         """High inbound hedge rate (>0.2) infers cautious senders."""
-        self._setup_inbound_profile(user_model_store, {
-            "cautious@example.com": {
-                "formality": 0.5,
-                "question_rate": 0.1,
-                "hedge_rate": 0.35,
-                "samples_count": 50,
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "cautious@example.com": {
+                    "formality": 0.5,
+                    "question_rate": 0.1,
+                    "hedge_rate": 0.35,
+                    "samples_count": 50,
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_inbound_linguistic_profile()
@@ -196,13 +211,16 @@ class TestInboundLinguisticInference:
     def test_per_contact_formality_reinforcement(self, user_model_store):
         """When >70% of contacts are formal, the formal environment fact is reinforced."""
         # 4 out of 5 contacts (80%) have formality > 0.7
-        self._setup_inbound_profile(user_model_store, {
-            "formal1@work.com": {"formality": 0.85, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
-            "formal2@work.com": {"formality": 0.75, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
-            "formal3@work.com": {"formality": 0.80, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
-            "formal4@work.com": {"formality": 0.72, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
-            "casual@friend.com": {"formality": 0.2, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
-        })
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "formal1@work.com": {"formality": 0.85, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
+                "formal2@work.com": {"formality": 0.75, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
+                "formal3@work.com": {"formality": 0.80, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
+                "formal4@work.com": {"formality": 0.72, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
+                "casual@friend.com": {"formality": 0.2, "question_rate": 0.1, "hedge_rate": 0.02, "samples_count": 10},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_inbound_linguistic_profile()
@@ -218,14 +236,17 @@ class TestInboundLinguisticInference:
 
     def test_run_all_inference_includes_inbound_linguistic(self, user_model_store):
         """run_all_inference processes the inbound linguistic profile."""
-        self._setup_inbound_profile(user_model_store, {
-            "contact@work.com": {
-                "formality": 0.85,
-                "question_rate": 0.1,
-                "hedge_rate": 0.05,
-                "samples_count": 30,
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "contact@work.com": {
+                    "formality": 0.85,
+                    "question_rate": 0.1,
+                    "hedge_rate": 0.05,
+                    "samples_count": 30,
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.run_all_inference()
@@ -284,10 +305,23 @@ class TestInboundLinguisticInference:
         Neutral-range formality indicates the user communicates with both
         formal and casual contacts — a meaningful fact about their environment.
         """
-        self._setup_inbound_profile(user_model_store, {
-            "contact1@example.com": {"formality": 0.5, "question_rate": 0.1, "hedge_rate": 0.05, "samples_count": 25},
-            "contact2@example.com": {"formality": 0.45, "question_rate": 0.1, "hedge_rate": 0.05, "samples_count": 25},
-        })
+        self._setup_inbound_profile(
+            user_model_store,
+            {
+                "contact1@example.com": {
+                    "formality": 0.5,
+                    "question_rate": 0.1,
+                    "hedge_rate": 0.05,
+                    "samples_count": 25,
+                },
+                "contact2@example.com": {
+                    "formality": 0.45,
+                    "question_rate": 0.1,
+                    "hedge_rate": 0.05,
+                    "samples_count": 25,
+                },
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_inbound_linguistic_profile()

@@ -38,9 +38,7 @@ class TestModalHTMLPresent:
     def test_modal_overlay_div_present(self):
         """The modal overlay container must be present in the template."""
         src = _get_template_source()
-        assert 'id="modalOverlay"' in src, (
-            "Modal overlay element missing — required for mobile-safe dialogs"
-        )
+        assert 'id="modalOverlay"' in src, "Modal overlay element missing — required for mobile-safe dialogs"
 
     def test_modal_title_div_present(self):
         """The modal title placeholder must exist inside the overlay."""
@@ -147,12 +145,8 @@ class TestNativeBrowserDialogsRemoved:
         assert match, "deleteFact() function not found in template"
         body = match.group(1)
 
-        assert "showConfirmModal(" in body, (
-            "deleteFact() must use showConfirmModal() — not confirm()"
-        )
-        assert "confirm(" not in body, (
-            "deleteFact() must not call native confirm() — blocked on mobile Safari"
-        )
+        assert "showConfirmModal(" in body, "deleteFact() must use showConfirmModal() — not confirm()"
+        assert "confirm(" not in body, "deleteFact() must not call native confirm() — blocked on mobile Safari"
 
     def test_correct_fact_does_not_call_prompt(self):
         """correctFact() must use showPromptModal(), not window.prompt().
@@ -171,12 +165,8 @@ class TestNativeBrowserDialogsRemoved:
         assert match, "correctFact() function not found in template"
         body = match.group(1)
 
-        assert "showPromptModal(" in body, (
-            "correctFact() must use showPromptModal() — not prompt()"
-        )
-        assert "= prompt(" not in body, (
-            "correctFact() must not call native prompt() — blocked on mobile Safari"
-        )
+        assert "showPromptModal(" in body, "correctFact() must use showPromptModal() — not prompt()"
+        assert "= prompt(" not in body, "correctFact() must not call native prompt() — blocked on mobile Safari"
 
     def test_delete_fact_uses_danger_style(self):
         """deleteFact modal must use danger styling (red confirm button)."""
@@ -189,9 +179,7 @@ class TestNativeBrowserDialogsRemoved:
         assert match
         body = match.group(1)
         # The fifth argument to showConfirmModal is the danger flag
-        assert "true" in body, (
-            "deleteFact must pass danger=true to showConfirmModal for red confirm button"
-        )
+        assert "true" in body, "deleteFact must pass danger=true to showConfirmModal for red confirm button"
 
 
 class TestIOSAPIClientFixes:
@@ -234,9 +222,5 @@ class TestIOSAPIClientFixes:
         match = re.search(r"func createTask\([^}]+\}", src, re.DOTALL)
         assert match, "createTask function not found in APIClient.swift"
         body = match.group(0)
-        assert '"/api/tasks"' in body, (
-            "createTask must hit /api/tasks — the plural endpoint that exists"
-        )
-        assert '"/api/task"' not in body, (
-            "createTask must not hit /api/task — that path returns 404"
-        )
+        assert '"/api/tasks"' in body, "createTask must hit /api/tasks — the plural endpoint that exists"
+        assert '"/api/task"' not in body, "createTask must not hit /api/task — that path returns 404"

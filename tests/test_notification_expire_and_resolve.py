@@ -42,8 +42,8 @@ def notification_manager(db, mock_event_bus):
 @pytest.fixture
 def create_prediction(db):
     """Helper to create a prediction in the user_model database."""
-    def _create(prediction_id: str, was_surfaced: int = 0, resolved_at=None,
-                was_accurate=None, user_response=None):
+
+    def _create(prediction_id: str, was_surfaced: int = 0, resolved_at=None, was_accurate=None, user_response=None):
         with db.get_connection("user_model") as conn:
             conn.execute(
                 """INSERT INTO predictions
@@ -63,6 +63,7 @@ def create_prediction(db):
                     user_response,
                 ),
             )
+
     return _create
 
 
@@ -73,6 +74,7 @@ def create_delivered_prediction_notification(db, mock_event_bus):
     Inserts directly into the DB to avoid side effects from create_notification
     (dedup checks, delivery routing, etc.).
     """
+
     def _create(notif_id: str, prediction_id: str, hours_ago: int = 25):
         delivered_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
         with db.get_connection("state") as conn:
@@ -80,9 +82,9 @@ def create_delivered_prediction_notification(db, mock_event_bus):
                 """INSERT INTO notifications
                    (id, title, body, priority, source_event_id, domain, status, delivered_at)
                    VALUES (?, ?, ?, ?, ?, ?, 'delivered', ?)""",
-                (notif_id, "Test Prediction", "body", "normal", prediction_id,
-                 "prediction", delivered_at),
+                (notif_id, "Test Prediction", "body", "normal", prediction_id, "prediction", delivered_at),
             )
+
     return _create
 
 
@@ -103,7 +105,7 @@ class TestExpireTimestampFormat:
         """A notification older than max_age_hours should be expired."""
         notif_id = "notif-old"
         # Insert a notification with a created_at 3 days ago in DB format (SS.SSS)
-        old_time = (datetime.now(timezone.utc) - timedelta(days=3))
+        old_time = datetime.now(timezone.utc) - timedelta(days=3)
         created_at = old_time.strftime("%Y-%m-%dT%H:%M:%S") + f".{old_time.microsecond // 1000:03d}Z"
 
         with db.get_connection("state") as conn:
@@ -126,7 +128,7 @@ class TestExpireTimestampFormat:
         """A notification newer than max_age_hours should NOT be expired."""
         notif_id = "notif-recent"
         # Insert a notification created 1 hour ago in DB format (SS.SSS)
-        recent_time = (datetime.now(timezone.utc) - timedelta(hours=1))
+        recent_time = datetime.now(timezone.utc) - timedelta(hours=1)
         created_at = recent_time.strftime("%Y-%m-%dT%H:%M:%S") + f".{recent_time.microsecond // 1000:03d}Z"
 
         with db.get_connection("state") as conn:
@@ -175,7 +177,7 @@ class TestExpireTimestampFormat:
 
     def test_expire_only_affects_pending_status(self, notification_manager, db):
         """Only pending notifications should be expired, not delivered/read ones."""
-        old_time = (datetime.now(timezone.utc) - timedelta(days=3))
+        old_time = datetime.now(timezone.utc) - timedelta(days=3)
         created_at = old_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         with db.get_connection("state") as conn:
@@ -213,7 +215,10 @@ class TestAutoResolveRaceCondition:
 
     @pytest.mark.asyncio
     async def test_no_feedback_logged_when_prediction_already_resolved(
-        self, notification_manager, db, create_prediction,
+        self,
+        notification_manager,
+        db,
+        create_prediction,
         create_delivered_prediction_notification,
     ):
         """Feedback should NOT be logged when the prediction was already resolved by user."""
@@ -244,7 +249,10 @@ class TestAutoResolveRaceCondition:
 
     @pytest.mark.asyncio
     async def test_feedback_logged_for_genuinely_stale_prediction(
-        self, notification_manager, db, create_prediction,
+        self,
+        notification_manager,
+        db,
+        create_prediction,
         create_delivered_prediction_notification,
     ):
         """Feedback SHOULD be logged when the prediction is genuinely stale (unresolved)."""
@@ -270,7 +278,10 @@ class TestAutoResolveRaceCondition:
 
     @pytest.mark.asyncio
     async def test_notification_always_marked_expired(
-        self, notification_manager, db, create_prediction,
+        self,
+        notification_manager,
+        db,
+        create_prediction,
         create_delivered_prediction_notification,
     ):
         """Notification should be marked expired even when prediction was already resolved."""
@@ -298,7 +309,10 @@ class TestAutoResolveRaceCondition:
 
     @pytest.mark.asyncio
     async def test_resolved_count_correct_with_mixed_predictions(
-        self, notification_manager, db, create_prediction,
+        self,
+        notification_manager,
+        db,
+        create_prediction,
         create_delivered_prediction_notification,
     ):
         """resolved_count should only count genuinely newly-resolved predictions."""

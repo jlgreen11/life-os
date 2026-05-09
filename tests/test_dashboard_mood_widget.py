@@ -43,24 +43,29 @@ def _make_client(mood_return_value) -> tuple:
     life_os.db = Mock()
     mock_conn = Mock()
     mock_conn.execute = Mock(return_value=Mock(fetchall=Mock(return_value=[]), fetchone=Mock(return_value=None)))
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
     life_os.event_bus = Mock()
     life_os.event_bus.is_connected = True
     life_os.event_store = Mock()
     life_os.event_store.get_event_count = Mock(return_value=0)
     life_os.event_store.get_events = Mock(return_value=[])
-    life_os.event_store.get_event_flow_stats = Mock(return_value={
-        "sources": {}, "stale_sources": [], "total_24h": 0, "events_per_hour": 0.0,
-    })
+    life_os.event_store.get_event_flow_stats = Mock(
+        return_value={
+            "sources": {},
+            "stale_sources": [],
+            "total_24h": 0,
+            "events_per_hour": 0.0,
+        }
+    )
     life_os.vector_store = Mock()
     life_os.vector_store.get_stats = Mock(return_value={"total": 0, "dimensions": 384})
     life_os.notification_manager = Mock()
@@ -117,8 +122,10 @@ class TestMoodEndpointNoData:
         """When the mood object uses manual attribute access (non-Pydantic),
         the response still includes confidence for no-data detection.
         """
+
         class ManualMood:
             """Simulates a mood object without model_dump() (non-Pydantic)."""
+
             energy_level = 0.5
             stress_level = 0.3
             social_battery = 0.5
@@ -201,9 +208,7 @@ class TestMoodEndpointErrorHandling:
         """
         client, life_os = _make_client(MoodState())
         # Override to raise an exception
-        life_os.signal_extractor.get_current_mood = Mock(
-            side_effect=RuntimeError("user_model.db corrupted")
-        )
+        life_os.signal_extractor.get_current_mood = Mock(side_effect=RuntimeError("user_model.db corrupted"))
 
         # Use raise_server_exceptions=False so TestClient returns the 500
         # response instead of re-raising the exception in the test process.

@@ -91,8 +91,13 @@ def _make_mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable",
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
     life_os.vector_store = Mock()
@@ -107,10 +112,12 @@ def _make_mock_life_os():
     life_os.rules_engine.add_rule = Mock(return_value="rule-1")
     life_os.rules_engine.remove_rule = Mock()
     life_os.user_model_store = Mock()
-    life_os.user_model_store.get_semantic_facts = Mock(return_value=[
-        {"category": "preference", "value": "coffee"},
-        {"category": "expertise", "value": "python"},
-    ])
+    life_os.user_model_store.get_semantic_facts = Mock(
+        return_value=[
+            {"category": "preference", "value": "coffee"},
+            {"category": "expertise", "value": "python"},
+        ]
+    )
     life_os.user_model_store.get_signal_profile = Mock(return_value=None)
     life_os.user_model_store.resolve_prediction = Mock()
     life_os.feedback_collector = Mock()

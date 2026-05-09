@@ -781,9 +781,7 @@ def test_classify_state_change_person_arrival(event_bus, db, ha_config):
     """Test _classify_state_change identifies person arriving home."""
     connector = HomeAssistantConnector(event_bus, db, ha_config)
 
-    event_type, priority = connector._classify_state_change(
-        "person.jay", "away", "home"
-    )
+    event_type, priority = connector._classify_state_change("person.jay", "away", "home")
 
     assert event_type == "home.arrived"
     assert priority == "normal"
@@ -793,9 +791,7 @@ def test_classify_state_change_person_departure(event_bus, db, ha_config):
     """Test _classify_state_change identifies person leaving home."""
     connector = HomeAssistantConnector(event_bus, db, ha_config)
 
-    event_type, priority = connector._classify_state_change(
-        "person.jay", "home", "work"
-    )
+    event_type, priority = connector._classify_state_change("person.jay", "home", "work")
 
     assert event_type == "home.departed"
     assert priority == "normal"
@@ -805,9 +801,7 @@ def test_classify_state_change_zone_transition(event_bus, db, ha_config):
     """Test _classify_state_change identifies non-home zone transitions."""
     connector = HomeAssistantConnector(event_bus, db, ha_config)
 
-    event_type, priority = connector._classify_state_change(
-        "person.jay", "work", "gym"
-    )
+    event_type, priority = connector._classify_state_change("person.jay", "work", "gym")
 
     assert event_type == "location.changed"
     assert priority == "low"
@@ -817,9 +811,7 @@ def test_classify_state_change_door_sensor_keyword(event_bus, db, ha_config):
     """Test _classify_state_change identifies door sensors by keyword."""
     connector = HomeAssistantConnector(event_bus, db, ha_config)
 
-    event_type, priority = connector._classify_state_change(
-        "binary_sensor.garage_door", "off", "on"
-    )
+    event_type, priority = connector._classify_state_change("binary_sensor.garage_door", "off", "on")
 
     assert event_type == "home.device.state_changed"
     assert priority == "normal"
@@ -829,9 +821,7 @@ def test_classify_state_change_generic_device(event_bus, db, ha_config):
     """Test _classify_state_change defaults to low priority for generic devices."""
     connector = HomeAssistantConnector(event_bus, db, ha_config)
 
-    event_type, priority = connector._classify_state_change(
-        "sensor.cpu_temperature", "65", "70"
-    )
+    event_type, priority = connector._classify_state_change("sensor.cpu_temperature", "65", "70")
 
     assert event_type == "home.device.state_changed"
     assert priority == "low"

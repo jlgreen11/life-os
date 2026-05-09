@@ -326,8 +326,7 @@ class TestMigrationV2toV3:
         # Verify all rows survived and filter_reason defaults to NULL
         with db.get_connection("user_model") as conn:
             rows = conn.execute(
-                "SELECT id, prediction_type, description, confidence, filter_reason "
-                "FROM predictions ORDER BY id"
+                "SELECT id, prediction_type, description, confidence, filter_reason FROM predictions ORDER BY id"
             ).fetchall()
 
             assert len(rows) == 5
@@ -422,10 +421,7 @@ class TestMigrationV3toV4:
 
         # Verify all rows survived with their filter_reason intact
         with db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT id, filter_reason, resolution_reason "
-                "FROM predictions ORDER BY id"
-            ).fetchall()
+            rows = conn.execute("SELECT id, filter_reason, resolution_reason FROM predictions ORDER BY id").fetchall()
 
             assert len(rows) == 5
             for row in rows:
@@ -588,8 +584,15 @@ class TestFullMigrationV2toV4:
                 "(id, prediction_type, description, confidence, confidence_gate, "
                 " filter_reason, resolution_reason) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (pred_id, "OPPORTUNITY", "Test post-migration", 0.6, "SUGGEST",
-                 "low_confidence", "automated_sender_fast_path"),
+                (
+                    pred_id,
+                    "OPPORTUNITY",
+                    "Test post-migration",
+                    0.6,
+                    "SUGGEST",
+                    "low_confidence",
+                    "automated_sender_fast_path",
+                ),
             )
             conn.commit()
 

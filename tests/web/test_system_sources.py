@@ -204,9 +204,9 @@ async def test_hours_since_field_present(db):
 @pytest.mark.asyncio
 async def test_stale_count_reflects_mixed_sources(db):
     """stale_count and active_count correctly reflect mixed stale/active state."""
-    _insert_event(db, "google", hours_ago=10)          # stale (external, >6h)
+    _insert_event(db, "google", hours_ago=10)  # stale (external, >6h)
     _insert_event(db, "user_model_store", hours_ago=1)  # active (internal, <24h)
-    _insert_event(db, "rules_engine", hours_ago=1)      # active (internal, <24h)
+    _insert_event(db, "rules_engine", hours_ago=1)  # active (internal, <24h)
     client = _make_app(db)
 
     resp = client.get("/api/system/sources")

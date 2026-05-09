@@ -44,7 +44,8 @@ def test_workflow_detection_scales_linearly(db, user_model_store, event_store):
         timestamp = base_time + timedelta(hours=i)
 
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_RECEIVED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_RECEIVED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -64,7 +65,8 @@ def test_workflow_detection_scales_linearly(db, user_model_store, event_store):
         timestamp = base_time + timedelta(hours=i * 20 + 1)  # 1 hour after some received email
 
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_SENT.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_SENT.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -81,7 +83,8 @@ def test_workflow_detection_scales_linearly(db, user_model_store, event_store):
     for i in range(10):
         timestamp = base_time + timedelta(hours=i * 100 + 2)
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.TASK_CREATED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.TASK_CREATED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -119,7 +122,8 @@ def test_recipient_index_eliminates_unnecessary_comparisons(db, user_model_store
     for i in range(10):
         timestamp = base_time + timedelta(hours=i)
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_RECEIVED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_RECEIVED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -136,7 +140,8 @@ def test_recipient_index_eliminates_unnecessary_comparisons(db, user_model_store
         if i % 2 == 0:
             response_time = timestamp + timedelta(minutes=30)
             response = {
-                "id": str(uuid.uuid4()), "type": EventType.EMAIL_SENT.value,
+                "id": str(uuid.uuid4()),
+                "type": EventType.EMAIL_SENT.value,
                 "source": "test",
                 "timestamp": response_time.isoformat(),
                 "payload": {
@@ -154,7 +159,8 @@ def test_recipient_index_eliminates_unnecessary_comparisons(db, user_model_store
     for i in range(100):
         timestamp = base_time + timedelta(hours=i)
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_RECEIVED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_RECEIVED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -199,7 +205,8 @@ def test_global_actions_tracked_across_all_senders(db, user_model_store, event_s
     for i in range(10):
         timestamp = base_time + timedelta(hours=i * 2)
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_RECEIVED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_RECEIVED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -215,7 +222,8 @@ def test_global_actions_tracked_across_all_senders(db, user_model_store, event_s
         # Create task within 1 hour (global action, no specific recipient)
         task_time = timestamp + timedelta(minutes=30)
         task_event = {
-            "id": str(uuid.uuid4()), "type": EventType.TASK_CREATED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.TASK_CREATED.value,
             "source": "test",
             "timestamp": task_time.isoformat(),
             "payload": {
@@ -245,8 +253,9 @@ def test_global_actions_tracked_across_all_senders(db, user_model_store, event_s
         workflow = boss_workflows[0]
         # Workflow should include both read_email and task creation steps
         assert len(workflow["steps"]) >= 2, "Workflow should have at least 2 steps"
-        assert "task" in str(workflow["steps"]).lower() or "created" in str(workflow["steps"]).lower(), \
+        assert "task" in str(workflow["steps"]).lower() or "created" in str(workflow["steps"]).lower(), (
             "Workflow should include task creation"
+        )
     # If no workflow, that's OK - it means task.created workflows don't meet success criteria
     # (which require email.sent as the completion action, not task.created)
 
@@ -263,7 +272,8 @@ def test_time_window_filtering_performance(db, user_model_store, event_store):
     for i in range(10):
         timestamp = base_time + timedelta(hours=i * 24)  # One per day
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_RECEIVED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_RECEIVED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -280,7 +290,8 @@ def test_time_window_filtering_performance(db, user_model_store, event_store):
         if i % 2 == 0:
             response_time = timestamp + timedelta(hours=2)
             response = {
-                "id": str(uuid.uuid4()), "type": EventType.EMAIL_SENT.value,
+                "id": str(uuid.uuid4()),
+                "type": EventType.EMAIL_SENT.value,
                 "source": "test",
                 "timestamp": response_time.isoformat(),
                 "payload": {
@@ -296,7 +307,8 @@ def test_time_window_filtering_performance(db, user_model_store, event_store):
         # Late response (10h after, outside window) - should be ignored
         late_response_time = timestamp + timedelta(hours=10)
         late_response = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_SENT.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_SENT.value,
             "source": "test",
             "timestamp": late_response_time.isoformat(),
             "payload": {
@@ -320,8 +332,7 @@ def test_time_window_filtering_performance(db, user_model_store, event_store):
     workflow = sender_workflows[0]
     # Success rate should be ~50% (5 immediate responses out of 10 emails)
     # Allow some tolerance for different calculation methods
-    assert 0.4 <= workflow["success_rate"] <= 0.6, \
-        f"Success rate should be ~50%, got {workflow['success_rate']:.1%}"
+    assert 0.4 <= workflow["success_rate"] <= 0.6, f"Success rate should be ~50%, got {workflow['success_rate']:.1%}"
 
 
 def test_case_insensitive_recipient_matching(db, user_model_store, event_store):
@@ -341,7 +352,8 @@ def test_case_insensitive_recipient_matching(db, user_model_store, event_store):
     for i, sender_case in enumerate(cases):
         timestamp = base_time + timedelta(hours=i)
         event = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_RECEIVED.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_RECEIVED.value,
             "source": "test",
             "timestamp": timestamp.isoformat(),
             "payload": {
@@ -358,7 +370,8 @@ def test_case_insensitive_recipient_matching(db, user_model_store, event_store):
         response_time = timestamp + timedelta(minutes=30)
         recipient_case = "sender@EXAMPLE.com" if i % 2 == 0 else "SENDER@example.COM"
         response = {
-            "id": str(uuid.uuid4()), "type": EventType.EMAIL_SENT.value,
+            "id": str(uuid.uuid4()),
+            "type": EventType.EMAIL_SENT.value,
             "source": "test",
             "timestamp": response_time.isoformat(),
             "payload": {
@@ -381,5 +394,6 @@ def test_case_insensitive_recipient_matching(db, user_model_store, event_store):
 
     # Total received count should be 3 (all case variations combined)
     workflow = sender_workflows[0]
-    assert workflow["times_observed"] >= 3, \
+    assert workflow["times_observed"] >= 3, (
         f"Should track all 3 emails regardless of case, got {workflow['times_observed']}"
+    )

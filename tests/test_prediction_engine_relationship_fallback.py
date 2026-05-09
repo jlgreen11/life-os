@@ -59,14 +59,10 @@ def _seed_bidirectional_contact(event_store, contact_addr: str, user_addr: str, 
         ts = now - timedelta(days=days_ago_start - i * interval)
         if i % 2 == 0:
             # Inbound: contact -> user
-            event_store.store_event(
-                _make_email_event("email.received", contact_addr, [user_addr], ts)
-            )
+            event_store.store_event(_make_email_event("email.received", contact_addr, [user_addr], ts))
         else:
             # Outbound: user -> contact
-            event_store.store_event(
-                _make_email_event("email.sent", user_addr, [contact_addr], ts)
-            )
+            event_store.store_event(_make_email_event("email.sent", user_addr, [contact_addr], ts))
 
 
 # ---------------------------------------------------------------------------
@@ -110,14 +106,10 @@ async def test_fallback_generates_predictions_from_events(db, event_store, engin
     for i in range(5):
         # Inbound emails: days 60, 50, 40, 30, 20 ago
         ts = now - timedelta(days=60 - i * 10)
-        event_store.store_event(
-            _make_email_event("email.received", contact, [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", contact, [user], ts))
         # Outbound emails: days 55, 45, 35, 25, 15 ago
         ts = now - timedelta(days=55 - i * 10)
-        event_store.store_event(
-            _make_email_event("email.sent", user, [contact], ts)
-        )
+        event_store.store_event(_make_email_event("email.sent", user, [contact], ts))
 
     predictions = await engine_no_signal_profile._check_relationship_maintenance({})
 
@@ -146,14 +138,10 @@ async def test_fallback_filters_marketing_contacts(db, event_store, engine_no_si
     # Seed 10 interactions with marketing address (enough to pass count threshold)
     for i in range(10):
         ts = now - timedelta(days=80 - i * 5)
-        event_store.store_event(
-            _make_email_event("email.received", marketing_addr, [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", marketing_addr, [user], ts))
         # Add some outbound so it doesn't get filtered by outbound_count=0
         ts = now - timedelta(days=78 - i * 5)
-        event_store.store_event(
-            _make_email_event("email.sent", user, [marketing_addr], ts)
-        )
+        event_store.store_event(_make_email_event("email.sent", user, [marketing_addr], ts))
 
     predictions = await engine_no_signal_profile._check_relationship_maintenance({})
 
@@ -172,12 +160,8 @@ async def test_fallback_skips_contacts_with_few_interactions(db, event_store, en
     # Only 3 interactions — below the threshold
     for i in range(2):
         ts = now - timedelta(days=60 - i * 20)
-        event_store.store_event(
-            _make_email_event("email.received", contact, [user], ts)
-        )
-    event_store.store_event(
-        _make_email_event("email.sent", user, [contact], now - timedelta(days=30))
-    )
+        event_store.store_event(_make_email_event("email.received", contact, [user], ts))
+    event_store.store_event(_make_email_event("email.sent", user, [contact], now - timedelta(days=30)))
 
     predictions = await engine_no_signal_profile._check_relationship_maintenance({})
 
@@ -195,9 +179,7 @@ async def test_fallback_skips_inbound_only_contacts(db, event_store, engine_no_s
     # 10 inbound-only emails — user never replied
     for i in range(10):
         ts = now - timedelta(days=80 - i * 5)
-        event_store.store_event(
-            _make_email_event("email.received", contact, [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", contact, [user], ts))
 
     predictions = await engine_no_signal_profile._check_relationship_maintenance({})
 
@@ -237,13 +219,9 @@ async def test_signal_profile_path_produces_compatible_predictions(db, event_sto
     for i in range(8):
         ts = now - timedelta(days=60 - i * 5)
         if i % 2 == 0:
-            event_store.store_event(
-                _make_email_event("email.received", contact, [user], ts)
-            )
+            event_store.store_event(_make_email_event("email.received", contact, [user], ts))
         else:
-            event_store.store_event(
-                _make_email_event("email.sent", user, [contact], ts)
-            )
+            event_store.store_event(_make_email_event("email.sent", user, [contact], ts))
 
     fallback_preds = await engine_fallback._check_relationship_maintenance({})
 
@@ -288,9 +266,7 @@ def test_build_contacts_from_events_filters_low_count(db, event_store, engine_no
     # 3 inbound emails from sparse contact
     for i in range(3):
         ts = now - timedelta(days=30 - i * 5)
-        event_store.store_event(
-            _make_email_event("email.received", "sparse@example.com", [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", "sparse@example.com", [user], ts))
 
     result = engine_no_signal_profile._build_contacts_from_events()
     assert "sparse@example.com" not in result
@@ -305,14 +281,10 @@ def test_build_contacts_from_events_includes_high_count(db, event_store, engine_
     # 4 inbound + 3 outbound = 7 total interactions
     for i in range(4):
         ts = now - timedelta(days=40 - i * 5)
-        event_store.store_event(
-            _make_email_event("email.received", contact, [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", contact, [user], ts))
     for i in range(3):
         ts = now - timedelta(days=38 - i * 5)
-        event_store.store_event(
-            _make_email_event("email.sent", user, [contact], ts)
-        )
+        event_store.store_event(_make_email_event("email.sent", user, [contact], ts))
 
     result = engine_no_signal_profile._build_contacts_from_events()
 
@@ -335,23 +307,17 @@ def test_build_contacts_from_events_correct_outbound_attribution(db, event_store
     # 5 inbound from alice
     for i in range(5):
         ts = now - timedelta(days=30 - i * 3)
-        event_store.store_event(
-            _make_email_event("email.received", contact_a, [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", contact_a, [user], ts))
 
     # 3 outbound to alice (from user)
     for i in range(3):
         ts = now - timedelta(days=28 - i * 3)
-        event_store.store_event(
-            _make_email_event("email.sent", user, [contact_a], ts)
-        )
+        event_store.store_event(_make_email_event("email.sent", user, [contact_a], ts))
 
     # 5 inbound from bob, no outbound
     for i in range(5):
         ts = now - timedelta(days=30 - i * 3)
-        event_store.store_event(
-            _make_email_event("email.received", contact_b, [user], ts)
-        )
+        event_store.store_event(_make_email_event("email.received", contact_b, [user], ts))
 
     result = engine_no_signal_profile._build_contacts_from_events()
 

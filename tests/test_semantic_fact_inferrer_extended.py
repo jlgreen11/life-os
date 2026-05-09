@@ -27,12 +27,25 @@ class TestTemporalInference:
         # Setup: temporal profile with 60% morning activity (6-10am)
         profile_data = {
             "activity_by_hour": {
-                "6": 20, "7": 30, "8": 40, "9": 35, "10": 25,  # 150 morning
-                "14": 20, "15": 15, "16": 10, "20": 10, "21": 5,  # 60 other
+                "6": 20,
+                "7": 30,
+                "8": 40,
+                "9": 35,
+                "10": 25,  # 150 morning
+                "14": 20,
+                "15": 15,
+                "16": 10,
+                "20": 10,
+                "21": 5,  # 60 other
             },
             "activity_by_day": {
-                "monday": 30, "tuesday": 35, "wednesday": 40,
-                "thursday": 30, "friday": 25, "saturday": 5, "sunday": 5,
+                "monday": 30,
+                "tuesday": 35,
+                "wednesday": 40,
+                "thursday": 30,
+                "friday": 25,
+                "saturday": 5,
+                "sunday": 5,
             },
         }
         user_model_store.update_signal_profile("temporal", profile_data)
@@ -53,12 +66,22 @@ class TestTemporalInference:
         # Setup: temporal profile with 50% evening activity (8pm-11pm)
         profile_data = {
             "activity_by_hour": {
-                "9": 10, "10": 8, "14": 12,  # 30 daytime
-                "20": 25, "21": 30, "22": 20, "23": 15,  # 90 evening
+                "9": 10,
+                "10": 8,
+                "14": 12,  # 30 daytime
+                "20": 25,
+                "21": 30,
+                "22": 20,
+                "23": 15,  # 90 evening
             },
             "activity_by_day": {
-                "monday": 15, "tuesday": 18, "wednesday": 20,
-                "thursday": 18, "friday": 20, "saturday": 12, "sunday": 10,
+                "monday": 15,
+                "tuesday": 18,
+                "wednesday": 20,
+                "thursday": 18,
+                "friday": 20,
+                "saturday": 12,
+                "sunday": 10,
             },
         }
         user_model_store.update_signal_profile("temporal", profile_data)
@@ -79,9 +102,12 @@ class TestTemporalInference:
         # Setup: clear peak at 2pm (hour 14)
         profile_data = {
             "activity_by_hour": {
-                "9": 10, "10": 12, "11": 15,
+                "9": 10,
+                "10": 12,
+                "11": 15,
                 "14": 60,  # Clear peak
-                "15": 20, "16": 18,
+                "15": 20,
+                "16": 18,
             },
             "activity_by_day": {"monday": 20, "tuesday": 25},
         }
@@ -104,9 +130,13 @@ class TestTemporalInference:
         profile_data = {
             "activity_by_hour": {"9": 10, "10": 15, "14": 20},
             "activity_by_day": {
-                "monday": 20, "tuesday": 22, "wednesday": 25,
-                "thursday": 20, "friday": 18,
-                "saturday": 2, "sunday": 1,  # Minimal weekend activity
+                "monday": 20,
+                "tuesday": 22,
+                "wednesday": 25,
+                "thursday": 20,
+                "friday": 18,
+                "saturday": 2,
+                "sunday": 1,  # Minimal weekend activity
             },
         }
         user_model_store.update_signal_profile("temporal", profile_data)
@@ -484,13 +514,15 @@ class TestRunAllInferenceExtended:
         _set_samples(user_model_store, "temporal", 60)
 
         spatial_data = {
-            "place_behaviors": json.dumps({
-                "office": {
-                    "place_id": "office",
-                    "visit_count": 40,
-                    "dominant_domain": "work",
-                },
-            })
+            "place_behaviors": json.dumps(
+                {
+                    "office": {
+                        "place_id": "office",
+                        "visit_count": 40,
+                        "dominant_domain": "work",
+                    },
+                }
+            )
         }
         user_model_store.update_signal_profile("spatial", spatial_data)
         _set_samples(user_model_store, "spatial", 40)

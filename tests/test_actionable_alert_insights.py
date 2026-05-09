@@ -34,8 +34,9 @@ from services.insight_engine.models import Insight
 # =============================================================================
 
 
-def _insert_task(db, title: str, status: str, due_date: str | None,
-                 priority: int = 2, task_id: str | None = None) -> str:
+def _insert_task(
+    db, title: str, status: str, due_date: str | None, priority: int = 2, task_id: str | None = None
+) -> str:
     """Insert a task into state.db and return its id."""
     tid = task_id or str(uuid.uuid4())
     with db.get_connection("state") as conn:
@@ -44,22 +45,27 @@ def _insert_task(db, title: str, status: str, due_date: str | None,
                (id, title, status, priority, due_date, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (
-                tid, title, status, priority, due_date,
+                tid,
+                title,
+                status,
+                priority,
+                due_date,
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
     return tid
 
 
-def _insert_cal_event(db, title: str, start_time: str,
-                      event_id: str | None = None) -> str:
+def _insert_cal_event(db, title: str, start_time: str, event_id: str | None = None) -> str:
     """Insert a calendar.event.created event and return the event_id."""
     eid = event_id or str(uuid.uuid4())
-    payload = json.dumps({
-        "event_id": eid,
-        "title": title,
-        "start_time": start_time,
-    })
+    payload = json.dumps(
+        {
+            "event_id": eid,
+            "title": title,
+            "start_time": start_time,
+        }
+    )
     with db.get_connection("events") as conn:
         conn.execute(
             """INSERT INTO events
@@ -70,7 +76,9 @@ def _insert_cal_event(db, title: str, start_time: str,
                 "calendar.event.created",
                 "test",
                 datetime.now(timezone.utc).isoformat(),
-                2, payload, "{}",
+                2,
+                payload,
+                "{}",
             ),
         )
     return eid
@@ -182,10 +190,8 @@ async def test_actionable_alert_overdue_confidence_scaling(db, user_model_store)
     engine = InsightEngine(db, user_model_store)
     now = datetime.now(timezone.utc)
 
-    _insert_task(db, "Slightly overdue", "pending",
-                 (now - timedelta(hours=1)).isoformat(), task_id="t1")
-    _insert_task(db, "Very overdue", "pending",
-                 (now - timedelta(days=10)).isoformat(), task_id="t2")
+    _insert_task(db, "Slightly overdue", "pending", (now - timedelta(hours=1)).isoformat(), task_id="t1")
+    _insert_task(db, "Very overdue", "pending", (now - timedelta(days=10)).isoformat(), task_id="t2")
 
     insights = engine._actionable_alert_insights()
     task_insights = {i.entity: i for i in insights if i.category == "overdue_task"}
@@ -317,19 +323,26 @@ async def test_actionable_alert_calendar_malformed_start_time_skipped(db, user_m
     """Calendar events with malformed start_time should be skipped gracefully."""
     engine = InsightEngine(db, user_model_store)
     # Insert event with bad start_time directly
-    payload = json.dumps({
-        "event_id": str(uuid.uuid4()),
-        "title": "Bad event",
-        "start_time": "not-a-timestamp",
-    })
+    payload = json.dumps(
+        {
+            "event_id": str(uuid.uuid4()),
+            "title": "Bad event",
+            "start_time": "not-a-timestamp",
+        }
+    )
     with db.get_connection("events") as conn:
         conn.execute(
             """INSERT INTO events
                (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
-                str(uuid.uuid4()), "calendar.event.created", "test",
-                datetime.now(timezone.utc).isoformat(), 2, payload, "{}",
+                str(uuid.uuid4()),
+                "calendar.event.created",
+                "test",
+                datetime.now(timezone.utc).isoformat(),
+                2,
+                payload,
+                "{}",
             ),
         )
 
@@ -360,6 +373,7 @@ async def test_generate_insights_includes_actionable_alerts(db, user_model_store
 async def test_generate_insights_actionable_alert_not_source_weight_filtered(db, user_model_store):
     """Actionable alerts should never be filtered by source weights (confidence stays unchanged)."""
     from services.insight_engine.source_weights import SourceWeightManager
+
     engine = InsightEngine(db, user_model_store, source_weight_manager=SourceWeightManager(db))
 
     now = datetime.now(timezone.utc)

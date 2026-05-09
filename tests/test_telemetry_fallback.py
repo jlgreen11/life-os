@@ -42,9 +42,7 @@ def test_telemetry_fallback_no_event_bus(db: DatabaseManager, event_store: Event
 
     # Verify the prediction was stored
     with db.get_connection("user_model") as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE prediction_type = 'test'"
-        ).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM predictions WHERE prediction_type = 'test'").fetchone()[0]
         assert count == 1, "Prediction should be stored"
 
     # Verify telemetry event was written to event store (fallback path)
@@ -155,9 +153,9 @@ def test_telemetry_fallback_all_paths_fail(db: DatabaseManager):
 
     # Verify prediction was still stored (telemetry failure doesn't break storage)
     with db.get_connection("user_model") as conn:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE prediction_type = 'test_no_telemetry'"
-        ).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM predictions WHERE prediction_type = 'test_no_telemetry'").fetchone()[
+            0
+        ]
         assert count == 1, "Prediction storage should succeed even if telemetry fails"
 
 

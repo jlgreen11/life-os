@@ -44,9 +44,7 @@ class TestEpisodicMemory:
 
         # Verify episode was stored
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
             assert row is not None
             assert row["event_id"] == event_id
             assert row["interaction_type"] == "email_received"
@@ -85,9 +83,7 @@ class TestEpisodicMemory:
 
         # Verify all fields were stored correctly
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
             assert row["location"] == "home"
             assert json.loads(row["inferred_mood"]) == episode["inferred_mood"]
             assert row["active_domain"] == "work"
@@ -125,9 +121,7 @@ class TestEpisodicMemory:
 
         # Should have only one row with v2 data
         with user_model_store.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT * FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchall()
             assert len(rows) == 1
             assert rows[0]["content_summary"] == "Version 2"
             assert rows[0]["interaction_type"] == "email_sent"
@@ -186,15 +180,11 @@ class TestSemanticMemory:
         key = "test_cap"
 
         # Create with high confidence
-        user_model_store.update_semantic_fact(
-            key=key, category="test", value="data", confidence=0.98
-        )
+        user_model_store.update_semantic_fact(key=key, category="test", value="data", confidence=0.98)
 
         # Confirm multiple times
         for _ in range(10):
-            user_model_store.update_semantic_fact(
-                key=key, category="test", value="data", confidence=0.5
-            )
+            user_model_store.update_semantic_fact(key=key, category="test", value="data", confidence=0.5)
 
         facts = user_model_store.get_semantic_facts()
         assert len(facts) == 1
@@ -216,15 +206,9 @@ class TestSemanticMemory:
 
     def test_get_semantic_facts_filter_by_category(self, user_model_store: UserModelStore):
         """Retrieve facts filtered by category."""
-        user_model_store.update_semantic_fact(
-            key="pref_1", category="preference", value="A", confidence=0.6
-        )
-        user_model_store.update_semantic_fact(
-            key="fact_1", category="explicit", value="B", confidence=0.7
-        )
-        user_model_store.update_semantic_fact(
-            key="pref_2", category="preference", value="C", confidence=0.8
-        )
+        user_model_store.update_semantic_fact(key="pref_1", category="preference", value="A", confidence=0.6)
+        user_model_store.update_semantic_fact(key="fact_1", category="explicit", value="B", confidence=0.7)
+        user_model_store.update_semantic_fact(key="pref_2", category="preference", value="C", confidence=0.8)
 
         prefs = user_model_store.get_semantic_facts(category="preference")
         assert len(prefs) == 2
@@ -232,15 +216,9 @@ class TestSemanticMemory:
 
     def test_get_semantic_facts_filter_by_confidence(self, user_model_store: UserModelStore):
         """Retrieve facts above a minimum confidence threshold."""
-        user_model_store.update_semantic_fact(
-            key="low", category="test", value="A", confidence=0.3
-        )
-        user_model_store.update_semantic_fact(
-            key="mid", category="test", value="B", confidence=0.6
-        )
-        user_model_store.update_semantic_fact(
-            key="high", category="test", value="C", confidence=0.9
-        )
+        user_model_store.update_semantic_fact(key="low", category="test", value="A", confidence=0.3)
+        user_model_store.update_semantic_fact(key="mid", category="test", value="B", confidence=0.6)
+        user_model_store.update_semantic_fact(key="high", category="test", value="C", confidence=0.9)
 
         high_conf = user_model_store.get_semantic_facts(min_confidence=0.7)
         assert len(high_conf) == 1
@@ -248,15 +226,9 @@ class TestSemanticMemory:
 
     def test_get_semantic_facts_sorted_by_confidence(self, user_model_store: UserModelStore):
         """Facts should be returned in descending confidence order."""
-        user_model_store.update_semantic_fact(
-            key="low", category="test", value="A", confidence=0.3
-        )
-        user_model_store.update_semantic_fact(
-            key="high", category="test", value="B", confidence=0.9
-        )
-        user_model_store.update_semantic_fact(
-            key="mid", category="test", value="C", confidence=0.6
-        )
+        user_model_store.update_semantic_fact(key="low", category="test", value="A", confidence=0.3)
+        user_model_store.update_semantic_fact(key="high", category="test", value="B", confidence=0.9)
+        user_model_store.update_semantic_fact(key="mid", category="test", value="C", confidence=0.6)
 
         facts = user_model_store.get_semantic_facts()
         assert len(facts) == 3
@@ -330,9 +302,7 @@ class TestMoodTracking:
 
         # Verify mood was stored with defaults for unspecified dimensions
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM mood_history ORDER BY timestamp DESC LIMIT 1"
-            ).fetchone()
+            row = conn.execute("SELECT * FROM mood_history ORDER BY timestamp DESC LIMIT 1").fetchone()
             assert row["energy_level"] == 0.7
             assert row["stress_level"] == 0.4
             assert row["social_battery"] == 0.5  # Default
@@ -359,9 +329,7 @@ class TestMoodTracking:
         user_model_store.store_mood(mood)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM mood_history WHERE timestamp = ?", (timestamp,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM mood_history WHERE timestamp = ?", (timestamp,)).fetchone()
             assert row["energy_level"] == 0.8
             assert row["stress_level"] == 0.2
             assert row["social_battery"] == 0.9
@@ -398,9 +366,7 @@ class TestPredictions:
         user_model_store.store_prediction(prediction)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM predictions WHERE id = ?", (pred_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,)).fetchone()
             assert row is not None
             assert row["prediction_type"] == "reminder"
             assert row["description"] == "Reply to Alice's email"
@@ -426,9 +392,7 @@ class TestPredictions:
         user_model_store.store_prediction(prediction)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM predictions WHERE id = ?", (pred_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,)).fetchone()
             assert row["time_horizon"] == "24h"
             assert row["suggested_action"] == "create_calendar_event"
             assert json.loads(row["supporting_signals"]) == ["signal_a", "signal_b"]
@@ -449,9 +413,7 @@ class TestPredictions:
         user_model_store.resolve_prediction(pred_id, was_accurate=True)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM predictions WHERE id = ?", (pred_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,)).fetchone()
             assert row["was_accurate"] == 1
             assert row["resolved_at"] is not None
             assert row["user_response"] is None
@@ -475,9 +437,7 @@ class TestPredictions:
         )
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM predictions WHERE id = ?", (pred_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,)).fetchone()
             assert row["was_accurate"] == 0
             assert row["user_response"] == "This was not relevant to my workflow"
 
@@ -497,9 +457,7 @@ class TestPredictions:
         user_model_store.resolve_prediction(pred_id, was_accurate=False, user_response="Changed my mind")
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM predictions WHERE id = ?", (pred_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,)).fetchone()
             # Latest resolution should win
             assert row["was_accurate"] == 0
             assert row["user_response"] == "Changed my mind"
@@ -519,9 +477,7 @@ class TestCommunicationTemplates:
         user_model_store.store_communication_template(template)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
             assert row is not None
             assert row["context"] == "professional_email"
             assert row["formality"] == 0.5  # Default
@@ -550,9 +506,7 @@ class TestCommunicationTemplates:
         user_model_store.store_communication_template(template)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
             assert row["contact_id"] == "alice@example.com"
             assert row["channel"] == "slack"
             assert row["greeting"] == "Hey!"
@@ -588,9 +542,7 @@ class TestCommunicationTemplates:
         user_model_store.store_communication_template(template_v2)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM communication_templates WHERE id = ?", (template_id,)).fetchall()
             assert len(rows) == 1
             assert rows[0]["context"] == "casual_email"
             assert rows[0]["greeting"] == "Hi"
@@ -605,7 +557,7 @@ class TestEdgeCases:
         user_model_store.update_semantic_fact(
             key="test_unicode",
             category="test",
-            value="emoji: 😊 quotes: \"nested\" backslash: \\",
+            value='emoji: 😊 quotes: "nested" backslash: \\',
             confidence=0.5,
         )
 
@@ -632,9 +584,7 @@ class TestEdgeCases:
         user_model_store.store_episode(episode)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
             assert json.loads(row["contacts_involved"]) == []
             assert json.loads(row["topics"]) == []
             assert json.loads(row["entities"]) == []
@@ -656,9 +606,7 @@ class TestEdgeCases:
         user_model_store.store_episode(episode)
 
         with user_model_store.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,)).fetchone()
             assert row["location"] is None
             assert row["active_domain"] is None
             assert row["energy_level"] is None
@@ -709,9 +657,7 @@ class TestTelemetryEmission:
         # This should NOT crash and should NOT emit telemetry
         store.update_signal_profile("linguistic", {"metric": 1.0})
 
-        assert len(telemetry_calls) == 0, (
-            "Telemetry was emitted despite DB write failure — phantom telemetry bug"
-        )
+        assert len(telemetry_calls) == 0, "Telemetry was emitted despite DB write failure — phantom telemetry bug"
 
         # Restore original for cleanup
         store.db.get_connection = original_get_conn
@@ -729,9 +675,7 @@ class TestTelemetryEmission:
 
         store._emit_telemetry = tracking_emit
 
-        store.update_semantic_fact(
-            key="test_fact", category="test", value="data", confidence=0.5
-        )
+        store.update_semantic_fact(key="test_fact", category="test", value="data", confidence=0.5)
 
         assert len(telemetry_calls) == 1
         assert telemetry_calls[0]["event_type"] == "usermodel.fact.learned"
@@ -760,15 +704,11 @@ class TestTelemetryEmission:
         # caller or fail-open pattern), so this will raise.  The key point:
         # telemetry must NOT have fired before the exception.
         try:
-            store.update_semantic_fact(
-                key="test_fact", category="test", value="data", confidence=0.5
-            )
+            store.update_semantic_fact(key="test_fact", category="test", value="data", confidence=0.5)
         except Exception:
             pass  # Expected — DB is unavailable
 
-        assert len(telemetry_calls) == 0, (
-            "Telemetry was emitted despite DB write failure — phantom telemetry bug"
-        )
+        assert len(telemetry_calls) == 0, "Telemetry was emitted despite DB write failure — phantom telemetry bug"
 
         store.db.get_connection = original_get_conn
 
@@ -806,12 +746,8 @@ class TestHighConfidenceFacts:
     def test_custom_min_confirmations(self, user_model_store: UserModelStore):
         """Caller can set a custom confirmation threshold."""
         # Confirm a fact twice
-        user_model_store.update_semantic_fact(
-            key="confirmed_twice", category="test", value="x", confidence=0.5
-        )
-        user_model_store.update_semantic_fact(
-            key="confirmed_twice", category="test", value="x", confidence=0.5
-        )
+        user_model_store.update_semantic_fact(key="confirmed_twice", category="test", value="x", confidence=0.5)
+        user_model_store.update_semantic_fact(key="confirmed_twice", category="test", value="x", confidence=0.5)
 
         # min_confirmations=2 should include it
         facts = user_model_store.get_high_confidence_facts(min_confirmations=2)
@@ -827,14 +763,20 @@ class TestHighConfidenceFacts:
         # Create 3x confirmed preference
         for i in range(3):
             user_model_store.update_semantic_fact(
-                key="pref_fact", category="preference", value="A", confidence=0.5,
+                key="pref_fact",
+                category="preference",
+                value="A",
+                confidence=0.5,
                 episode_id=f"ep_p{i}",
             )
 
         # Create 3x confirmed explicit fact
         for i in range(3):
             user_model_store.update_semantic_fact(
-                key="explicit_fact", category="explicit", value="B", confidence=0.5,
+                key="explicit_fact",
+                category="explicit",
+                value="B",
+                confidence=0.5,
                 episode_id=f"ep_e{i}",
             )
 
@@ -849,9 +791,7 @@ class TestHighConfidenceFacts:
 
     def test_empty_result_when_no_facts_meet_threshold(self, user_model_store: UserModelStore):
         """Returns empty list when no facts have enough confirmations."""
-        user_model_store.update_semantic_fact(
-            key="single", category="test", value="x", confidence=0.5
-        )
+        user_model_store.update_semantic_fact(key="single", category="test", value="x", confidence=0.5)
 
         facts = user_model_store.get_high_confidence_facts(min_confirmations=5)
         assert facts == []
@@ -860,8 +800,11 @@ class TestHighConfidenceFacts:
         """Returned facts should have value and source_episodes deserialized."""
         for i in range(3):
             user_model_store.update_semantic_fact(
-                key="deser_test", category="test", value={"nested": "data"},
-                confidence=0.5, episode_id=f"ep_{i}",
+                key="deser_test",
+                category="test",
+                value={"nested": "data"},
+                confidence=0.5,
+                episode_id=f"ep_{i}",
             )
 
         facts = user_model_store.get_high_confidence_facts()

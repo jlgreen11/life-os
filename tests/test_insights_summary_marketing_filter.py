@@ -58,6 +58,7 @@ from storage.user_model_store import UserModelStore
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def life_os_mock(db, event_store, user_model_store):
     """Minimal LifeOS mock wired to real temp database components.
@@ -95,6 +96,7 @@ def life_os_mock(db, event_store, user_model_store):
 def client(life_os_mock):
     """TestClient bound to the full FastAPI app with the mock LifeOS."""
     from web.app import create_web_app
+
     app = create_web_app(life_os_mock)
     return TestClient(app)
 
@@ -141,6 +143,7 @@ def _store_relationships_profile(user_model_store, contacts: dict) -> None:
 # Tests: marketing senders are excluded
 # ---------------------------------------------------------------------------
 
+
 def test_marketing_address_excluded_from_relationship_intelligence(client, life_os_mock):
     """Marketing senders must not appear in relationship_intelligence insights.
 
@@ -177,12 +180,10 @@ def test_marketing_address_excluded_from_relationship_intelligence(client, life_
     # Both addresses are marketing senders — neither should appear
     entities = [i.get("entity", "") for i in relationship]
     assert "noreply@newsletter.example.com" not in entities, (
-        "Marketing sender noreply@newsletter.example.com should be excluded from "
-        "relationship_intelligence insights"
+        "Marketing sender noreply@newsletter.example.com should be excluded from relationship_intelligence insights"
     )
     assert "donotreply@bank.com" not in entities, (
-        "Marketing sender donotreply@bank.com should be excluded from "
-        "relationship_intelligence insights"
+        "Marketing sender donotreply@bank.com should be excluded from relationship_intelligence insights"
     )
 
 
@@ -211,14 +212,14 @@ def test_marketing_address_excluded_from_relationship_intelligence_inbound_only(
     entities = [i.get("entity", "") for i in relationship]
 
     assert "alerts@brokerage.com" not in entities, (
-        "Marketing sender alerts@brokerage.com should be excluded from "
-        "relationship_intelligence insights"
+        "Marketing sender alerts@brokerage.com should be excluded from relationship_intelligence insights"
     )
 
 
 # ---------------------------------------------------------------------------
 # Tests: inbound-only contacts are excluded
 # ---------------------------------------------------------------------------
+
 
 def test_inbound_only_contact_excluded_from_relationship_intelligence(client, life_os_mock):
     """Inbound-only contacts (outbound_count=0) must not appear in relationship_intelligence.
@@ -242,21 +243,18 @@ def test_inbound_only_contact_excluded_from_relationship_intelligence(client, li
     assert response.status_code == 200
 
     insights = response.json()["insights"]
-    relationship_insights = [
-        i for i in insights
-        if i["type"] == "relationship_intelligence"
-    ]
+    relationship_insights = [i for i in insights if i["type"] == "relationship_intelligence"]
     entities = [i.get("entity", "") for i in relationship_insights]
 
     assert "cold.sender@example.com" not in entities, (
-        "Inbound-only contact cold.sender@example.com should be excluded from "
-        "relationship_intelligence insights"
+        "Inbound-only contact cold.sender@example.com should be excluded from relationship_intelligence insights"
     )
 
 
 # ---------------------------------------------------------------------------
 # Tests: legitimate bidirectional contacts still appear
 # ---------------------------------------------------------------------------
+
 
 def test_bidirectional_contact_appears_in_relationship_intelligence(client, life_os_mock):
     """Bidirectional contacts with sufficient gap appear as relationship_intelligence.
@@ -332,6 +330,7 @@ def test_bidirectional_contact_appears_in_contact_gap_intelligence(client, life_
 # Tests: no-reply variants are excluded
 # ---------------------------------------------------------------------------
 
+
 def test_noreply_variants_excluded(client, life_os_mock):
     """Various no-reply address patterns must all be excluded from relationship_intelligence.
 
@@ -361,11 +360,7 @@ def test_noreply_variants_excluded(client, life_os_mock):
     assert response.status_code == 200
 
     insights = response.json()["insights"]
-    relationship_entities = {
-        i.get("entity", "")
-        for i in insights
-        if i["type"] == "relationship_intelligence"
-    }
+    relationship_entities = {i.get("entity", "") for i in insights if i["type"] == "relationship_intelligence"}
 
     for addr in no_reply_addresses:
         assert addr not in relationship_entities, (
@@ -377,6 +372,7 @@ def test_noreply_variants_excluded(client, life_os_mock):
 # Tests: empty profile is handled gracefully
 # ---------------------------------------------------------------------------
 
+
 def test_empty_relationships_profile_returns_no_relationship_insights(client, life_os_mock):
     """An empty relationships profile must not raise and returns no relationship insights."""
     _store_relationships_profile(life_os_mock.user_model_store, {"contacts": {}})
@@ -385,10 +381,7 @@ def test_empty_relationships_profile_returns_no_relationship_insights(client, li
     assert response.status_code == 200
 
     insights = response.json()["insights"]
-    relationship_insights = [
-        i for i in insights
-        if i["type"] == "relationship_intelligence"
-    ]
+    relationship_insights = [i for i in insights if i["type"] == "relationship_intelligence"]
     assert relationship_insights == [], (
         "Empty relationships profile should produce zero relationship_intelligence insights"
     )
@@ -406,6 +399,7 @@ def test_no_relationships_profile_stored_returns_200(client, life_os_mock):
 # ---------------------------------------------------------------------------
 # Tests: mixed contacts — only the filtered ones are excluded
 # ---------------------------------------------------------------------------
+
 
 def test_mixed_contacts_only_marketing_excluded(client, life_os_mock):
     """With a mix of marketing and real contacts, only marketing is excluded.
@@ -440,17 +434,11 @@ def test_mixed_contacts_only_marketing_excluded(client, life_os_mock):
     assert response.status_code == 200
 
     insights = response.json()["insights"]
-    relationship_entities = {
-        i.get("entity", "")
-        for i in insights
-        if i["type"] == "relationship_intelligence"
-    }
+    relationship_entities = {i.get("entity", "") for i in insights if i["type"] == "relationship_intelligence"}
 
     assert "alice@personal.com" in relationship_entities, (
-        "Real bidirectional contact alice@personal.com should appear in "
-        "relationship_intelligence insights when overdue"
+        "Real bidirectional contact alice@personal.com should appear in relationship_intelligence insights when overdue"
     )
     assert "unsubscribe@promo.store" not in relationship_entities, (
-        "Marketing address unsubscribe@promo.store should be excluded from "
-        "relationship_intelligence insights"
+        "Marketing address unsubscribe@promo.store should be excluded from relationship_intelligence insights"
     )

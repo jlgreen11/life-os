@@ -156,9 +156,11 @@ def backfill_spatial_profile(
             # Progress reporting every batch
             elapsed = time.time() - start_time
             rate = events_processed / elapsed if elapsed > 0 else 0
-            print(f"[backfill_spatial_profile] Progress: {events_processed} events, "
-                  f"{signals_extracted} signals, {errors} errors "
-                  f"({rate:.1f} events/sec)")
+            print(
+                f"[backfill_spatial_profile] Progress: {events_processed} events, "
+                f"{signals_extracted} signals, {errors} errors "
+                f"({rate:.1f} events/sec)"
+            )
 
     # Get final profile state
     final_profile = ums.get_signal_profile("spatial")
@@ -188,21 +190,25 @@ def backfill_spatial_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_spatial_profile] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_spatial_profile] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_spatial_profile] Events processed: {events_processed}")
     print(f"[backfill_spatial_profile] Signals extracted: {signals_extracted}")
-    print(f"[backfill_spatial_profile] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})")
+    print(
+        f"[backfill_spatial_profile] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})"
+    )
     print(f"[backfill_spatial_profile] Unique places: {unique_places}")
     print(f"[backfill_spatial_profile] Errors: {errors}")
-    print(f"[backfill_spatial_profile] Elapsed: {elapsed_seconds:.1f}s ({events_processed/elapsed_seconds:.1f} events/sec)")
+    print(
+        f"[backfill_spatial_profile] Elapsed: {elapsed_seconds:.1f}s ({events_processed / elapsed_seconds:.1f} events/sec)"
+    )
 
     if dry_run:
-        print(f"[backfill_spatial_profile] DRY RUN - no changes were written to database")
+        print("[backfill_spatial_profile] DRY RUN - no changes were written to database")
 
     # Show sample of the spatial profile data for verification
     if final_profile and not dry_run:
         data = final_profile["data"]
-        print(f"\n[backfill_spatial_profile] ===== SPATIAL PROFILE SUMMARY =====")
+        print("\n[backfill_spatial_profile] ===== SPATIAL PROFILE SUMMARY =====")
 
         place_behaviors_raw = data.get("place_behaviors", {})
         if isinstance(place_behaviors_raw, str):
@@ -212,13 +218,9 @@ def backfill_spatial_profile(
 
         if place_behaviors:
             # Show top 5 most visited places
-            sorted_places = sorted(
-                place_behaviors.items(),
-                key=lambda x: x[1].get("visit_count", 0),
-                reverse=True
-            )[:5]
+            sorted_places = sorted(place_behaviors.items(), key=lambda x: x[1].get("visit_count", 0), reverse=True)[:5]
 
-            print(f"[backfill_spatial_profile] Top 5 visited places:")
+            print("[backfill_spatial_profile] Top 5 visited places:")
             for location, place in sorted_places:
                 visits = place.get("visit_count", 0)
                 domain = place.get("dominant_domain", "unknown")
@@ -230,9 +232,7 @@ def backfill_spatial_profile(
 
 def main():
     """CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Backfill spatial profile from historical events"
-    )
+    parser = argparse.ArgumentParser(description="Backfill spatial profile from historical events")
     parser.add_argument(
         "--data-dir",
         default="data",
@@ -273,6 +273,7 @@ def main():
     except Exception as e:
         print(f"[backfill_spatial_profile] FATAL ERROR: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

@@ -212,9 +212,7 @@ class TestGetMoodContext:
         ca = ContextAssembler(db, user_model_store)
         ctx = ca.assemble_briefing_context()
         # Raw signal dicts look like {"signal_type": "...", "value": ...}
-        assert '"signal_type"' not in ctx, (
-            "Raw signal_type keys should not appear in briefing context"
-        )
+        assert '"signal_type"' not in ctx, "Raw signal_type keys should not appear in briefing context"
 
     def test_briefing_context_mood_absent_when_no_history(self, db, user_model_store):
         """assemble_briefing_context() omits mood section when mood_history is empty."""

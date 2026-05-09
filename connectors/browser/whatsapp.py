@@ -46,8 +46,8 @@ class WhatsAppConnector(BrowserBaseConnector):
     DISPLAY_NAME = "WhatsApp"
     SITE_ID = "whatsapp"
     LOGIN_URL = "https://web.whatsapp.com"
-    SYNC_INTERVAL_SECONDS = 10     # Poll frequently for near-real-time messages
-    MIN_REQUEST_INTERVAL = 1.0     # WhatsApp Web is a SPA, so page loads are rare
+    SYNC_INTERVAL_SECONDS = 10  # Poll frequently for near-real-time messages
+    MIN_REQUEST_INTERVAL = 1.0  # WhatsApp Web is a SPA, so page loads are rare
 
     async def api_authenticate(self) -> bool:
         # WhatsApp has no personal API; always fall through to browser mode
@@ -95,9 +95,7 @@ class WhatsAppConnector(BrowserBaseConnector):
                 self.CONNECTOR_ID,
             )
 
-            await self._interactor.screenshot(
-                self._page, "data/browser/whatsapp_qr.png"
-            )
+            await self._interactor.screenshot(self._page, "data/browser/whatsapp_qr.png")
 
             # Poll every ~5 seconds for up to 2 minutes (24 iterations)
             for _ in range(24):
@@ -115,8 +113,7 @@ class WhatsAppConnector(BrowserBaseConnector):
             logger.error("[%s] Auth error: %s", self.CONNECTOR_ID, e)
             return False
 
-    async def browser_sync(self, page: Any, human: HumanEmulator,
-                           interactor: PageInteractor) -> int:
+    async def browser_sync(self, page: Any, human: HumanEmulator, interactor: PageInteractor) -> int:
         """Scrape new messages from WhatsApp Web.
 
         Reads the sidebar for chats with unread badges, clicks into each
@@ -153,7 +150,8 @@ class WhatsAppConnector(BrowserBaseConnector):
                         }
 
                         await self.publish_event(
-                            "message.received", payload,
+                            "message.received",
+                            payload,
                             priority=self._classify_priority(chat["name"]),
                             metadata={"related_contacts": [chat["name"]]},
                         )
@@ -254,7 +252,9 @@ class WhatsAppConnector(BrowserBaseConnector):
                 await self._human.wait_human(0.5, 1.0)
 
             # Type and send the message
-            msg_box_selector = '[aria-label="Type a message"], [title="Type a message"], footer [contenteditable="true"]'
+            msg_box_selector = (
+                '[aria-label="Type a message"], [title="Type a message"], footer [contenteditable="true"]'
+            )
             await self._human.type_text(self._page, msg_box_selector, message)
             await self._human.wait_human(0.3, 0.8)
             await self._page.keyboard.press("Enter")
@@ -286,6 +286,9 @@ class WhatsAppConnector(BrowserBaseConnector):
     async def health_check(self) -> dict[str, Any]:
         if self._page:
             logged_in = await self.is_logged_in(self._page)
-            return {"status": "ok" if logged_in else "session_expired",
-                    "connector": self.CONNECTOR_ID, "mode": "browser"}
+            return {
+                "status": "ok" if logged_in else "session_expired",
+                "connector": self.CONNECTOR_ID,
+                "mode": "browser",
+            }
         return {"status": "not_started", "connector": self.CONNECTOR_ID}

@@ -251,13 +251,10 @@ def backfill_topic_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_topic] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_topic] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_topic] Events processed: {events_processed}")
     print(f"[backfill_topic] Signals extracted: {signals_extracted}")
-    print(
-        f"[backfill_topic] Profile samples: {initial_samples} → {final_samples} "
-        f"(+{final_samples - initial_samples})"
-    )
+    print(f"[backfill_topic] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})")
     print(f"[backfill_topic] Topics discovered: {initial_topics} → {final_topics}")
     print(f"[backfill_topic] Errors: {errors}")
     print(
@@ -266,14 +263,14 @@ def backfill_topic_profile(
     )
 
     if dry_run:
-        print(f"[backfill_topic] DRY RUN — no changes written to database")
+        print("[backfill_topic] DRY RUN — no changes written to database")
 
     # Show top topics for verification.
     if final_profile and not dry_run:
         topic_counts = final_profile["data"].get("topic_counts", {})
         if topic_counts:
             top_topics = sorted(topic_counts.items(), key=lambda kv: kv[1], reverse=True)[:15]
-            print(f"\n[backfill_topic] ===== TOP 15 TOPICS =====")
+            print("\n[backfill_topic] ===== TOP 15 TOPICS =====")
             for topic, count in top_topics:
                 print(f"  {topic}: {count}")
 

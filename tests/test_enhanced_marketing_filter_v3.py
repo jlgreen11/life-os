@@ -212,8 +212,7 @@ class TestRealWorldProductionData:
         ]
 
         for addr in production_marketing:
-            assert extractor._is_marketing_or_noreply(addr, {}), \
-                f"Expected {addr} to be filtered as marketing"
+            assert extractor._is_marketing_or_noreply(addr, {}), f"Expected {addr} to be filtered as marketing"
 
     def test_filter_coverage_improvement(self, extractor):
         """Verify significant improvement in filter coverage."""

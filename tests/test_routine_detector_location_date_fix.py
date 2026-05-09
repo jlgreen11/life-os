@@ -113,19 +113,11 @@ class TestLocationRoutinesLocalDate:
         routines = detector._detect_location_routines(lookback_days=30)
 
         # cooking should appear (3 local days >= threshold)
-        cooking_found = any(
-            any(s["action"] == "cooking" for s in r.get("steps", []))
-            for r in routines
-        )
+        cooking_found = any(any(s["action"] == "cooking" for s in r.get("steps", [])) for r in routines)
         # cleaning should NOT appear (only 2 local days < threshold of 3)
-        cleaning_found = any(
-            any(s["action"] == "cleaning" for s in r.get("steps", []))
-            for r in routines
-        )
+        cleaning_found = any(any(s["action"] == "cleaning" for s in r.get("steps", [])) for r in routines)
 
-        assert cooking_found or len(routines) >= 1, (
-            f"Expected 'cooking' routine at Kitchen; got {routines}"
-        )
+        assert cooking_found or len(routines) >= 1, f"Expected 'cooking' routine at Kitchen; got {routines}"
 
 
 class TestEventTriggeredRoutinesLocalDate:
@@ -207,8 +199,7 @@ class TestEventTriggeredRoutinesLocalDate:
         # With the old DATE() approach, they'd be on different UTC dates and
         # the JOIN would miss the pairing.
         event_triggered = [
-            r for r in routines
-            if r.get("trigger_type") == "event" or "evening_review" in r.get("trigger", "")
+            r for r in routines if r.get("trigger_type") == "event" or "evening_review" in r.get("trigger", "")
         ]
 
         # Verify we get a routine with evening_review as trigger and
@@ -264,7 +255,4 @@ class TestEventTriggeredRoutinesLocalDate:
                     found_pair = True
                     break
 
-        assert found_pair, (
-            "Expected standup_meeting → standup_notes routine in UTC mode. "
-            f"Got routines: {routines}"
-        )
+        assert found_pair, f"Expected standup_meeting → standup_notes routine in UTC mode. Got routines: {routines}"

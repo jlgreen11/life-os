@@ -374,8 +374,15 @@ def test_derive_chronotype_early_bird(db, user_model_store):
     # 40% of activity in morning hours 6-10 (24 out of 60 events),
     # rest spread across midday hours
     hour_counts = {
-        6: 5, 7: 5, 8: 5, 9: 5, 10: 4,  # 24 morning events
-        12: 9, 13: 9, 14: 9, 15: 9,       # 36 midday events
+        6: 5,
+        7: 5,
+        8: 5,
+        9: 5,
+        10: 4,  # 24 morning events
+        12: 9,
+        13: 9,
+        14: 9,
+        15: 9,  # 36 midday events
     }
     _build_profile_with_hourly_distribution(extractor, hour_counts)
 
@@ -390,8 +397,14 @@ def test_derive_chronotype_night_owl(db, user_model_store):
 
     # 40% of activity in evening hours 20-23 (24 out of 60 events)
     hour_counts = {
-        12: 9, 13: 9, 14: 9, 15: 9,       # 36 midday events
-        20: 6, 21: 6, 22: 6, 23: 6,        # 24 evening events
+        12: 9,
+        13: 9,
+        14: 9,
+        15: 9,  # 36 midday events
+        20: 6,
+        21: 6,
+        22: 6,
+        23: 6,  # 24 evening events
     }
     _build_profile_with_hourly_distribution(extractor, hour_counts)
 

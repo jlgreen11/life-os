@@ -47,7 +47,7 @@ def test_connector_field_def_all_parameters():
         sensitive=True,
         default="default_value",
         help_text="Your API key",
-        placeholder="sk-..."
+        placeholder="sk-...",
     )
 
     assert field.name == "api_key"
@@ -115,7 +115,7 @@ def test_connector_type_def_with_fields():
         category="api",
         module_path="test",
         class_name="Test",
-        config_fields=[field1, field2]
+        config_fields=[field1, field2],
     )
 
     assert len(typedef.config_fields) == 2
@@ -131,7 +131,7 @@ def test_connector_type_def_valid_categories():
         description="API connector",
         category="api",
         module_path="test",
-        class_name="Test"
+        class_name="Test",
     )
     assert api_typedef.category == "api"
 
@@ -141,7 +141,7 @@ def test_connector_type_def_valid_categories():
         description="Browser connector",
         category="browser",
         module_path="test",
-        class_name="Test"
+        class_name="Test",
     )
     assert browser_typedef.category == "browser"
 
@@ -154,7 +154,7 @@ def test_connector_type_def_is_dataclass():
         description="Test",
         category="api",
         module_path="test",
-        class_name="Test"
+        class_name="Test",
     )
 
     typedef_dict = asdict(typedef)
@@ -196,15 +196,13 @@ def test_registry_not_empty():
 def test_registry_all_values_are_connector_type_defs():
     """All values in CONNECTOR_REGISTRY should be ConnectorTypeDef instances."""
     for connector_id, typedef in CONNECTOR_REGISTRY.items():
-        assert isinstance(typedef, ConnectorTypeDef), \
-            f"{connector_id} is not a ConnectorTypeDef"
+        assert isinstance(typedef, ConnectorTypeDef), f"{connector_id} is not a ConnectorTypeDef"
 
 
 def test_registry_connector_ids_match_keys():
     """Each ConnectorTypeDef's connector_id should match its dictionary key."""
     for key, typedef in CONNECTOR_REGISTRY.items():
-        assert typedef.connector_id == key, \
-            f"Key '{key}' does not match connector_id '{typedef.connector_id}'"
+        assert typedef.connector_id == key, f"Key '{key}' does not match connector_id '{typedef.connector_id}'"
 
 
 def test_registry_all_have_required_fields():
@@ -213,8 +211,7 @@ def test_registry_all_have_required_fields():
         assert typedef.connector_id, f"{connector_id}: missing connector_id"
         assert typedef.display_name, f"{connector_id}: missing display_name"
         assert typedef.description, f"{connector_id}: missing description"
-        assert typedef.category in ["api", "browser"], \
-            f"{connector_id}: invalid category '{typedef.category}'"
+        assert typedef.category in ["api", "browser"], f"{connector_id}: invalid category '{typedef.category}'"
         assert typedef.module_path, f"{connector_id}: missing module_path"
         assert typedef.class_name, f"{connector_id}: missing class_name"
 
@@ -223,8 +220,7 @@ def test_registry_all_have_config_fields():
     """All registry entries should define their configuration schema."""
     for connector_id, typedef in CONNECTOR_REGISTRY.items():
         # config_fields should be a list (may be empty, but should exist)
-        assert isinstance(typedef.config_fields, list), \
-            f"{connector_id}: config_fields is not a list"
+        assert isinstance(typedef.config_fields, list), f"{connector_id}: config_fields is not a list"
 
 
 def test_registry_categories_are_valid():
@@ -232,8 +228,7 @@ def test_registry_categories_are_valid():
     valid_categories = {"api", "browser"}
 
     for connector_id, typedef in CONNECTOR_REGISTRY.items():
-        assert typedef.category in valid_categories, \
-            f"{connector_id}: invalid category '{typedef.category}'"
+        assert typedef.category in valid_categories, f"{connector_id}: invalid category '{typedef.category}'"
 
 
 def test_registry_api_connectors():
@@ -250,8 +245,7 @@ def test_registry_api_connectors():
 
     for connector_id in api_connectors:
         typedef = CONNECTOR_REGISTRY[connector_id]
-        assert typedef.category == "api", \
-            f"{connector_id} should be category 'api', not '{typedef.category}'"
+        assert typedef.category == "api", f"{connector_id} should be category 'api', not '{typedef.category}'"
 
 
 def test_registry_browser_connectors():
@@ -260,8 +254,7 @@ def test_registry_browser_connectors():
 
     for connector_id in browser_connectors:
         typedef = CONNECTOR_REGISTRY[connector_id]
-        assert typedef.category == "browser", \
-            f"{connector_id} should be category 'browser', not '{typedef.category}'"
+        assert typedef.category == "browser", f"{connector_id} should be category 'browser', not '{typedef.category}'"
 
 
 def test_registry_config_fields_are_valid():
@@ -270,12 +263,12 @@ def test_registry_config_fields_are_valid():
 
     for connector_id, typedef in CONNECTOR_REGISTRY.items():
         for field in typedef.config_fields:
-            assert isinstance(field, ConnectorFieldDef), \
-                f"{connector_id}: field '{field}' is not a ConnectorFieldDef"
+            assert isinstance(field, ConnectorFieldDef), f"{connector_id}: field '{field}' is not a ConnectorFieldDef"
 
             assert field.name, f"{connector_id}: field has no name"
-            assert field.field_type in valid_field_types, \
+            assert field.field_type in valid_field_types, (
                 f"{connector_id}.{field.name}: invalid field_type '{field.field_type}'"
+            )
 
 
 def test_registry_required_fields_validation():
@@ -284,8 +277,9 @@ def test_registry_required_fields_validation():
         for field in typedef.config_fields:
             # Required fields should have meaningful help text
             if field.required:
-                assert field.help_text or field.placeholder, \
+                assert field.help_text or field.placeholder, (
                     f"{connector_id}.{field.name}: required field has no help text or placeholder"
+                )
 
 
 def test_registry_sensitive_fields_are_passwords():
@@ -302,23 +296,24 @@ def test_registry_module_paths_follow_convention():
     """Module paths should follow the connectors.{type}.connector pattern."""
     for connector_id, typedef in CONNECTOR_REGISTRY.items():
         # Should start with "connectors."
-        assert typedef.module_path.startswith("connectors."), \
+        assert typedef.module_path.startswith("connectors."), (
             f"{connector_id}: module_path '{typedef.module_path}' doesn't start with 'connectors.'"
+        )
 
 
 def test_registry_class_names_follow_convention():
     """Class names should follow the {Name}Connector pattern."""
     for connector_id, typedef in CONNECTOR_REGISTRY.items():
         # Should end with "Connector"
-        assert typedef.class_name.endswith("Connector"), \
+        assert typedef.class_name.endswith("Connector"), (
             f"{connector_id}: class_name '{typedef.class_name}' doesn't end with 'Connector'"
+        )
 
 
 def test_registry_no_duplicate_display_names():
     """Each connector should have a unique display name."""
     display_names = [typedef.display_name for typedef in CONNECTOR_REGISTRY.values()]
-    assert len(display_names) == len(set(display_names)), \
-        "Duplicate display names found in registry"
+    assert len(display_names) == len(set(display_names)), "Duplicate display names found in registry"
 
 
 # --- get_connector_class() Tests ---
@@ -447,8 +442,9 @@ def test_get_connector_class_all_registered():
 
             # Class name should match registry
             expected_name = CONNECTOR_REGISTRY[connector_id].class_name
-            assert cls.__name__ == expected_name, \
+            assert cls.__name__ == expected_name, (
                 f"{connector_id}: class name '{cls.__name__}' != expected '{expected_name}'"
+            )
         except Exception as e:
             pytest.fail(f"Failed to load {connector_id}: {e}")
 
@@ -518,7 +514,7 @@ def test_registry_supports_admin_ui_workflow():
                     "sensitive": field.sensitive,
                 }
                 for field in typedef.config_fields
-            ]
+            ],
         }
 
         if typedef.category == "api":
@@ -563,15 +559,16 @@ def test_registry_field_type_consistency():
         for field in typedef.config_fields:
             # Passwords should be sensitive
             if field.field_type == "password":
-                assert field.sensitive, \
-                    f"{connector_id}.{field.name}: password field should be marked sensitive"
+                assert field.sensitive, f"{connector_id}.{field.name}: password field should be marked sensitive"
 
             # Integer fields should have integer defaults (if default is set)
             if field.field_type == "integer" and field.default is not None:
-                assert isinstance(field.default, int), \
+                assert isinstance(field.default, int), (
                     f"{connector_id}.{field.name}: integer field has non-integer default"
+                )
 
             # Boolean fields should have boolean defaults (if default is set)
             if field.field_type == "boolean" and field.default is not None:
-                assert isinstance(field.default, bool), \
+                assert isinstance(field.default, bool), (
                     f"{connector_id}.{field.name}: boolean field has non-boolean default"
+                )

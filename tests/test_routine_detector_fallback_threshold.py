@@ -36,15 +36,17 @@ def _create_event(event_store, *, event_type, timestamp=None):
     """Helper to create a test event in the events database and return its ID."""
     event_id = str(uuid.uuid4())
     ts = timestamp or datetime.now(timezone.utc)
-    event_store.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": "test",
-        "timestamp": ts.isoformat(),
-        "priority": "normal",
-        "payload": json.dumps({}),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": "test",
+            "timestamp": ts.isoformat(),
+            "priority": "normal",
+            "payload": json.dumps({}),
+            "metadata": json.dumps({}),
+        }
+    )
     return event_id
 
 
@@ -93,9 +95,7 @@ class TestTemporalFallbackThreshold:
         routines = detector._detect_temporal_routines(lookback_days=60)
 
         # Should detect routines because fallback recovered the 500 episodes
-        assert len(routines) >= 1, (
-            "Expected at least 1 routine from fallback-recovered episodes"
-        )
+        assert len(routines) >= 1, "Expected at least 1 routine from fallback-recovered episodes"
 
     def test_no_fallback_when_enough_episodes(self, db, user_model_store):
         """Fallback should NOT trigger when primary query returns enough episodes.
@@ -155,9 +155,7 @@ class TestTemporalFallbackThreshold:
         for i in range(200):
             day_offset = i % 20
             hour = 9 + (i % 2)
-            ts = base_date.replace(hour=hour, minute=(i * 2) % 60, second=0, microsecond=0) + timedelta(
-                days=day_offset
-            )
+            ts = base_date.replace(hour=hour, minute=(i * 2) % 60, second=0, microsecond=0) + timedelta(days=day_offset)
             event_id = _create_event(event_store, event_type="email.received", timestamp=ts)
             _create_episode(
                 user_model_store,
@@ -170,9 +168,7 @@ class TestTemporalFallbackThreshold:
         routines = detector._detect_temporal_routines(lookback_days=60)
 
         # Should have routines from the merged dataset (30 + derived from 200)
-        assert len(routines) >= 1, (
-            "Expected at least 1 routine from merged primary + fallback episodes"
-        )
+        assert len(routines) >= 1, "Expected at least 1 routine from merged primary + fallback episodes"
 
 
 class TestLocationFallbackThreshold:

@@ -112,9 +112,7 @@ def backfill_communication_templates(
 
         # Get initial template count
         with db.get_connection("user_model") as um_conn:
-            templates_before = um_conn.execute(
-                "SELECT COUNT(*) FROM communication_templates"
-            ).fetchone()[0]
+            templates_before = um_conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
 
         # Seed the running count so per-batch deltas are meaningful.
         templates_running_count = templates_before
@@ -171,9 +169,7 @@ def backfill_communication_templates(
                 # of communication events strongly suggests lock contention or a
                 # silent write failure.
                 with db.get_connection("user_model") as verify_conn:
-                    post_batch_count = verify_conn.execute(
-                        "SELECT COUNT(*) FROM communication_templates"
-                    ).fetchone()[0]
+                    post_batch_count = verify_conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
                 if post_batch_count == templates_running_count:
                     print(
                         f"Warning: template count unchanged after processing "
@@ -188,17 +184,12 @@ def backfill_communication_templates(
             if now - last_report_time >= 5.0:
                 elapsed = now - start_time
                 rate = events_processed / elapsed if elapsed > 0 else 0
-                print(
-                    f"Processed {events_processed:,} events "
-                    f"({rate:.1f}/sec, {errors} errors)"
-                )
+                print(f"Processed {events_processed:,} events ({rate:.1f}/sec, {errors} errors)")
                 last_report_time = now
 
     # Get final template count
     with db.get_connection("user_model") as um_conn:
-        templates_after = um_conn.execute(
-            "SELECT COUNT(*) FROM communication_templates"
-        ).fetchone()[0]
+        templates_after = um_conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
 
     elapsed_seconds = time.time() - start_time
     templates_created = templates_after - templates_before
@@ -232,9 +223,7 @@ def backfill_communication_templates(
 
 def main():
     """CLI entry point for backfill script."""
-    parser = argparse.ArgumentParser(
-        description="Backfill communication templates from historical events"
-    )
+    parser = argparse.ArgumentParser(description="Backfill communication templates from historical events")
     parser.add_argument(
         "--data-dir",
         default="data",
@@ -273,6 +262,7 @@ def main():
     except Exception as e:
         print(f"\n\nFatal error: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

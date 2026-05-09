@@ -24,6 +24,7 @@ from services.prediction_engine.engine import PredictionEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_prediction(**overrides) -> Prediction:
     """Create a minimal Prediction for testing.
 
@@ -45,14 +46,16 @@ def _make_prediction(**overrides) -> Prediction:
 
 def _insert_event(event_store):
     """Insert a generic event to advance the cursor so generate_predictions runs."""
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@test.com", "subject": "Test", "message_id": str(uuid.uuid4())},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@test.com", "subject": "Test", "message_id": str(uuid.uuid4())},
+            "metadata": {},
+        }
+    )
 
 
 async def _run_engine_with_fake_predictions(engine, user_model_store, predictions, store_side_effect=None):
@@ -86,6 +89,7 @@ async def _run_engine_with_fake_predictions(engine, user_model_store, prediction
 
     # predict_reaction always returns "helpful"
     from models.user_model import ReactionPrediction
+
     helpful_reaction = ReactionPrediction(
         predicted_reaction="helpful",
         confidence=0.9,
@@ -133,7 +137,9 @@ class TestStoreFailureTracking:
 
         preds = [_make_prediction(), _make_prediction()]
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, preds,
+            engine,
+            user_model_store,
+            preds,
             store_side_effect=RuntimeError("DB locked"),
         )
 
@@ -147,7 +153,9 @@ class TestStoreFailureTracking:
 
         pred = _make_prediction(prediction_type="conflict")
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, [pred],
+            engine,
+            user_model_store,
+            [pred],
             store_side_effect=ValueError("bad column"),
         )
 
@@ -166,15 +174,22 @@ class TestStoreFailureTracking:
 
         # Pre-populate with 9 fake errors
         engine._last_store_errors = [
-            {"timestamp": "t", "prediction_id": f"old-{i}", "prediction_type": "test",
-             "error_message": "old", "error_type": "RuntimeError"}
+            {
+                "timestamp": "t",
+                "prediction_id": f"old-{i}",
+                "prediction_type": "test",
+                "error_message": "old",
+                "error_type": "RuntimeError",
+            }
             for i in range(9)
         ]
 
         _insert_event(event_store)
         preds = [_make_prediction() for _ in range(5)]
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, preds,
+            engine,
+            user_model_store,
+            preds,
             store_side_effect=RuntimeError("fail"),
         )
 
@@ -193,7 +208,9 @@ class TestStoreFailureTracking:
 
         preds = [_make_prediction()]
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, preds,
+            engine,
+            user_model_store,
+            preds,
             store_side_effect=RuntimeError("oops"),
         )
 
@@ -218,7 +235,9 @@ class TestStoreFailureTracking:
         _insert_event(event_store)
         preds = [_make_prediction(), _make_prediction()]
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, preds,
+            engine,
+            user_model_store,
+            preds,
             store_side_effect=RuntimeError("fail"),
         )
 
@@ -228,7 +247,9 @@ class TestStoreFailureTracking:
         # Second run: store succeeds
         _insert_event(event_store)
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, [_make_prediction()],
+            engine,
+            user_model_store,
+            [_make_prediction()],
             store_side_effect=None,
         )
 
@@ -246,7 +267,9 @@ class TestStoreFailureTracking:
 
         preds = [_make_prediction()]
         await _run_engine_with_fake_predictions(
-            engine, user_model_store, preds,
+            engine,
+            user_model_store,
+            preds,
             store_side_effect=None,
         )
 

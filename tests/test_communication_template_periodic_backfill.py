@@ -36,13 +36,15 @@ def db_with_many_events(tmp_path):
                     "google",
                     f"2026-02-{(i % 28) + 1:02d}T09:00:00.000Z",
                     0.5,
-                    json.dumps({
-                        "to_addresses": [f"contact{i}@example.com"],
-                        "from_address": "user@example.com",
-                        "subject": f"Email {i}",
-                        "body": f"Hello,\n\nThis is test email number {i}. It has plenty of content.\n\nBest,\nUser",
-                        "body_plain": f"Hello,\n\nThis is test email number {i}. It has plenty of content.\n\nBest,\nUser",
-                    }),
+                    json.dumps(
+                        {
+                            "to_addresses": [f"contact{i}@example.com"],
+                            "from_address": "user@example.com",
+                            "subject": f"Email {i}",
+                            "body": f"Hello,\n\nThis is test email number {i}. It has plenty of content.\n\nBest,\nUser",
+                            "body_plain": f"Hello,\n\nThis is test email number {i}. It has plenty of content.\n\nBest,\nUser",
+                        }
+                    ),
                     json.dumps({}),
                 ),
             )
@@ -69,11 +71,13 @@ def db_with_few_events(tmp_path):
                     "google",
                     f"2026-02-{i + 1:02d}T09:00:00.000Z",
                     0.5,
-                    json.dumps({
-                        "to_addresses": [f"contact{i}@example.com"],
-                        "from_address": "user@example.com",
-                        "body_plain": f"Hello, short email {i} with enough text here.",
-                    }),
+                    json.dumps(
+                        {
+                            "to_addresses": [f"contact{i}@example.com"],
+                            "from_address": "user@example.com",
+                            "body_plain": f"Hello, short email {i} with enough text here.",
+                        }
+                    ),
                     json.dumps({}),
                 ),
             )
@@ -127,9 +131,7 @@ class TestBackfillMethodSkipsWhenTemplatesExist:
 
         # Confirm we start with 110 templates
         with db.get_connection("user_model") as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM communication_templates"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
         assert count == 110, f"Expected 110 templates, got {count}"
 
         # Build a minimal LifeOS-like object with just the attributes the method needs
@@ -160,9 +162,7 @@ class TestBackfillMethodTriggersWhenEmpty:
 
         # Confirm no templates exist
         with db.get_connection("user_model") as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM communication_templates"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
         assert count == 0, "Should start with no templates"
 
         lifeos = MagicMock()
@@ -179,7 +179,9 @@ class TestBackfillMethodTriggersWhenEmpty:
             captured_calls.append({"data_dir": data_dir, "db": db, "ums": ums})
             return {"templates_created": 55, "events_processed": 55, "elapsed_seconds": 1.0}
 
-        with patch("scripts.backfill_communication_templates.backfill_communication_templates", side_effect=fake_backfill):
+        with patch(
+            "scripts.backfill_communication_templates.backfill_communication_templates", side_effect=fake_backfill
+        ):
             from main import LifeOS
 
             async def _run():
@@ -258,6 +260,7 @@ class TestDbHealthLoopCallsTemplateBackfill:
             # Patch asyncio.sleep so the loop doesn't actually wait 1800 seconds
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 from main import LifeOS
+
                 await LifeOS._db_health_loop(lifeos)
 
         asyncio.run(_run())

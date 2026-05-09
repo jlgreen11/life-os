@@ -52,9 +52,9 @@ def _make_engine(db) -> InsightEngine:
     return InsightEngine(db=db, ums=ums, timezone="UTC")
 
 
-def _set_temporal_profile(ums: UserModelStore, activity_by_hour: dict[str, int],
-                          activity_by_day: dict[str, int],
-                          samples_count: int) -> None:
+def _set_temporal_profile(
+    ums: UserModelStore, activity_by_hour: dict[str, int], activity_by_day: dict[str, int], samples_count: int
+) -> None:
     """Write a temporal signal profile with specified histogram data.
 
     Calls update_signal_profile() once per artificial sample so the
@@ -79,8 +79,7 @@ def _set_temporal_profile(ums: UserModelStore, activity_by_hour: dict[str, int],
         )
 
 
-def _insert_mood_row(db, energy: float, stress: float, valence: float,
-                     ts: str | None = None) -> None:
+def _insert_mood_row(db, energy: float, stress: float, valence: float, ts: str | None = None) -> None:
     """Insert a row into mood_history."""
     timestamp = ts or datetime.now(timezone.utc).isoformat()
     with db.get_connection("user_model") as conn:
@@ -111,8 +110,7 @@ class TestTemporalPatternInsights:
         ums = _make_ums(db)
         # Provide a plausible hour histogram but only 10 samples
         hours = {str(h): 5 for h in range(6, 12)}  # morning-only activity
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={},
-                              samples_count=10)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={}, samples_count=10)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         assert insights == []
@@ -123,10 +121,8 @@ class TestTemporalPatternInsights:
         # 5–10 h dominant; 18–22 h minimal
         hours = {str(h): 20 for h in range(5, 11)}  # 120 morning events
         hours.update({str(h): 3 for h in range(18, 23)})  # 15 evening events
-        days = {"monday": 20, "tuesday": 18, "wednesday": 15, "thursday": 17,
-                "friday": 15, "saturday": 10, "sunday": 5}
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days,
-                              samples_count=200)
+        days = {"monday": 20, "tuesday": 18, "wednesday": 15, "thursday": 17, "friday": 15, "saturday": 10, "sunday": 5}
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         chrono_insights = [i for i in insights if i.category == "chronotype"]
@@ -141,10 +137,9 @@ class TestTemporalPatternInsights:
     def test_night_owl_chronotype(self, db):
         """Heavy evening activity → 'night_owl' chronotype insight."""
         ums = _make_ums(db)
-        hours = {str(h): 3 for h in range(5, 11)}   # 18 morning events
+        hours = {str(h): 3 for h in range(5, 11)}  # 18 morning events
         hours.update({str(h): 25 for h in range(18, 23)})  # 125 evening events
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={},
-                              samples_count=200)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={}, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         chrono = [i for i in insights if i.category == "chronotype"]
@@ -155,10 +150,9 @@ class TestTemporalPatternInsights:
         """Balanced morning/evening activity → 'mixed' chronotype."""
         ums = _make_ums(db)
         # Morning ~100, evening ~100 — ratio < 1.5
-        hours = {str(h): 17 for h in range(5, 11)}   # ~102 morning
+        hours = {str(h): 17 for h in range(5, 11)}  # ~102 morning
         hours.update({str(h): 16 for h in range(18, 23)})  # 80 evening
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={},
-                              samples_count=200)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={}, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         chrono = [i for i in insights if i.category == "chronotype"]
@@ -173,8 +167,7 @@ class TestTemporalPatternInsights:
         for h in range(6, 22):
             hours[str(h)] = 5  # baseline
         hours["9"] = 50  # peak
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={},
-                              samples_count=300)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={}, samples_count=300)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         peak_insights = [i for i in insights if i.category == "peak_hour"]
@@ -190,8 +183,7 @@ class TestTemporalPatternInsights:
         ums = _make_ums(db)
         # All hours have only 5 events — below MIN_PEAK_ACTIVITY (10)
         hours = {str(h): 5 for h in range(6, 22)}
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={},
-                              samples_count=200)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={}, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         assert not any(i.category == "peak_hour" for i in insights)
@@ -202,11 +194,15 @@ class TestTemporalPatternInsights:
         hours = {str(h): 10 for h in range(6, 22)}  # provide enough hour data
         # Tuesday has 2× the average
         days = {
-            "monday": 20, "tuesday": 60, "wednesday": 20,
-            "thursday": 22, "friday": 18, "saturday": 10, "sunday": 10,
+            "monday": 20,
+            "tuesday": 60,
+            "wednesday": 20,
+            "thursday": 22,
+            "friday": 18,
+            "saturday": 10,
+            "sunday": 10,
         }
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days,
-                              samples_count=200)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         day_insights = [i for i in insights if i.category == "busiest_day"]
@@ -219,10 +215,8 @@ class TestTemporalPatternInsights:
         ums = _make_ums(db)
         hours = {str(h): 10 for h in range(6, 22)}
         # All days equal — ratio = 1.0, below 1.3 threshold
-        days = {d: 20 for d in
-                ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]}
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days,
-                              samples_count=200)
+        days = {d: 20 for d in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]}
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         assert not any(i.category == "busiest_day" for i in insights)
@@ -233,8 +227,7 @@ class TestTemporalPatternInsights:
         hours = {str(h): 10 for h in range(6, 22)}
         # Only 10 total day samples (2+2+2+1+1+1+1)
         days = {"monday": 5, "tuesday": 3, "wednesday": 2}
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days,
-                              samples_count=200)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = engine._temporal_pattern_insights()
         assert not any(i.category == "busiest_day" for i in insights)
@@ -244,8 +237,7 @@ class TestTemporalPatternInsights:
         ums = _make_ums(db)
         hours = {str(h): 20 for h in range(5, 11)}
         hours.update({str(h): 3 for h in range(18, 23)})
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={},
-                              samples_count=200)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day={}, samples_count=200)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         run1 = engine._temporal_pattern_insights()
         run2 = engine._temporal_pattern_insights()
@@ -385,8 +377,7 @@ class TestMoodTrendInsights:
             # Recent 3 (inserted last → newer): NULL fields → fall back to 0.5
             for _ in range(3):
                 conn.execute(
-                    "INSERT INTO mood_history (timestamp, confidence, trend) "
-                    "VALUES (?, 0.5, 'stable')",
+                    "INSERT INTO mood_history (timestamp, confidence, trend) VALUES (?, 0.5, 'stable')",
                     (datetime.now(timezone.utc).isoformat(),),
                 )
         # Should not raise; NULL → 0.5 defaults are applied
@@ -416,17 +407,19 @@ class TestTemporalMoodInsightsIntegration:
         # Make hour 9 the peak
         hours["9"] = 40
         days = {
-            "monday": 30, "tuesday": 80, "wednesday": 25,
-            "thursday": 22, "friday": 20, "saturday": 10, "sunday": 8,
+            "monday": 30,
+            "tuesday": 80,
+            "wednesday": 25,
+            "thursday": 22,
+            "friday": 20,
+            "saturday": 10,
+            "sunday": 8,
         }
-        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days,
-                              samples_count=300)
+        _set_temporal_profile(ums, activity_by_hour=hours, activity_by_day=days, samples_count=300)
         engine = InsightEngine(db=db, ums=ums, timezone="UTC")
         insights = await engine.generate_insights()
         types = {i.type for i in insights}
-        assert "temporal_pattern" in types, (
-            "temporal_pattern insights should appear in generate_insights() output"
-        )
+        assert "temporal_pattern" in types, "temporal_pattern insights should appear in generate_insights() output"
 
     @pytest.mark.asyncio
     async def test_mood_trend_appears_in_generate_insights(self, db):
@@ -439,9 +432,7 @@ class TestTemporalMoodInsightsIntegration:
             _insert_mood_row(db, energy=0.9, stress=0.1, valence=0.9)
         insights = await engine.generate_insights()
         types = {i.type for i in insights}
-        assert "mood_trend" in types, (
-            "mood_trend insight should appear in generate_insights() output"
-        )
+        assert "mood_trend" in types, "mood_trend insight should appear in generate_insights() output"
 
     @pytest.mark.asyncio
     async def test_no_crash_when_all_profiles_missing(self, db):

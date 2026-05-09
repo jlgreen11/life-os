@@ -26,16 +26,16 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _no_print_in_source(source: str, context: str) -> None:
     """Assert that there are no bare print() calls in *source*."""
-    assert "print(" not in source, (
-        f"{context} still contains print() calls — should use logger instead"
-    )
+    assert "print(" not in source, f"{context} still contains print() calls — should use logger instead"
 
 
 # ---------------------------------------------------------------------------
 # BrowserOrchestrator
 # ---------------------------------------------------------------------------
+
 
 class TestBrowserOrchestratorLogging:
     """BrowserOrchestrator emits log records instead of print()."""
@@ -43,30 +43,35 @@ class TestBrowserOrchestratorLogging:
     def test_logger_defined(self):
         """The orchestrator module must define a module-level logger."""
         import connectors.browser.orchestrator as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.browser.orchestrator"
 
     def test_no_print_in_start(self):
         """BrowserOrchestrator.start() source must not contain print()."""
         from connectors.browser.orchestrator import BrowserOrchestrator
+
         src = inspect.getsource(BrowserOrchestrator.start)
         _no_print_in_source(src, "BrowserOrchestrator.start")
 
     def test_no_print_in_start_connectors(self):
         """BrowserOrchestrator.start_connectors() source must not contain print()."""
         from connectors.browser.orchestrator import BrowserOrchestrator
+
         src = inspect.getsource(BrowserOrchestrator.start_connectors)
         _no_print_in_source(src, "BrowserOrchestrator.start_connectors")
 
     def test_no_print_in_api_fallback_wrapper_sync(self):
         """APIFallbackWrapper.sync() source must not contain print()."""
         from connectors.browser.orchestrator import APIFallbackWrapper
+
         src = inspect.getsource(APIFallbackWrapper.sync)
         _no_print_in_source(src, "APIFallbackWrapper.sync")
 
     def test_no_print_in_api_fallback_browser_sync(self):
         """APIFallbackWrapper._browser_fallback_sync() source must not contain print()."""
         from connectors.browser.orchestrator import APIFallbackWrapper
+
         src = inspect.getsource(APIFallbackWrapper._browser_fallback_sync)
         _no_print_in_source(src, "APIFallbackWrapper._browser_fallback_sync")
 
@@ -148,6 +153,7 @@ class TestBrowserOrchestratorLogging:
 # BrowserBaseConnector
 # ---------------------------------------------------------------------------
 
+
 class TestBrowserBaseConnectorLogging:
     """BrowserBaseConnector error paths emit log records instead of print()."""
 
@@ -183,32 +189,39 @@ class TestBrowserBaseConnectorLogging:
         vault.get_credential.return_value = None  # Force "no credentials" path
 
         connector = DummyBrowserConnector(
-            event_bus=bus, db=db, config={},
-            browser_engine=engine, credential_vault=vault,
+            event_bus=bus,
+            db=db,
+            config={},
+            browser_engine=engine,
+            credential_vault=vault,
         )
         return connector
 
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.browser.base_connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.browser.base_connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.browser.base_connector import BrowserBaseConnector
+
         src = inspect.getsource(BrowserBaseConnector.authenticate)
         _no_print_in_source(src, "BrowserBaseConnector.authenticate")
 
     def test_no_print_in_sync(self):
         """sync() source must not contain print()."""
         from connectors.browser.base_connector import BrowserBaseConnector
+
         src = inspect.getsource(BrowserBaseConnector.sync)
         _no_print_in_source(src, "BrowserBaseConnector.sync")
 
     def test_no_print_in_browser_login(self):
         """_browser_login() source must not contain print()."""
         from connectors.browser.base_connector import BrowserBaseConnector
+
         src = inspect.getsource(BrowserBaseConnector._browser_login)
         _no_print_in_source(src, "BrowserBaseConnector._browser_login")
 
@@ -257,9 +270,11 @@ class TestBrowserBaseConnectorLogging:
         vault.get_credential.return_value = {"username": "u", "password": "p"}
 
         connector = APIBrowserConnector(
-            event_bus=MagicMock(), db=MagicMock(),
+            event_bus=MagicMock(),
+            db=MagicMock(),
             config={"prefer_api": True, "api_failure_threshold": 3},
-            browser_engine=engine, credential_vault=vault,
+            browser_engine=engine,
+            credential_vault=vault,
         )
 
         with caplog.at_level(logging.WARNING, logger="connectors.browser.base_connector"):
@@ -276,18 +291,21 @@ class TestBrowserBaseConnectorLogging:
 # CredentialVault (engine.py)
 # ---------------------------------------------------------------------------
 
+
 class TestBrowserEngineLogging:
     """CredentialVault.get_totp() emits a log record instead of print()."""
 
     def test_logger_defined(self):
         """The engine module must define a module-level logger."""
         import connectors.browser.engine as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.browser.engine"
 
     def test_no_print_in_get_totp(self):
         """CredentialVault.get_totp() source must not contain print()."""
         from connectors.browser.engine import CredentialVault
+
         src = inspect.getsource(CredentialVault.get_totp)
         _no_print_in_source(src, "CredentialVault.get_totp")
 
@@ -304,14 +322,13 @@ class TestBrowserEngineLogging:
                 result = vault.get_totp("example")
 
         assert result is None
-        assert any("pyotp" in r.message for r in caplog.records), (
-            "Expected pyotp warning not found in log records"
-        )
+        assert any("pyotp" in r.message for r in caplog.records), "Expected pyotp warning not found in log records"
 
 
 # ---------------------------------------------------------------------------
 # WhatsAppConnector
 # ---------------------------------------------------------------------------
+
 
 class TestWhatsAppConnectorLogging:
     """WhatsAppConnector emits log records instead of print()."""
@@ -332,26 +349,32 @@ class TestWhatsAppConnectorLogging:
         db = MagicMock()
 
         connector = WhatsAppConnector(
-            event_bus=bus, db=db, config={},
-            browser_engine=engine, credential_vault=MagicMock(),
+            event_bus=bus,
+            db=db,
+            config={},
+            browser_engine=engine,
+            credential_vault=MagicMock(),
         )
         return connector
 
     def test_logger_defined(self):
         """The whatsapp module must define a module-level logger."""
         import connectors.browser.whatsapp as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.browser.whatsapp"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.browser.whatsapp import WhatsAppConnector
+
         src = inspect.getsource(WhatsAppConnector.authenticate)
         _no_print_in_source(src, "WhatsAppConnector.authenticate")
 
     def test_no_print_in_browser_sync(self):
         """browser_sync() source must not contain print()."""
         from connectors.browser.whatsapp import WhatsAppConnector
+
         src = inspect.getsource(WhatsAppConnector.browser_sync)
         _no_print_in_source(src, "WhatsAppConnector.browser_sync")
 
@@ -398,6 +421,7 @@ class TestWhatsAppConnectorLogging:
     async def test_browser_sync_chat_error_logs_warning(self, caplog):
         """browser_sync() logs WARNING when reading an individual chat fails."""
         from connectors.browser.engine import HumanEmulator, PageInteractor
+
         connector = self._make_connector()
 
         # Return one unread chat

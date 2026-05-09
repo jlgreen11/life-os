@@ -27,16 +27,16 @@ def mock_life_os():
     mock_conn = Mock()
     # Return empty result sets by default (no events in DB)
     mock_conn.execute = Mock(return_value=Mock(fetchall=Mock(return_value=[])))
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
 
     # --- Event bus ---
     life_os.event_bus = Mock()
@@ -56,10 +56,17 @@ def mock_life_os():
     # --- Signal extractor ---
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
 
     # --- Notification manager (notifications section) ---
     life_os.notification_manager = Mock()
@@ -125,6 +132,7 @@ def client(mock_life_os):
 # Test: All sections load successfully
 # ---------------------------------------------------------------------------
 
+
 def test_all_sections_loaded_on_success(client, mock_life_os):
     """When all sections succeed, sections_loaded contains all 5 names."""
     response = client.get("/api/dashboard/feed")
@@ -133,13 +141,18 @@ def test_all_sections_loaded_on_success(client, mock_life_os):
 
     assert "sections_loaded" in data
     assert sorted(data["sections_loaded"]) == [
-        "calendar", "email", "messages", "notifications", "tasks",
+        "calendar",
+        "email",
+        "messages",
+        "notifications",
+        "tasks",
     ]
 
 
 # ---------------------------------------------------------------------------
 # Test: One section failing doesn't break others
 # ---------------------------------------------------------------------------
+
 
 def test_tasks_failure_still_returns_other_sections(client, mock_life_os):
     """When the tasks section raises, the endpoint still returns 200 and
@@ -178,6 +191,7 @@ def test_tasks_failure_still_returns_other_sections(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Test: Failed section is NOT in sections_loaded
 # ---------------------------------------------------------------------------
+
 
 def test_failed_section_excluded_from_sections_loaded(client, mock_life_os):
     """A section that raises an exception is not listed in sections_loaded."""

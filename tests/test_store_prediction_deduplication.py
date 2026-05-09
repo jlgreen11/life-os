@@ -279,7 +279,7 @@ class TestPredictionStorageDeduplication:
                 prediction = {
                     "id": f"pred-cycle{cycle}-email{idx}",
                     "prediction_type": "reminder",
-                    "description": f"Unreplied message from {email['from']}: \"{email['subject']}\"",
+                    "description": f'Unreplied message from {email["from"]}: "{email["subject"]}"',
                     "confidence": 0.80,
                     "confidence_gate": "DEFAULT",
                     "time_horizon": "24_hours",

@@ -136,9 +136,7 @@ class TestResolveNotificationSourceKeyPrediction:
         """When the prediction row doesn't exist, the domain fallback should
         return 'email.work' (the _DOMAIN_TO_SOURCE entry for 'prediction')."""
         nid = str(uuid.uuid4())
-        _insert_notification(
-            db, notif_id=nid, source_event_id=str(uuid.uuid4()), domain="prediction"
-        )
+        _insert_notification(db, notif_id=nid, source_event_id=str(uuid.uuid4()), domain="prediction")
         result = lifeos_stub._resolve_notification_source_key(nid)
         assert result == "email.work"
 

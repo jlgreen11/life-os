@@ -68,9 +68,7 @@ async def test_filtered_predictions_are_auto_resolved(db: DatabaseManager):
         assert total >= 5, f"Should have generated predictions, got {total}"
 
         # Count surfaced predictions
-        surfaced = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()[0]
+        surfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
         assert surfaced == len(predictions), f"Surfaced count mismatch: {surfaced} vs {len(predictions)}"
 
         # Count filtered predictions (should be auto-resolved)
@@ -90,9 +88,7 @@ async def test_filtered_predictions_are_auto_resolved(db: DatabaseManager):
             """SELECT COUNT(*) FROM predictions
                WHERE was_surfaced = 0 AND resolved_at IS NULL"""
         ).fetchone()[0]
-        assert unresolved_filtered == 0, (
-            f"Found {unresolved_filtered} unresolved filtered predictions - should be 0"
-        )
+        assert unresolved_filtered == 0, f"Found {unresolved_filtered} unresolved filtered predictions - should be 0"
 
 
 @pytest.mark.asyncio
@@ -135,9 +131,7 @@ async def test_surfaced_predictions_not_auto_resolved(db: DatabaseManager):
             """SELECT COUNT(*) FROM predictions
                WHERE was_surfaced = 1 AND resolved_at IS NOT NULL"""
         ).fetchone()[0]
-        assert surfaced_resolved == 0, (
-            f"Surfaced predictions should NOT be auto-resolved, found {surfaced_resolved}"
-        )
+        assert surfaced_resolved == 0, f"Surfaced predictions should NOT be auto-resolved, found {surfaced_resolved}"
 
         # All surfaced predictions should have user_response=NULL
         surfaced_with_response = conn.execute(
@@ -193,8 +187,8 @@ async def test_filtered_predictions_have_timestamp(db: DatabaseManager):
         assert len(filtered_preds) > 0, "Should have some filtered predictions"
 
         for pred in filtered_preds:
-            created_at = datetime.fromisoformat(pred["created_at"].replace('Z', '+00:00'))
-            resolved_at = datetime.fromisoformat(pred["resolved_at"].replace('Z', '+00:00'))
+            created_at = datetime.fromisoformat(pred["created_at"].replace("Z", "+00:00"))
+            resolved_at = datetime.fromisoformat(pred["resolved_at"].replace("Z", "+00:00"))
 
             # Resolved timestamp should be same as created (or within 1 second)
             delta = abs((resolved_at - created_at).total_seconds())
@@ -214,7 +208,7 @@ async def test_multiple_cycles_dont_accumulate_unresolved(db: DatabaseManager):
     with db.get_connection("events") as conn:
         now = datetime.now(timezone.utc)
         for i in range(5):
-            timestamp = (now - timedelta(hours=i+1)).isoformat()
+            timestamp = (now - timedelta(hours=i + 1)).isoformat()
             conn.execute(
                 """INSERT INTO events (id, type, source, timestamp, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?)""",
@@ -224,7 +218,7 @@ async def test_multiple_cycles_dont_accumulate_unresolved(db: DatabaseManager):
                     "proton_mail",
                     timestamp,
                     f'{{"from_address": "person{i}@example.com", "subject": "Test", "body": "..."}}',
-                    '{}',
+                    "{}",
                 ),
             )
 
@@ -242,7 +236,7 @@ async def test_multiple_cycles_dont_accumulate_unresolved(db: DatabaseManager):
     # Add more events for second cycle
     with db.get_connection("events") as conn:
         for i in range(5):
-            timestamp = (now - timedelta(hours=i+0.5)).isoformat()
+            timestamp = (now - timedelta(hours=i + 0.5)).isoformat()
             conn.execute(
                 """INSERT INTO events (id, type, source, timestamp, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?)""",
@@ -252,7 +246,7 @@ async def test_multiple_cycles_dont_accumulate_unresolved(db: DatabaseManager):
                     "proton_mail",
                     timestamp,
                     f'{{"from_address": "person{i}@example.com", "subject": "Test 2", "body": "..."}}',
-                    '{}',
+                    "{}",
                 ),
             )
 
@@ -278,7 +272,7 @@ async def test_accuracy_queries_exclude_filtered_predictions(db: DatabaseManager
     with db.get_connection("events") as conn:
         now = datetime.now(timezone.utc)
         for i in range(15):
-            timestamp = (now - timedelta(hours=i+1)).isoformat()
+            timestamp = (now - timedelta(hours=i + 1)).isoformat()
             conn.execute(
                 """INSERT INTO events (id, type, source, timestamp, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?)""",
@@ -288,7 +282,7 @@ async def test_accuracy_queries_exclude_filtered_predictions(db: DatabaseManager
                     "proton_mail",
                     timestamp,
                     f'{{"from_address": "person{i}@example.com", "subject": "Test", "body": "..."}}',
-                    '{}',
+                    "{}",
                 ),
             )
 
@@ -301,14 +295,10 @@ async def test_accuracy_queries_exclude_filtered_predictions(db: DatabaseManager
         total = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
 
         # Count surfaced predictions
-        surfaced = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()[0]
+        surfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
 
         # Count filtered predictions
-        filtered = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE user_response = 'filtered'"
-        ).fetchone()[0]
+        filtered = conn.execute("SELECT COUNT(*) FROM predictions WHERE user_response = 'filtered'").fetchone()[0]
 
         # Accuracy query (from prediction_engine.py _get_accuracy_multiplier)
         # Should only look at surfaced predictions
@@ -322,8 +312,7 @@ async def test_accuracy_queries_exclude_filtered_predictions(db: DatabaseManager
 
         # This should be 0 because we haven't marked any surfaced predictions as resolved yet
         assert accuracy_query_count == 0, (
-            f"Accuracy query should return 0 (no surfaced predictions resolved yet), "
-            f"got {accuracy_query_count}"
+            f"Accuracy query should return 0 (no surfaced predictions resolved yet), got {accuracy_query_count}"
         )
 
         # Behavioral tracker query (from tracker.py run_inference_cycle)
@@ -337,8 +326,7 @@ async def test_accuracy_queries_exclude_filtered_predictions(db: DatabaseManager
 
         # This should equal the number of surfaced predictions
         assert tracker_query_count == surfaced, (
-            f"Behavioral tracker query should return {surfaced} (all surfaced predictions), "
-            f"got {tracker_query_count}"
+            f"Behavioral tracker query should return {surfaced} (all surfaced predictions), got {tracker_query_count}"
         )
 
         # Verify all predictions are accounted for.
@@ -378,7 +366,7 @@ async def test_filtered_due_to_confidence_threshold(db: DatabaseManager):
                     "proton_mail",
                     timestamp,
                     f'{{"from_address": "person{i}@example.com", "subject": "Old message", "body": "..."}}',
-                    '{}',
+                    "{}",
                 ),
             )
 
@@ -391,9 +379,7 @@ async def test_filtered_due_to_confidence_threshold(db: DatabaseManager):
 
         # If predictions were generated, check filtering behavior
         if total > 0:
-            surfaced = conn.execute(
-                "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-            ).fetchone()[0]
+            surfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
             filtered = conn.execute(
                 """SELECT COUNT(*) FROM predictions
                    WHERE was_surfaced = 0 AND user_response = 'filtered'"""
@@ -421,7 +407,7 @@ async def test_filtered_due_to_top_n_cap(db: DatabaseManager):
 
         # Create 10 recent unreplied messages
         for i in range(10):
-            timestamp = (now - timedelta(hours=2+i)).isoformat()
+            timestamp = (now - timedelta(hours=2 + i)).isoformat()
 
             conn.execute(
                 """INSERT INTO events (id, type, source, timestamp, payload, metadata)
@@ -442,9 +428,7 @@ async def test_filtered_due_to_top_n_cap(db: DatabaseManager):
 
     with db.get_connection("user_model") as conn:
         total = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
-        surfaced = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()[0]
+        surfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
         filtered = conn.execute(
             """SELECT COUNT(*) FROM predictions
                WHERE was_surfaced = 0 AND user_response = 'filtered'"""

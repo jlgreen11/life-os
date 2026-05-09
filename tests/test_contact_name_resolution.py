@@ -25,6 +25,7 @@ from services.insight_engine.engine import InsightEngine
 # Helper: insert a contact + identifier into the test DB
 # ---------------------------------------------------------------------------
 
+
 def _insert_contact(db, email: str, name: str) -> str:
     """Insert a contact and its email identifier; return the contact id."""
     contact_id = str(uuid.uuid4())
@@ -137,8 +138,7 @@ async def test_contact_gap_shows_name_when_contact_exists(db, user_model_store):
                 "outbound_count": 5,
                 "last_interaction": (now - timedelta(days=overdue_days)).isoformat(),
                 "interaction_timestamps": [
-                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat()
-                    for i in range(10)
+                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat() for i in range(10)
                 ],
             }
         }
@@ -171,8 +171,7 @@ async def test_contact_gap_falls_back_to_email_when_no_contact(db, user_model_st
                 "outbound_count": 5,
                 "last_interaction": (now - timedelta(days=overdue_days)).isoformat(),
                 "interaction_timestamps": [
-                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat()
-                    for i in range(10)
+                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat() for i in range(10)
                 ],
             }
         }

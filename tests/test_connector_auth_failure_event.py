@@ -34,8 +34,7 @@ class FailingAuthConnector(BaseConnector):
     DISPLAY_NAME = "Auth Fail Test Connector"
     SYNC_INTERVAL_SECONDS = 60
 
-    def __init__(self, event_bus: EventBus, db: DatabaseManager, config: dict[str, Any],
-                 auth_error: str | None = None):
+    def __init__(self, event_bus: EventBus, db: DatabaseManager, config: dict[str, Any], auth_error: str | None = None):
         """Initialize with an optional auth_error message.
 
         Args:

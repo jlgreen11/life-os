@@ -24,6 +24,7 @@ from services.ai_engine.context import ContextAssembler
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_prediction(
     conn,
     prediction_type: str = "reminder",
@@ -68,6 +69,7 @@ def _insert_prediction(
 # ---------------------------------------------------------------------------
 # Tests for _get_predictions_context()
 # ---------------------------------------------------------------------------
+
 
 class TestGetPredictionsContext:
     """Tests for the _get_predictions_context() private method."""
@@ -294,6 +296,7 @@ class TestGetPredictionsContext:
 # ---------------------------------------------------------------------------
 # Integration tests: assemble_briefing_context() includes predictions
 # ---------------------------------------------------------------------------
+
 
 class TestBriefingContextIncludesPredictions:
     """Integration tests confirming predictions appear in the full briefing context."""

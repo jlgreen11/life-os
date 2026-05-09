@@ -589,26 +589,28 @@ def test_backfill_decision_profile_respects_limit(db, user_model_store):
     # Create 10 task completion events
     events = []
     for i in range(10):
-        events.extend([
-            {
-                "id": f"evt-created-{i}",
-                "type": EventType.TASK_CREATED.value,
-                "source": "web_ui",
-                "timestamp": f"2026-02-10T{10+i:02d}:00:00Z",
-                "priority": "normal",
-                "payload": {"task_id": f"task-{i}", "domain": "work"},
-                "metadata": {},
-            },
-            {
-                "id": f"evt-completed-{i}",
-                "type": EventType.TASK_COMPLETED.value,
-                "source": "web_ui",
-                "timestamp": f"2026-02-10T{11+i:02d}:00:00Z",
-                "priority": "normal",
-                "payload": {"task_id": f"task-{i}"},
-                "metadata": {},
-            },
-        ])
+        events.extend(
+            [
+                {
+                    "id": f"evt-created-{i}",
+                    "type": EventType.TASK_CREATED.value,
+                    "source": "web_ui",
+                    "timestamp": f"2026-02-10T{10 + i:02d}:00:00Z",
+                    "priority": "normal",
+                    "payload": {"task_id": f"task-{i}", "domain": "work"},
+                    "metadata": {},
+                },
+                {
+                    "id": f"evt-completed-{i}",
+                    "type": EventType.TASK_COMPLETED.value,
+                    "source": "web_ui",
+                    "timestamp": f"2026-02-10T{11 + i:02d}:00:00Z",
+                    "priority": "normal",
+                    "payload": {"task_id": f"task-{i}"},
+                    "metadata": {},
+                },
+            ]
+        )
 
     # Insert events
     with db.get_connection("events") as conn:

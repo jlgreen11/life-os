@@ -21,34 +21,38 @@ from services.prediction_engine.engine import PredictionEngine
 def _insert_email(event_store, *, from_address, subject, message_id, hours_ago, snippet=""):
     """Helper to insert an email.received event at a specific age."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": ts,
-        "payload": {
-            "from_address": from_address,
-            "subject": subject,
-            "snippet": snippet,
-            "message_id": message_id,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": ts,
+            "payload": {
+                "from_address": from_address,
+                "subject": subject,
+                "snippet": snippet,
+                "message_id": message_id,
+            },
+            "metadata": {},
+        }
+    )
 
 
 def _insert_sent_email(event_store, *, in_reply_to, hours_ago):
     """Helper to insert an email.sent event (reply)."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.sent",
-        "source": "google",
-        "timestamp": ts,
-        "payload": {
-            "in_reply_to": in_reply_to,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.sent",
+            "source": "google",
+            "timestamp": ts,
+            "payload": {
+                "in_reply_to": in_reply_to,
+            },
+            "metadata": {},
+        }
+    )
 
 
 # -------------------------------------------------------------------------
@@ -57,9 +61,7 @@ def _insert_sent_email(event_store, *, in_reply_to, hours_ago):
 
 
 @pytest.mark.asyncio
-async def test_fallback_activates_when_no_recent_emails_and_old_data_exists(
-    db, event_store, user_model_store
-):
+async def test_fallback_activates_when_no_recent_emails_and_old_data_exists(db, event_store, user_model_store):
     """When no emails in 24h but emails exist 5 days ago, fallback should activate
     and surface unreplied ones."""
     engine = PredictionEngine(db, user_model_store)
@@ -86,18 +88,12 @@ async def test_fallback_activates_when_no_recent_emails_and_old_data_exists(
 
     # The fallback should have found these emails
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "colleague@work.com" in contacts, (
-        "Stale fallback should surface unreplied email from 5 days ago"
-    )
-    assert "manager@work.com" in contacts, (
-        "Stale fallback should surface all unreplied emails in last active period"
-    )
+    assert "colleague@work.com" in contacts, "Stale fallback should surface unreplied email from 5 days ago"
+    assert "manager@work.com" in contacts, "Stale fallback should surface all unreplied emails in last active period"
 
 
 @pytest.mark.asyncio
-async def test_fallback_does_not_activate_when_recent_emails_exist(
-    db, event_store, user_model_store
-):
+async def test_fallback_does_not_activate_when_recent_emails_exist(db, event_store, user_model_store):
     """When there ARE emails within 24h, the fallback should NOT activate."""
     engine = PredictionEngine(db, user_model_store)
     engine._first_follow_up_run = False
@@ -152,9 +148,7 @@ async def test_fallback_14_day_cap_enforced(db, event_store, user_model_store):
     predictions = await engine._check_follow_up_needs({})
 
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "ancient@work.com" not in contacts, (
-        "Emails older than 14 days should not surface even with fallback"
-    )
+    assert "ancient@work.com" not in contacts, "Emails older than 14 days should not surface even with fallback"
 
 
 @pytest.mark.asyncio
@@ -175,9 +169,7 @@ async def test_fallback_emails_within_14_day_cap_surface(db, event_store, user_m
     predictions = await engine._check_follow_up_needs({})
 
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "tenday@work.com" in contacts, (
-        "Emails within 14-day cap should surface via fallback"
-    )
+    assert "tenday@work.com" in contacts, "Emails within 14-day cap should surface via fallback"
 
 
 # -------------------------------------------------------------------------
@@ -226,12 +218,8 @@ async def test_dedup_works_in_fallback_mode(db, event_store, user_model_store):
 
     # Second call — same message should NOT generate again
     second_preds = await engine._check_follow_up_needs({})
-    second_msg_ids = {
-        p.supporting_signals.get("message_id") for p in second_preds
-    }
-    assert "msg-dedup-fallback-1" not in second_msg_ids, (
-        "Deduplication should prevent re-predicting in fallback mode"
-    )
+    second_msg_ids = {p.supporting_signals.get("message_id") for p in second_preds}
+    assert "msg-dedup-fallback-1" not in second_msg_ids, "Deduplication should prevent re-predicting in fallback mode"
 
 
 # -------------------------------------------------------------------------
@@ -270,9 +258,7 @@ async def test_marketing_filtered_in_fallback_mode(db, event_store, user_model_s
     assert "newsletter@marketing.example.com" not in contacts, (
         "Marketing emails should be filtered even in fallback mode"
     )
-    assert "real-person@work.com" in contacts, (
-        "Legitimate emails should still surface in fallback mode"
-    )
+    assert "real-person@work.com" in contacts, "Legitimate emails should still surface in fallback mode"
 
 
 # -------------------------------------------------------------------------
@@ -314,12 +300,8 @@ async def test_replied_emails_excluded_in_fallback_mode(db, event_store, user_mo
     predictions = await engine._check_follow_up_needs({})
 
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "colleague@work.com" not in contacts, (
-        "Replied-to emails should be excluded even in fallback mode"
-    )
-    assert "other@work.com" in contacts, (
-        "Unreplied emails should still surface in fallback mode"
-    )
+    assert "colleague@work.com" not in contacts, "Replied-to emails should be excluded even in fallback mode"
+    assert "other@work.com" in contacts, "Unreplied emails should still surface in fallback mode"
 
 
 # -------------------------------------------------------------------------
@@ -345,9 +327,7 @@ async def test_first_run_flag_not_interfered_with(db, event_store, user_model_st
     predictions = await engine._check_follow_up_needs({})
     assert engine._first_follow_up_run is False
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "first-run@work.com" in contacts, (
-        "First-run 72h lookback should still work independently of fallback"
-    )
+    assert "first-run@work.com" in contacts, "First-run 72h lookback should still work independently of fallback"
 
 
 # -------------------------------------------------------------------------
@@ -361,14 +341,17 @@ async def test_priority_contact_1h_grace_period(db, event_store, user_model_stor
     engine = PredictionEngine(db, user_model_store)
 
     # Set up a priority contact in the relationships signal profile
-    user_model_store.update_signal_profile("relationships", {
-        "contacts": {
-            "priority-sender@work.com": {
-                "outbound_count": 5,
-                "inbound_count": 10,
+    user_model_store.update_signal_profile(
+        "relationships",
+        {
+            "contacts": {
+                "priority-sender@work.com": {
+                    "outbound_count": 5,
+                    "inbound_count": 10,
+                }
             }
-        }
-    })
+        },
+    )
 
     # Insert an email from a priority contact 1.5 hours ago
     # (past the 1h priority grace, but before the 3h standard grace)
@@ -383,9 +366,7 @@ async def test_priority_contact_1h_grace_period(db, event_store, user_model_stor
     predictions = await engine._check_follow_up_needs({})
 
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "priority-sender@work.com" in contacts, (
-        "Priority contacts should surface after 1h grace period (1.5h > 1h)"
-    )
+    assert "priority-sender@work.com" in contacts, "Priority contacts should surface after 1h grace period (1.5h > 1h)"
 
 
 @pytest.mark.asyncio
@@ -417,14 +398,17 @@ async def test_priority_contact_within_1h_grace_not_surfaced(db, event_store, us
     engine = PredictionEngine(db, user_model_store)
 
     # Set up a priority contact
-    user_model_store.update_signal_profile("relationships", {
-        "contacts": {
-            "vip@work.com": {
-                "outbound_count": 3,
-                "inbound_count": 7,
+    user_model_store.update_signal_profile(
+        "relationships",
+        {
+            "contacts": {
+                "vip@work.com": {
+                    "outbound_count": 3,
+                    "inbound_count": 7,
+                }
             }
-        }
-    })
+        },
+    )
 
     # Insert an email from a priority contact 30 minutes ago
     _insert_email(
@@ -438,6 +422,4 @@ async def test_priority_contact_within_1h_grace_not_surfaced(db, event_store, us
     predictions = await engine._check_follow_up_needs({})
 
     contacts = {p.relevant_contacts[0] for p in predictions}
-    assert "vip@work.com" not in contacts, (
-        "Priority contacts within 1h grace should NOT surface"
-    )
+    assert "vip@work.com" not in contacts, "Priority contacts within 1h grace should NOT surface"

@@ -48,11 +48,15 @@ class TestEmailWorkflowAbsoluteCount:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        event_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        event_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -64,11 +68,15 @@ class TestEmailWorkflowAbsoluteCount:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        response_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        response_time.isoformat(),
+                        3,
                         json.dumps({"to": sender}),
                         json.dumps({}),
-                        None, sender,
+                        None,
+                        sender,
                     ),
                 )
 
@@ -103,11 +111,15 @@ class TestEmailWorkflowAbsoluteCount:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        event_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        event_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -119,11 +131,15 @@ class TestEmailWorkflowAbsoluteCount:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        response_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        response_time.isoformat(),
+                        3,
                         json.dumps({"to": sender}),
                         json.dumps({}),
-                        None, sender,
+                        None,
+                        sender,
                     ),
                 )
 
@@ -153,11 +169,15 @@ class TestEmailWorkflowAbsoluteCount:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        event_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        event_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -169,11 +189,15 @@ class TestEmailWorkflowAbsoluteCount:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        response_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        response_time.isoformat(),
+                        3,
                         json.dumps({"to": sender}),
                         json.dumps({}),
-                        None, sender,
+                        None,
+                        sender,
                     ),
                 )
 
@@ -206,8 +230,11 @@ class TestTaskWorkflowAbsoluteCount:
                     """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "task.created", "task_manager",
-                        create_time.isoformat(), 3,
+                        str(uuid4()),
+                        "task.created",
+                        "task_manager",
+                        create_time.isoformat(),
+                        3,
                         json.dumps({"task_id": task_id, "title": f"Task {i}"}),
                         json.dumps({}),
                     ),
@@ -219,8 +246,11 @@ class TestTaskWorkflowAbsoluteCount:
                     """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        email_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        email_time.isoformat(),
+                        3,
                         json.dumps({"subject": f"Re: Task {i}"}),
                         json.dumps({}),
                     ),
@@ -233,8 +263,11 @@ class TestTaskWorkflowAbsoluteCount:
                         """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            str(uuid4()), "task.completed", "task_manager",
-                            complete_time.isoformat(), 3,
+                            str(uuid4()),
+                            "task.completed",
+                            "task_manager",
+                            complete_time.isoformat(),
+                            3,
                             json.dumps({"task_id": task_id}),
                             json.dumps({}),
                         ),
@@ -243,9 +276,7 @@ class TestTaskWorkflowAbsoluteCount:
         workflows = detector.detect_workflows(lookback_days=30)
 
         task_workflows = [w for w in workflows if "task" in w["name"].lower()]
-        assert len(task_workflows) >= 1, (
-            "Should detect task workflow with 3 completions >= min_completions=2"
-        )
+        assert len(task_workflows) >= 1, "Should detect task workflow with 3 completions >= min_completions=2"
 
     def test_task_workflow_with_1_completion_not_detected(self, detector, db):
         """Task workflow with only 1 completion is NOT detected.
@@ -263,8 +294,11 @@ class TestTaskWorkflowAbsoluteCount:
                     """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "task.created", "task_manager",
-                        create_time.isoformat(), 3,
+                        str(uuid4()),
+                        "task.created",
+                        "task_manager",
+                        create_time.isoformat(),
+                        3,
                         json.dumps({"task_id": task_id, "title": f"Task {i}"}),
                         json.dumps({}),
                     ),
@@ -276,8 +310,11 @@ class TestTaskWorkflowAbsoluteCount:
                     """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        email_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        email_time.isoformat(),
+                        3,
                         json.dumps({"subject": f"Re: Task {i}"}),
                         json.dumps({}),
                     ),
@@ -290,8 +327,11 @@ class TestTaskWorkflowAbsoluteCount:
                         """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            str(uuid4()), "task.completed", "task_manager",
-                            complete_time.isoformat(), 3,
+                            str(uuid4()),
+                            "task.completed",
+                            "task_manager",
+                            complete_time.isoformat(),
+                            3,
                             json.dumps({"task_id": task_id}),
                             json.dumps({}),
                         ),
@@ -300,9 +340,7 @@ class TestTaskWorkflowAbsoluteCount:
         workflows = detector.detect_workflows(lookback_days=30)
 
         task_workflows = [w for w in workflows if "task" in w["name"].lower()]
-        assert len(task_workflows) == 0, (
-            "Should NOT detect task workflow with 1 completion < min_completions=2"
-        )
+        assert len(task_workflows) == 0, "Should NOT detect task workflow with 1 completion < min_completions=2"
 
 
 class TestMinCompletionsAttribute:
@@ -323,9 +361,7 @@ class TestMinCompletionsAttribute:
 
         assert "min_completions" in thresholds, "Diagnostics should report min_completions"
         assert thresholds["min_completions"] == 2
-        assert "success_threshold" not in thresholds, (
-            "Diagnostics should NOT report success_threshold (removed)"
-        )
+        assert "success_threshold" not in thresholds, "Diagnostics should NOT report success_threshold (removed)"
 
     def test_success_rate_still_in_workflow_dict(self, detector, db):
         """Verify success_rate is kept for informational purposes in workflow dicts.
@@ -345,11 +381,15 @@ class TestMinCompletionsAttribute:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        event_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        event_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -360,11 +400,15 @@ class TestMinCompletionsAttribute:
                                               email_from, email_to)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            str(uuid4()), "email.sent", "gmail",
-                            response_time.isoformat(), 3,
+                            str(uuid4()),
+                            "email.sent",
+                            "gmail",
+                            response_time.isoformat(),
+                            3,
                             json.dumps({"to": sender}),
                             json.dumps({}),
-                            None, sender,
+                            None,
+                            sender,
                         ),
                     )
 

@@ -363,8 +363,7 @@ def harness(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 def test_harness_completes_within_ci_budget(harness: dict[str, Any]) -> None:
     """Acceptance: < 2 min end-to-end. Guards against silent regression."""
     assert harness["elapsed_seconds"] < 120.0, (
-        f"harness took {harness['elapsed_seconds']:.1f}s (budget 120s); "
-        "split the fixture or shrink sample counts."
+        f"harness took {harness['elapsed_seconds']:.1f}s (budget 120s); split the fixture or shrink sample counts."
     )
 
 
@@ -440,9 +439,7 @@ def test_rollback_plan_orders_every_step(harness: dict[str, Any]) -> None:
         "verify_v1_health",
     ]
     assert harness["exit_code"] == rollback.EXIT_OK
-    assert all(r.ok for r in results), [
-        (r.step.name, r.message) for r in results if not r.ok
-    ]
+    assert all(r.ok for r in results), [(r.step.name, r.message) for r in results if not r.ok]
 
 
 def test_rollback_side_effects_hit_runner_in_order(harness: dict[str, Any]) -> None:

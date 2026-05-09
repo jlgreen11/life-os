@@ -51,7 +51,7 @@ class TestVerifyDbFunctional:
                 with open(db_path, "r+b") as f:
                     # Write garbage into the middle of the data pages
                     f.seek(file_size // 2)
-                    f.write(b"\x00\xDE\xAD\xBE\xEF" * 200)
+                    f.write(b"\x00\xde\xad\xbe\xef" * 200)
 
                 # Force SQLite to see the corruption by removing WAL
                 wal_path = db_path.parent / (db_path.name + "-wal")
@@ -86,10 +86,7 @@ class TestVerifyDbFunctional:
             db_path = Path(tmpdir) / "user_model.db"
             conn = sqlite3.connect(str(db_path))
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS schema_version "
-                "(version INTEGER PRIMARY KEY)"
-            )
+            conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
             conn.commit()
             conn.close()
 

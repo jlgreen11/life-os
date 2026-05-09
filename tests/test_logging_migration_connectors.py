@@ -31,16 +31,16 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _no_print_in_source(source: str, context: str) -> None:
     """Assert that there are no bare print() calls in *source*."""
-    assert "print(" not in source, (
-        f"{context} still contains print() calls — should use logger instead"
-    )
+    assert "print(" not in source, f"{context} still contains print() calls — should use logger instead"
 
 
 # ---------------------------------------------------------------------------
 # BaseConnector
 # ---------------------------------------------------------------------------
+
 
 class TestBaseConnectorLogging:
     """BaseConnector._handle_sync_error() emits a log record instead of print()."""
@@ -48,12 +48,14 @@ class TestBaseConnectorLogging:
     def test_logger_defined(self):
         """The connectors.base.connector module must define a module-level logger."""
         import connectors.base.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.base.connector"
 
     def test_no_print_in_handle_sync_error(self):
         """_handle_sync_error source must not contain print()."""
         from connectors.base.connector import BaseConnector
+
         src = inspect.getsource(BaseConnector._handle_sync_error)
         _no_print_in_source(src, "BaseConnector._handle_sync_error")
 
@@ -67,10 +69,17 @@ class TestBaseConnectorLogging:
             CONNECTOR_ID = "dummy"
             DISPLAY_NAME = "Dummy"
 
-            async def authenticate(self): return True
-            async def sync(self): return 0
-            async def execute(self, action, params): return {}
-            async def health_check(self): return {"status": "ok"}
+            async def authenticate(self):
+                return True
+
+            async def sync(self):
+                return 0
+
+            async def execute(self, action, params):
+                return {}
+
+            async def health_check(self):
+                return {"status": "ok"}
 
         bus = MagicMock()
         bus.publish = AsyncMock()
@@ -91,11 +100,13 @@ class TestBaseConnectorLogging:
 # HomeAssistantConnector
 # ---------------------------------------------------------------------------
 
+
 class TestHomeAssistantConnectorLogging:
     """HomeAssistantConnector error paths emit log records instead of print()."""
 
     def _make_connector(self):
         from connectors.home_assistant.connector import HomeAssistantConnector
+
         bus = MagicMock()
         bus.publish = AsyncMock()
         db = MagicMock()
@@ -109,18 +120,21 @@ class TestHomeAssistantConnectorLogging:
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.home_assistant.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.home_assistant.connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.home_assistant.connector import HomeAssistantConnector
+
         src = inspect.getsource(HomeAssistantConnector.authenticate)
         _no_print_in_source(src, "HomeAssistantConnector.authenticate")
 
     def test_no_print_in_sync(self):
         """sync() source must not contain print()."""
         from connectors.home_assistant.connector import HomeAssistantConnector
+
         src = inspect.getsource(HomeAssistantConnector.sync)
         _no_print_in_source(src, "HomeAssistantConnector.sync")
 
@@ -166,11 +180,13 @@ class TestHomeAssistantConnectorLogging:
 # CalDAVConnector
 # ---------------------------------------------------------------------------
 
+
 class TestCalDAVConnectorLogging:
     """CalDAVConnector error paths emit log records instead of print()."""
 
     def _make_connector(self):
         from connectors.caldav.connector import CalDAVConnector
+
         bus = MagicMock()
         bus.publish = AsyncMock()
         db = MagicMock()
@@ -184,24 +200,28 @@ class TestCalDAVConnectorLogging:
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.caldav.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.caldav.connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.caldav.connector import CalDAVConnector
+
         src = inspect.getsource(CalDAVConnector.authenticate)
         _no_print_in_source(src, "CalDAVConnector.authenticate")
 
     def test_no_print_in_sync(self):
         """sync() source must not contain print()."""
         from connectors.caldav.connector import CalDAVConnector
+
         src = inspect.getsource(CalDAVConnector.sync)
         _no_print_in_source(src, "CalDAVConnector.sync")
 
     def test_no_print_in_detect_conflicts(self):
         """_detect_conflicts() source must not contain print()."""
         from connectors.caldav.connector import CalDAVConnector
+
         src = inspect.getsource(CalDAVConnector._detect_conflicts)
         _no_print_in_source(src, "CalDAVConnector._detect_conflicts")
 
@@ -237,24 +257,28 @@ class TestCalDAVConnectorLogging:
 # ProtonMailConnector
 # ---------------------------------------------------------------------------
 
+
 class TestProtonMailConnectorLogging:
     """ProtonMailConnector error paths emit log records instead of print()."""
 
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.proton_mail.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.proton_mail.connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.proton_mail.connector import ProtonMailConnector
+
         src = inspect.getsource(ProtonMailConnector.authenticate)
         _no_print_in_source(src, "ProtonMailConnector.authenticate")
 
     def test_no_print_in_sync(self):
         """sync() source must not contain print()."""
         from connectors.proton_mail.connector import ProtonMailConnector
+
         src = inspect.getsource(ProtonMailConnector.sync)
         _no_print_in_source(src, "ProtonMailConnector.sync")
 
@@ -262,6 +286,7 @@ class TestProtonMailConnectorLogging:
     async def test_authenticate_failure_logs_error(self, caplog):
         """authenticate() logs ERROR when IMAP connection fails."""
         from connectors.proton_mail.connector import ProtonMailConnector
+
         bus = MagicMock()
         bus.publish = AsyncMock()
         db = MagicMock()
@@ -285,24 +310,28 @@ class TestProtonMailConnectorLogging:
 # FinanceConnector
 # ---------------------------------------------------------------------------
 
+
 class TestFinanceConnectorLogging:
     """FinanceConnector error paths emit log records instead of print()."""
 
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.finance.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.finance.connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.finance.connector import FinanceConnector
+
         src = inspect.getsource(FinanceConnector.authenticate)
         _no_print_in_source(src, "FinanceConnector.authenticate")
 
     def test_no_print_in_sync(self):
         """sync() source must not contain print()."""
         from connectors.finance.connector import FinanceConnector
+
         src = inspect.getsource(FinanceConnector.sync)
         _no_print_in_source(src, "FinanceConnector.sync")
 
@@ -310,6 +339,7 @@ class TestFinanceConnectorLogging:
     async def test_authenticate_failure_logs_error(self, caplog):
         """authenticate() logs ERROR when Plaid init fails."""
         from connectors.finance.connector import FinanceConnector
+
         bus = MagicMock()
         bus.publish = AsyncMock()
         db = MagicMock()
@@ -333,24 +363,28 @@ class TestFinanceConnectorLogging:
 # iMessageConnector
 # ---------------------------------------------------------------------------
 
+
 class TestiMessageConnectorLogging:
     """iMessageConnector error paths emit log records instead of print()."""
 
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.imessage.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.imessage.connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.imessage.connector import iMessageConnector
+
         src = inspect.getsource(iMessageConnector.authenticate)
         _no_print_in_source(src, "iMessageConnector.authenticate")
 
     def test_no_print_in_contact_sync_loop(self):
         """_contact_sync_loop() source must not contain print()."""
         from connectors.imessage.connector import iMessageConnector
+
         src = inspect.getsource(iMessageConnector._contact_sync_loop)
         _no_print_in_source(src, "iMessageConnector._contact_sync_loop")
 
@@ -358,6 +392,7 @@ class TestiMessageConnectorLogging:
     async def test_authenticate_failure_logs_error(self, tmp_path, caplog):
         """authenticate() logs ERROR when the chat.db path doesn't exist."""
         from connectors.imessage.connector import iMessageConnector
+
         bus = MagicMock()
         bus.publish = AsyncMock()
         db = MagicMock()
@@ -384,11 +419,13 @@ class TestiMessageConnectorLogging:
 # SignalConnector
 # ---------------------------------------------------------------------------
 
+
 class TestSignalConnectorLogging:
     """SignalConnector error paths emit log records instead of print()."""
 
     def _make_connector(self):
         from connectors.signal_msg.connector import SignalConnector
+
         bus = MagicMock()
         bus.publish = AsyncMock()
         db = MagicMock()
@@ -401,24 +438,28 @@ class TestSignalConnectorLogging:
     def test_logger_defined(self):
         """Module-level logger must exist."""
         import connectors.signal_msg.connector as mod
+
         assert hasattr(mod, "logger"), "Missing module-level logger"
         assert mod.logger.name == "connectors.signal_msg.connector"
 
     def test_no_print_in_authenticate(self):
         """authenticate() source must not contain print()."""
         from connectors.signal_msg.connector import SignalConnector
+
         src = inspect.getsource(SignalConnector.authenticate)
         _no_print_in_source(src, "SignalConnector.authenticate")
 
     def test_no_print_in_sync(self):
         """sync() source must not contain print()."""
         from connectors.signal_msg.connector import SignalConnector
+
         src = inspect.getsource(SignalConnector.sync)
         _no_print_in_source(src, "SignalConnector.sync")
 
     def test_no_print_in_sync_contacts(self):
         """sync_contacts() source must not contain print()."""
         from connectors.signal_msg.connector import SignalConnector
+
         src = inspect.getsource(SignalConnector.sync_contacts)
         _no_print_in_source(src, "SignalConnector.sync_contacts")
 

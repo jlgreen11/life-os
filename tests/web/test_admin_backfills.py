@@ -32,8 +32,14 @@ from web.routes import register_routes
 # ---------------------------------------------------------------------------
 
 _PROFILE_NAMES = [
-    "relationships", "temporal", "topics", "linguistic",
-    "cadence", "mood_signals", "spatial", "decision",
+    "relationships",
+    "temporal",
+    "topics",
+    "linguistic",
+    "cadence",
+    "mood_signals",
+    "spatial",
+    "decision",
 ]
 
 
@@ -64,9 +70,12 @@ def _make_app(
     life_os.connectors = []
     life_os.event_bus.is_connected = True
     life_os.vector_store.get_stats.return_value = {"document_count": 0}
-    life_os.prediction_engine.get_diagnostics = AsyncMock(return_value={
-        "prediction_types": {}, "overall": {"health": "unknown"},
-    })
+    life_os.prediction_engine.get_diagnostics = AsyncMock(
+        return_value={
+            "prediction_types": {},
+            "overall": {"health": "unknown"},
+        }
+    )
     life_os.semantic_fact_inferrer.run_all_inference.return_value = None
 
     # Wire backfill methods as no-op async callables (they are awaited in routes).
@@ -207,6 +216,7 @@ def test_backfill_status_includes_generated_at(db):
     assert "generated_at" in data
     # Should parse as ISO-8601
     from datetime import datetime
+
     datetime.fromisoformat(data["generated_at"].replace("Z", "+00:00"))
 
 
@@ -237,8 +247,14 @@ def test_trigger_backfills_lists_all_four(db):
 
     assert "backfills" in data
     for expected in [
-        "relationship", "temporal", "topic", "linguistic",
-        "cadence", "mood_signals", "spatial", "decision",
+        "relationship",
+        "temporal",
+        "topic",
+        "linguistic",
+        "cadence",
+        "mood_signals",
+        "spatial",
+        "decision",
     ]:
         assert expected in data["backfills"], f"Missing backfill type: {expected}"
 

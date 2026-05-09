@@ -18,6 +18,7 @@ from services.insight_engine.engine import InsightEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_calendar_event(
     event_store,
     event_type: str,
@@ -29,28 +30,32 @@ def _insert_calendar_event(
     This lets us decouple the sync time (when the event was written to the log)
     from the actual calendar event start time.
     """
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": event_type,
-        "source": "test",
-        "timestamp": sync_timestamp.isoformat(),
-        "priority": 2,
-        "payload": {"start_time": start_time, "title": "Test Meeting"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "source": "test",
+            "timestamp": sync_timestamp.isoformat(),
+            "priority": 2,
+            "payload": {"start_time": start_time, "title": "Test Meeting"},
+            "metadata": {},
+        }
+    )
 
 
 def _insert_event_no_payload(event_store, event_type: str, timestamp: datetime):
     """Insert a minimal event with no start_time in payload."""
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": event_type,
-        "source": "test",
-        "timestamp": timestamp.isoformat(),
-        "priority": 2,
-        "payload": {},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "source": "test",
+            "timestamp": timestamp.isoformat(),
+            "priority": 2,
+            "payload": {},
+            "metadata": {},
+        }
+    )
 
 
 # ===========================================================================

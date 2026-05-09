@@ -61,9 +61,7 @@ def sample_insights():
     ]
 
 
-def test_source_weight_filtering_logs_dropped_insights(
-    insight_engine_with_low_weight, sample_insights, caplog
-):
+def test_source_weight_filtering_logs_dropped_insights(insight_engine_with_low_weight, sample_insights, caplog):
     """When insights are dropped by low source weights, debug-level log messages
     should record each drop and an info-level summary should report totals."""
     engine = insight_engine_with_low_weight
@@ -87,9 +85,7 @@ def test_source_weight_filtering_logs_dropped_insights(
     assert "kept 0 insights, dropped 3" in summary_messages[0].message
 
 
-def test_source_weight_filtering_keeps_high_confidence(
-    insight_engine_with_high_weight, sample_insights, caplog
-):
+def test_source_weight_filtering_keeps_high_confidence(insight_engine_with_high_weight, sample_insights, caplog):
     """When source weights are high (1.0), no insights should be dropped
     and no drop log messages should appear."""
     engine = insight_engine_with_high_weight
@@ -109,9 +105,7 @@ def test_source_weight_filtering_keeps_high_confidence(
     assert len(summary_messages) == 0
 
 
-def test_source_weight_drop_log_includes_details(
-    insight_engine_with_low_weight, caplog
-):
+def test_source_weight_drop_log_includes_details(insight_engine_with_low_weight, caplog):
     """Drop log messages should include the insight type, source key,
     original confidence, and weighted confidence."""
     engine = insight_engine_with_low_weight
@@ -244,9 +238,7 @@ async def test_deduplication_logs_removed_count(db, user_model_store, caplog):
     assert "removed 2 of 2" in dedup_messages[0].message
 
 
-def test_unmapped_category_not_dropped_by_source_weight(
-    insight_engine_with_low_weight, caplog
-):
+def test_unmapped_category_not_dropped_by_source_weight(insight_engine_with_low_weight, caplog):
     """Insights with categories not in the source-weight mapping should
     pass through unmodified (not dropped), since actionable alerts and
     unmapped categories bypass source-weight modulation."""

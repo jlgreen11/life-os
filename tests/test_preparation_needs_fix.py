@@ -55,15 +55,17 @@ def test_preparation_needs_queries_by_start_time_not_sync_timestamp(db, event_st
         "source": "caldav",
         "timestamp": sync_time.isoformat(),
         "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-flight-001",
-            "title": "Flight to SFO",
-            "start_time": flight_time.isoformat(),
-            "end_time": (flight_time + timedelta(hours=3)).isoformat(),
-            "location": "Airport",
-            "attendees": []
-        }),
-        "metadata": json.dumps({})
+        "payload": json.dumps(
+            {
+                "event_id": "cal-flight-001",
+                "title": "Flight to SFO",
+                "start_time": flight_time.isoformat(),
+                "end_time": (flight_time + timedelta(hours=3)).isoformat(),
+                "location": "Airport",
+                "attendees": [],
+            }
+        ),
+        "metadata": json.dumps({}),
     }
 
     event_store.store_event(event)
@@ -102,55 +104,67 @@ def test_preparation_needs_ignores_events_outside_window(db, event_store, user_m
     now = datetime.now(timezone.utc)
 
     # Too soon (6 hours)
-    event_store.store_event({
-        "id": "evt-too-soon",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-001",
-            "title": "Flight to LAX",
-            "start_time": (now + timedelta(hours=6)).isoformat(),
-            "end_time": (now + timedelta(hours=9)).isoformat(),
-            "attendees": []
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-too-soon",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-001",
+                    "title": "Flight to LAX",
+                    "start_time": (now + timedelta(hours=6)).isoformat(),
+                    "end_time": (now + timedelta(hours=9)).isoformat(),
+                    "attendees": [],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Too far out (72 hours)
-    event_store.store_event({
-        "id": "evt-too-far",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-002",
-            "title": "Flight to NYC",
-            "start_time": (now + timedelta(hours=72)).isoformat(),
-            "end_time": (now + timedelta(hours=75)).isoformat(),
-            "attendees": []
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-too-far",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-002",
+                    "title": "Flight to NYC",
+                    "start_time": (now + timedelta(hours=72)).isoformat(),
+                    "end_time": (now + timedelta(hours=75)).isoformat(),
+                    "attendees": [],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Just right (24 hours - in the 12-48h window)
-    event_store.store_event({
-        "id": "evt-perfect",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-003",
-            "title": "Flight to SFO",
-            "start_time": (now + timedelta(hours=24)).isoformat(),
-            "end_time": (now + timedelta(hours=27)).isoformat(),
-            "attendees": []
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-perfect",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-003",
+                    "title": "Flight to SFO",
+                    "start_time": (now + timedelta(hours=24)).isoformat(),
+                    "end_time": (now + timedelta(hours=27)).isoformat(),
+                    "attendees": [],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     predictions = asyncio.run(engine.generate_predictions({}))
 
@@ -170,22 +184,26 @@ def test_preparation_needs_detects_large_meetings(db, event_store, user_model_st
     sync_time = datetime.now(timezone.utc)
     meeting_time = datetime.now(timezone.utc) + timedelta(hours=30)
 
-    event_store.store_event({
-        "id": "evt-big-meeting",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-meeting-001",
-            "title": "Q1 Planning Meeting",
-            "start_time": meeting_time.isoformat(),
-            "end_time": (meeting_time + timedelta(hours=2)).isoformat(),
-            "location": "Conference Room A",
-            "attendees": ["alice@example.com", "bob@example.com", "charlie@example.com", "diana@example.com"]
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-big-meeting",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-meeting-001",
+                    "title": "Q1 Planning Meeting",
+                    "start_time": meeting_time.isoformat(),
+                    "end_time": (meeting_time + timedelta(hours=2)).isoformat(),
+                    "location": "Conference Room A",
+                    "attendees": ["alice@example.com", "bob@example.com", "charlie@example.com", "diana@example.com"],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     predictions = asyncio.run(engine.generate_predictions({}))
 
@@ -207,21 +225,25 @@ def test_preparation_needs_skips_small_meetings(db, event_store, user_model_stor
     sync_time = datetime.now(timezone.utc)
     meeting_time = datetime.now(timezone.utc) + timedelta(hours=30)
 
-    event_store.store_event({
-        "id": "evt-small-meeting",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-meeting-002",
-            "title": "1-on-1 with Manager",
-            "start_time": meeting_time.isoformat(),
-            "end_time": (meeting_time + timedelta(minutes=30)).isoformat(),
-            "attendees": ["manager@example.com"]
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-small-meeting",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-meeting-002",
+                    "title": "1-on-1 with Manager",
+                    "start_time": meeting_time.isoformat(),
+                    "end_time": (meeting_time + timedelta(minutes=30)).isoformat(),
+                    "attendees": ["manager@example.com"],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     predictions = asyncio.run(engine.generate_predictions({}))
 
@@ -237,53 +259,65 @@ def test_preparation_needs_handles_malformed_events(db, event_store, user_model_
     sync_time = datetime.now(timezone.utc)
 
     # Event with missing start_time
-    event_store.store_event({
-        "id": "evt-malformed-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-malformed-1",
-            "title": "Broken Event",
-            # Missing start_time and end_time
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-malformed-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-malformed-1",
+                    "title": "Broken Event",
+                    # Missing start_time and end_time
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Event with invalid start_time format
-    event_store.store_event({
-        "id": "evt-malformed-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-malformed-2",
-            "title": "Invalid Time",
-            "start_time": "not-a-valid-timestamp",
-            "end_time": "also-invalid"
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-malformed-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-malformed-2",
+                    "title": "Invalid Time",
+                    "start_time": "not-a-valid-timestamp",
+                    "end_time": "also-invalid",
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Valid event for comparison
     valid_time = datetime.now(timezone.utc) + timedelta(hours=24)
-    event_store.store_event({
-        "id": "evt-valid",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-valid",
-            "title": "Flight to Boston",
-            "start_time": valid_time.isoformat(),
-            "end_time": (valid_time + timedelta(hours=2)).isoformat(),
-            "attendees": []
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-valid",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-valid",
+                    "title": "Flight to Boston",
+                    "start_time": valid_time.isoformat(),
+                    "end_time": (valid_time + timedelta(hours=2)).isoformat(),
+                    "attendees": [],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Should not crash, should skip malformed events and process valid one
     predictions = asyncio.run(engine.generate_predictions({}))
@@ -303,21 +337,25 @@ def test_preparation_needs_includes_hours_until_in_description(db, event_store, 
     # Event in 18 hours
     event_time = datetime.now(timezone.utc) + timedelta(hours=18)
 
-    event_store.store_event({
-        "id": "evt-timing-test",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "priority": "medium",
-        "payload": json.dumps({
-            "event_id": "cal-timing",
-            "title": "Flight to Seattle",
-            "start_time": event_time.isoformat(),
-            "end_time": (event_time + timedelta(hours=2)).isoformat(),
-            "attendees": []
-        }),
-        "metadata": json.dumps({})
-    })
+    event_store.store_event(
+        {
+            "id": "evt-timing-test",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "priority": "medium",
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-timing",
+                    "title": "Flight to Seattle",
+                    "start_time": event_time.isoformat(),
+                    "end_time": (event_time + timedelta(hours=2)).isoformat(),
+                    "attendees": [],
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     predictions = asyncio.run(engine.generate_predictions({}))
 
@@ -326,8 +364,9 @@ def test_preparation_needs_includes_hours_until_in_description(db, event_store, 
 
     pred = travel_preds[0]
     # Should mention hours until event (17h or 18h depending on timing)
-    assert "17h" in pred.description or "18h" in pred.description, \
+    assert "17h" in pred.description or "18h" in pred.description, (
         f"Prediction should include hours until event, got: {pred.description}"
+    )
 
 
 def test_preparation_needs_detects_all_travel_keywords(db, event_store, user_model_store):
@@ -346,24 +385,27 @@ def test_preparation_needs_detects_all_travel_keywords(db, event_store, user_mod
     keywords = ["flight", "airport", "hotel", "travel", "trip"]
 
     for i, keyword in enumerate(keywords):
-        event_store.store_event({
-            "id": f"evt-keyword-{i}",
-            "type": "calendar.event.created",
-            "source": "caldav",
-            "timestamp": sync_time.isoformat(),
-            "priority": "medium",
-            "payload": json.dumps({
-                "event_id": f"cal-{keyword}",
-                "title": f"Event with {keyword} keyword",
-                "start_time": (base_time + timedelta(minutes=i)).isoformat(),
-                "end_time": (base_time + timedelta(hours=1, minutes=i)).isoformat(),
-                "attendees": []
-            }),
-            "metadata": json.dumps({})
-        })
+        event_store.store_event(
+            {
+                "id": f"evt-keyword-{i}",
+                "type": "calendar.event.created",
+                "source": "caldav",
+                "timestamp": sync_time.isoformat(),
+                "priority": "medium",
+                "payload": json.dumps(
+                    {
+                        "event_id": f"cal-{keyword}",
+                        "title": f"Event with {keyword} keyword",
+                        "start_time": (base_time + timedelta(minutes=i)).isoformat(),
+                        "end_time": (base_time + timedelta(hours=1, minutes=i)).isoformat(),
+                        "attendees": [],
+                    }
+                ),
+                "metadata": json.dumps({}),
+            }
+        )
 
     predictions = asyncio.run(engine.generate_predictions({}))
 
     travel_preds = [p for p in predictions if p.prediction_type == "need" and "keyword" in p.description]
-    assert len(travel_preds) >= 1, \
-        f"At least one travel keyword should trigger a prediction. Got {len(travel_preds)}"
+    assert len(travel_preds) >= 1, f"At least one travel keyword should trigger a prediction. Got {len(travel_preds)}"

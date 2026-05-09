@@ -316,9 +316,7 @@ class TestSectionOrdering:
 
         assert episodes_pos != -1, "Episodes section must be present"
         assert semantic_pos != -1, "Semantic Memory section must be present"
-        assert episodes_pos < semantic_pos, (
-            "Layer 1 (episodic) section must appear before Layer 2 (semantic)"
-        )
+        assert episodes_pos < semantic_pos, "Layer 1 (episodic) section must appear before Layer 2 (semantic)"
 
 
 # ---------------------------------------------------------------------------

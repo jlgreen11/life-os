@@ -27,6 +27,7 @@ from models.core import EventType
 async def test_backfill_detects_simple_overlap(db, event_bus):
     """Verify backfill detects two overlapping calendar events."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     # Create two overlapping events:
@@ -39,38 +40,46 @@ async def test_backfill_detects_simple_overlap(db, event_bus):
     event2_end = event2_start + timedelta(hours=1)
 
     # Store first event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-1",
-            "title": "Team Standup",
-            "start_time": event1_start.isoformat(),
-            "end_time": event1_end.isoformat(),
-            "is_all_day": False,
-            "calendar_id": "Work",
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-1",
+                    "title": "Team Standup",
+                    "start_time": event1_start.isoformat(),
+                    "end_time": event1_end.isoformat(),
+                    "is_all_day": False,
+                    "calendar_id": "Work",
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Store second event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-2",
-            "title": "Client Call",
-            "start_time": event2_start.isoformat(),
-            "end_time": event2_end.isoformat(),
-            "is_all_day": False,
-            "calendar_id": "Work",
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-2",
+                    "title": "Client Call",
+                    "start_time": event2_start.isoformat(),
+                    "end_time": event2_end.isoformat(),
+                    "is_all_day": False,
+                    "calendar_id": "Work",
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -82,10 +91,7 @@ async def test_backfill_detects_simple_overlap(db, event_bus):
     assert stats["parse_errors"] == 0
 
     # Verify conflict event was published via event_bus
-    published_conflicts = [
-        e for e in event_bus._published_events
-        if e["type"] == "calendar.conflict.detected"
-    ]
+    published_conflicts = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
     assert len(published_conflicts) == 1
 
     # Verify conflict payload structure
@@ -107,6 +113,7 @@ async def test_backfill_detects_simple_overlap(db, event_bus):
 async def test_backfill_skips_non_overlapping_events(db, event_bus):
     """Verify backfill does not create conflicts for well-spaced events."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -119,35 +126,43 @@ async def test_backfill_skips_non_overlapping_events(db, event_bus):
     event2_start = now.replace(hour=14, minute=0, second=0, microsecond=0)
     event2_end = event2_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-1",
-            "title": "Morning Meeting",
-            "start_time": event1_start.isoformat(),
-            "end_time": event1_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-1",
+                    "title": "Morning Meeting",
+                    "start_time": event1_start.isoformat(),
+                    "end_time": event1_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-2",
-            "title": "Afternoon Meeting",
-            "start_time": event2_start.isoformat(),
-            "end_time": event2_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-2",
+                    "title": "Afternoon Meeting",
+                    "start_time": event2_start.isoformat(),
+                    "end_time": event2_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -158,10 +173,7 @@ async def test_backfill_skips_non_overlapping_events(db, event_bus):
     assert stats["events_published"] == 0
 
     # Verify no conflict events were published
-    published_conflicts = [
-        e for e in event_bus._published_events
-        if e["type"] == "calendar.conflict.detected"
-    ]
+    published_conflicts = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
     assert len(published_conflicts) == 0
 
 
@@ -169,40 +181,49 @@ async def test_backfill_skips_non_overlapping_events(db, event_bus):
 async def test_backfill_skips_all_day_events(db, event_bus):
     """Verify backfill ignores all-day events when detecting conflicts."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
 
     # Two all-day events on the same day should NOT conflict
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "all-day-1",
-            "title": "Team Offsite",
-            "start_time": now.date().isoformat(),
-            "end_time": now.date().isoformat(),
-            "is_all_day": True,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "all-day-1",
+                    "title": "Team Offsite",
+                    "start_time": now.date().isoformat(),
+                    "end_time": now.date().isoformat(),
+                    "is_all_day": True,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "all-day-2",
-            "title": "Vacation Day",
-            "start_time": now.date().isoformat(),
-            "end_time": now.date().isoformat(),
-            "is_all_day": True,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "all-day-2",
+                    "title": "Vacation Day",
+                    "start_time": now.date().isoformat(),
+                    "end_time": now.date().isoformat(),
+                    "is_all_day": True,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -217,6 +238,7 @@ async def test_backfill_skips_all_day_events(db, event_bus):
 async def test_backfill_handles_edge_touching_events(db, event_bus):
     """Events that touch at boundaries (end1 == start2) should not conflict."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -229,35 +251,43 @@ async def test_backfill_handles_edge_touching_events(db, event_bus):
     event2_start = event1_end
     event2_end = event2_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-1",
-            "title": "Morning Session",
-            "start_time": event1_start.isoformat(),
-            "end_time": event1_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-1",
+                    "title": "Morning Session",
+                    "start_time": event1_start.isoformat(),
+                    "end_time": event1_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-2",
-            "title": "Lunch Meeting",
-            "start_time": event2_start.isoformat(),
-            "end_time": event2_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-2",
+                    "title": "Lunch Meeting",
+                    "start_time": event2_start.isoformat(),
+                    "end_time": event2_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -271,6 +301,7 @@ async def test_backfill_handles_edge_touching_events(db, event_bus):
 async def test_backfill_detects_multiple_overlaps(db, event_bus):
     """Verify backfill detects all pairwise conflicts in a multi-event scenario."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -287,50 +318,62 @@ async def test_backfill_detects_multiple_overlaps(db, event_bus):
     event3_start = event1_start + timedelta(hours=1, minutes=30)
     event3_end = event3_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-1",
-            "title": "Workshop Part 1",
-            "start_time": event1_start.isoformat(),
-            "end_time": event1_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-1",
+                    "title": "Workshop Part 1",
+                    "start_time": event1_start.isoformat(),
+                    "end_time": event1_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-2",
-            "title": "Team Sync",
-            "start_time": event2_start.isoformat(),
-            "end_time": event2_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-2",
+                    "title": "Team Sync",
+                    "start_time": event2_start.isoformat(),
+                    "end_time": event2_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-3",
-            "title": "Emergency Call",
-            "start_time": event3_start.isoformat(),
-            "end_time": event3_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-3",
+                    "title": "Emergency Call",
+                    "start_time": event3_start.isoformat(),
+                    "end_time": event3_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -346,39 +389,48 @@ async def test_backfill_detects_multiple_overlaps(db, event_bus):
 async def test_backfill_handles_malformed_payloads(db, event_bus):
     """Verify backfill gracefully handles events with missing or invalid fields."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
 
     # Valid event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "valid-event",
-            "title": "Valid Meeting",
-            "start_time": now.isoformat(),
-            "end_time": (now + timedelta(hours=1)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "valid-event",
+                    "title": "Valid Meeting",
+                    "start_time": now.isoformat(),
+                    "end_time": (now + timedelta(hours=1)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Malformed event: missing start_time
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "malformed-event",
-            "title": "Broken Meeting",
-            "end_time": (now + timedelta(hours=1)).isoformat(),
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "malformed-event",
+                    "title": "Broken Meeting",
+                    "end_time": (now + timedelta(hours=1)).isoformat(),
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -393,6 +445,7 @@ async def test_backfill_handles_malformed_payloads(db, event_bus):
 async def test_backfill_dry_run_mode(db, event_bus):
     """Verify dry_run=True reports conflicts without publishing events."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -403,35 +456,43 @@ async def test_backfill_dry_run_mode(db, event_bus):
     event2_start = event1_start + timedelta(minutes=30)
     event2_end = event2_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-1",
-            "title": "Meeting A",
-            "start_time": event1_start.isoformat(),
-            "end_time": event1_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-1",
+                    "title": "Meeting A",
+                    "start_time": event1_start.isoformat(),
+                    "end_time": event1_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-2",
-            "title": "Meeting B",
-            "start_time": event2_start.isoformat(),
-            "end_time": event2_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-2",
+                    "title": "Meeting B",
+                    "start_time": event2_start.isoformat(),
+                    "end_time": event2_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run in dry-run mode
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=True)
@@ -441,10 +502,7 @@ async def test_backfill_dry_run_mode(db, event_bus):
     assert stats["events_published"] == 0
 
     # Verify no conflict events were published (dry-run mode)
-    published_conflicts = [
-        e for e in event_bus._published_events
-        if e["type"] == "calendar.conflict.detected"
-    ]
+    published_conflicts = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
     assert len(published_conflicts) == 0
 
 
@@ -452,6 +510,7 @@ async def test_backfill_dry_run_mode(db, event_bus):
 async def test_backfill_deduplicates_conflicts(db, event_bus):
     """Verify backfill doesn't create duplicate conflicts for the same event pair."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -462,35 +521,43 @@ async def test_backfill_deduplicates_conflicts(db, event_bus):
     event2_start = event1_start + timedelta(minutes=30)
     event2_end = event2_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-1",
-            "title": "Meeting A",
-            "start_time": event1_start.isoformat(),
-            "end_time": event1_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-1",
+                    "title": "Meeting A",
+                    "start_time": event1_start.isoformat(),
+                    "end_time": event1_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": EventType.CALENDAR_EVENT_CREATED.value,
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "event-2",
-            "title": "Meeting B",
-            "start_time": event2_start.isoformat(),
-            "end_time": event2_end.isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": EventType.CALENDAR_EVENT_CREATED.value,
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "event-2",
+                    "title": "Meeting B",
+                    "start_time": event2_start.isoformat(),
+                    "end_time": event2_end.isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run backfill
     stats = await detect_conflicts_for_all_events(event_store, event_bus, dry_run=False)
@@ -500,10 +567,7 @@ async def test_backfill_deduplicates_conflicts(db, event_bus):
     assert stats["events_published"] == 1
 
     # Verify only 1 conflict event was published
-    published_conflicts = [
-        e for e in event_bus._published_events
-        if e["type"] == "calendar.conflict.detected"
-    ]
+    published_conflicts = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
     assert len(published_conflicts) == 1
 
 
@@ -511,6 +575,7 @@ async def test_backfill_deduplicates_conflicts(db, event_bus):
 async def test_backfill_with_no_events(db, event_bus):
     """Verify backfill handles empty database gracefully."""
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     # Run backfill on empty database

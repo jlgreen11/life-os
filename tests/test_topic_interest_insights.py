@@ -46,9 +46,9 @@ def _make_engine(db) -> InsightEngine:
     return InsightEngine(db=db, ums=ums)
 
 
-def _set_topics_profile(ums: UserModelStore, topic_counts: dict,
-                        recent_topics: list | None = None,
-                        samples_count: int = 60) -> None:
+def _set_topics_profile(
+    ums: UserModelStore, topic_counts: dict, recent_topics: list | None = None, samples_count: int = 60
+) -> None:
     """Write a topics signal profile with the given data.
 
     Calls update_signal_profile() ``samples_count`` times so the stored
@@ -75,8 +75,7 @@ def _make_recent_entries(topics_per_entry: list[str], count: int) -> list[dict]:
         topics_per_entry: List of topic strings for each entry.
         count: Number of entries to generate.
     """
-    return [{"topics": topics_per_entry, "timestamp": "2026-01-01T10:00:00Z"}
-            for _ in range(count)]
+    return [{"topics": topics_per_entry, "timestamp": "2026-01-01T10:00:00Z"} for _ in range(count)]
 
 
 # =============================================================================
@@ -118,10 +117,18 @@ def test_top_interests_fires_with_sufficient_data(db):
     """top_interests insight fires when profile has >= 20 samples and >= 5 counts."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {
-        "work": 200, "project": 150, "team": 100, "email": 80, "meeting": 60,
-        "finance": 40,
-    }, samples_count=60)
+    _set_topics_profile(
+        ums,
+        {
+            "work": 200,
+            "project": 150,
+            "team": 100,
+            "email": 80,
+            "meeting": 60,
+            "finance": 40,
+        },
+        samples_count=60,
+    )
 
     insights = engine._topic_interest_insights()
     top = [i for i in insights if i.category == "top_interests"]
@@ -142,11 +149,20 @@ def test_top_interests_excludes_topics_below_min_count(db):
     """Topics with < 5 occurrences are not included in the top-interests summary."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {
-        "work": 50, "project": 30, "team": 20, "email": 10, "meeting": 8,
-        # These should be excluded (count < 5)
-        "rare": 2, "single": 1,
-    }, samples_count=60)
+    _set_topics_profile(
+        ums,
+        {
+            "work": 50,
+            "project": 30,
+            "team": 20,
+            "email": 10,
+            "meeting": 8,
+            # These should be excluded (count < 5)
+            "rare": 2,
+            "single": 1,
+        },
+        samples_count=60,
+    )
 
     insights = engine._topic_interest_insights()
     top = [i for i in insights if i.category == "top_interests"]
@@ -160,9 +176,16 @@ def test_top_interests_entity_fingerprint_uses_top3(db):
     """top_interests entity is the concatenation of the top-3 topic names."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {
-        "alpha": 300, "beta": 200, "gamma": 100, "delta": 50,
-    }, samples_count=60)
+    _set_topics_profile(
+        ums,
+        {
+            "alpha": 300,
+            "beta": 200,
+            "gamma": 100,
+            "delta": 50,
+        },
+        samples_count=60,
+    )
 
     insights = engine._topic_interest_insights()
     top = [i for i in insights if i.category == "top_interests"]
@@ -176,8 +199,7 @@ def test_top_interests_confidence_capped_at_0_80(db):
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     # 500 samples would push 0.50 + 500*0.001 = 1.0, but cap should apply.
-    _set_topics_profile(ums, {"work": 1000, "email": 800, "team": 600},
-                        samples_count=500)
+    _set_topics_profile(ums, {"work": 1000, "email": 800, "team": 600}, samples_count=500)
 
     insights = engine._topic_interest_insights()
     top = [i for i in insights if i.category == "top_interests"]
@@ -227,10 +249,7 @@ def test_no_trending_when_ratio_below_threshold(db):
     _set_topics_profile(
         ums,
         {"work": 4000, "budget": 1000},
-        recent_topics=(
-            _make_recent_entries(["work"], 16) +
-            _make_recent_entries(["budget"], 4)
-        ),
+        recent_topics=(_make_recent_entries(["work"], 16) + _make_recent_entries(["budget"], 4)),
         samples_count=25,
     )
 
@@ -249,10 +268,7 @@ def test_no_trending_when_count_below_min_trending_count(db):
     _set_topics_profile(
         ums,
         {"work": 1000, "budget": 10},
-        recent_topics=(
-            _make_recent_entries(["work"], 18) +
-            _make_recent_entries(["budget"], 2)
-        ),
+        recent_topics=(_make_recent_entries(["work"], 18) + _make_recent_entries(["budget"], 2)),
         samples_count=25,
     )
 
@@ -272,9 +288,9 @@ def test_trending_topic_fires_when_ratio_exceeds_threshold(db):
         ums,
         {"work": 2000, "budget": 50},
         recent_topics=(
-            _make_recent_entries(["work"], 5) +
-            _make_recent_entries(["budget"], 10) +
-            _make_recent_entries(["work"], 10)
+            _make_recent_entries(["work"], 5)
+            + _make_recent_entries(["budget"], 10)
+            + _make_recent_entries(["work"], 10)
         ),
         samples_count=25,
     )
@@ -295,9 +311,7 @@ def test_trending_topic_entity_is_topic_name(db):
         ums,
         {"work": 1000, "taxes": 20},
         recent_topics=(
-            _make_recent_entries(["work"], 5) +
-            _make_recent_entries(["taxes"], 10) +
-            _make_recent_entries(["work"], 10)
+            _make_recent_entries(["work"], 5) + _make_recent_entries(["taxes"], 10) + _make_recent_entries(["work"], 10)
         ),
         samples_count=25,
     )
@@ -316,9 +330,7 @@ def test_trending_topic_staleness_ttl_48h(db):
         ums,
         {"work": 1000, "ai": 20},
         recent_topics=(
-            _make_recent_entries(["work"], 5) +
-            _make_recent_entries(["ai"], 10) +
-            _make_recent_entries(["work"], 10)
+            _make_recent_entries(["work"], 5) + _make_recent_entries(["ai"], 10) + _make_recent_entries(["work"], 10)
         ),
         samples_count=25,
     )
@@ -333,8 +345,7 @@ def test_top_interests_staleness_ttl_168h(db):
     """top_interests uses a 168-hour (7-day) staleness TTL."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {"work": 100, "email": 80, "team": 60},
-                        samples_count=60)
+    _set_topics_profile(ums, {"work": 100, "email": 80, "team": 60}, samples_count=60)
 
     insights = engine._topic_interest_insights()
     top = [i for i in insights if i.category == "top_interests"]
@@ -353,12 +364,11 @@ def test_both_subtypes_can_fire_together(db):
     engine = InsightEngine(db=db, ums=ums)
     _set_topics_profile(
         ums,
-        {"work": 2000, "email": 1000, "team": 500, "project": 400, "meeting": 300,
-         "budget": 30},
+        {"work": 2000, "email": 1000, "team": 500, "project": 400, "meeting": 300, "budget": 30},
         recent_topics=(
-            _make_recent_entries(["work"], 5) +
-            _make_recent_entries(["budget"], 10) +
-            _make_recent_entries(["work"], 10)
+            _make_recent_entries(["work"], 5)
+            + _make_recent_entries(["budget"], 10)
+            + _make_recent_entries(["work"], 10)
         ),
         samples_count=100,
     )
@@ -378,11 +388,10 @@ def test_correlator_wired_into_generate_insights(db):
     """_topic_interest_insights is called as part of generate_insights()."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {"work": 200, "email": 150, "team": 100,
-                               "project": 80, "meeting": 70},
-                        samples_count=60)
+    _set_topics_profile(ums, {"work": 200, "email": 150, "team": 100, "project": 80, "meeting": 70}, samples_count=60)
 
     import asyncio
+
     insights = asyncio.run(engine.generate_insights())
     top = [i for i in insights if i.category == "top_interests"]
     assert len(top) >= 1
@@ -403,12 +412,11 @@ def test_source_weight_mapping_top_interests(db):
 
     _set_topics_profile(
         ums,
-        {"work": 2000, "email": 1000, "team": 500, "project": 400, "meeting": 300,
-         "budget": 30},
+        {"work": 2000, "email": 1000, "team": 500, "project": 400, "meeting": 300, "budget": 30},
         recent_topics=(
-            _make_recent_entries(["work"], 5) +
-            _make_recent_entries(["budget"], 10) +
-            _make_recent_entries(["work"], 10)
+            _make_recent_entries(["work"], 5)
+            + _make_recent_entries(["budget"], 10)
+            + _make_recent_entries(["work"], 10)
         ),
         samples_count=100,
     )

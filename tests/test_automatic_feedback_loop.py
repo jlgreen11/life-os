@@ -107,6 +107,7 @@ def test_auto_resolve_logs_feedback(db_with_stale_prediction, event_bus):
 
     # Verify context includes auto-resolution metadata
     import json
+
     context = json.loads(feedback["context"])
     assert context["auto_resolved"] is True
     assert context["reason"] == "ignored"
@@ -155,6 +156,7 @@ def test_explicit_dismiss_logs_feedback(db, event_bus):
 
     # Verify context marks this as explicit user action
     import json
+
     context = json.loads(feedback["context"])
     assert context["explicit_user_action"] is True
     assert context["action"] == "dismissed"
@@ -196,6 +198,7 @@ def test_explicit_act_on_logs_feedback(db, event_bus):
 
     # Verify context marks this as explicit user action
     import json
+
     context = json.loads(feedback["context"])
     assert context["explicit_user_action"] is True
     assert context["action"] == "acted_on"
@@ -230,6 +233,7 @@ def test_reaction_prediction_uses_feedback_data(db_with_stale_prediction, event_
 
     # Create a dummy prediction to test reaction scoring
     from models.user_model import Prediction
+
     test_pred = Prediction(
         id="test-pred-001",
         prediction_type="reminder",
@@ -285,6 +289,7 @@ def test_multiple_dismissals_affect_reaction_score(db, event_bus):
 
     # Test reaction prediction after many recent dismissals
     from models.user_model import Prediction
+
     test_pred = Prediction(
         id="test-pred-002",
         prediction_type="reminder",
@@ -303,8 +308,7 @@ def test_multiple_dismissals_affect_reaction_score(db, event_bus):
     assert reaction is not None
     assert reaction.predicted_reaction in ["helpful", "neutral", "annoying"]
     # The reasoning field should mention the dismissal count from feedback_log
-    assert "dismissals=5" in reaction.reasoning, \
-        "Reaction prediction should read dismissal count from feedback_log"
+    assert "dismissals=5" in reaction.reasoning, "Reaction prediction should read dismissal count from feedback_log"
 
 
 def test_no_duplicate_feedback_for_same_notification(db, event_bus):

@@ -30,37 +30,41 @@ async def test_all_day_events_included_in_conflict_detection(db, event_store, us
     tomorrow_start = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
     tomorrow_end = datetime.combine(tomorrow, datetime.max.time(), tzinfo=timezone.utc)
 
-    event_store.store_event({
-        "id": "event-all-day-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Conference Day",
-            "start_time": tomorrow_start.isoformat(),
-            "end_time": tomorrow_end.isoformat(),
-            "is_all_day": True,
-            "location": "Convention Center",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "event-all-day-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Conference Day",
+                "start_time": tomorrow_start.isoformat(),
+                "end_time": tomorrow_end.isoformat(),
+                "is_all_day": True,
+                "location": "Convention Center",
+            },
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id": "event-all-day-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Team Offsite",
-            "start_time": tomorrow_start.isoformat(),
-            "end_time": tomorrow_end.isoformat(),
-            "is_all_day": True,
-            "location": "Company HQ",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "event-all-day-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Team Offsite",
+                "start_time": tomorrow_start.isoformat(),
+                "end_time": tomorrow_end.isoformat(),
+                "is_all_day": True,
+                "location": "Company HQ",
+            },
+            "metadata": {},
+        }
+    )
 
     # Generate predictions
     predictions = await engine._check_calendar_conflicts({})
@@ -80,41 +84,45 @@ async def test_all_day_vs_timed_event_conflict(db, event_store, user_model_store
     tomorrow_end = datetime.combine(tomorrow, datetime.max.time(), tzinfo=timezone.utc)
 
     # All-day conference
-    event_store.store_event({
-        "id": "event-all-day-conf",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "AI Summit",
-            "start_time": tomorrow_start.isoformat(),
-            "end_time": tomorrow_end.isoformat(),
-            "is_all_day": True,
-            "location": "San Francisco",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "event-all-day-conf",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "AI Summit",
+                "start_time": tomorrow_start.isoformat(),
+                "end_time": tomorrow_end.isoformat(),
+                "is_all_day": True,
+                "location": "San Francisco",
+            },
+            "metadata": {},
+        }
+    )
 
     # Timed meeting on the same day (overlaps the all-day event)
     meeting_start = datetime.combine(tomorrow, datetime.min.time().replace(hour=14), tzinfo=timezone.utc)
     meeting_end = meeting_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": "event-timed-meeting",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Client Call",
-            "start_time": meeting_start.isoformat(),
-            "end_time": meeting_end.isoformat(),
-            "is_all_day": False,
-            "location": "Office",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "event-timed-meeting",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Client Call",
+                "start_time": meeting_start.isoformat(),
+                "end_time": meeting_end.isoformat(),
+                "is_all_day": False,
+                "location": "Office",
+            },
+            "metadata": {},
+        }
+    )
 
     # Generate predictions
     predictions = await engine._check_calendar_conflicts({})
@@ -139,39 +147,43 @@ async def test_timed_events_still_detect_tight_gaps(db, event_store, user_model_
     meeting1_start = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
     meeting1_end = meeting1_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": "meeting-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Standup",
-            "start_time": meeting1_start.isoformat(),
-            "end_time": meeting1_end.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "meeting-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Standup",
+                "start_time": meeting1_start.isoformat(),
+                "end_time": meeting1_end.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Meeting 2: 10:05-11:00 (only 5 min gap)
     meeting2_start = meeting1_end + timedelta(minutes=5)
     meeting2_end = meeting2_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": "meeting-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Planning",
-            "start_time": meeting2_start.isoformat(),
-            "end_time": meeting2_end.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "meeting-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Planning",
+                "start_time": meeting2_start.isoformat(),
+                "end_time": meeting2_end.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Generate predictions
     predictions = await engine._check_calendar_conflicts({})
@@ -195,39 +207,43 @@ async def test_overlapping_timed_events(db, event_store, user_model_store):
     meeting1_start = tomorrow.replace(hour=14, minute=0, second=0, microsecond=0)
     meeting1_end = meeting1_start + timedelta(hours=1, minutes=30)
 
-    event_store.store_event({
-        "id": "meeting-overlap-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Product Review",
-            "start_time": meeting1_start.isoformat(),
-            "end_time": meeting1_end.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "meeting-overlap-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Product Review",
+                "start_time": meeting1_start.isoformat(),
+                "end_time": meeting1_end.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Meeting 2: 15:00-16:00 (30 min overlap)
     meeting2_start = meeting1_start + timedelta(hours=1)
     meeting2_end = meeting2_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": "meeting-overlap-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Investor Call",
-            "start_time": meeting2_start.isoformat(),
-            "end_time": meeting2_end.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "meeting-overlap-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Investor Call",
+                "start_time": meeting2_start.isoformat(),
+                "end_time": meeting2_end.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Generate predictions
     predictions = await engine._check_calendar_conflicts({})
@@ -252,21 +268,23 @@ async def test_preparation_needs_with_all_day_travel(db, event_store, user_model
     tomorrow_start = datetime.combine(day_after_tomorrow, datetime.min.time().replace(hour=8), tzinfo=timezone.utc)
     tomorrow_end = datetime.combine(day_after_tomorrow, datetime.max.time(), tzinfo=timezone.utc)
 
-    event_store.store_event({
-        "id": "travel-all-day",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Flight to NYC",
-            "start_time": tomorrow_start.isoformat(),
-            "end_time": tomorrow_end.isoformat(),
-            "is_all_day": True,
-            "location": "JFK Airport",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "travel-all-day",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Flight to NYC",
+                "start_time": tomorrow_start.isoformat(),
+                "end_time": tomorrow_end.isoformat(),
+                "is_all_day": True,
+                "location": "JFK Airport",
+            },
+            "metadata": {},
+        }
+    )
 
     # Generate preparation predictions
     predictions = await engine._check_preparation_needs({})
@@ -291,20 +309,22 @@ async def test_no_tight_gap_for_all_day_events(db, event_store, user_model_store
     allday_start = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
     allday_end = datetime.combine(tomorrow, datetime.max.time(), tzinfo=timezone.utc)
 
-    event_store.store_event({
-        "id": "allday-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Conference",
-            "start_time": allday_start.isoformat(),
-            "end_time": allday_end.isoformat(),
-            "is_all_day": True,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "allday-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Conference",
+                "start_time": allday_start.isoformat(),
+                "end_time": allday_end.isoformat(),
+                "is_all_day": True,
+            },
+            "metadata": {},
+        }
+    )
 
     # Timed event "right after" the all-day event ends
     # (technically 1 second gap, but this shouldn't trigger tight gap warnings)
@@ -312,20 +332,22 @@ async def test_no_tight_gap_for_all_day_events(db, event_store, user_model_store
     timed_start = datetime.combine(next_day, datetime.min.time(), tzinfo=timezone.utc)
     timed_end = timed_start + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": "timed-after",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "payload": {
-            "title": "Follow-up Meeting",
-            "start_time": timed_start.isoformat(),
-            "end_time": timed_end.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "timed-after",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "payload": {
+                "title": "Follow-up Meeting",
+                "start_time": timed_start.isoformat(),
+                "end_time": timed_end.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Generate predictions
     predictions = await engine._check_calendar_conflicts({})

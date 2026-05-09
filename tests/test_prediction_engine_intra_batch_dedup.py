@@ -60,9 +60,7 @@ class TestIntraBatchDedup:
     """Verify that duplicate predictions within a single cycle are eliminated."""
 
     @pytest.mark.asyncio
-    async def test_intra_batch_dedup_removes_second_identical_prediction(
-        self, db, user_model_store
-    ):
+    async def test_intra_batch_dedup_removes_second_identical_prediction(self, db, user_model_store):
         """Two _check_* methods returning identical predictions → only one stored in DB.
 
         Patches _check_relationship_maintenance and _check_follow_up_needs to both
@@ -119,9 +117,7 @@ class TestIntraBatchDedup:
         )
 
     @pytest.mark.asyncio
-    async def test_intra_batch_dedup_preserves_distinct_predictions(
-        self, db, user_model_store
-    ):
+    async def test_intra_batch_dedup_preserves_distinct_predictions(self, db, user_model_store):
         """Distinct predictions from different _check_* methods are NOT deduplicated.
 
         When two methods return predictions with different descriptions, both should
@@ -157,12 +153,8 @@ class TestIntraBatchDedup:
 
         # Both distinct predictions should reach the DB (no intra-batch removal)
         with db.get_connection("user_model") as conn:
-            count_a = conn.execute(
-                "SELECT COUNT(*) FROM predictions WHERE description = ?", (desc_a,)
-            ).fetchone()[0]
-            count_b = conn.execute(
-                "SELECT COUNT(*) FROM predictions WHERE description = ?", (desc_b,)
-            ).fetchone()[0]
+            count_a = conn.execute("SELECT COUNT(*) FROM predictions WHERE description = ?", (desc_a,)).fetchone()[0]
+            count_b = conn.execute("SELECT COUNT(*) FROM predictions WHERE description = ?", (desc_b,)).fetchone()[0]
 
         assert count_a == 1, f"Expected 1 row for desc_a, got {count_a}"
         assert count_b == 1, f"Expected 1 row for desc_b, got {count_b}"
@@ -173,9 +165,7 @@ class TestIntraBatchDedup:
         )
 
     @pytest.mark.asyncio
-    async def test_intra_batch_dedup_key_includes_time_horizon(
-        self, db, user_model_store
-    ):
+    async def test_intra_batch_dedup_key_includes_time_horizon(self, db, user_model_store):
         """Same description but different time_horizon → NOT considered a duplicate.
 
         The dedup key is (prediction_type, description, time_horizon), so two
@@ -222,9 +212,7 @@ class TestIntraBatchDedup:
 
         # Both should be stored: they differ by time_horizon
         horizons = {r[0] for r in rows}
-        assert len(rows) == 2, (
-            f"Expected 2 rows (different time_horizon), got {len(rows)}: {horizons}"
-        )
+        assert len(rows) == 2, f"Expected 2 rows (different time_horizon), got {len(rows)}: {horizons}"
         assert "24_hours" in horizons
         assert "this_week" in horizons
 
@@ -232,9 +220,7 @@ class TestIntraBatchDedup:
         assert engine._last_run_diagnostics.get("intra_batch_dedup", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_intra_batch_dedup_multiple_duplicates(
-        self, db, user_model_store
-    ):
+    async def test_intra_batch_dedup_multiple_duplicates(self, db, user_model_store):
         """Three copies of the same prediction → only one kept, dedup count=2."""
         engine = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
         desc = "Triplicate reminder"
@@ -263,19 +249,14 @@ class TestIntraBatchDedup:
             await engine.generate_predictions({})
 
         with db.get_connection("user_model") as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM predictions WHERE description = ?", (desc,)
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM predictions WHERE description = ?", (desc,)).fetchone()[0]
         assert count == 1, f"Expected 1 row after removing 2 duplicates, got {count}"
         assert engine._last_run_diagnostics.get("intra_batch_dedup") == 2, (
-            f"Expected intra_batch_dedup=2, "
-            f"got {engine._last_run_diagnostics.get('intra_batch_dedup')!r}"
+            f"Expected intra_batch_dedup=2, got {engine._last_run_diagnostics.get('intra_batch_dedup')!r}"
         )
 
     @pytest.mark.asyncio
-    async def test_intra_batch_dedup_logged_at_debug(
-        self, db, user_model_store, caplog
-    ):
+    async def test_intra_batch_dedup_logged_at_debug(self, db, user_model_store, caplog):
         """Intra-batch dedup count should be logged at DEBUG level."""
         engine = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
         desc = "Logged dedup prediction"
@@ -302,9 +283,7 @@ class TestIntraBatchDedup:
             with caplog.at_level(logging.DEBUG, logger="services.prediction_engine.engine"):
                 await engine.generate_predictions({})
 
-        assert "Intra-batch dedup" in caplog.text, (
-            "Expected 'Intra-batch dedup' in debug log output"
-        )
+        assert "Intra-batch dedup" in caplog.text, "Expected 'Intra-batch dedup' in debug log output"
         assert "1" in caplog.text  # "removed 1 duplicate predictions"
 
 
@@ -323,9 +302,7 @@ class TestPrefilterCachePersistence:
         assert engine._prefilter_refresh_cycle == 0, "Cycle counter should start at 0"
 
     @pytest.mark.asyncio
-    async def test_prefilter_cache_populated_after_first_run(
-        self, db, user_model_store
-    ):
+    async def test_prefilter_cache_populated_after_first_run(self, db, user_model_store):
         """After the first generate_predictions() run, _prefilter_cache should contain
         keys for any predictions stored during that cycle.
 
@@ -355,16 +332,13 @@ class TestPrefilterCachePersistence:
         # The cache should now contain the stored prediction's key
         cache_key = ("reminder", desc, "this_week")
         assert cache_key in engine._prefilter_cache, (
-            f"Expected key {cache_key!r} in _prefilter_cache after first run. "
-            f"Cache: {engine._prefilter_cache}"
+            f"Expected key {cache_key!r} in _prefilter_cache after first run. Cache: {engine._prefilter_cache}"
         )
         # Cycle counter should have advanced past 0
         assert engine._prefilter_refresh_cycle > 0
 
     @pytest.mark.asyncio
-    async def test_prefilter_cache_used_on_second_run(
-        self, db, user_model_store
-    ):
+    async def test_prefilter_cache_used_on_second_run(self, db, user_model_store):
         """After first run, the second cycle uses the in-memory cache (no DB query).
 
         We verify this by manually injecting a key into _prefilter_cache that
@@ -396,9 +370,7 @@ class TestPrefilterCachePersistence:
         engine._prefilter_cache.add(cache_only_key)
         # Confirm it's not in the DB
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT id FROM predictions WHERE description = ?", (desc,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM predictions WHERE description = ?", (desc,)).fetchone()
         assert row is None, "Prediction must not exist in DB for this test to be valid"
 
         # Second cycle: returns the "cache-only" prediction
@@ -419,18 +391,14 @@ class TestPrefilterCachePersistence:
 
         # The prediction should NOT have been stored because the cache said it exists
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT id FROM predictions WHERE description = ?", (desc,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM predictions WHERE description = ?", (desc,)).fetchone()
         assert row is None, (
             "Prediction was stored even though it was in the in-memory cache. "
             "The second cycle should use _prefilter_cache, not query the DB."
         )
 
     @pytest.mark.asyncio
-    async def test_prefilter_cache_db_refresh_on_fourth_cycle(
-        self, db, user_model_store
-    ):
+    async def test_prefilter_cache_db_refresh_on_fourth_cycle(self, db, user_model_store):
         """Cache is rebuilt from DB when _prefilter_refresh_cycle % 4 == 0.
 
         We simulate being at cycle 4 (would normally use cache) by directly setting
@@ -482,9 +450,7 @@ class TestPrefilterCachePersistence:
         )
 
     @pytest.mark.asyncio
-    async def test_prefilter_cache_reset_on_persistence_failure_recovery(
-        self, db, user_model_store
-    ):
+    async def test_prefilter_cache_reset_on_persistence_failure_recovery(self, db, user_model_store):
         """When persistence failure recovery runs, the pre-filter cache is rebuilt.
 
         If _persistence_failure_detected is True at entry, the recovery block:
@@ -539,9 +505,7 @@ class TestPrefilterDiagnostics:
     """Verify that pre-filter cache metrics appear in _last_run_diagnostics."""
 
     @pytest.mark.asyncio
-    async def test_diagnostics_include_prefilter_cache_size(
-        self, db, user_model_store
-    ):
+    async def test_diagnostics_include_prefilter_cache_size(self, db, user_model_store):
         """_last_run_diagnostics should expose prefilter_cache_size and
         prefilter_refresh_cycle for monitoring."""
         engine = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
@@ -562,9 +526,7 @@ class TestPrefilterDiagnostics:
             await engine.generate_predictions({})
 
         diag = engine._last_run_diagnostics
-        assert "prefilter_cache_size" in diag, (
-            f"Expected 'prefilter_cache_size' in diagnostics. Keys: {list(diag)}"
-        )
+        assert "prefilter_cache_size" in diag, f"Expected 'prefilter_cache_size' in diagnostics. Keys: {list(diag)}"
         assert "prefilter_refresh_cycle" in diag, (
             f"Expected 'prefilter_refresh_cycle' in diagnostics. Keys: {list(diag)}"
         )
@@ -572,9 +534,7 @@ class TestPrefilterDiagnostics:
         assert isinstance(diag["prefilter_refresh_cycle"], int)
 
     @pytest.mark.asyncio
-    async def test_diagnostics_intra_batch_dedup_zero_when_no_duplicates(
-        self, db, user_model_store
-    ):
+    async def test_diagnostics_intra_batch_dedup_zero_when_no_duplicates(self, db, user_model_store):
         """When no intra-batch duplicates occur, intra_batch_dedup should be 0."""
         engine = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
 
@@ -596,9 +556,7 @@ class TestPrefilterDiagnostics:
         assert engine._last_run_diagnostics.get("intra_batch_dedup", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_diagnostics_intra_batch_dedup_present_when_duplicates_exist(
-        self, db, user_model_store
-    ):
+    async def test_diagnostics_intra_batch_dedup_present_when_duplicates_exist(self, db, user_model_store):
         """When intra-batch duplicates are removed, the count is in diagnostics."""
         engine = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
         desc = "Duplicate prediction for diagnostics test"
@@ -645,9 +603,5 @@ class TestResetStatePrefilterFields:
 
         engine.reset_state()
 
-        assert engine._prefilter_cache == set(), (
-            "reset_state() should clear _prefilter_cache"
-        )
-        assert engine._prefilter_refresh_cycle == 0, (
-            "reset_state() should reset _prefilter_refresh_cycle to 0"
-        )
+        assert engine._prefilter_cache == set(), "reset_state() should clear _prefilter_cache"
+        assert engine._prefilter_refresh_cycle == 0, "reset_state() should reset _prefilter_refresh_cycle to 0"

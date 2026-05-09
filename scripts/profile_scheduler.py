@@ -39,7 +39,6 @@ import asyncio
 import json
 import random
 import sqlite3
-import statistics
 import sys
 import tempfile
 import time
@@ -198,8 +197,7 @@ def insert_seeds(conn: sqlite3.Connection, seeds: Sequence[MomentSeed], *, now_t
             moment_rows,
         )
         conn.executemany(
-            "INSERT INTO moment_state_history (moment_id, from_state, to_state, ts, annotation) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO moment_state_history (moment_id, from_state, to_state, ts, annotation) VALUES (?, ?, ?, ?, ?)",
             history_rows,
         )
         conn.execute("COMMIT")
@@ -303,7 +301,7 @@ def render_report(
         "",
         f"- Fleet size: **{summary.count:,}** synthetic Moments",
         "  - 70% SUGGESTED scheduled, 20% SNOOZED, 10% context-trigger-only",
-        f"  - `scheduled_for` uniform across next 24h from reference now",
+        "  - `scheduled_for` uniform across next 24h from reference now",
         f"- Ticks: **{summary.ticks}** × `tick_seconds={summary.tick_seconds}` = "
         f"{summary.simulated_seconds:,}s of simulated wall time",
         f"- Batch limit per tick: {batch_limit:,}",
@@ -439,13 +437,26 @@ def _default_report_path(ts: datetime) -> Path:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--count", type=int, default=DEFAULT_COUNT, help="Synthetic Moment count (default: %(default)s).")
-    parser.add_argument("--ticks", type=int, default=DEFAULT_TICKS, help="Number of simulated ticks (default: %(default)s).")
-    parser.add_argument("--tick-seconds", type=int, default=DEFAULT_TICK_SECONDS, help="Simulated wall-clock advance per tick (default: %(default)s).")
-    parser.add_argument("--batch-limit", type=int, default=DEFAULT_BATCH_LIMIT, help="Scheduler batch limit (default: %(default)s).")
+    parser.add_argument(
+        "--count", type=int, default=DEFAULT_COUNT, help="Synthetic Moment count (default: %(default)s)."
+    )
+    parser.add_argument(
+        "--ticks", type=int, default=DEFAULT_TICKS, help="Number of simulated ticks (default: %(default)s)."
+    )
+    parser.add_argument(
+        "--tick-seconds",
+        type=int,
+        default=DEFAULT_TICK_SECONDS,
+        help="Simulated wall-clock advance per tick (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--batch-limit", type=int, default=DEFAULT_BATCH_LIMIT, help="Scheduler batch limit (default: %(default)s)."
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="RNG seed (default: %(default)s).")
     parser.add_argument("--output", type=Path, default=None, help="Override report output path.")
-    parser.add_argument("--no-report", action="store_true", help="Skip writing the markdown report; print summary only.")
+    parser.add_argument(
+        "--no-report", action="store_true", help="Skip writing the markdown report; print summary only."
+    )
     args = parser.parse_args(argv)
 
     summary = run_profile(

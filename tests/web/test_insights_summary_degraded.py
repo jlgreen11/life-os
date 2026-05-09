@@ -22,6 +22,7 @@ from web.app import create_web_app
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_sample_insights() -> list[Insight]:
     """Create sample Insight objects mimicking generate_insights() output."""
     return [
@@ -74,9 +75,7 @@ def mock_life_os():
 
     # Insight engine — returns sample insights by default
     life_os.insight_engine = Mock()
-    life_os.insight_engine.generate_insights = AsyncMock(
-        return_value=_make_sample_insights()
-    )
+    life_os.insight_engine.generate_insights = AsyncMock(return_value=_make_sample_insights())
 
     # Other services required by create_web_app
     life_os.event_bus = Mock()
@@ -102,8 +101,12 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6,
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
             trend="stable",
         )
     )
@@ -193,13 +196,20 @@ def test_insights_summary_fallback_has_correct_structure(mock_life_os):
     response = client.get("/api/insights/summary")
     data = response.json()
 
-    expected_fields = {"id", "type", "summary", "confidence", "category",
-                       "entity", "evidence", "feedback", "created_at"}
+    expected_fields = {
+        "id",
+        "type",
+        "summary",
+        "confidence",
+        "category",
+        "entity",
+        "evidence",
+        "feedback",
+        "created_at",
+    }
 
     for insight in data["insights"]:
-        assert expected_fields.issubset(set(insight.keys())), (
-            f"Missing fields: {expected_fields - set(insight.keys())}"
-        )
+        assert expected_fields.issubset(set(insight.keys())), f"Missing fields: {expected_fields - set(insight.keys())}"
 
     # Check specific values from the first sample insight
     ins = data["insights"][0]
@@ -216,9 +226,7 @@ def test_insights_summary_fallback_has_correct_structure(mock_life_os):
 def test_insights_summary_returns_empty_when_both_db_and_generate_fail(mock_life_os):
     """/api/insights/summary returns empty list if both DB and generate_insights fail."""
     _corrupt_user_model_db(mock_life_os)
-    mock_life_os.insight_engine.generate_insights = AsyncMock(
-        side_effect=RuntimeError("correlator crashed")
-    )
+    mock_life_os.insight_engine.generate_insights = AsyncMock(side_effect=RuntimeError("correlator crashed"))
 
     app = create_web_app(mock_life_os)
     client = TestClient(app)
@@ -263,13 +271,20 @@ def test_insights_list_fallback_has_correct_structure(mock_life_os):
     response = client.get("/api/insights")
     data = response.json()
 
-    expected_fields = {"id", "type", "summary", "confidence", "category",
-                       "entity", "evidence", "feedback", "created_at"}
+    expected_fields = {
+        "id",
+        "type",
+        "summary",
+        "confidence",
+        "category",
+        "entity",
+        "evidence",
+        "feedback",
+        "created_at",
+    }
 
     for insight in data["insights"]:
-        assert expected_fields.issubset(set(insight.keys())), (
-            f"Missing fields: {expected_fields - set(insight.keys())}"
-        )
+        assert expected_fields.issubset(set(insight.keys())), f"Missing fields: {expected_fields - set(insight.keys())}"
 
 
 def test_insights_list_respects_limit_in_fallback(mock_life_os):
@@ -290,9 +305,7 @@ def test_insights_list_respects_limit_in_fallback(mock_life_os):
 def test_insights_list_returns_empty_when_both_db_and_generate_fail(mock_life_os):
     """/api/insights returns empty list with error if both DB and generate_insights fail."""
     _corrupt_user_model_db(mock_life_os)
-    mock_life_os.insight_engine.generate_insights = AsyncMock(
-        side_effect=RuntimeError("correlator crashed")
-    )
+    mock_life_os.insight_engine.generate_insights = AsyncMock(side_effect=RuntimeError("correlator crashed"))
 
     app = create_web_app(mock_life_os)
     client = TestClient(app)

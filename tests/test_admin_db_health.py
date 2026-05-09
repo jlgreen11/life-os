@@ -21,6 +21,7 @@ from web.app import create_web_app
 # Helpers — build a mock life_os with real or fake DB connections
 # ---------------------------------------------------------------------------
 
+
 def _make_life_os_with_real_db(db: DatabaseManager):
     """Build a mock life_os that uses a real DatabaseManager for DB operations.
 
@@ -44,10 +45,17 @@ def _make_life_os_with_real_db(db: DatabaseManager):
     life_os.vector_store.search = Mock(return_value=[])
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.3, social_battery=0.5,
-        cognitive_load=0.3, emotional_valence=0.5, confidence=0.5, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.5,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
     life_os.notification_manager = Mock()
     life_os.notification_manager.get_stats = Mock(return_value={})
     life_os.notification_manager.get_pending = Mock(return_value=[])
@@ -71,6 +79,7 @@ def _make_life_os_with_real_db(db: DatabaseManager):
 # ---------------------------------------------------------------------------
 # GET /api/admin/db-integrity
 # ---------------------------------------------------------------------------
+
 
 class TestDbIntegrity:
     """Tests for the database integrity check endpoint."""
@@ -173,6 +182,7 @@ class TestDbIntegrity:
 # POST /api/admin/rebuild-user-model
 # ---------------------------------------------------------------------------
 
+
 class TestRebuildUserModel:
     """Tests for the runtime user_model.db rebuild endpoint."""
 
@@ -220,12 +230,7 @@ class TestRebuildUserModel:
             check = conn.execute("PRAGMA quick_check").fetchone()
             assert check[0] == "ok"
             # Verify key tables exist
-            tables = {
-                row[0]
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
             assert "episodes" in tables
             assert "semantic_facts" in tables
             assert "signal_profiles" in tables
@@ -253,10 +258,7 @@ class TestRebuildUserModel:
         assert resp.json()["status"] == "rebuilt"
 
         # Check that a backup file exists (.corrupt. or .corrupted- prefix)
-        backup_files = [
-            f for f in os.listdir(tmp_data_dir)
-            if "user_model.db" in f and ("corrupt" in f.lower())
-        ]
+        backup_files = [f for f in os.listdir(tmp_data_dir) if "user_model.db" in f and ("corrupt" in f.lower())]
         assert len(backup_files) >= 1, f"Expected backup file, found: {os.listdir(tmp_data_dir)}"
 
     def test_rebuild_proceeds_on_blob_probe_corruption(self, db):

@@ -310,10 +310,10 @@ def _compute_confidence(profile: dict[str, Any], occurrences: list[str]) -> floa
         try:
             consistency = float(raw)
         except (TypeError, ValueError):
-            consistency = None
+            pass
         else:
-            consistency = max(0.0, min(1.0, consistency))
-            return min(0.9, 0.4 + consistency * 0.5)
+            clamped = max(0.0, min(1.0, consistency))
+            return min(0.9, 0.4 + clamped * 0.5)
     count = min(len(occurrences), 20)
     return min(0.9, 0.4 + count / 40.0)
 

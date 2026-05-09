@@ -21,6 +21,7 @@ from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTrack
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_surfaced_prediction(db, pred_id: str | None = None, *, hours_ago: float = 2.0) -> str:
     """Insert a surfaced, unresolved reminder prediction into user_model.db.
 
@@ -55,6 +56,7 @@ def _insert_surfaced_prediction(db, pred_id: str | None = None, *, hours_ago: fl
 # ---------------------------------------------------------------------------
 # get_pipeline_health() — cold-start detection
 # ---------------------------------------------------------------------------
+
 
 def test_pipeline_health_initial_state(db):
     """Before any cycles run, health shows zeros and cold_start_detected=False."""
@@ -133,6 +135,7 @@ async def test_pipeline_health_partial_cold_start(db):
 # Cycle stats updated after run_inference_cycle()
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_cycle_stats_updated_after_empty_cycle(db):
     """After an empty cycle, last_cycle_stats includes predictions_queried=0."""
@@ -193,6 +196,7 @@ async def test_total_cycles_increments_per_run(db):
 # INFO log fires on 10th empty cycle
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_info_log_fires_on_10th_empty_cycle(db, caplog):
     """INFO log about idle learning loop fires on the 10th cycle with no predictions."""
@@ -207,8 +211,7 @@ async def test_info_log_fires_on_10th_empty_cycle(db, caplog):
         await tracker.run_inference_cycle()
 
     assert any(
-        "0 surfaced predictions" in record.message
-        and "accuracy learning loop idle" in record.message
+        "0 surfaced predictions" in record.message and "accuracy learning loop idle" in record.message
         for record in caplog.records
     ), "Expected cold-start INFO log on cycle 10, but it was not emitted"
 
@@ -223,7 +226,8 @@ async def test_info_log_does_not_fire_on_first_9_empty_cycles(db, caplog):
             await tracker.run_inference_cycle()
 
     cold_start_logs = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if "0 surfaced predictions" in r.message and "accuracy learning loop idle" in r.message
     ]
     assert len(cold_start_logs) == 0, (
@@ -244,8 +248,7 @@ async def test_info_log_fires_on_20th_empty_cycle(db, caplog):
         await tracker.run_inference_cycle()
 
     assert any(
-        "0 surfaced predictions" in record.message
-        and "accuracy learning loop idle" in record.message
+        "0 surfaced predictions" in record.message and "accuracy learning loop idle" in record.message
         for record in caplog.records
     ), "Expected cold-start INFO log on cycle 20, but it was not emitted"
 
@@ -253,6 +256,7 @@ async def test_info_log_fires_on_20th_empty_cycle(db, caplog):
 # ---------------------------------------------------------------------------
 # predictions_table_count in health
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_predictions_table_count_reflects_resolved_predictions(db):

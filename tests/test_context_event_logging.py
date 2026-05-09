@@ -25,16 +25,16 @@ def mock_life_os():
     life_os.db = Mock()
     mock_conn = Mock()
     mock_conn.execute = Mock()
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
 
     # Event bus — default: working
     life_os.event_bus = Mock()
@@ -53,10 +53,17 @@ def mock_life_os():
     life_os.vector_store.search = Mock(return_value=[])
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.5, social_battery=0.5,
-        cognitive_load=0.5, emotional_valence=0.5, confidence=0.5, trend="stable"
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.5,
+            social_battery=0.5,
+            cognitive_load=0.5,
+            emotional_valence=0.5,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
     life_os.notification_manager = Mock()
     life_os.notification_manager.get_stats = Mock(return_value={"pending": 0, "delivered": 0})
     life_os.notification_manager.get_pending = Mock(return_value=[])
@@ -98,11 +105,14 @@ def test_submit_context_event_returns_200_when_event_bus_fails(client, mock_life
     """Event bus publish failure should not prevent a 200 response."""
     mock_life_os.event_bus.publish = AsyncMock(side_effect=Exception("NATS down"))
 
-    response = client.post("/api/context/event", json={
-        "type": "context.location",
-        "source": "ios_app",
-        "payload": {"latitude": 37.7749, "longitude": -122.4194},
-    })
+    response = client.post(
+        "/api/context/event",
+        json={
+            "type": "context.location",
+            "source": "ios_app",
+            "payload": {"latitude": 37.7749, "longitude": -122.4194},
+        },
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -115,11 +125,14 @@ def test_submit_context_event_logs_warning_on_bus_failure(client, mock_life_os, 
     mock_life_os.event_bus.publish = AsyncMock(side_effect=Exception("NATS connection lost"))
 
     with caplog.at_level(logging.WARNING, logger="web.routes"):
-        client.post("/api/context/event", json={
-            "type": "context.location",
-            "source": "ios_app",
-            "payload": {"latitude": 37.7749, "longitude": -122.4194},
-        })
+        client.post(
+            "/api/context/event",
+            json={
+                "type": "context.location",
+                "source": "ios_app",
+                "payload": {"latitude": 37.7749, "longitude": -122.4194},
+            },
+        )
 
     assert any("Context event bus publish failed" in msg for msg in caplog.messages)
     assert any("context.location" in msg for msg in caplog.messages)
@@ -143,11 +156,14 @@ def test_submit_context_event_logs_warning_on_place_update_failure(mock_life_os,
     client = TestClient(app)
 
     with caplog.at_level(logging.WARNING, logger="web.routes"):
-        response = client.post("/api/context/event", json={
-            "type": "context.location",
-            "source": "ios_app",
-            "payload": {"latitude": 37.7749, "longitude": -122.4194},
-        })
+        response = client.post(
+            "/api/context/event",
+            json={
+                "type": "context.location",
+                "source": "ios_app",
+                "payload": {"latitude": 37.7749, "longitude": -122.4194},
+            },
+        )
 
     assert response.status_code == 200
     assert any("Place update from context event failed" in msg for msg in caplog.messages)
@@ -169,11 +185,14 @@ def test_submit_context_event_logs_warning_on_device_correlation_failure(mock_li
     client = TestClient(app)
 
     with caplog.at_level(logging.WARNING, logger="web.routes"):
-        response = client.post("/api/context/event", json={
-            "type": "context.device_nearby",
-            "source": "ios_app",
-            "payload": {"device_name": "iPhone", "signal_strength": -45},
-        })
+        response = client.post(
+            "/api/context/event",
+            json={
+                "type": "context.device_nearby",
+                "source": "ios_app",
+                "payload": {"device_name": "iPhone", "signal_strength": -45},
+            },
+        )
 
     assert response.status_code == 200
     assert any("Device-contact correlation failed" in msg for msg in caplog.messages)
@@ -187,12 +206,15 @@ def test_submit_context_event_logs_warning_on_device_correlation_failure(mock_li
 
 def test_submit_context_batch_returns_zero_publish_failures_on_success(client, mock_life_os):
     """Batch endpoint should return publish_failures: 0 when all publishes succeed."""
-    response = client.post("/api/context/batch", json={
-        "events": [
-            {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
-            {"type": "context.time", "source": "ios_app", "payload": {}},
-        ],
-    })
+    response = client.post(
+        "/api/context/batch",
+        json={
+            "events": [
+                {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
+                {"type": "context.time", "source": "ios_app", "payload": {}},
+            ],
+        },
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -205,13 +227,16 @@ def test_submit_context_batch_tracks_publish_failures(client, mock_life_os):
     """Batch endpoint should count and return the number of failed publishes."""
     mock_life_os.event_bus.publish = AsyncMock(side_effect=Exception("Bus unavailable"))
 
-    response = client.post("/api/context/batch", json={
-        "events": [
-            {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
-            {"type": "context.device_nearby", "source": "ios_app", "payload": {"device_name": "Watch"}},
-            {"type": "context.time", "source": "ios_app", "payload": {}},
-        ],
-    })
+    response = client.post(
+        "/api/context/batch",
+        json={
+            "events": [
+                {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
+                {"type": "context.device_nearby", "source": "ios_app", "payload": {"device_name": "Watch"}},
+                {"type": "context.time", "source": "ios_app", "payload": {}},
+            ],
+        },
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -234,13 +259,16 @@ def test_submit_context_batch_partial_publish_failures(client, mock_life_os):
 
     mock_life_os.event_bus.publish = AsyncMock(side_effect=fail_on_second)
 
-    response = client.post("/api/context/batch", json={
-        "events": [
-            {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
-            {"type": "context.time", "source": "ios_app", "payload": {}},
-            {"type": "context.location", "source": "ios_app", "payload": {"latitude": 3.0, "longitude": 4.0}},
-        ],
-    })
+    response = client.post(
+        "/api/context/batch",
+        json={
+            "events": [
+                {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
+                {"type": "context.time", "source": "ios_app", "payload": {}},
+                {"type": "context.location", "source": "ios_app", "payload": {"latitude": 3.0, "longitude": 4.0}},
+            ],
+        },
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -253,11 +281,14 @@ def test_submit_context_batch_logs_warning_on_publish_failure(client, mock_life_
     mock_life_os.event_bus.publish = AsyncMock(side_effect=Exception("Bus down"))
 
     with caplog.at_level(logging.WARNING, logger="web.routes"):
-        client.post("/api/context/batch", json={
-            "events": [
-                {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
-            ],
-        })
+        client.post(
+            "/api/context/batch",
+            json={
+                "events": [
+                    {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
+                ],
+            },
+        )
 
     assert any("Context batch event bus publish failed" in msg for msg in caplog.messages)
     assert any("context.location" in msg for msg in caplog.messages)

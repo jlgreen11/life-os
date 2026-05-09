@@ -124,9 +124,7 @@ async def test_direct_prediction_resolution(db, event_store, user_model_store, e
 
     # Resolve directly with custom feedback
     user_model_store.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=True,
-        user_response="Very helpful, thanks!"
+        prediction_id=prediction_id, was_accurate=True, user_response="Very helpful, thanks!"
     )
 
     # Verify prediction is resolved with custom response
@@ -155,9 +153,7 @@ async def test_resolve_prediction_with_false_accuracy(db, event_store, user_mode
 
     # Resolve as inaccurate
     user_model_store.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=False,
-        user_response="False alarm, events are sequential"
+        prediction_id=prediction_id, was_accurate=False, user_response="False alarm, events are sequential"
     )
 
     # Verify
@@ -185,11 +181,7 @@ async def test_resolve_prediction_without_user_response(db, event_store, user_mo
         )
 
     # Resolve with no user_response text
-    user_model_store.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=True,
-        user_response=None
-    )
+    user_model_store.resolve_prediction(prediction_id=prediction_id, was_accurate=True, user_response=None)
 
     # Verify
     with db.get_connection("user_model") as conn:
@@ -217,16 +209,12 @@ async def test_multiple_resolutions_last_write_wins(db, event_store, user_model_
 
     # First resolution: accurate
     user_model_store.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=True,
-        user_response="First resolution"
+        prediction_id=prediction_id, was_accurate=True, user_response="First resolution"
     )
 
     # Second resolution: inaccurate (user changed their mind)
     user_model_store.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=False,
-        user_response="Second resolution"
+        prediction_id=prediction_id, was_accurate=False, user_response="Second resolution"
     )
 
     # Verify last write wins
@@ -282,9 +270,7 @@ async def test_prediction_without_notification_can_be_resolved(db, event_store, 
 
     # Resolve it anyway (e.g., user inspected the full prediction log in admin)
     user_model_store.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=False,
-        user_response="Never saw this, too low confidence"
+        prediction_id=prediction_id, was_accurate=False, user_response="Never saw this, too low confidence"
     )
 
     # Verify
@@ -369,11 +355,7 @@ async def test_resolve_prediction_doesnt_crash_without_event_bus(db, event_store
         )
 
     # Resolve it — should not crash even with no event bus
-    ums.resolve_prediction(
-        prediction_id=prediction_id,
-        was_accurate=True,
-        user_response="Helpful"
-    )
+    ums.resolve_prediction(prediction_id=prediction_id, was_accurate=True, user_response="Helpful")
 
     # Verify prediction is resolved correctly
     with db.get_connection("user_model") as conn:

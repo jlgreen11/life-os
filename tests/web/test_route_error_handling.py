@@ -99,9 +99,7 @@ class TestDraftErrorHandling:
         """When ai_engine.draft_reply() raises, the endpoint returns an error
         object with draft=None instead of a 500."""
         client, life_os = _make_app(db)
-        life_os.ai_engine.draft_reply = AsyncMock(
-            side_effect=RuntimeError("AI engine offline")
-        )
+        life_os.ai_engine.draft_reply = AsyncMock(side_effect=RuntimeError("AI engine offline"))
 
         resp = client.post(
             "/api/draft",

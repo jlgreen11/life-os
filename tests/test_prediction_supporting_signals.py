@@ -34,6 +34,7 @@ from models.user_model import Prediction
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_calendar_event(
     event_id: str,
     title: str,
@@ -46,32 +47,40 @@ def _make_calendar_event(
     The row mimics what sqlite3.Row looks like when accessed by column name.
     """
     row = MagicMock()
-    row.__getitem__ = MagicMock(side_effect=lambda k: {
-        "id": event_id,
-        "type": "calendar.event.created",
-        "payload": json.dumps({
-            "event_id": event_id,
-            "title": title,
-            "start_time": start_iso,
-            "end_time": end_iso,
-            "is_all_day": is_all_day,
-            "attendees": [],
-        }),
-        "timestamp": start_iso,
-    }[k])
-    row.get = MagicMock(side_effect=lambda k, d=None: {
-        "id": event_id,
-        "type": "calendar.event.created",
-        "payload": json.dumps({
-            "event_id": event_id,
-            "title": title,
-            "start_time": start_iso,
-            "end_time": end_iso,
-            "is_all_day": is_all_day,
-            "attendees": [],
-        }),
-        "timestamp": start_iso,
-    }.get(k, d))
+    row.__getitem__ = MagicMock(
+        side_effect=lambda k: {
+            "id": event_id,
+            "type": "calendar.event.created",
+            "payload": json.dumps(
+                {
+                    "event_id": event_id,
+                    "title": title,
+                    "start_time": start_iso,
+                    "end_time": end_iso,
+                    "is_all_day": is_all_day,
+                    "attendees": [],
+                }
+            ),
+            "timestamp": start_iso,
+        }[k]
+    )
+    row.get = MagicMock(
+        side_effect=lambda k, d=None: {
+            "id": event_id,
+            "type": "calendar.event.created",
+            "payload": json.dumps(
+                {
+                    "event_id": event_id,
+                    "title": title,
+                    "start_time": start_iso,
+                    "end_time": end_iso,
+                    "is_all_day": is_all_day,
+                    "attendees": [],
+                }
+            ),
+            "timestamp": start_iso,
+        }.get(k, d)
+    )
     return row
 
 
@@ -93,6 +102,7 @@ def _make_engine(db):
 # ---------------------------------------------------------------------------
 # Conflict predictions: supporting_signals
 # ---------------------------------------------------------------------------
+
 
 class TestConflictPredictionSignals:
     """_check_calendar_conflicts() must populate supporting_signals."""
@@ -175,8 +185,8 @@ class TestConflictPredictionSignals:
 
         # 30-minute overlap
         ev_a_start = (now + timedelta(hours=5)).replace(microsecond=0)
-        ev_a_end = ev_a_start + timedelta(hours=1)          # ends at +6h
-        ev_b_start = ev_a_start + timedelta(minutes=30)     # starts at +5h30m
+        ev_a_end = ev_a_start + timedelta(hours=1)  # ends at +6h
+        ev_b_start = ev_a_start + timedelta(minutes=30)  # starts at +5h30m
         ev_b_end = ev_b_start + timedelta(hours=1)
 
         fake_events = [
@@ -208,7 +218,7 @@ class TestConflictPredictionSignals:
         # 10-minute gap (tight, but no overlap)
         ev_a_start = (now + timedelta(hours=5)).replace(microsecond=0)
         ev_a_end = ev_a_start + timedelta(hours=1)
-        ev_b_start = ev_a_end + timedelta(minutes=10)   # only 10 min gap
+        ev_b_start = ev_a_end + timedelta(minutes=10)  # only 10 min gap
         ev_b_end = ev_b_start + timedelta(hours=1)
 
         fake_events = [
@@ -239,11 +249,11 @@ class TestConflictPredictionSignals:
 # Need predictions: supporting_signals
 # ---------------------------------------------------------------------------
 
+
 class TestNeedPredictionSignals:
     """_check_preparation_needs() must populate supporting_signals."""
 
-    def _make_prep_event(self, event_id: str, title: str, hours_ahead: float,
-                         attendees=None, is_all_day=False):
+    def _make_prep_event(self, event_id: str, title: str, hours_ahead: float, attendees=None, is_all_day=False):
         """Build a fake calendar.event.created row in the 12-48h preparation window."""
         now = datetime.now(timezone.utc)
         start = (now + timedelta(hours=hours_ahead)).replace(microsecond=0)
@@ -257,14 +267,18 @@ class TestNeedPredictionSignals:
             "is_all_day": is_all_day,
             "attendees": attendees or [],
         }
-        row.__getitem__ = MagicMock(side_effect=lambda k: {
-            "id": event_id,
-            "payload": json.dumps(payload),
-        }[k])
-        row.get = MagicMock(side_effect=lambda k, d=None: {
-            "id": event_id,
-            "payload": json.dumps(payload),
-        }.get(k, d))
+        row.__getitem__ = MagicMock(
+            side_effect=lambda k: {
+                "id": event_id,
+                "payload": json.dumps(payload),
+            }[k]
+        )
+        row.get = MagicMock(
+            side_effect=lambda k, d=None: {
+                "id": event_id,
+                "payload": json.dumps(payload),
+            }.get(k, d)
+        )
         return row
 
     @pytest.mark.asyncio
@@ -394,7 +408,9 @@ class TestNeedPredictionSignals:
         """Large meeting predictions include preparation_type='large_meeting'."""
         engine = _make_engine(db)
         fake_event = self._make_prep_event(
-            "meeting-200", "Board Presentation", hours_ahead=24,
+            "meeting-200",
+            "Board Presentation",
+            hours_ahead=24,
             attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com"],
         )
 
@@ -416,6 +432,7 @@ class TestNeedPredictionSignals:
 # Opportunity predictions: supporting_signals
 # ---------------------------------------------------------------------------
 
+
 class TestOpportunityPredictionSignals:
     """_check_relationship_maintenance() must populate supporting_signals."""
 
@@ -424,10 +441,7 @@ class TestOpportunityPredictionSignals:
         now = datetime.now(timezone.utc)
         last_contact = now - timedelta(days=days_since)
         # Create interaction timestamps spanning enough history
-        timestamps = [
-            (now - timedelta(days=days_since + avg_gap * i)).isoformat()
-            for i in range(5)
-        ]
+        timestamps = [(now - timedelta(days=days_since + avg_gap * i)).isoformat() for i in range(5)]
         return {
             addr: {
                 "interaction_count": 6,
@@ -449,9 +463,11 @@ class TestOpportunityPredictionSignals:
             mock_conn.__exit__ = MagicMock(return_value=False)
             # Return a fake relationships signal_profile row
             mock_row = MagicMock()
-            mock_row.__getitem__ = MagicMock(side_effect=lambda k: {
-                "profile_data": json.dumps(profile),
-            }[k])
+            mock_row.__getitem__ = MagicMock(
+                side_effect=lambda k: {
+                    "profile_data": json.dumps(profile),
+                }[k]
+            )
             mock_conn.execute.return_value.fetchone.return_value = mock_row
             mock_ctx.return_value = mock_conn
 
@@ -479,9 +495,11 @@ class TestOpportunityPredictionSignals:
             mock_conn.__enter__ = MagicMock(return_value=mock_conn)
             mock_conn.__exit__ = MagicMock(return_value=False)
             mock_row = MagicMock()
-            mock_row.__getitem__ = MagicMock(side_effect=lambda k: {
-                "profile_data": json.dumps(profile),
-            }[k])
+            mock_row.__getitem__ = MagicMock(
+                side_effect=lambda k: {
+                    "profile_data": json.dumps(profile),
+                }[k]
+            )
             mock_conn.execute.return_value.fetchone.return_value = mock_row
             mock_ctx.return_value = mock_conn
 
@@ -507,9 +525,11 @@ class TestOpportunityPredictionSignals:
             mock_conn.__enter__ = MagicMock(return_value=mock_conn)
             mock_conn.__exit__ = MagicMock(return_value=False)
             mock_row = MagicMock()
-            mock_row.__getitem__ = MagicMock(side_effect=lambda k: {
-                "profile_data": json.dumps(profile),
-            }[k])
+            mock_row.__getitem__ = MagicMock(
+                side_effect=lambda k: {
+                    "profile_data": json.dumps(profile),
+                }[k]
+            )
             mock_conn.execute.return_value.fetchone.return_value = mock_row
             mock_ctx.return_value = mock_conn
 
@@ -535,9 +555,11 @@ class TestOpportunityPredictionSignals:
             mock_conn.__enter__ = MagicMock(return_value=mock_conn)
             mock_conn.__exit__ = MagicMock(return_value=False)
             mock_row = MagicMock()
-            mock_row.__getitem__ = MagicMock(side_effect=lambda k: {
-                "profile_data": json.dumps(profile),
-            }[k])
+            mock_row.__getitem__ = MagicMock(
+                side_effect=lambda k: {
+                    "profile_data": json.dumps(profile),
+                }[k]
+            )
             mock_conn.execute.return_value.fetchone.return_value = mock_row
             mock_ctx.return_value = mock_conn
 
@@ -555,6 +577,7 @@ class TestOpportunityPredictionSignals:
 # ---------------------------------------------------------------------------
 # Integration: signals survive round-trip through storage
 # ---------------------------------------------------------------------------
+
 
 class TestSignalsRoundTrip:
     """Verify supporting_signals are preserved when stored and retrieved."""

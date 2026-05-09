@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
+
 def _routine_trigger_label(trigger: str) -> str:
     """Convert a machine trigger key to a human-readable phrase.
 
@@ -83,12 +84,12 @@ def _routine_trigger_label(trigger: str) -> str:
 
     # "arrive_<location>" → "arrival routine at <location>"
     if trigger.startswith("arrive_"):
-        location = trigger[len("arrive_"):].replace("_", " ")
+        location = trigger[len("arrive_") :].replace("_", " ")
         return f"arrival routine at {location}"
 
     # "after_<event>" → "post-<event> routine"
     if trigger.startswith("after_"):
-        event = trigger[len("after_"):].replace("_", " ")
+        event = trigger[len("after_") :].replace("_", " ")
         return f"post-{event} routine"
 
     # Fallback: use the trigger string verbatim
@@ -98,10 +99,14 @@ def _routine_trigger_label(trigger: str) -> str:
 class InsightEngine:
     """Cross-correlates signal profiles to produce human-readable insights."""
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore,
-                 source_weight_manager: Optional[SourceWeightManager] = None,
-                 timezone: str = "America/Los_Angeles",
-                 cache_ttl_seconds: float = 300.0):
+    def __init__(
+        self,
+        db: DatabaseManager,
+        ums: UserModelStore,
+        source_weight_manager: Optional[SourceWeightManager] = None,
+        timezone: str = "America/Los_Angeles",
+        cache_ttl_seconds: float = 300.0,
+    ):
         self.db = db
         self.ums = ums
         self.swm = source_weight_manager
@@ -227,7 +232,9 @@ class InsightEngine:
                 count = -1
             report[correlator_name] = {
                 "source": f"events({event_type})",
-                "status": "ready" if count >= min_count else ("error" if count < 0 else ("partial" if count > 0 else "no_data")),
+                "status": "ready"
+                if count >= min_count
+                else ("error" if count < 0 else ("partial" if count > 0 else "no_data")),
                 "count": count,
                 "min_required": min_count,
             }
@@ -243,8 +250,11 @@ class InsightEngine:
         empty list here simply means "no new insights computed this call".
         """
         if self._insight_cache_ttl > 0 and (time.monotonic() - self._last_insight_run) < self._insight_cache_ttl:
-            logger.debug("Skipping correlator run — last run %.1fs ago (TTL %.0fs)",
-                         time.monotonic() - self._last_insight_run, self._insight_cache_ttl)
+            logger.debug(
+                "Skipping correlator run — last run %.1fs ago (TTL %.0fs)",
+                time.monotonic() - self._last_insight_run,
+                self._insight_cache_ttl,
+            )
             return []
 
         raw: list[Insight] = []
@@ -364,12 +374,8 @@ class InsightEngine:
         by_type: dict[str, int] = {}
         try:
             with self.db.get_connection("user_model") as conn:
-                total_stored = conn.execute(
-                    "SELECT COUNT(*) FROM insights"
-                ).fetchone()[0]
-                rows = conn.execute(
-                    "SELECT type, COUNT(*) as cnt FROM insights GROUP BY type"
-                ).fetchall()
+                total_stored = conn.execute("SELECT COUNT(*) FROM insights").fetchone()[0]
+                rows = conn.execute("SELECT type, COUNT(*) as cnt FROM insights GROUP BY type").fetchall()
                 by_type = {row["type"]: row["cnt"] for row in rows}
         except Exception as e:
             logger.warning("get_diagnostics: failed to query insights table: %s", e)
@@ -609,9 +615,7 @@ class InsightEngine:
 
         try:
             with self.db.get_connection("entities") as conn:
-                rows = conn.execute(
-                    "SELECT name, visit_count, place_type FROM places WHERE visit_count > 3"
-                ).fetchall()
+                rows = conn.execute("SELECT name, visit_count, place_type FROM places WHERE visit_count > 3").fetchall()
         except Exception:
             return []
 
@@ -721,17 +725,11 @@ class InsightEngine:
                 continue
 
             try:
-                dts = sorted([
-                    datetime.fromisoformat(t.replace("Z", "+00:00"))
-                    for t in timestamps[-10:]
-                ])
+                dts = sorted([datetime.fromisoformat(t.replace("Z", "+00:00")) for t in timestamps[-10:]])
                 # Fractional days: avoids avg_gap=0 for high-frequency contacts
                 # (daily emailers, instant-message threads).  The .days attribute
                 # truncates to integers, turning a 6-hour gap into 0 days.
-                gaps = [
-                    (dts[i + 1] - dts[i]).total_seconds() / 86400
-                    for i in range(len(dts) - 1)
-                ]
+                gaps = [(dts[i + 1] - dts[i]).total_seconds() / 86400 for i in range(len(dts) - 1)]
                 avg_gap = sum(gaps) / len(gaps) if gaps else 30
             except (ValueError, TypeError):
                 avg_gap = 30
@@ -747,11 +745,7 @@ class InsightEngine:
                 # last contact. Last topics: budget-review, q1-planning."
                 # giving the user concrete context about what to follow up on.
                 last_topics = self._get_contact_last_topics(addr)
-                topic_suffix = (
-                    f" Last topics: {', '.join(last_topics)}."
-                    if last_topics
-                    else ""
-                )
+                topic_suffix = f" Last topics: {', '.join(last_topics)}." if last_topics else ""
                 insight = Insight(
                     type="relationship_intelligence",
                     summary=(
@@ -774,8 +768,7 @@ class InsightEngine:
                 insights.append(insight)
 
         logger.debug(
-            "contact_gap_insights: %d insights generated "
-            "(skipped_marketing=%d, skipped_inbound_only=%d)",
+            "contact_gap_insights: %d insights generated (skipped_marketing=%d, skipped_inbound_only=%d)",
             len(insights),
             skipped_marketing,
             skipped_inbound_only,
@@ -845,9 +838,7 @@ class InsightEngine:
 
                     # Compute days since last interaction
                     try:
-                        last_dt = datetime.fromisoformat(
-                            row["last_seen"].replace("Z", "+00:00")
-                        )
+                        last_dt = datetime.fromisoformat(row["last_seen"].replace("Z", "+00:00"))
                         days_since = (now - last_dt).total_seconds() / 86400
                     except (ValueError, TypeError):
                         continue
@@ -878,15 +869,12 @@ class InsightEngine:
                     insights.append(insight)
 
             logger.debug(
-                "contact_gap_insights_from_events: %d insights generated "
-                "(skipped_marketing=%d)",
+                "contact_gap_insights_from_events: %d insights generated (skipped_marketing=%d)",
                 len(insights),
                 skipped_marketing,
             )
         except Exception as e:
-            logger.warning(
-                "contact_gap_insights_from_events fallback failed: %s", e
-            )
+            logger.warning("contact_gap_insights_from_events fallback failed: %s", e)
 
         return insights
 
@@ -1106,8 +1094,7 @@ class InsightEngine:
                     insights.append(insight)
 
         logger.debug(
-            "relationship_intelligence_insights: %d insights generated "
-            "(reciprocity + fast_responder)",
+            "relationship_intelligence_insights: %d insights generated (reciprocity + fast_responder)",
             len(insights),
         )
         return insights
@@ -1164,8 +1151,7 @@ class InsightEngine:
             insight = Insight(
                 type="behavioral_pattern",
                 summary=(
-                    f"Your busiest email day is {busiest_day} "
-                    f"({busiest_count} emails vs ~{int(avg_count)} average)."
+                    f"Your busiest email day is {busiest_day} ({busiest_count} emails vs ~{int(avg_count)} average)."
                 ),
                 confidence=min(0.85, 0.5 + (busiest_count / max(avg_count, 1) - 1.0) * 0.2),
                 evidence=[
@@ -1306,8 +1292,7 @@ class InsightEngine:
             insight = Insight(
                 type="behavioral_pattern",
                 summary=(
-                    f"Your meeting-heaviest day is {peak_day} "
-                    f"({peak_count} meetings vs ~{int(avg_count)} average)"
+                    f"Your meeting-heaviest day is {peak_day} ({peak_count} meetings vs ~{int(avg_count)} average)"
                 ),
                 confidence=min(0.8, 0.45 + (peak_count / max(avg_count, 1) - 1.0) * 0.2),
                 evidence=[
@@ -1388,18 +1373,13 @@ class InsightEngine:
 
         for row in rows:
             try:
-                due_dt = datetime.fromisoformat(
-                    row["due_date"].replace("Z", "+00:00")
-                )
+                due_dt = datetime.fromisoformat(row["due_date"].replace("Z", "+00:00"))
                 hours_until_due = (due_dt - now).total_seconds() / 3600
 
                 if hours_until_due < 0:
                     # Overdue
                     days_overdue = abs(hours_until_due) / 24
-                    summary = (
-                        f"Task '{row['title']}' is overdue "
-                        f"(due {int(days_overdue) + 1} day(s) ago)."
-                    )
+                    summary = f"Task '{row['title']}' is overdue (due {int(days_overdue) + 1} day(s) ago)."
                     # Confidence increases with how overdue the task is,
                     # capped at 0.9 to leave room for very long-overdue tasks.
                     confidence = min(0.9, 0.6 + days_overdue * 0.05)
@@ -1410,10 +1390,7 @@ class InsightEngine:
                     ]
                 else:
                     # Due within 24 hours
-                    summary = (
-                        f"Task '{row['title']}' is due in "
-                        f"{int(hours_until_due) + 1} hour(s)."
-                    )
+                    summary = f"Task '{row['title']}' is due in {int(hours_until_due) + 1} hour(s)."
                     # Higher urgency for tasks due very soon
                     confidence = min(0.85, 0.5 + (24 - hours_until_due) / 24 * 0.3)
                     evidence = [
@@ -1482,9 +1459,7 @@ class InsightEngine:
                 seen_cal_ids.add(event_id)
 
                 # Parse start time
-                start_dt = datetime.fromisoformat(
-                    start_str.replace("Z", "+00:00")
-                )
+                start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
 
                 # Only surface events that start in the future
                 hours_until_start = (start_dt - now).total_seconds() / 3600
@@ -1501,9 +1476,7 @@ class InsightEngine:
                     urgency_label = f"starts in {int(hours_until_start)} hours"
                     confidence = 0.65
 
-                summary = (
-                    f"Upcoming event '{title}' {urgency_label} — consider preparing."
-                )
+                summary = f"Upcoming event '{title}' {urgency_label} — consider preparing."
                 evidence = [
                     f"hours_until_start={int(hours_until_start)}",
                     f"event_id={event_id}",
@@ -1528,8 +1501,7 @@ class InsightEngine:
                 continue
 
         logger.debug(
-            "actionable_alert_insights: %d insights generated "
-            "(tasks=%d, calendar=%d)",
+            "actionable_alert_insights: %d insights generated (tasks=%d, calendar=%d)",
             len(insights),
             sum(1 for i in insights if i.category == "overdue_task"),
             sum(1 for i in insights if i.category == "upcoming_calendar"),
@@ -1788,9 +1760,7 @@ class InsightEngine:
         outbound_profile = self.ums.get_signal_profile("linguistic")
         # Default to 0.5 (neutral baseline) if outbound profile is missing.
         user_formality: float = (
-            outbound_profile["data"].get("averages", {}).get("formality", 0.5)
-            if outbound_profile
-            else 0.5
+            outbound_profile["data"].get("averages", {}).get("formality", 0.5) if outbound_profile else 0.5
         )
 
         per_contact_avgs = inbound_profile["data"].get("per_contact_averages", {})
@@ -1867,10 +1837,13 @@ class InsightEngine:
             "_inbound_style_insights: %d insights generated from %d qualifying contacts "
             "(%d total contacts in inbound profile)",
             len(insights),
-            len([
-                c for c, a in per_contact_avgs.items()
-                if a.get("samples_count", 0) >= 5 and not is_marketing_or_noreply(c)
-            ]),
+            len(
+                [
+                    c
+                    for c, a in per_contact_avgs.items()
+                    if a.get("samples_count", 0) >= 5 and not is_marketing_or_noreply(c)
+                ]
+            ),
             len(per_contact_avgs),
         )
         return insights
@@ -1928,10 +1901,10 @@ class InsightEngine:
             average)."
         """
         # Minimum data requirements to avoid noise from sparse profiles
-        MIN_SAMPLES = 50          # total activity samples required for chronotype
-        MIN_PEAK_ACTIVITY = 10   # events in the busiest hour for a peak-hour insight
-        MIN_DAY_SAMPLES = 30     # total day-level samples for busiest-day insight
-        CHRONOTYPE_RATIO = 1.5   # morning vs evening activity ratio threshold
+        MIN_SAMPLES = 50  # total activity samples required for chronotype
+        MIN_PEAK_ACTIVITY = 10  # events in the busiest hour for a peak-hour insight
+        MIN_DAY_SAMPLES = 30  # total day-level samples for busiest-day insight
+        CHRONOTYPE_RATIO = 1.5  # morning vs evening activity ratio threshold
 
         profile = self.ums.get_signal_profile("temporal")
         if not profile:
@@ -1992,9 +1965,7 @@ class InsightEngine:
                     f"suggesting you're an {description} ({pct}% of windowed activity between {window_label})."
                 )
             else:
-                summary = (
-                    f"Your activity is fairly balanced between morning and evening ({description})."
-                )
+                summary = f"Your activity is fairly balanced between morning and evening ({description})."
 
             insight = Insight(
                 type="temporal_pattern",
@@ -2080,8 +2051,7 @@ class InsightEngine:
                 insights.append(insight)
 
         logger.debug(
-            "temporal_pattern_insights: %d insights generated "
-            "(samples=%d, hours=%d, days=%d)",
+            "temporal_pattern_insights: %d insights generated (samples=%d, hours=%d, days=%d)",
             len(insights),
             total_samples,
             len(activity_by_hour),
@@ -2224,7 +2194,10 @@ class InsightEngine:
 
         logger.debug(
             "mood_trend_insights: trend=%s delta=%.3f recent=%.3f baseline=%.3f",
-            trend, delta, recent_score, baseline_score,
+            trend,
+            delta,
+            recent_score,
+            baseline_score,
         )
         return [insight]
 
@@ -2347,14 +2320,14 @@ class InsightEngine:
                     if amount <= 0:
                         # Income or zero-value event — not a spending transaction
                         continue
-                    result.append({
-                        "amount": amount,
-                        "category": (payload.get("category") or "uncategorized").strip(),
-                        "merchant": (
-                            payload.get("merchant") or payload.get("name") or "unknown"
-                        ).strip(),
-                        "timestamp": row["timestamp"],
-                    })
+                    result.append(
+                        {
+                            "amount": amount,
+                            "category": (payload.get("category") or "uncategorized").strip(),
+                            "merchant": (payload.get("merchant") or payload.get("name") or "unknown").strip(),
+                            "timestamp": row["timestamp"],
+                        }
+                    )
                 except (json.JSONDecodeError, TypeError, KeyError):
                     continue
             return result
@@ -2496,6 +2469,7 @@ class InsightEngine:
             # Rounding to nearest $1 handles minor Plaid rounding differences.
             # month_key = YYYY-MM so each calendar month contributes one hit.
             from collections import defaultdict
+
             bucket_months: dict[tuple[str, int], set[str]] = defaultdict(set)
 
             for txn in sub_txns:
@@ -2505,9 +2479,7 @@ class InsightEngine:
                 merchant = txn["merchant"]
                 rounded_amt = round(txn["amount"])
                 try:
-                    ts = datetime.fromisoformat(
-                        txn["timestamp"].replace("Z", "+00:00")
-                    )
+                    ts = datetime.fromisoformat(txn["timestamp"].replace("Z", "+00:00"))
                     month_key = ts.strftime("%Y-%m")
                 except (ValueError, AttributeError):
                     continue
@@ -2542,8 +2514,7 @@ class InsightEngine:
                 insights.append(insight)
 
         logger.debug(
-            "spending_pattern_insights: %d insights generated "
-            "(recent_txns=%d, prior_txns=%d, sub_txns=%d)",
+            "spending_pattern_insights: %d insights generated (recent_txns=%d, prior_txns=%d, sub_txns=%d)",
             len(insights),
             len(recent_txns),
             len(prior_txns),
@@ -2637,6 +2608,7 @@ class InsightEngine:
         speed_by_domain: dict[str, float] = data.get("decision_speed_by_domain", {})
 
         if len(speed_by_domain) >= 2:
+
             def _speed_label(seconds: float) -> str:
                 """Convert raw seconds into a human-readable speed description."""
                 if seconds < 3600:
@@ -2889,10 +2861,7 @@ class InsightEngine:
 
             insight = Insight(
                 type="behavioral_pattern",
-                summary=(
-                    f"Your most-engaged topics: {topic_list}. "
-                    f"Across {n_total:,} message observations."
-                ),
+                summary=(f"Your most-engaged topics: {topic_list}. Across {n_total:,} message observations."),
                 confidence=confidence,
                 evidence=[
                     f"top_topic={sorted_topics[0][0]}",
@@ -2973,8 +2942,7 @@ class InsightEngine:
                     insights.append(insight)
 
         logger.debug(
-            "topic_interest_insights: %d insights generated "
-            "(unique_topics=%d, recent_entries=%d, samples=%d)",
+            "topic_interest_insights: %d insights generated (unique_topics=%d, recent_entries=%d, samples=%d)",
             len(insights),
             len(topic_counts),
             len(recent_topics),
@@ -3208,10 +3176,7 @@ class InsightEngine:
 
                     insight = Insight(
                         type="behavioral_pattern",
-                        summary=(
-                            f"Your most active communication hours are "
-                            f"{', '.join(hour_labels)}."
-                        ),
+                        summary=(f"Your most active communication hours are {', '.join(hour_labels)}."),
                         confidence=min(0.85, 0.50 + total_counts * 0.002),
                         evidence=[
                             f"top_hours={','.join(h for h, _ in top_3)}",
@@ -3277,8 +3242,7 @@ class InsightEngine:
                     insights.append(insight)
 
         logger.debug(
-            "cadence_response_insights: %d insights generated "
-            "(global_rt_samples=%d, per_contact=%d, hourly_total=%d)",
+            "cadence_response_insights: %d insights generated (global_rt_samples=%d, per_contact=%d, hourly_total=%d)",
             len(insights),
             len(global_rts),
             len(per_contact),
@@ -3513,10 +3477,7 @@ class InsightEngine:
 
             insight = Insight(
                 type="behavioral_pattern",
-                summary=(
-                    f"Your most-visited location is '{display_name}' "
-                    f"({top_visits} visits{dur_str})."
-                ),
+                summary=(f"Your most-visited location is '{display_name}' ({top_visits} visits{dur_str})."),
                 confidence=min(0.85, 0.45 + top_visits * 0.01),
                 evidence=[
                     f"top_location={top_name}",
@@ -3548,27 +3509,18 @@ class InsightEngine:
                 best_work_name = loc_name
 
         if best_work_name and best_work_count >= MIN_WORK_VISITS:
-            display_work = (
-                best_work_name if len(best_work_name) <= 40 else best_work_name[:37] + "…"
-            )
+            display_work = best_work_name if len(best_work_name) <= 40 else best_work_name[:37] + "…"
 
             # Detect home-office pattern: location name contains "home" or common
             # residential keywords in the normalized string.
             home_keywords = {"home", "house", "apartment", "residence", "flat"}
-            is_home_office = (
-                "home" in best_work_name.lower()
-                or best_work_name.lower() in home_keywords
-            )
+            is_home_office = "home" in best_work_name.lower() or best_work_name.lower() in home_keywords
 
             if is_home_office:
-                summary = (
-                    f"You primarily work from home "
-                    f"({best_work_count} work events recorded at '{display_work}')."
-                )
+                summary = f"You primarily work from home ({best_work_count} work events recorded at '{display_work}')."
             else:
                 summary = (
-                    f"Your most frequent work location is '{display_work}' "
-                    f"({best_work_count} work events recorded)."
+                    f"Your most frequent work location is '{display_work}' ({best_work_count} work events recorded)."
                 )
 
             insight = Insight(
@@ -3593,18 +3545,12 @@ class InsightEngine:
         # Sub-insight 3: Location diversity (work vs personal split)
         # ----------------------------------------------------------------
         # Count places the user visits frequently and split by dominant domain.
-        frequent_places = [
-            (name, d)
-            for name, d in place_behaviors.items()
-            if d.get("visit_count", 0) >= MIN_VISITS
-        ]
+        frequent_places = [(name, d) for name, d in place_behaviors.items() if d.get("visit_count", 0) >= MIN_VISITS]
 
         # Only surface when there are at least 2 frequent locations — a single
         # place provides no meaningful "diversity" comparison.
         if len(frequent_places) >= 2:
-            work_count = sum(
-                1 for _, d in frequent_places if d.get("dominant_domain") == "work"
-            )
+            work_count = sum(1 for _, d in frequent_places if d.get("dominant_domain") == "work")
             personal_count = len(frequent_places) - work_count
             n_total = len(frequent_places)
 
@@ -3633,8 +3579,7 @@ class InsightEngine:
             insights.append(insight)
 
         logger.debug(
-            "spatial_insights: %d insights generated "
-            "(total_locations=%d, frequent_locations=%d, total_samples=%d)",
+            "spatial_insights: %d insights generated (total_locations=%d, frequent_locations=%d, total_samples=%d)",
             len(insights),
             len(place_behaviors),
             len([d for d in place_behaviors.values() if d.get("visit_count", 0) >= MIN_VISITS]),
@@ -3743,15 +3688,13 @@ class InsightEngine:
             if name.startswith("Responding to "):
                 # Extract the sender address from the workflow name.
                 # WorkflowDetector formats these as "Responding to <addr>".
-                sender = name[len("Responding to "):]
+                sender = name[len("Responding to ") :]
 
                 # Skip automated/marketing senders — these workflows are
                 # noise (e.g., "Responding to newsletter@company.com" with
                 # success_rate=0.001 because the user never replies).
                 if is_marketing_or_noreply(sender, {}):
-                    logger.debug(
-                        "workflow_pattern_insights: skipping marketing workflow '%s'", name
-                    )
+                    logger.debug("workflow_pattern_insights: skipping marketing workflow '%s'", name)
                     continue
 
                 reply_pct = round(success_rate * 100)
@@ -3797,9 +3740,7 @@ class InsightEngine:
             # up to 0.15 bonus from success_rate.
             confidence = min(
                 0.85,
-                0.50
-                + min(observed, 50) / 50 * 0.20
-                + success_rate * 0.15,
+                0.50 + min(observed, 50) / 50 * 0.20 + success_rate * 0.15,
             )
 
             insight = Insight(
@@ -3824,13 +3765,17 @@ class InsightEngine:
 
         # Sort descending by times_observed so the most-seen workflows
         # appear first in the briefing context.
-        insights.sort(key=lambda i: -(i.evidence and
-                                       int(next((e.split("=")[1] for e in i.evidence
-                                                 if e.startswith("times_observed=")), "0"))))
+        insights.sort(
+            key=lambda i: (
+                -(
+                    i.evidence
+                    and int(next((e.split("=")[1] for e in i.evidence if e.startswith("times_observed=")), "0"))
+                )
+            )
+        )
 
         logger.debug(
-            "workflow_pattern_insights: %d insights generated "
-            "(total_workflows=%d, qualifying=%d)",
+            "workflow_pattern_insights: %d insights generated (total_workflows=%d, qualifying=%d)",
             len(insights),
             len(workflows),
             len(insights),
@@ -3954,59 +3899,55 @@ class InsightEngine:
 
             if status == "error":
                 # Active error state — high severity
-                summary = (
-                    f"{connector_id} connector has been failing since "
-                    f"{last_sync or 'never'}. Error: {last_error}"
-                )
+                summary = f"{connector_id} connector has been failing since {last_sync or 'never'}. Error: {last_error}"
                 dedup_raw = f"actionable_alert:connector_error:{connector_id}"
-                insights.append(Insight(
-                    type="actionable_alert",
-                    summary=summary,
-                    confidence=0.95,
-                    evidence=[
-                        f"connector_id={connector_id}",
-                        f"status={status}",
-                        f"error_count={row['error_count']}",
-                        f"last_error={last_error}",
-                    ],
-                    category="connector_error",
-                    entity=connector_id,
-                    staleness_ttl_hours=24,
-                    dedup_key=hashlib.sha256(dedup_raw.encode()).hexdigest()[:16],
-                    source_key="system.connector_health",
-                ))
+                insights.append(
+                    Insight(
+                        type="actionable_alert",
+                        summary=summary,
+                        confidence=0.95,
+                        evidence=[
+                            f"connector_id={connector_id}",
+                            f"status={status}",
+                            f"error_count={row['error_count']}",
+                            f"last_error={last_error}",
+                        ],
+                        category="connector_error",
+                        entity=connector_id,
+                        staleness_ttl_hours=24,
+                        dedup_key=hashlib.sha256(dedup_raw.encode()).hexdigest()[:16],
+                        source_key="system.connector_health",
+                    )
+                )
             elif last_sync:
                 # Check for silently stalled connectors (> 48h since last sync)
                 try:
-                    sync_dt = datetime.fromisoformat(
-                        last_sync.replace("Z", "+00:00")
-                    )
+                    sync_dt = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
                     hours_since_sync = (now - sync_dt).total_seconds() / 3600
                 except (ValueError, TypeError):
                     # Unparseable timestamp — skip this connector
                     continue
 
                 if hours_since_sync > 48:
-                    summary = (
-                        f"{connector_id} connector has not synced "
-                        f"in {hours_since_sync:.0f} hours"
-                    )
+                    summary = f"{connector_id} connector has not synced in {hours_since_sync:.0f} hours"
                     dedup_raw = f"actionable_alert:connector_stalled:{connector_id}"
-                    insights.append(Insight(
-                        type="actionable_alert",
-                        summary=summary,
-                        confidence=0.8,
-                        evidence=[
-                            f"connector_id={connector_id}",
-                            f"status={status}",
-                            f"hours_since_sync={hours_since_sync:.0f}",
-                        ],
-                        category="connector_stalled",
-                        entity=connector_id,
-                        staleness_ttl_hours=24,
-                        dedup_key=hashlib.sha256(dedup_raw.encode()).hexdigest()[:16],
-                        source_key="system.connector_health",
-                    ))
+                    insights.append(
+                        Insight(
+                            type="actionable_alert",
+                            summary=summary,
+                            confidence=0.8,
+                            evidence=[
+                                f"connector_id={connector_id}",
+                                f"status={status}",
+                                f"hours_since_sync={hours_since_sync:.0f}",
+                            ],
+                            category="connector_stalled",
+                            entity=connector_id,
+                            staleness_ttl_hours=24,
+                            dedup_key=hashlib.sha256(dedup_raw.encode()).hexdigest()[:16],
+                            source_key="system.connector_health",
+                        )
+                    )
 
         return insights
 

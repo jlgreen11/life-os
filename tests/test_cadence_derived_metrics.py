@@ -30,6 +30,7 @@ from services.signal_extractor.cadence import CadenceExtractor
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def extractor(db, user_model_store):
     """CadenceExtractor wired to test databases."""
@@ -140,7 +141,7 @@ def test_quiet_hours_detects_overnight_sleep_window(extractor):
         if 7 <= h <= 21:
             hourly[h] = 50  # Active during the day
         else:
-            hourly[h] = 0   # Silent overnight (22, 23, 0-6)
+            hourly[h] = 0  # Silent overnight (22, 23, 0-6)
     data = _activity_data(hourly)
 
     extractor._compute_quiet_hours(data)
@@ -178,9 +179,7 @@ def test_quiet_hours_midnight_wrapping_detected_as_single_span(extractor):
     extractor._compute_quiet_hours(data)
 
     spans = data.get("quiet_hours_observed", [])
-    assert len(spans) == 1, (
-        "Overnight quiet window crossing midnight should be a single span"
-    )
+    assert len(spans) == 1, "Overnight quiet window crossing midnight should be a single span"
     start, end = spans[0]
     # The span should start in the evening (hour >= 20) and end in the morning
     assert start >= 20 or start == 22
@@ -258,8 +257,8 @@ def test_domain_response_times_computed_from_contact_data(extractor):
     data = _activity_data({})
     # Two contacts from the same gmail.com domain: 5 min + 10 min + 15 min = 10 min avg
     data["per_contact_response_times"] = {
-        "alice@gmail.com": [300.0, 600.0, 900.0],   # 3 samples
-        "bob@gmail.com":   [600.0, 600.0, 600.0],   # 3 samples → avg 600 s
+        "alice@gmail.com": [300.0, 600.0, 900.0],  # 3 samples
+        "bob@gmail.com": [600.0, 600.0, 600.0],  # 3 samples → avg 600 s
         "carol@work.example.com": [7200.0, 3600.0, 5400.0],  # 3 samples
     }
 
@@ -297,7 +296,7 @@ def test_domain_response_times_skips_phone_numbers(extractor):
     """Phone number contact IDs (no '@') should be ignored for domain grouping."""
     data = _activity_data({})
     data["per_contact_response_times"] = {
-        "+15551234567": [60.0, 90.0, 120.0],   # Phone number — skip
+        "+15551234567": [60.0, 90.0, 120.0],  # Phone number — skip
         "alice@email.com": [300.0, 300.0, 300.0],  # Email — include
     }
 
@@ -343,24 +342,28 @@ def test_peak_hours_persisted_after_extract_calls(extractor, event_store, user_m
     # Generate 60 events concentrated at hour 10 and hour 14.
     for i in range(30):
         ts = datetime(2026, 2, 17, 10, i % 60, 0, tzinfo=timezone.utc).isoformat()
-        extractor.extract({
-            "id": f"peak-am-{i}",
-            "type": EventType.EMAIL_SENT.value,
-            "source": "email",
-            "timestamp": ts,
-            "payload": {"to_addresses": ["test@example.com"], "body": "work"},
-            "metadata": {},
-        })
+        extractor.extract(
+            {
+                "id": f"peak-am-{i}",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "email",
+                "timestamp": ts,
+                "payload": {"to_addresses": ["test@example.com"], "body": "work"},
+                "metadata": {},
+            }
+        )
     for i in range(30):
         ts = datetime(2026, 2, 17, 14, i % 60, 0, tzinfo=timezone.utc).isoformat()
-        extractor.extract({
-            "id": f"peak-pm-{i}",
-            "type": EventType.EMAIL_SENT.value,
-            "source": "email",
-            "timestamp": ts,
-            "payload": {"to_addresses": ["test@example.com"], "body": "work"},
-            "metadata": {},
-        })
+        extractor.extract(
+            {
+                "id": f"peak-pm-{i}",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "email",
+                "timestamp": ts,
+                "payload": {"to_addresses": ["test@example.com"], "body": "work"},
+                "metadata": {},
+            }
+        )
 
     profile = user_model_store.get_signal_profile("cadence")
     assert "peak_hours" in profile["data"]
@@ -368,9 +371,7 @@ def test_peak_hours_persisted_after_extract_calls(extractor, event_store, user_m
     assert 14 in profile["data"]["peak_hours"]
 
 
-def test_domain_response_times_persisted_after_extract_calls(
-    extractor, event_store, user_model_store
-):
+def test_domain_response_times_persisted_after_extract_calls(extractor, event_store, user_model_store):
     """avg_response_time_by_domain should appear in profile after enough reply events."""
     base = datetime.now(timezone.utc)
     # Create 3 gmail replies at ~1 hour each and 3 work replies at ~4 hours each.
@@ -388,19 +389,21 @@ def test_domain_response_times_persisted_after_extract_calls(
             "metadata": {},
         }
         event_store.store_event(orig)
-        extractor.extract({
-            "id": f"reply-gmail-{i}",
-            "type": EventType.EMAIL_SENT.value,
-            "source": "email",
-            "timestamp": (base + timedelta(hours=1)).isoformat(),
-            "payload": {
-                "is_reply": True,
-                "in_reply_to": f"gmail-msg-{i}",
-                "to_addresses": [f"friend{i}@gmail.com"],
-                "body": "hey back",
-            },
-            "metadata": {},
-        })
+        extractor.extract(
+            {
+                "id": f"reply-gmail-{i}",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "email",
+                "timestamp": (base + timedelta(hours=1)).isoformat(),
+                "payload": {
+                    "is_reply": True,
+                    "in_reply_to": f"gmail-msg-{i}",
+                    "to_addresses": [f"friend{i}@gmail.com"],
+                    "body": "hey back",
+                },
+                "metadata": {},
+            }
+        )
     for i in range(3):
         orig = {
             "id": f"orig-work-{i}",
@@ -415,19 +418,21 @@ def test_domain_response_times_persisted_after_extract_calls(
             "metadata": {},
         }
         event_store.store_event(orig)
-        extractor.extract({
-            "id": f"reply-work-{i}",
-            "type": EventType.EMAIL_SENT.value,
-            "source": "email",
-            "timestamp": (base + timedelta(hours=4)).isoformat(),
-            "payload": {
-                "is_reply": True,
-                "in_reply_to": f"work-msg-{i}",
-                "to_addresses": [f"colleague{i}@corp.example.com"],
-                "body": "answer",
-            },
-            "metadata": {},
-        })
+        extractor.extract(
+            {
+                "id": f"reply-work-{i}",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "email",
+                "timestamp": (base + timedelta(hours=4)).isoformat(),
+                "payload": {
+                    "is_reply": True,
+                    "in_reply_to": f"work-msg-{i}",
+                    "to_addresses": [f"colleague{i}@corp.example.com"],
+                    "body": "answer",
+                },
+                "metadata": {},
+            }
+        )
 
     profile = user_model_store.get_signal_profile("cadence")
     domains = profile["data"].get("avg_response_time_by_domain", {})
@@ -449,25 +454,29 @@ def test_profile_persisted_even_when_compute_derived_metrics_raises(extractor, u
     """_update_profile should persist raw signal data even if _compute_derived_metrics throws."""
     # First, process one event so the profile exists with some data.
     ts = datetime(2026, 2, 17, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-    extractor.extract({
-        "id": "resilience-1",
-        "type": EventType.EMAIL_SENT.value,
-        "source": "email",
-        "timestamp": ts,
-        "payload": {"to_addresses": ["test@example.com"], "body": "hello"},
-        "metadata": {},
-    })
-
-    # Now make _compute_derived_metrics raise on the next call.
-    with patch.object(extractor, "_compute_derived_metrics", side_effect=RuntimeError("boom")):
-        extractor.extract({
-            "id": "resilience-2",
+    extractor.extract(
+        {
+            "id": "resilience-1",
             "type": EventType.EMAIL_SENT.value,
             "source": "email",
             "timestamp": ts,
-            "payload": {"to_addresses": ["test@example.com"], "body": "hello again"},
+            "payload": {"to_addresses": ["test@example.com"], "body": "hello"},
             "metadata": {},
-        })
+        }
+    )
+
+    # Now make _compute_derived_metrics raise on the next call.
+    with patch.object(extractor, "_compute_derived_metrics", side_effect=RuntimeError("boom")):
+        extractor.extract(
+            {
+                "id": "resilience-2",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "email",
+                "timestamp": ts,
+                "payload": {"to_addresses": ["test@example.com"], "body": "hello again"},
+                "metadata": {},
+            }
+        )
 
     # The profile should still be updated with the raw activity data.
     profile = user_model_store.get_signal_profile("cadence")
@@ -480,14 +489,16 @@ def test_profile_persisted_even_when_compute_derived_metrics_raises(extractor, u
 def test_extract_returns_signals_even_when_update_profile_fails(extractor):
     """extract() should return signals even if _update_profile throws."""
     with patch.object(extractor, "_update_profile", side_effect=RuntimeError("db error")):
-        signals = extractor.extract({
-            "id": "sig-return-1",
-            "type": EventType.EMAIL_SENT.value,
-            "source": "email",
-            "timestamp": datetime(2026, 2, 17, 10, 0, 0, tzinfo=timezone.utc).isoformat(),
-            "payload": {"to_addresses": ["test@example.com"], "body": "test"},
-            "metadata": {},
-        })
+        signals = extractor.extract(
+            {
+                "id": "sig-return-1",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "email",
+                "timestamp": datetime(2026, 2, 17, 10, 0, 0, tzinfo=timezone.utc).isoformat(),
+                "payload": {"to_addresses": ["test@example.com"], "body": "test"},
+                "metadata": {},
+            }
+        )
 
     # Signals should still be returned (at minimum a cadence_activity signal).
     assert len(signals) >= 1
@@ -545,18 +556,20 @@ def test_rebuild_scenario_100_emails_produces_cadence_profile(extractor, user_mo
     base = datetime(2026, 2, 1, 8, 0, 0, tzinfo=timezone.utc)
     for i in range(100):
         ts = (base + timedelta(hours=i % 12, minutes=i % 60)).isoformat()
-        extractor.extract({
-            "id": f"rebuild-{i}",
-            "type": EventType.EMAIL_RECEIVED.value,
-            "source": "email",
-            "timestamp": ts,
-            "payload": {
-                "sender": f"contact{i % 10}@example.com",
-                "subject": f"Subject {i}",
-                "body": f"Message body {i}",
-            },
-            "metadata": {},
-        })
+        extractor.extract(
+            {
+                "id": f"rebuild-{i}",
+                "type": EventType.EMAIL_RECEIVED.value,
+                "source": "email",
+                "timestamp": ts,
+                "payload": {
+                    "sender": f"contact{i % 10}@example.com",
+                    "subject": f"Subject {i}",
+                    "body": f"Message body {i}",
+                },
+                "metadata": {},
+            }
+        )
 
     profile = user_model_store.get_signal_profile("cadence")
     assert profile is not None

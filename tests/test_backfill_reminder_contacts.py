@@ -172,9 +172,7 @@ class TestBackfillReminderContacts:
 
         # Verify database update
         conn = sqlite3.connect(db_path)
-        result = conn.execute(
-            "SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-1",)
-        ).fetchone()
+        result = conn.execute("SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-1",)).fetchone()
         conn.close()
 
         signals = json.loads(result[0])
@@ -210,9 +208,7 @@ class TestBackfillReminderContacts:
         assert stats["name_only"] == 1
 
         conn = sqlite3.connect(db_path)
-        result = conn.execute(
-            "SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-2",)
-        ).fetchone()
+        result = conn.execute("SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-2",)).fetchone()
         conn.close()
 
         signals = json.loads(result[0])
@@ -366,9 +362,7 @@ class TestBackfillReminderContacts:
 
         # Verify database was NOT changed
         conn = sqlite3.connect(db_path)
-        result = conn.execute(
-            "SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-7",)
-        ).fetchone()
+        result = conn.execute("SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-7",)).fetchone()
         conn.close()
 
         assert result[0] == "[]"  # Still the old value
@@ -449,9 +443,7 @@ class TestBackfillReminderContacts:
 
         # Verify original signals are preserved
         conn = sqlite3.connect(db_path)
-        result = conn.execute(
-            "SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-8",)
-        ).fetchone()
+        result = conn.execute("SELECT supporting_signals FROM predictions WHERE id = ?", ("pred-8",)).fetchone()
         conn.close()
 
         assert result[0] == existing_signals

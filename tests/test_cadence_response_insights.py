@@ -171,10 +171,13 @@ def test_fastest_contacts_fires_for_fast_contact(db):
     # Global avg = 4h; alice avg = 1h (25% of global — well below 50% threshold)
     rts_global = [_hours(4.0)] * 15
     per_contact = {"alice@example.com": [_hours(1.0)] * 5}
-    _set_cadence_profile(ums, {
-        "response_times": rts_global,
-        "per_contact_response_times": per_contact,
-    })
+    _set_cadence_profile(
+        ums,
+        {
+            "response_times": rts_global,
+            "per_contact_response_times": per_contact,
+        },
+    )
     insights = engine._cadence_response_insights()
     fast = [i for i in insights if i.category == "fastest_contacts"]
     assert len(fast) == 1
@@ -189,10 +192,13 @@ def test_fastest_contacts_not_fire_when_ratio_above_threshold(db):
     # Global avg = 4h; bob avg = 3h (75% of global — above 50% threshold)
     rts_global = [_hours(4.0)] * 15
     per_contact = {"bob@example.com": [_hours(3.0)] * 5}
-    _set_cadence_profile(ums, {
-        "response_times": rts_global,
-        "per_contact_response_times": per_contact,
-    })
+    _set_cadence_profile(
+        ums,
+        {
+            "response_times": rts_global,
+            "per_contact_response_times": per_contact,
+        },
+    )
     insights = engine._cadence_response_insights()
     fast = [i for i in insights if i.category == "fastest_contacts"]
     assert len(fast) == 0
@@ -205,10 +211,13 @@ def test_fastest_contacts_requires_min_ct_samples(db):
     rts_global = [_hours(4.0)] * 15
     # Only 2 samples for this contact — below MIN_CT_SAMPLES
     per_contact = {"alice@example.com": [_hours(0.5), _hours(0.5)]}
-    _set_cadence_profile(ums, {
-        "response_times": rts_global,
-        "per_contact_response_times": per_contact,
-    })
+    _set_cadence_profile(
+        ums,
+        {
+            "response_times": rts_global,
+            "per_contact_response_times": per_contact,
+        },
+    )
     insights = engine._cadence_response_insights()
     fast = [i for i in insights if i.category == "fastest_contacts"]
     assert len(fast) == 0
@@ -223,10 +232,13 @@ def test_fastest_contacts_filters_marketing_addresses(db):
         "noreply@newsletter.com": [_hours(0.1)] * 5,
         "updates@service.com": [_hours(0.2)] * 5,
     }
-    _set_cadence_profile(ums, {
-        "response_times": rts_global,
-        "per_contact_response_times": per_contact,
-    })
+    _set_cadence_profile(
+        ums,
+        {
+            "response_times": rts_global,
+            "per_contact_response_times": per_contact,
+        },
+    )
     insights = engine._cadence_response_insights()
     fast = [i for i in insights if i.category == "fastest_contacts"]
     assert len(fast) == 0
@@ -241,10 +253,13 @@ def test_fastest_contacts_capped_at_max_contacts(db):
         f"contact{i}@example.com": [_hours(0.5)] * 5
         for i in range(6)  # 6 qualifying contacts
     }
-    _set_cadence_profile(ums, {
-        "response_times": rts_global,
-        "per_contact_response_times": per_contact,
-    })
+    _set_cadence_profile(
+        ums,
+        {
+            "response_times": rts_global,
+            "per_contact_response_times": per_contact,
+        },
+    )
     insights = engine._cadence_response_insights()
     fast = [i for i in insights if i.category == "fastest_contacts"]
     assert len(fast) <= 3
@@ -257,10 +272,13 @@ def test_fastest_contacts_minutes_format_for_sub_hour(db):
     rts_global = [_hours(4.0)] * 15
     # 15-minute avg for alice
     per_contact = {"alice@example.com": [_hours(0.25)] * 5}
-    _set_cadence_profile(ums, {
-        "response_times": rts_global,
-        "per_contact_response_times": per_contact,
-    })
+    _set_cadence_profile(
+        ums,
+        {
+            "response_times": rts_global,
+            "per_contact_response_times": per_contact,
+        },
+    )
     insights = engine._cadence_response_insights()
     fast = [i for i in insights if i.category == "fastest_contacts"]
     assert len(fast) == 1
@@ -325,8 +343,8 @@ def test_channel_cadence_fires_when_gap_substantial(db):
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     per_channel = {
-        "imessage": [_hours(0.25)] * 5,      # 15-minute avg
-        "proton_mail": [_hours(4.0)] * 5,    # 4-hour avg (16× faster)
+        "imessage": [_hours(0.25)] * 5,  # 15-minute avg
+        "proton_mail": [_hours(4.0)] * 5,  # 4-hour avg (16× faster)
     }
     _set_cadence_profile(ums, {"per_channel_response_times": per_channel})
     insights = engine._cadence_response_insights()
@@ -368,7 +386,7 @@ def test_channel_cadence_requires_min_ct_samples_per_channel(db):
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
     per_channel = {
-        "imessage": [_hours(0.25)] * 2,      # Only 2 samples — below threshold
+        "imessage": [_hours(0.25)] * 2,  # Only 2 samples — below threshold
         "proton_mail": [_hours(4.0)] * 5,
     }
     _set_cadence_profile(ums, {"per_channel_response_times": per_channel})
@@ -456,14 +474,34 @@ def test_cadence_categories_in_source_weight_map(db):
     from services.insight_engine.models import Insight
 
     cadence_insights = [
-        Insight(type="behavioral_pattern", summary="avg reply 3h", confidence=0.7,
-                category="response_time_baseline", entity="global_avg"),
-        Insight(type="behavioral_pattern", summary="fast alice", confidence=0.6,
-                category="fastest_contacts", entity="alice@example.com"),
-        Insight(type="behavioral_pattern", summary="peak 9:00", confidence=0.7,
-                category="communication_peak_hours", entity="9_10_14"),
-        Insight(type="behavioral_pattern", summary="imessage fastest", confidence=0.6,
-                category="channel_cadence", entity="imessage:email"),
+        Insight(
+            type="behavioral_pattern",
+            summary="avg reply 3h",
+            confidence=0.7,
+            category="response_time_baseline",
+            entity="global_avg",
+        ),
+        Insight(
+            type="behavioral_pattern",
+            summary="fast alice",
+            confidence=0.6,
+            category="fastest_contacts",
+            entity="alice@example.com",
+        ),
+        Insight(
+            type="behavioral_pattern",
+            summary="peak 9:00",
+            confidence=0.7,
+            category="communication_peak_hours",
+            entity="9_10_14",
+        ),
+        Insight(
+            type="behavioral_pattern",
+            summary="imessage fastest",
+            confidence=0.6,
+            category="channel_cadence",
+            entity="imessage:email",
+        ),
     ]
     weighted = engine._apply_source_weights(cadence_insights)
     # All four should pass the 0.1 confidence threshold with default weights

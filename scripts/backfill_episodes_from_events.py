@@ -30,7 +30,7 @@ import json
 import logging
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add parent directory to path so we can import from the project
@@ -46,23 +46,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Event types that produce episodic memory — mirrors main.py:_create_episode()
-EPISODIC_EVENT_TYPES = frozenset({
-    "email.received", "email.sent",
-    "message.received", "message.sent",
-    "call.received", "call.missed",
-    "calendar.event.created", "calendar.event.updated",
-    "finance.transaction.new",
-    "task.created", "task.completed",
-    "location.changed", "location.arrived", "location.departed",
-    "context.location", "context.activity",
-    "system.user.command",
-})
+EPISODIC_EVENT_TYPES = frozenset(
+    {
+        "email.received",
+        "email.sent",
+        "message.received",
+        "message.sent",
+        "call.received",
+        "call.missed",
+        "calendar.event.created",
+        "calendar.event.updated",
+        "finance.transaction.new",
+        "task.created",
+        "task.completed",
+        "location.changed",
+        "location.arrived",
+        "location.departed",
+        "context.location",
+        "context.activity",
+        "system.user.command",
+    }
+)
 
 # Payload fields that contain large body content — stripped to a short snippet
 # to keep episode content_full compact (mirrors main.py lines 1846-1872)
-_LARGE_FIELDS = frozenset(
-    {"body", "html_body", "raw", "raw_mime", "text_body", "html", "content"}
-)
+_LARGE_FIELDS = frozenset({"body", "html_body", "raw", "raw_mime", "text_body", "html", "content"})
 _SNIPPET_CHARS = 500
 _MAX_TOTAL_CHARS = 4_000
 
@@ -175,9 +183,7 @@ def generate_episode_summary(event_type: str, payload: dict) -> str:
     elif "location" in event_type:
         location = payload.get("location", "Unknown location")
         action = (
-            "arrived at" if "arrived" in event_type
-            else "departed from" if "departed" in event_type
-            else "changed to"
+            "arrived at" if "arrived" in event_type else "departed from" if "departed" in event_type else "changed to"
         )
         return f"Location {action} {location}"[:200]
     elif event_type == "system.user.command":
@@ -231,12 +237,12 @@ def extract_actual_timestamp(payload: dict, event_timestamp: str) -> str:
         The best available timestamp string
     """
     return (
-        payload.get("email_date")       # Google/Proton mail — actual Date header
-        or payload.get("sent_at")       # iMessage, Signal — message send time
-        or payload.get("received_at")   # some connectors — arrival time
-        or payload.get("date")          # generic fallback for older connectors
-        or payload.get("start_time")    # Calendar: actual event start
-        or event_timestamp              # Last resort: sync timestamp
+        payload.get("email_date")  # Google/Proton mail — actual Date header
+        or payload.get("sent_at")  # iMessage, Signal — message send time
+        or payload.get("received_at")  # some connectors — arrival time
+        or payload.get("date")  # generic fallback for older connectors
+        or payload.get("start_time")  # Calendar: actual event start
+        or event_timestamp  # Last resort: sync timestamp
     )
 
 
@@ -346,9 +352,7 @@ def backfill_episodes(
             interaction_type = classify_interaction_type(event_type, payload)
 
             # Track type distribution
-            stats["type_distribution"][interaction_type] = (
-                stats["type_distribution"].get(interaction_type, 0) + 1
-            )
+            stats["type_distribution"][interaction_type] = stats["type_distribution"].get(interaction_type, 0) + 1
 
             # Extract contacts involved
             contacts_involved = []
@@ -367,9 +371,7 @@ def backfill_episodes(
             content_full = build_compact_content(payload)
 
             # Determine the actual event timestamp (not sync timestamp)
-            actual_timestamp = extract_actual_timestamp(
-                payload, event_row["timestamp"]
-            )
+            actual_timestamp = extract_actual_timestamp(payload, event_row["timestamp"])
 
             # Determine active domain from event metadata
             active_domain = metadata.get("domain", "personal")
@@ -404,7 +406,10 @@ def backfill_episodes(
                     stats["episodes_verified"] += batch_verified
                 logger.info(
                     "Progress: %d/%d events processed, %d episodes created, %d verified",
-                    i + 1, len(events), stats["episodes_created"], stats["episodes_verified"],
+                    i + 1,
+                    len(events),
+                    stats["episodes_created"],
+                    stats["episodes_verified"],
                 )
                 pending_episodes = []
 
@@ -526,9 +531,7 @@ def _dict_factory(cursor, row):
 
 def main():
     """CLI entry point for the episode backfill script."""
-    parser = argparse.ArgumentParser(
-        description="Backfill episodes from events.db into user_model.db"
-    )
+    parser = argparse.ArgumentParser(description="Backfill episodes from events.db into user_model.db")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -560,7 +563,7 @@ def main():
     if args.dry_run:
         logger.info("DRY RUN MODE: No changes will be made")
 
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
 
     # Run backfill
     stats = backfill_episodes(
@@ -570,7 +573,7 @@ def main():
         batch_size=args.batch_size,
     )
 
-    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
 
     # Print summary
     logger.info("=" * 60)

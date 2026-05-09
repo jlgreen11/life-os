@@ -31,6 +31,7 @@ from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTrack
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _pred_id() -> str:
     """Generate a unique prediction ID."""
     return str(uuid.uuid4())
@@ -104,6 +105,7 @@ def _insert_event(conn, event_type: str, source: str, timestamp: str, payload: d
 # ===================================================================
 # 1. NEED prediction accuracy inference
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_need_prediction_accurate_when_event_occurs(db, user_model_store):
@@ -194,9 +196,7 @@ async def test_need_prediction_inaccurate_when_event_cancelled(db, user_model_st
     assert stats["marked_inaccurate"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_accurate"] == 0
 
 
@@ -248,9 +248,7 @@ async def test_need_prediction_inaccurate_when_event_rescheduled_far(db, user_mo
     assert stats["marked_inaccurate"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_accurate"] == 0
 
 
@@ -299,6 +297,7 @@ async def test_need_prediction_pending_when_event_not_yet_occurred(db, user_mode
 # ===================================================================
 # 2. CONFLICT prediction accuracy inference (extended)
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_conflict_accurate_when_second_event_rescheduled(db, user_model_store):
@@ -413,6 +412,7 @@ async def test_conflict_no_event_ids_returns_none(db, user_model_store):
 # ===================================================================
 # 3. OPPORTUNITY prediction accuracy inference
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_opportunity_accurate_when_user_contacts_person(db, user_model_store):
@@ -629,9 +629,7 @@ async def test_opportunity_accurate_via_email_sent(db, user_model_store):
     assert stats["marked_accurate"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_accurate"] == 1
 
 
@@ -684,6 +682,7 @@ async def test_opportunity_contact_in_cc_counts_as_accurate(db, user_model_store
 # ===================================================================
 # 4. RISK prediction accuracy inference
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_risk_prediction_accurate_high_spending(db, user_model_store):
@@ -798,6 +797,7 @@ async def test_risk_prediction_extracts_category_from_description(db, user_model
 # 5. Missing supporting_signals edge case
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_null_supporting_signals_does_not_crash(db, user_model_store):
     """Predictions with NULL supporting_signals are handled gracefully."""
@@ -891,6 +891,7 @@ async def test_list_format_supporting_signals_does_not_crash(db, user_model_stor
 # 6. Schema self-repair (_ensure_resolution_reason_column)
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_schema_self_repair_adds_resolution_reason_column(db, user_model_store):
     """Tracker auto-adds resolution_reason column if it's missing."""
@@ -932,6 +933,7 @@ async def test_schema_repair_idempotent_on_multiple_inits(db, user_model_store):
 # ===================================================================
 # 7. Cold-start scenario
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_cold_start_empty_database_returns_zero_stats(db, user_model_store):
@@ -975,6 +977,7 @@ async def test_cold_start_no_events_with_predictions(db, user_model_store):
 # ===================================================================
 # 8. Multiple predictions in single cycle (mixed types)
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_mixed_type_predictions_resolved_independently(db, user_model_store):
@@ -1127,6 +1130,7 @@ async def test_mixed_type_predictions_resolved_independently(db, user_model_stor
 # 9. Automated sender backfill (_backfill_automated_sender_tags)
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_backfill_tags_automated_sender_predictions(db, user_model_store):
     """_backfill_automated_sender_tags tags existing inaccurate automated-sender predictions."""
@@ -1244,6 +1248,7 @@ async def test_backfill_extracts_email_from_description_fallback(db, user_model_
 # 10. Already-resolved predictions are skipped
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_already_resolved_accurate_skipped(db, user_model_store):
     """Predictions already resolved as accurate are not re-evaluated."""
@@ -1277,9 +1282,7 @@ async def test_already_resolved_accurate_skipped(db, user_model_store):
 
     # Verify user_response unchanged (still "acted_on", not "inferred")
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT user_response FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT user_response FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["user_response"] == "acted_on"
 
 
@@ -1371,6 +1374,7 @@ async def test_already_inferred_not_re_evaluated_with_new_evidence(db, user_mode
 # 11. Routine deviation accuracy inference
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_routine_deviation_accurate_when_user_performs_routine(db, user_model_store):
     """Routine deviation is ACCURATE when the user performs expected actions within 2h."""
@@ -1455,9 +1459,7 @@ async def test_routine_deviation_inaccurate_after_4h(db, user_model_store):
     assert stats["marked_inaccurate"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_accurate"] == 0
 
 
@@ -1507,6 +1509,7 @@ async def test_routine_deviation_pending_within_4h(db, user_model_store):
 # 12. Unknown prediction type
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_unknown_prediction_type_returns_none(db, user_model_store):
     """Unknown prediction types are skipped (no resolution, no crash)."""
@@ -1538,6 +1541,7 @@ async def test_unknown_prediction_type_returns_none(db, user_model_store):
 # ===================================================================
 # 13. Filtered predictions (was_surfaced=0) processing
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_filtered_prediction_resolved_when_user_acts(db, user_model_store):
@@ -1578,15 +1582,14 @@ async def test_filtered_prediction_resolved_when_user_acts(db, user_model_store)
     assert stats["filtered"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_accurate"] == 1
 
 
 # ===================================================================
 # 14. Edge: description-based contact extraction for opportunity
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_opportunity_extracts_email_from_description(db, user_model_store):
@@ -1630,6 +1633,7 @@ async def test_opportunity_extracts_email_from_description(db, user_model_store)
 # 15. Resolution reason for normal vs automated sender
 # ===================================================================
 
+
 @pytest.mark.asyncio
 async def test_resolution_reason_none_for_real_contacts(db, user_model_store):
     """Real human contact predictions have resolution_reason = NULL."""
@@ -1659,9 +1663,7 @@ async def test_resolution_reason_none_for_real_contacts(db, user_model_store):
     assert stats["marked_inaccurate"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         # Real contact → no special resolution reason
         assert pred["resolution_reason"] is None
 
@@ -1694,15 +1696,14 @@ async def test_resolution_reason_automated_for_noreply(db, user_model_store):
     assert stats["marked_inaccurate"] == 1
 
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["resolution_reason"] == "automated_sender_fast_path"
 
 
 # ===================================================================
 # 16. Stats dict structure validation
 # ===================================================================
+
 
 @pytest.mark.asyncio
 async def test_stats_dict_has_all_expected_keys(db, user_model_store):

@@ -29,9 +29,9 @@ class NotificationManager:
     """Routes, batches, and delivers notifications intelligently."""
 
     def __init__(self, db: DatabaseManager, event_bus: Any, config: dict, timezone: str = "America/Los_Angeles"):
-        self.db = db          # Database access for notifications and preferences tables
-        self.bus = event_bus   # Event bus for publishing delivery/dismissal events
-        self.config = config   # App-level configuration (not user preferences)
+        self.db = db  # Database access for notifications and preferences tables
+        self.bus = event_bus  # Event bus for publishing delivery/dismissal events
+        self.config = config  # App-level configuration (not user preferences)
         self._tz = ZoneInfo(timezone)
 
     def expire_stale_notifications(self, max_age_hours: int = 48) -> tuple[int, list[str]]:
@@ -59,9 +59,7 @@ class NotificationManager:
             # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             # where %f = SS.SSS (seconds with 3-digit fractional part).
             # Sub-second precision is irrelevant for a 48-hour cutoff.
-            cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).strftime(
-                "%Y-%m-%dT%H:%M:%S.000Z"
-            )
+            cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
             with self.db.get_connection("state") as conn:
                 # Collect IDs before the UPDATE so we can log feedback for each.
                 # Include both 'pending' (immediate-delivery queue) and 'batched'
@@ -145,12 +143,8 @@ class NotificationManager:
         try:
             now = datetime.now(UTC)
             # Cutoff timestamps for each priority tier.
-            normal_cutoff = (now - timedelta(hours=max_pending_hours)).strftime(
-                "%Y-%m-%dT%H:%M:%S.000Z"
-            )
-            high_cutoff = (now - timedelta(hours=high_priority_hours)).strftime(
-                "%Y-%m-%dT%H:%M:%S.000Z"
-            )
+            normal_cutoff = (now - timedelta(hours=max_pending_hours)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+            high_cutoff = (now - timedelta(hours=high_priority_hours)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
             with self.db.get_connection("state") as conn:
                 # Fetch notifications eligible under either threshold.
@@ -172,23 +166,20 @@ class NotificationManager:
             delivered = 0
             for row in rows:
                 try:
-                    await self._deliver_notification(
-                        row["id"], row["title"], row["body"], row["priority"]
-                    )
+                    await self._deliver_notification(row["id"], row["title"], row["body"], row["priority"])
                     # Mark prediction as surfaced so accuracy tracking works.
                     if row["domain"] == "prediction" and row["source_event_id"]:
                         self._mark_prediction_surfaced(row["source_event_id"])
                     delivered += 1
                 except Exception:
-                    logger.warning(
-                        "Failed to auto-deliver notification %s", row["id"], exc_info=True
-                    )
+                    logger.warning("Failed to auto-deliver notification %s", row["id"], exc_info=True)
 
             if delivered:
                 logger.info(
-                    "Auto-delivered %d stale notification(s) (high_priority_hours=%.1f, "
-                    "normal_hours=%.1f)",
-                    delivered, high_priority_hours, max_pending_hours,
+                    "Auto-delivered %d stale notification(s) (high_priority_hours=%.1f, normal_hours=%.1f)",
+                    delivered,
+                    high_priority_hours,
+                    max_pending_hours,
                 )
 
             return delivered
@@ -230,7 +221,10 @@ class NotificationManager:
                 if total >= 3 and dismissed / total >= 0.7:
                     logger.info(
                         "Suppressing notification for domain %s: %d/%d dismissed (%.0f%%)",
-                        domain, dismissed, total, 100 * dismissed / total,
+                        domain,
+                        dismissed,
+                        total,
+                        100 * dismissed / total,
                     )
                     return True
         except Exception:
@@ -238,8 +232,9 @@ class NotificationManager:
 
         return False
 
-    def _log_automatic_feedback(self, action_id: str, action_type: str,
-                                 feedback_type: str, context: dict | None = None):
+    def _log_automatic_feedback(
+        self, action_id: str, action_type: str, feedback_type: str, context: dict | None = None
+    ):
         """
         Log automatic feedback to feedback_log without requiring user interaction.
 
@@ -255,6 +250,7 @@ class NotificationManager:
             context: Optional context dict with metadata about the auto-resolution
         """
         import uuid
+
         feedback_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
 
@@ -369,7 +365,8 @@ class NotificationManager:
         if priority != "critical" and self._check_dismissal_suppression(domain):
             logger.debug(
                 "Notification suppressed by dismissal pattern: %s (domain=%s)",
-                title, domain,
+                title,
+                domain,
             )
             return None
 
@@ -435,8 +432,7 @@ class NotificationManager:
 
         return notif_id
 
-    def _decide_delivery(self, priority: str, domain: str | None,
-                         now: datetime) -> str:
+    def _decide_delivery(self, priority: str, domain: str | None, now: datetime) -> str:
         """
         Decide whether to deliver immediately, batch, or suppress.
 
@@ -501,9 +497,7 @@ class NotificationManager:
         windows (which are specified in local time).
         """
         with self.db.get_connection("preferences") as conn:
-            rows = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            rows = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         if not rows:
             return False
@@ -564,9 +558,7 @@ class NotificationManager:
             'immediate'
         """
         with self.db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'notification_mode'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'notification_mode'").fetchone()
             if not row:
                 logger.info("No notification_mode preference set — defaulting to 'immediate'")
                 return "immediate"
@@ -587,8 +579,7 @@ class NotificationManager:
         # Raw value is already a plain string (e.g. 'frequent' stored directly).
         return raw
 
-    async def _deliver_notification(self, notif_id: str, title: str,
-                                     body: str | None, priority: str):
+    async def _deliver_notification(self, notif_id: str, title: str, body: str | None, priority: str):
         """
         Actually deliver a notification to the user.
 
@@ -680,7 +671,8 @@ class NotificationManager:
             # A corrupt user_model.db should not prevent notifications from reaching the user.
             logger.warning(
                 "Failed to mark prediction %s as surfaced (user_model.db may be corrupted)",
-                prediction_id, exc_info=True,
+                prediction_id,
+                exc_info=True,
             )
 
     def _update_linked_prediction(self, notif_id: str, was_accurate: bool):
@@ -721,7 +713,8 @@ class NotificationManager:
             # mark_acted_on/dismiss should still succeed even if user_model.db is corrupt.
             logger.warning(
                 "Failed to update linked prediction for notification %s (user_model.db may be corrupted)",
-                notif_id, exc_info=True,
+                notif_id,
+                exc_info=True,
             )
 
     async def mark_acted_on(self, notif_id: str):
@@ -744,7 +737,7 @@ class NotificationManager:
             action_id=notif_id,
             action_type="notification",
             feedback_type="engaged",
-            context={"explicit_user_action": True, "action": "acted_on"}
+            context={"explicit_user_action": True, "action": "acted_on"},
         )
 
         if self.bus and self.bus.is_connected:
@@ -771,9 +764,7 @@ class NotificationManager:
         notif_domain = None
         try:
             with self.db.get_connection("state") as conn:
-                notif = conn.execute(
-                    "SELECT domain FROM notifications WHERE id = ?", (notif_id,)
-                ).fetchone()
+                notif = conn.execute("SELECT domain FROM notifications WHERE id = ?", (notif_id,)).fetchone()
                 notif_domain = notif["domain"] if notif else None
         except Exception:
             pass  # Fail-open: missing domain won't break the dismissal log
@@ -922,10 +913,7 @@ class NotificationManager:
         # Both 'pending' and 'batched' are awaiting delivery.
         pending = counts.get("pending", 0) + counts.get("batched", 0)
         # Everything that isn't delivered/expired/pending/batched (read, acted_on, etc.)
-        other = sum(
-            v for k, v in counts.items()
-            if k not in ("delivered", "expired", "pending", "batched")
-        )
+        other = sum(v for k, v in counts.items() if k not in ("delivered", "expired", "pending", "batched"))
         total_created = delivered + expired + pending + other
         delivery_rate = delivered / total_created if total_created > 0 else 0.0
 
@@ -1055,7 +1043,8 @@ class NotificationManager:
                 # was already resolved or not.
                 logger.warning(
                     "Failed to auto-resolve stale prediction %s (user_model.db may be corrupted)",
-                    prediction_id, exc_info=True,
+                    prediction_id,
+                    exc_info=True,
                 )
 
             # Only log automatic feedback when we actually resolved the prediction.
@@ -1067,7 +1056,7 @@ class NotificationManager:
                     action_id=notif["id"],
                     action_type="notification",
                     feedback_type="dismissed",
-                    context={"auto_resolved": True, "reason": "ignored", "timeout_hours": timeout_hours}
+                    context={"auto_resolved": True, "reason": "ignored", "timeout_hours": timeout_hours},
                 )
 
             # Always mark the notification as expired so it doesn't clutter the UI,
@@ -1120,9 +1109,7 @@ class NotificationManager:
         # --- Status counts ---
         try:
             with self.db.get_connection("state") as conn:
-                rows = conn.execute(
-                    "SELECT status, COUNT(*) as cnt FROM notifications GROUP BY status"
-                ).fetchall()
+                rows = conn.execute("SELECT status, COUNT(*) as cnt FROM notifications GROUP BY status").fetchall()
             diagnostics["status_counts"] = {row["status"]: row["cnt"] for row in rows}
             # Derive batch depth from the 'batched' status bucket (DB-backed, crash-safe).
             diagnostics["db_batch_depth"] = diagnostics["status_counts"].get("batched", 0)
@@ -1179,12 +1166,8 @@ class NotificationManager:
         # --- Domain breakdown ---
         try:
             with self.db.get_connection("state") as conn:
-                rows = conn.execute(
-                    "SELECT domain, COUNT(*) as cnt FROM notifications GROUP BY domain"
-                ).fetchall()
-            diagnostics["domain_breakdown"] = {
-                (row["domain"] or "unknown"): row["cnt"] for row in rows
-            }
+                rows = conn.execute("SELECT domain, COUNT(*) as cnt FROM notifications GROUP BY domain").fetchall()
+            diagnostics["domain_breakdown"] = {(row["domain"] or "unknown"): row["cnt"] for row in rows}
         except Exception:
             logger.warning("Diagnostics: failed to query domain breakdown", exc_info=True)
 
@@ -1232,8 +1215,7 @@ class NotificationManager:
         if pending_count > 50:
             diagnostics["health"] = "degraded"
             recommendations.append(
-                f"{pending_count} pending notifications — batch queue may be stuck. "
-                "Check digest delivery schedule."
+                f"{pending_count} pending notifications — batch queue may be stuck. Check digest delivery schedule."
             )
 
         if oldest_hours is not None and oldest_hours > 48:

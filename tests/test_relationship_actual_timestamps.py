@@ -21,9 +21,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 
-def test_relationship_extractor_uses_email_date_not_sync_time(
-    db, user_model_store
-):
+def test_relationship_extractor_uses_email_date_not_sync_time(db, user_model_store):
     """
     Verify relationship extractor uses actual email Date header timestamp.
 
@@ -114,14 +112,10 @@ def test_relationship_extractor_uses_email_date_not_sync_time(
     assert len(timestamps) == 3, "Should have 3 timestamp entries"
 
     # Parse timestamps for comparison
-    ts_dates = [
-        datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        for ts in timestamps
-    ]
+    ts_dates = [datetime.fromisoformat(ts.replace("Z", "+00:00")) for ts in timestamps]
 
     # Verify they're in ascending order (oldest first)
-    assert ts_dates[0] < ts_dates[1] < ts_dates[2], \
-        "Timestamps should be chronologically ordered"
+    assert ts_dates[0] < ts_dates[1] < ts_dates[2], "Timestamps should be chronologically ordered"
 
     # Verify actual dates are used (not all collapsed to sync time)
     # Gap 1 → 2: ~16 days
@@ -129,18 +123,14 @@ def test_relationship_extractor_uses_email_date_not_sync_time(
     gap1 = (ts_dates[1] - ts_dates[0]).days
     gap2 = (ts_dates[2] - ts_dates[1]).days
 
-    assert 15 <= gap1 <= 17, \
-        f"First gap should be ~16 days, got {gap1}"
-    assert 6 <= gap2 <= 8, \
-        f"Second gap should be ~7 days, got {gap2}"
+    assert 15 <= gap1 <= 17, f"First gap should be ~16 days, got {gap1}"
+    assert 6 <= gap2 <= 8, f"Second gap should be ~7 days, got {gap2}"
 
     # WITHOUT the fix, all gaps would be ~0 days (same sync time)
     # This would break relationship maintenance predictions
 
 
-def test_message_connector_uses_sent_at_timestamp(
-    db, user_model_store
-):
+def test_message_connector_uses_sent_at_timestamp(db, user_model_store):
     """
     Verify relationship extractor uses message sent_at/received_at timestamps.
 
@@ -197,19 +187,13 @@ def test_message_connector_uses_sent_at_timestamp(
 
     # Verify timestamps use actual message times (not sync time)
     timestamps = bob["interaction_timestamps"]
-    ts_dates = [
-        datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        for ts in timestamps
-    ]
+    ts_dates = [datetime.fromisoformat(ts.replace("Z", "+00:00")) for ts in timestamps]
 
     gap = (ts_dates[1] - ts_dates[0]).days
-    assert 3 <= gap <= 5, \
-        f"Gap should be ~4 days (Feb 10 → Feb 14), got {gap}"
+    assert 3 <= gap <= 5, f"Gap should be ~4 days (Feb 10 → Feb 14), got {gap}"
 
 
-def test_fallback_to_sync_time_when_no_actual_timestamp(
-    db, user_model_store
-):
+def test_fallback_to_sync_time_when_no_actual_timestamp(db, user_model_store):
     """
     Verify extractor falls back to sync timestamp when no actual date available.
 
@@ -248,13 +232,10 @@ def test_fallback_to_sync_time_when_no_actual_timestamp(
 
     # Should use event.timestamp as fallback
     assert len(timestamps) == 1
-    assert timestamps[0] == "2026-02-16T10:00:00+00:00", \
-        "Should fall back to event timestamp"
+    assert timestamps[0] == "2026-02-16T10:00:00+00:00", "Should fall back to event timestamp"
 
 
-def test_relationship_maintenance_predictions_after_fix(
-    db, user_model_store
-):
+def test_relationship_maintenance_predictions_after_fix(db, user_model_store):
     """
     Integration test: Verify relationship maintenance predictions work correctly.
 
@@ -288,60 +269,66 @@ def test_relationship_maintenance_predictions_after_fix(
     events = []
     for i in range(10):
         interaction_date = base_date + timedelta(days=i * 14)
-        events.append({
-            "id": f"email-{i}",
-            "type": "email.received",
-            "source": "google",
-            "timestamp": sync_time,  # All synced at once
-            "payload": {
-                "from_address": "dave@example.com",
-                "to_addresses": ["user@example.com"],
-                "subject": f"Email {i}",
-                "body": "Regular check-in",
-                "channel": "google",
-                "email_date": interaction_date.isoformat(),
-            },
-        })
+        events.append(
+            {
+                "id": f"email-{i}",
+                "type": "email.received",
+                "source": "google",
+                "timestamp": sync_time,  # All synced at once
+                "payload": {
+                    "from_address": "dave@example.com",
+                    "to_addresses": ["user@example.com"],
+                    "subject": f"Email {i}",
+                    "body": "Regular check-in",
+                    "channel": "google",
+                    "email_date": interaction_date.isoformat(),
+                },
+            }
+        )
 
     # Last interaction: 30 days before sync_time (2x overdue for 14-day frequency).
     # Use sync_time as the reference point (not datetime.now()) so the test is
     # deterministic regardless of when it runs — datetime.now() drifts daily
     # and causes the average-gap assertion to fail as the real calendar advances.
     sync_time_dt = datetime.fromisoformat(sync_time)
-    events.append({
-        "id": "email-last",
-        "type": "email.received",
-        "source": "google",
-        "timestamp": sync_time,
-        "payload": {
-            "from_address": "dave@example.com",
-            "to_addresses": ["user@example.com"],
-            "subject": "Last email",
-            "body": "Long time no talk",
-            "channel": "google",
-            "email_date": (sync_time_dt - timedelta(days=30)).isoformat(),
-        },
-    })
+    events.append(
+        {
+            "id": "email-last",
+            "type": "email.received",
+            "source": "google",
+            "timestamp": sync_time,
+            "payload": {
+                "from_address": "dave@example.com",
+                "to_addresses": ["user@example.com"],
+                "subject": "Last email",
+                "body": "Long time no talk",
+                "channel": "google",
+                "email_date": (sync_time_dt - timedelta(days=30)).isoformat(),
+            },
+        }
+    )
 
     # Extract a single outbound event FIRST so Dave is marked as a bidirectional
     # contact (passes the inbound-only filter added in iteration 187).  We process
     # it before the inbound events so it lands at position 0 in the ring buffer;
     # the last-10 slice used by the avg-gap assertion then contains only the
     # regular 14-day inbound entries, preserving the expected gap pattern.
-    extractor.extract({
-        "id": "dave-outbound-0",
-        "type": "email.sent",
-        "source": "google",
-        "timestamp": sync_time,
-        "payload": {
-            "from_address": "user@example.com",
-            "to_addresses": ["dave@example.com"],
-            "subject": "Re: Earlier check-in",
-            "body": "Thanks Dave",
-            "channel": "google",
-            "email_date": (base_date - timedelta(days=30)).isoformat(),
-        },
-    })
+    extractor.extract(
+        {
+            "id": "dave-outbound-0",
+            "type": "email.sent",
+            "source": "google",
+            "timestamp": sync_time,
+            "payload": {
+                "from_address": "user@example.com",
+                "to_addresses": ["dave@example.com"],
+                "subject": "Re: Earlier check-in",
+                "body": "Thanks Dave",
+                "channel": "google",
+                "email_date": (base_date - timedelta(days=30)).isoformat(),
+            },
+        }
+    )
 
     # Process all inbound events
     for event in events:
@@ -367,40 +354,34 @@ def test_relationship_maintenance_predictions_after_fix(
     gaps = [(ts_dates[i + 1] - ts_dates[i]).days for i in range(len(ts_dates) - 1)]
     avg_gap = sum(gaps) / len(gaps) if gaps else 0
 
-    assert 12 <= avg_gap <= 20, \
-        f"Average gap should be ~14-17 days (anchored to sync_time), got {avg_gap:.1f}"
+    assert 12 <= avg_gap <= 20, f"Average gap should be ~14-17 days (anchored to sync_time), got {avg_gap:.1f}"
 
     # Run prediction engine
     import asyncio
+
     predictions = asyncio.run(engine.generate_predictions({}))
 
     # Filter to relationship maintenance predictions for Dave
     # Description now uses resolved contact name (may be title-cased via entities.db lookup)
-    dave_preds = [
-        p for p in predictions
-        if p.prediction_type == "opportunity"
-        and "dave" in p.description.lower()
-    ]
+    dave_preds = [p for p in predictions if p.prediction_type == "opportunity" and "dave" in p.description.lower()]
 
-    assert len(dave_preds) > 0, \
-        "Should generate relationship maintenance prediction for Dave (30 days overdue)"
+    assert len(dave_preds) > 0, "Should generate relationship maintenance prediction for Dave (30 days overdue)"
 
     pred = dave_preds[0]
-    assert pred.confidence > 0.3, \
-        f"Confidence should be > 0.3 for 2x overdue contact, got {pred.confidence:.2f}"
+    assert pred.confidence > 0.3, f"Confidence should be > 0.3 for 2x overdue contact, got {pred.confidence:.2f}"
 
     # The description should mention a humanized duration since last contact.
     # The prediction engine uses _humanize_duration() for coarse time buckets
     # to enable dedup stability.
-    assert "It's been" in pred.description, \
+    assert "It's been" in pred.description, (
         f"Description should mention time since last contact, got: {pred.description}"
-    assert pred.supporting_signals.get("days_since_last_contact", 0) > 0, \
+    )
+    assert pred.supporting_signals.get("days_since_last_contact", 0) > 0, (
         "Supporting signals should include positive days_since_last_contact"
+    )
 
 
-def test_multiple_contacts_different_frequencies(
-    db, user_model_store
-):
+def test_multiple_contacts_different_frequencies(db, user_model_store):
     """
     Verify the fix works correctly with multiple contacts at different frequencies.
 
@@ -421,98 +402,106 @@ def test_multiple_contacts_different_frequencies(
     # Alice: 10 daily interactions, last one today
     for i in range(10):
         interaction_date = now - timedelta(days=9 - i)
-        extractor.extract({
-            "id": f"alice-{i}",
-            "type": "email.received",
-            "source": "google",
-            "timestamp": sync_time,
-            "payload": {
-                "from_address": "alice@example.com",
-                "to_addresses": ["user@example.com"],
-                "subject": "Daily check-in",
-                "body": "Hi",
-                "channel": "google",
-                "email_date": interaction_date.isoformat(),
-            },
-        })
+        extractor.extract(
+            {
+                "id": f"alice-{i}",
+                "type": "email.received",
+                "source": "google",
+                "timestamp": sync_time,
+                "payload": {
+                    "from_address": "alice@example.com",
+                    "to_addresses": ["user@example.com"],
+                    "subject": "Daily check-in",
+                    "body": "Hi",
+                    "channel": "google",
+                    "email_date": interaction_date.isoformat(),
+                },
+            }
+        )
 
     # Bob: 5 weekly interactions (4 inbound + 1 outbound reply), last one 14 days ago (2x overdue).
     # The outbound event is required so Bob registers as a bidirectional contact and
     # passes the inbound-only filter added in iteration 187.
     for i in range(4):
         interaction_date = now - timedelta(days=14 + (3 - i) * 7)
-        extractor.extract({
-            "id": f"bob-{i}",
-            "type": "email.received",
+        extractor.extract(
+            {
+                "id": f"bob-{i}",
+                "type": "email.received",
+                "source": "google",
+                "timestamp": sync_time,
+                "payload": {
+                    "from_address": "bob@example.com",
+                    "to_addresses": ["user@example.com"],
+                    "subject": "Weekly update",
+                    "body": "Hello",
+                    "channel": "google",
+                    "email_date": interaction_date.isoformat(),
+                },
+            }
+        )
+    # Bob outbound — user replied to Bob (establishes bidirectionality)
+    extractor.extract(
+        {
+            "id": "bob-outbound-0",
+            "type": "email.sent",
             "source": "google",
             "timestamp": sync_time,
             "payload": {
-                "from_address": "bob@example.com",
-                "to_addresses": ["user@example.com"],
-                "subject": "Weekly update",
-                "body": "Hello",
+                "from_address": "user@example.com",
+                "to_addresses": ["bob@example.com"],
+                "subject": "Re: Weekly update",
+                "body": "Thanks Bob",
                 "channel": "google",
-                "email_date": interaction_date.isoformat(),
+                "email_date": (now - timedelta(days=35)).isoformat(),
             },
-        })
-    # Bob outbound — user replied to Bob (establishes bidirectionality)
-    extractor.extract({
-        "id": "bob-outbound-0",
-        "type": "email.sent",
-        "source": "google",
-        "timestamp": sync_time,
-        "payload": {
-            "from_address": "user@example.com",
-            "to_addresses": ["bob@example.com"],
-            "subject": "Re: Weekly update",
-            "body": "Thanks Bob",
-            "channel": "google",
-            "email_date": (now - timedelta(days=35)).isoformat(),
-        },
-    })
+        }
+    )
 
     # Carol: 5 monthly interactions (4 inbound + 1 outbound reply), last one 60 days ago (2x overdue).
     # The outbound event establishes Carol as a bidirectional contact.
     for i in range(4):
         interaction_date = now - timedelta(days=60 + (3 - i) * 30)
-        extractor.extract({
-            "id": f"carol-{i}",
-            "type": "email.received",
+        extractor.extract(
+            {
+                "id": f"carol-{i}",
+                "type": "email.received",
+                "source": "google",
+                "timestamp": sync_time,
+                "payload": {
+                    "from_address": "carol@example.com",
+                    "to_addresses": ["user@example.com"],
+                    "subject": "Monthly catch-up",
+                    "body": "Hi there",
+                    "channel": "google",
+                    "email_date": interaction_date.isoformat(),
+                },
+            }
+        )
+    # Carol outbound — user replied to Carol (establishes bidirectionality)
+    extractor.extract(
+        {
+            "id": "carol-outbound-0",
+            "type": "email.sent",
             "source": "google",
             "timestamp": sync_time,
             "payload": {
-                "from_address": "carol@example.com",
-                "to_addresses": ["user@example.com"],
-                "subject": "Monthly catch-up",
-                "body": "Hi there",
+                "from_address": "user@example.com",
+                "to_addresses": ["carol@example.com"],
+                "subject": "Re: Monthly catch-up",
+                "body": "Great to hear from you",
                 "channel": "google",
-                "email_date": interaction_date.isoformat(),
+                "email_date": (now - timedelta(days=90)).isoformat(),
             },
-        })
-    # Carol outbound — user replied to Carol (establishes bidirectionality)
-    extractor.extract({
-        "id": "carol-outbound-0",
-        "type": "email.sent",
-        "source": "google",
-        "timestamp": sync_time,
-        "payload": {
-            "from_address": "user@example.com",
-            "to_addresses": ["carol@example.com"],
-            "subject": "Re: Monthly catch-up",
-            "body": "Great to hear from you",
-            "channel": "google",
-            "email_date": (now - timedelta(days=90)).isoformat(),
-        },
-    })
+        }
+    )
 
     # Run predictions
     import asyncio
+
     predictions = asyncio.run(engine.generate_predictions({}))
 
-    maintenance_preds = [
-        p for p in predictions
-        if p.prediction_type == "opportunity"
-    ]
+    maintenance_preds = [p for p in predictions if p.prediction_type == "opportunity"]
 
     # Extract contact names from predictions (descriptions now use resolved names, not emails)
     contacts_with_preds = set()
@@ -527,13 +516,10 @@ def test_multiple_contacts_different_frequencies(
             contacts_with_preds.add("carol")
 
     # Alice should NOT have prediction (contacted today, avg=1 day, threshold=1.5 days)
-    assert "alice" not in contacts_with_preds, \
-        "Alice should not trigger prediction (contacted today)"
+    assert "alice" not in contacts_with_preds, "Alice should not trigger prediction (contacted today)"
 
     # Bob SHOULD have prediction (14 days ago, avg=7 days, threshold=10.5 days)
-    assert "bob" in contacts_with_preds, \
-        "Bob should trigger prediction (14 days > 10.5 day threshold)"
+    assert "bob" in contacts_with_preds, "Bob should trigger prediction (14 days > 10.5 day threshold)"
 
     # Carol SHOULD have prediction (60 days ago, avg=30 days, threshold=45 days)
-    assert "carol" in contacts_with_preds, \
-        "Carol should trigger prediction (60 days > 45 day threshold)"
+    assert "carol" in contacts_with_preds, "Carol should trigger prediction (60 days > 45 day threshold)"

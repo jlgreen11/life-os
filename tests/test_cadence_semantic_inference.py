@@ -30,6 +30,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _set_cadence_profile(ums, data: dict, sample_count: int = 500) -> None:
     """Store *data* as the cadence signal profile with *sample_count* samples.
 
@@ -54,17 +55,21 @@ def _get_facts_dict(ums, category: str = None) -> dict[str, dict]:
 # peak_hours inference
 # ---------------------------------------------------------------------------
 
+
 class TestPeakHoursInference:
     """Verify peak_communication_hours fact is generated from peak_hours list."""
 
     def test_peak_hours_list_generates_fact(self, user_model_store):
         """When cadence profile contains peak_hours with >=2 entries, a fact is stored."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"9": 50, "10": 60, "11": 55, "14": 20, "22": 5},
-            "peak_hours": [9, 10, 11],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"9": 50, "10": 60, "11": 55, "14": 20, "22": 5},
+                "peak_hours": [9, 10, 11],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -79,18 +84,19 @@ class TestPeakHoursInference:
         stored_value = fact["value"]
         if isinstance(stored_value, str):
             stored_value = json.loads(stored_value)
-        assert stored_value == [9, 10, 11], (
-            "peak_communication_hours value should exactly match the peak_hours list"
-        )
+        assert stored_value == [9, 10, 11], "peak_communication_hours value should exactly match the peak_hours list"
 
     def test_peak_hours_confidence_scales_with_count(self, user_model_store):
         """Confidence should increase as more peak hours are found (more consistent pattern)."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -99,18 +105,19 @@ class TestPeakHoursInference:
         assert "peak_communication_hours" in facts
         confidence = facts["peak_communication_hours"]["confidence"]
         # 9 peak hours * 0.04 + 0.5 = 0.86, capped at 0.9
-        assert confidence >= 0.85, (
-            f"9 peak hours should yield confidence >= 0.85, got {confidence}"
-        )
+        assert confidence >= 0.85, f"9 peak hours should yield confidence >= 0.85, got {confidence}"
 
     def test_single_peak_hour_suppressed(self, user_model_store):
         """A peak_hours list with only 1 entry should NOT generate a fact (too noisy)."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"10": 100, "14": 10},
-            "peak_hours": [10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"10": 100, "14": 10},
+                "peak_hours": [10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -122,12 +129,15 @@ class TestPeakHoursInference:
 
     def test_empty_peak_hours_suppressed(self, user_model_store):
         """An empty peak_hours list should not generate any fact."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"10": 30, "11": 35},
-            "peak_hours": [],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"10": 30, "11": 35},
+                "peak_hours": [],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -140,17 +150,21 @@ class TestPeakHoursInference:
 # quiet_hours_observed inference
 # ---------------------------------------------------------------------------
 
+
 class TestQuietHoursInference:
     """Verify observed_quiet_window fact is generated from quiet_hours_observed."""
 
     def test_sleep_window_generates_fact(self, user_model_store):
         """A standard overnight quiet window (22:00-06:00) should produce an observed_quiet_window fact."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"9": 50, "10": 60},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [[22, 6]],   # midnight-crossing window
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"9": 50, "10": 60},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [[22, 6]],  # midnight-crossing window
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -166,12 +180,15 @@ class TestQuietHoursInference:
 
     def test_quiet_window_confidence_scales_with_span(self, user_model_store):
         """Longer quiet windows should yield higher confidence (more reliable sleep signal)."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [10, 11],
-            "quiet_hours_observed": [[23, 7]],   # 8-hour window
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [10, 11],
+                "quiet_hours_observed": [[23, 7]],  # 8-hour window
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -184,18 +201,23 @@ class TestQuietHoursInference:
         # We need a fresh store to avoid re-confirmation incrementing confidence
         from storage.manager import DatabaseManager
         import tempfile, os
+
         tmp_dir = tempfile.mkdtemp()
         fresh_db = DatabaseManager(data_dir=tmp_dir)
         fresh_db.initialize_all()
         from storage.user_model_store import UserModelStore
+
         fresh_ums = UserModelStore(fresh_db)
 
-        _set_cadence_profile(fresh_ums, {
-            "hourly_activity": {},
-            "peak_hours": [10, 11],
-            "quiet_hours_observed": [[2, 5]],   # 3-hour window (minimum)
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            fresh_ums,
+            {
+                "hourly_activity": {},
+                "peak_hours": [10, 11],
+                "quiet_hours_observed": [[2, 5]],  # 3-hour window (minimum)
+                "avg_response_time_by_domain": {},
+            },
+        )
         SemanticFactInferrer(fresh_ums).infer_from_cadence_profile()
         fresh_facts = _get_facts_dict(fresh_ums)
         if "observed_quiet_window" in fresh_facts:
@@ -206,12 +228,15 @@ class TestQuietHoursInference:
 
     def test_short_quiet_window_suppressed(self, user_model_store):
         """A quiet window shorter than 3 hours should NOT produce a fact (too noisy)."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [10, 11],
-            "quiet_hours_observed": [[3, 5]],   # 2-hour span: below minimum threshold
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [10, 11],
+                "quiet_hours_observed": [[3, 5]],  # 2-hour span: below minimum threshold
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -223,12 +248,15 @@ class TestQuietHoursInference:
 
     def test_empty_quiet_windows_suppressed(self, user_model_store):
         """An empty quiet_hours_observed list should generate no quiet window fact."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"9": 50, "10": 60},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"9": 50, "10": 60},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -238,12 +266,15 @@ class TestQuietHoursInference:
 
     def test_non_midnight_crossing_window(self, user_model_store):
         """A same-day quiet window (e.g., 14:00-18:00 = afternoon off) is handled correctly."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [[14, 18]],   # 4-hour same-day window
-            "avg_response_time_by_domain": {},
-        })
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [[14, 18]],  # 4-hour same-day window
+                "avg_response_time_by_domain": {},
+            },
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -259,20 +290,24 @@ class TestQuietHoursInference:
 # avg_response_time_by_domain inference
 # ---------------------------------------------------------------------------
 
+
 class TestDomainResponsePriorityInference:
     """Verify high_priority_domain_* facts are generated from avg_response_time_by_domain."""
 
     def test_fast_domain_generates_fact(self, user_model_store):
         """A domain with average reply < 1 hour should produce a high_priority_domain_* fact."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {
-                "work.example.com": 900.0,   # 15 minutes = high priority
-                "gmail.com": 7200.0,         # 2 hours = not fast enough
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {
+                    "work.example.com": 900.0,  # 15 minutes = high priority
+                    "gmail.com": 7200.0,  # 2 hours = not fast enough
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -288,15 +323,18 @@ class TestDomainResponsePriorityInference:
 
     def test_domain_fact_value_contains_minutes(self, user_model_store):
         """The fact value should include the average reply time in minutes."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {
-                "corp.co": 1800.0,   # 30 minutes
-                "other.org": 9000.0,
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {
+                    "corp.co": 1800.0,  # 30 minutes
+                    "other.org": 9000.0,
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -311,18 +349,21 @@ class TestDomainResponsePriorityInference:
     def test_max_three_domain_facts(self, user_model_store):
         """At most 3 high_priority_domain_* facts should be generated regardless of how many fast domains exist."""
         # 5 domains all replying in < 1 hour
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {
-                "a.com": 300.0,    # 5 min
-                "b.com": 600.0,    # 10 min
-                "c.com": 900.0,    # 15 min
-                "d.com": 1200.0,   # 20 min
-                "e.com": 1500.0,   # 25 min
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {
+                    "a.com": 300.0,  # 5 min
+                    "b.com": 600.0,  # 10 min
+                    "c.com": 900.0,  # 15 min
+                    "d.com": 1200.0,  # 20 min
+                    "e.com": 1500.0,  # 25 min
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -346,14 +387,17 @@ class TestDomainResponsePriorityInference:
         inferring priority — one data point isn't enough to establish a
         meaningful comparison.
         """
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {
-                "work.co": 300.0,   # fast, but only domain
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {
+                    "work.co": 300.0,  # fast, but only domain
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -366,15 +410,18 @@ class TestDomainResponsePriorityInference:
 
     def test_domain_confidence_scales_with_reply_speed(self, user_model_store):
         """Faster-replying domains should get higher confidence than slower-but-still-fast ones."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [],
-            "avg_response_time_by_domain": {
-                "fast.co": 60.0,     # 1 minute
-                "medium.co": 1800.0, # 30 minutes
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [],
+                "avg_response_time_by_domain": {
+                    "fast.co": 60.0,  # 1 minute
+                    "medium.co": 1800.0,  # 30 minutes
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -394,17 +441,22 @@ class TestDomainResponsePriorityInference:
 # Insufficient samples — all new inference suppressed
 # ---------------------------------------------------------------------------
 
+
 class TestInsufficientSamples:
     """Verify that new inferences don't fire when sample count < 25."""
 
     def test_all_new_facts_suppressed_with_low_samples(self, user_model_store):
         """With < 25 samples, none of the new derived-metric facts should be stored."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"9": 5, "10": 6},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [[23, 7]],
-            "avg_response_time_by_domain": {"work.co": 300.0, "other.co": 500.0},
-        }, sample_count=20)   # Below 25-sample threshold
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"9": 5, "10": 6},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [[23, 7]],
+                "avg_response_time_by_domain": {"work.co": 300.0, "other.co": 500.0},
+            },
+            sample_count=20,
+        )  # Below 25-sample threshold
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -420,21 +472,25 @@ class TestInsufficientSamples:
 # End-to-end: all three inferences fire together
 # ---------------------------------------------------------------------------
 
+
 class TestAllThreeInferencesTogether:
     """Integration test: all three derived-metric facts generated in a single call."""
 
     def test_all_three_facts_generated(self, user_model_store):
         """When all three derived fields have sufficient data, all three fact types are created."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"9": 50, "10": 60, "11": 55},
-            "daily_activity": {"monday": 80, "tuesday": 70},
-            "peak_hours": [9, 10, 11],
-            "quiet_hours_observed": [[22, 6]],
-            "avg_response_time_by_domain": {
-                "priority.co": 600.0,   # 10 min
-                "normal.co": 3000.0,    # 50 min
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"9": 50, "10": 60, "11": 55},
+                "daily_activity": {"monday": 80, "tuesday": 70},
+                "peak_hours": [9, 10, 11],
+                "quiet_hours_observed": [[22, 6]],
+                "avg_response_time_by_domain": {
+                    "priority.co": 600.0,  # 10 min
+                    "normal.co": 3000.0,  # 50 min
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()
@@ -450,21 +506,22 @@ class TestAllThreeInferencesTogether:
         # All confidence values are valid [0, 1] floats
         for key in ["peak_communication_hours", "observed_quiet_window"] + domain_facts:
             confidence = facts[key]["confidence"]
-            assert 0.0 <= confidence <= 1.0, (
-                f"Confidence for {key} out of range: {confidence}"
-            )
+            assert 0.0 <= confidence <= 1.0, f"Confidence for {key} out of range: {confidence}"
 
     def test_facts_idempotent_on_re_inference(self, user_model_store):
         """Calling infer_from_cadence_profile() twice should not raise errors or duplicate facts."""
-        _set_cadence_profile(user_model_store, {
-            "hourly_activity": {"9": 50, "10": 60},
-            "peak_hours": [9, 10],
-            "quiet_hours_observed": [[23, 7]],
-            "avg_response_time_by_domain": {
-                "a.co": 300.0,
-                "b.co": 900.0,
+        _set_cadence_profile(
+            user_model_store,
+            {
+                "hourly_activity": {"9": 50, "10": 60},
+                "peak_hours": [9, 10],
+                "quiet_hours_observed": [[23, 7]],
+                "avg_response_time_by_domain": {
+                    "a.co": 300.0,
+                    "b.co": 900.0,
+                },
             },
-        })
+        )
 
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_cadence_profile()

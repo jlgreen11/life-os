@@ -46,34 +46,40 @@ class TestAutomaticEpisodeBackfill:
 
         # Manually create episodes with the OLD generic "communication" type
         with db.get_connection("user_model") as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO episodes (
                     id, timestamp, event_id, interaction_type,
                     content_summary, content_full
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                "ep-1",
-                email_received_event["timestamp"],
-                "evt-1",
-                "communication",  # OLD generic type
-                "Email from alice@example.com",
-                json.dumps(email_received_event["payload"]),
-            ))
-            conn.execute("""
+            """,
+                (
+                    "ep-1",
+                    email_received_event["timestamp"],
+                    "evt-1",
+                    "communication",  # OLD generic type
+                    "Email from alice@example.com",
+                    json.dumps(email_received_event["payload"]),
+                ),
+            )
+            conn.execute(
+                """
                 INSERT INTO episodes (
                     id, timestamp, event_id, interaction_type,
                     content_summary, content_full
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                "ep-2",
-                email_sent_event["timestamp"],
-                "evt-2",
-                "communication",  # OLD generic type
-                "Email to bob@example.com",
-                json.dumps(email_sent_event["payload"]),
-            ))
+            """,
+                (
+                    "ep-2",
+                    email_sent_event["timestamp"],
+                    "evt-2",
+                    "communication",  # OLD generic type
+                    "Email to bob@example.com",
+                    json.dumps(email_sent_event["payload"]),
+                ),
+            )
 
         # Verify episodes have generic type before startup
         with db.get_connection("user_model") as conn:
@@ -88,7 +94,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Run the backfill method directly (simulating startup)
         await app._backfill_episode_classification_if_needed()
@@ -104,20 +112,23 @@ class TestAutomaticEpisodeBackfill:
         """Backfill should be a no-op when all episodes are already classified correctly."""
         # Create episodes that already have granular types
         with db.get_connection("user_model") as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO episodes (
                     id, timestamp, event_id, interaction_type,
                     content_summary, content_full
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                "ep-1",
-                datetime.now(timezone.utc).isoformat(),
-                "evt-1",
-                "email_received",  # Already granular
-                "Test",
-                "{}",
-            ))
+            """,
+                (
+                    "ep-1",
+                    datetime.now(timezone.utc).isoformat(),
+                    "evt-1",
+                    "email_received",  # Already granular
+                    "Test",
+                    "{}",
+                ),
+            )
 
         config = {
             "data_dir": "./data",
@@ -125,7 +136,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Run backfill (should be a no-op)
         await app._backfill_episode_classification_if_needed()
@@ -169,14 +182,34 @@ class TestAutomaticEpisodeBackfill:
 
         # Create episodes with generic type
         with db.get_connection("user_model") as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary, content_full)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, ("ep-1", meeting_event["timestamp"], "evt-meeting", "communication", "Meeting", json.dumps(meeting_event["payload"])))
-            conn.execute("""
+            """,
+                (
+                    "ep-1",
+                    meeting_event["timestamp"],
+                    "evt-meeting",
+                    "communication",
+                    "Meeting",
+                    json.dumps(meeting_event["payload"]),
+                ),
+            )
+            conn.execute(
+                """
                 INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary, content_full)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, ("ep-2", personal_event["timestamp"], "evt-personal", "communication", "Personal", json.dumps(personal_event["payload"])))
+            """,
+                (
+                    "ep-2",
+                    personal_event["timestamp"],
+                    "evt-personal",
+                    "communication",
+                    "Personal",
+                    json.dumps(personal_event["payload"]),
+                ),
+            )
 
         config = {
             "data_dir": "./data",
@@ -184,7 +217,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         await app._backfill_episode_classification_if_needed()
 
@@ -202,17 +237,20 @@ class TestAutomaticEpisodeBackfill:
         """Backfill should gracefully skip episodes whose events were deleted."""
         # Create an episode pointing to a non-existent event
         with db.get_connection("user_model") as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary, content_full)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                "ep-orphan",
-                datetime.now(timezone.utc).isoformat(),
-                "evt-deleted",  # This event doesn't exist
-                "communication",
-                "Orphaned episode",
-                "{}",
-            ))
+            """,
+                (
+                    "ep-orphan",
+                    datetime.now(timezone.utc).isoformat(),
+                    "evt-deleted",  # This event doesn't exist
+                    "communication",
+                    "Orphaned episode",
+                    "{}",
+                ),
+            )
 
         config = {
             "data_dir": "./data",
@@ -220,7 +258,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Backfill should not crash
         await app._backfill_episode_classification_if_needed()
@@ -250,7 +290,7 @@ class TestAutomaticEpisodeBackfill:
                     "id": f"evt-{event_id}",
                     "type": event_type,
                     "source": "test",
-                    "timestamp": f"2026-02-0{day}T08:{hour_offset*10:02d}:00Z",  # 8:00, 8:10, 8:20
+                    "timestamp": f"2026-02-0{day}T08:{hour_offset * 10:02d}:00Z",  # 8:00, 8:10, 8:20
                     "priority": 1,
                     "payload": payload,
                     "metadata": {},
@@ -259,10 +299,20 @@ class TestAutomaticEpisodeBackfill:
 
                 # Create episode with generic type
                 with db.get_connection("user_model") as conn:
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary, content_full)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    """, (f"ep-{event_id}", event["timestamp"], event["id"], "communication", f"Event {event_id}", json.dumps(payload)))
+                    """,
+                        (
+                            f"ep-{event_id}",
+                            event["timestamp"],
+                            event["id"],
+                            "communication",
+                            f"Event {event_id}",
+                            json.dumps(payload),
+                        ),
+                    )
 
                 event_id += 1
 
@@ -272,7 +322,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Before backfill: all episodes are "communication" - no type diversity
         with db.get_connection("user_model") as conn:
@@ -321,10 +373,13 @@ class TestAutomaticEpisodeBackfill:
 
             # Create episode with generic type
             with db.get_connection("user_model") as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary, content_full)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (event_id, event["timestamp"], event_id, "communication", f"Event {event_id}", json.dumps(payload)))
+                """,
+                    (event_id, event["timestamp"], event_id, "communication", f"Event {event_id}", json.dumps(payload)),
+                )
 
         config = {
             "data_dir": "./data",
@@ -332,7 +387,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         await app._backfill_episode_classification_if_needed()
 
@@ -363,10 +420,13 @@ class TestAutomaticEpisodeBackfill:
         event_store.store_event(event)
 
         with db.get_connection("user_model") as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary, content_full)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, ("ep-1", event["timestamp"], "evt-1", "communication", "Email", json.dumps(event["payload"])))
+            """,
+                ("ep-1", event["timestamp"], "evt-1", "communication", "Email", json.dumps(event["payload"])),
+            )
 
         config = {
             "data_dir": "./data",
@@ -374,7 +434,9 @@ class TestAutomaticEpisodeBackfill:
             "web_port": 8080,
             "ai": {"use_cloud": False},
         }
-        app = LifeOS(config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Run backfill first time
         await app._backfill_episode_classification_if_needed()

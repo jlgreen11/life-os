@@ -65,7 +65,7 @@ def test_migration_deletes_orphaned_general_templates():
                 ("abc123", "general", "alice@example.com", "email", "Hi", "Best", 0.5, 10),
                 ("def456", "general", "bob@example.com", "email", "Hey", "Thanks", 0.3, 5),
                 ("ghi789", "general", "carol@example.com", "signal_msg", "Yo", "Later", 0.2, 3),
-            ]
+            ],
         )
         conn.commit()
 
@@ -134,7 +134,7 @@ def test_migration_preserves_new_format_templates():
             """INSERT INTO communication_templates
                (id, context, contact_id, channel, greeting, closing, formality, samples_analyzed)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("old123", "general", "old@example.com", "email", "Hi", "Best", 0.5, 10)
+            ("old123", "general", "old@example.com", "email", "Hi", "Best", 0.5, 10),
         )
 
         # Insert new-format templates with bidirectional context
@@ -145,7 +145,7 @@ def test_migration_preserves_new_format_templates():
             [
                 ("new123out", "user_to_contact", "alice@example.com", "email", "Hi", "Best", 0.5, 15),
                 ("new123in", "contact_to_user", "alice@example.com", "email", "Hey", "Cheers", 0.3, 12),
-            ]
+            ],
         )
         conn.commit()
         conn.close()
@@ -167,15 +167,11 @@ def test_migration_preserves_new_format_templates():
             assert new_count == 2
 
             # Verify new templates have correct data
-            outbound = conn.execute(
-                "SELECT * FROM communication_templates WHERE id = 'new123out'"
-            ).fetchone()
+            outbound = conn.execute("SELECT * FROM communication_templates WHERE id = 'new123out'").fetchone()
             assert outbound["context"] == "user_to_contact"
             assert outbound["samples_analyzed"] == 15
 
-            inbound = conn.execute(
-                "SELECT * FROM communication_templates WHERE id = 'new123in'"
-            ).fetchone()
+            inbound = conn.execute("SELECT * FROM communication_templates WHERE id = 'new123in'").fetchone()
             assert inbound["context"] == "contact_to_user"
             assert inbound["samples_analyzed"] == 12
 
@@ -211,7 +207,7 @@ def test_migration_is_idempotent():
             """INSERT INTO communication_templates
                (id, context, contact_id, channel, samples_analyzed)
                VALUES (?, ?, ?, ?, ?)""",
-            ("abc123", "general", "alice@example.com", "email", 10)
+            ("abc123", "general", "alice@example.com", "email", 10),
         )
         conn.commit()
         conn.close()
@@ -222,9 +218,7 @@ def test_migration_is_idempotent():
 
         # Verify templates were deleted
         with db.get_connection("user_model") as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM communication_templates WHERE context = 'general'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM communication_templates WHERE context = 'general'").fetchone()[0]
             assert count == 0
 
         # Trigger migration again (should be a no-op)
@@ -233,9 +227,7 @@ def test_migration_is_idempotent():
 
         # Verify still no orphaned templates
         with db_again.get_connection("user_model") as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM communication_templates WHERE context = 'general'"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM communication_templates WHERE context = 'general'").fetchone()[0]
             assert count == 0
 
             # Verify schema version is still 2
@@ -319,7 +311,7 @@ def test_migration_logs_deletion_count(caplog):
             [
                 ("t1", "general", "a@example.com", "email", 5),
                 ("t2", "general", "b@example.com", "email", 10),
-            ]
+            ],
         )
         conn.commit()
         conn.close()
@@ -330,8 +322,7 @@ def test_migration_logs_deletion_count(caplog):
             db.initialize_all()  # This runs the migration
 
         # Verify log message mentions the count
-        assert any("Deleting 2 orphaned communication templates" in record.message
-                   for record in caplog.records)
+        assert any("Deleting 2 orphaned communication templates" in record.message for record in caplog.records)
 
 
 def test_fresh_database_starts_at_v2():
@@ -352,9 +343,20 @@ def test_fresh_database_starts_at_v2():
 
             # Verify all expected columns exist
             expected_columns = {
-                "id", "context", "contact_id", "channel", "greeting", "closing",
-                "formality", "typical_length", "uses_emoji", "common_phrases",
-                "avoids_phrases", "tone_notes", "example_message_ids",
-                "samples_analyzed", "updated_at"
+                "id",
+                "context",
+                "contact_id",
+                "channel",
+                "greeting",
+                "closing",
+                "formality",
+                "typical_length",
+                "uses_emoji",
+                "common_phrases",
+                "avoids_phrases",
+                "tone_notes",
+                "example_message_ids",
+                "samples_analyzed",
+                "updated_at",
             }
             assert expected_columns.issubset(columns)

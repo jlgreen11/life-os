@@ -26,9 +26,8 @@ Usage:
 import argparse
 import json
 import logging
-import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add parent directory to path so we can import from the project
@@ -173,10 +172,7 @@ def backfill_episode_classification(db: DatabaseManager, dry_run: bool = False) 
             # Fetch the original event from events.db
             with db.get_connection("events") as events_conn:
                 events_cursor = events_conn.cursor()
-                events_cursor.execute(
-                    "SELECT type, payload FROM events WHERE id = ?",
-                    (event_id,)
-                )
+                events_cursor.execute("SELECT type, payload FROM events WHERE id = ?", (event_id,))
                 event_row = events_cursor.fetchone()
 
             if not event_row:
@@ -198,8 +194,9 @@ def backfill_episode_classification(db: DatabaseManager, dry_run: bool = False) 
             new_interaction_type = classify_interaction_type(event_type, payload)
 
             # Track type distribution
-            stats["type_distribution"][new_interaction_type] = \
+            stats["type_distribution"][new_interaction_type] = (
                 stats["type_distribution"].get(new_interaction_type, 0) + 1
+            )
 
             # Update if changed
             if new_interaction_type != current_interaction_type:
@@ -212,8 +209,7 @@ def backfill_episode_classification(db: DatabaseManager, dry_run: bool = False) 
                     with db.get_connection("user_model") as conn:
                         cursor = conn.cursor()
                         cursor.execute(
-                            "UPDATE episodes SET interaction_type = ? WHERE id = ?",
-                            (new_interaction_type, episode_id)
+                            "UPDATE episodes SET interaction_type = ? WHERE id = ?", (new_interaction_type, episode_id)
                         )
                         conn.commit()
                 stats["reclassified"] += 1
@@ -229,13 +225,9 @@ def backfill_episode_classification(db: DatabaseManager, dry_run: bool = False) 
 
 def main():
     """Run the backfill script with command-line argument parsing."""
-    parser = argparse.ArgumentParser(
-        description="Backfill episode classification with granular interaction types"
-    )
+    parser = argparse.ArgumentParser(description="Backfill episode classification with granular interaction types")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be changed without modifying the database"
+        "--dry-run", action="store_true", help="Show what would be changed without modifying the database"
     )
     args = parser.parse_args()
 
@@ -246,12 +238,12 @@ def main():
     if args.dry_run:
         logger.info("DRY RUN MODE: No changes will be made")
 
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
 
     # Run backfill
     stats = backfill_episode_classification(db, dry_run=args.dry_run)
 
-    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+    elapsed = (datetime.now(UTC) - start_time).total_seconds()
 
     # Print summary
     logger.info("=" * 60)
@@ -264,11 +256,7 @@ def main():
     logger.info(f"Elapsed time:       {elapsed:.2f}s")
     logger.info("")
     logger.info("Interaction type distribution:")
-    for interaction_type, count in sorted(
-        stats["type_distribution"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    ):
+    for interaction_type, count in sorted(stats["type_distribution"].items(), key=lambda x: x[1], reverse=True):
         logger.info(f"  {interaction_type:25s} {count:6d}")
 
     if args.dry_run:

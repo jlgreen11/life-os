@@ -60,10 +60,11 @@ async def test_authenticate_success(connector):
     mock_creds = MagicMock()
     mock_creds.valid = True
 
-    with patch("google.oauth2.credentials.Credentials") as mock_creds_class, \
-         patch("googleapiclient.discovery.build") as mock_build, \
-         patch.object(connector, "_load_credentials", return_value=mock_creds):
-
+    with (
+        patch("google.oauth2.credentials.Credentials") as mock_creds_class,
+        patch("googleapiclient.discovery.build") as mock_build,
+        patch.object(connector, "_load_credentials", return_value=mock_creds),
+    ):
         # Mock Gmail service to return profile
         mock_service = MagicMock()
         mock_profile = {"emailAddress": "test@gmail.com"}
@@ -90,9 +91,10 @@ async def test_authenticate_api_error(connector):
     mock_creds = MagicMock()
     mock_creds.valid = True
 
-    with patch("googleapiclient.discovery.build") as mock_build, \
-         patch.object(connector, "_load_credentials", return_value=mock_creds):
-
+    with (
+        patch("googleapiclient.discovery.build") as mock_build,
+        patch.object(connector, "_load_credentials", return_value=mock_creds),
+    ):
         # Mock Gmail service to raise exception
         mock_service = MagicMock()
         mock_service.users().getProfile().execute.side_effect = Exception("API error")
@@ -108,10 +110,10 @@ async def test_load_credentials_valid(connector):
     mock_creds = MagicMock()
     mock_creds.valid = True
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+    ):
         result = connector._load_credentials()
         assert result == mock_creds
 
@@ -124,12 +126,12 @@ async def test_load_credentials_refresh_needed(connector):
     mock_creds.expired = True
     mock_creds.refresh_token = "refresh_token_123"
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds), \
-         patch("builtins.open", MagicMock()), \
-         patch("google.auth.transport.requests.Request"):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+        patch("builtins.open", MagicMock()),
+        patch("google.auth.transport.requests.Request"),
+    ):
         result = connector._load_credentials()
         assert result == mock_creds
         mock_creds.refresh.assert_called_once()
@@ -156,11 +158,11 @@ async def test_load_credentials_refresh_error(connector):
 
     mock_creds.refresh.side_effect = google_exceptions.RefreshError("Token has been revoked")
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds), \
-         patch("google.auth.transport.requests.Request"):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+        patch("google.auth.transport.requests.Request"),
+    ):
         with pytest.raises(ValueError, match="re-authenticate via /admin connector panel"):
             connector._load_credentials()
 
@@ -175,10 +177,10 @@ async def test_load_credentials_expired_no_refresh_token(connector):
     mock_creds.expired = True
     mock_creds.refresh_token = None
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+    ):
         with pytest.raises(ValueError, match="no refresh_token"):
             connector._load_credentials()
 
@@ -189,7 +191,6 @@ async def test_authenticate_descriptive_error_state(connector, db):
     error_msg = "Token refresh failed (invalid_grant) — re-authenticate via /admin connector panel"
 
     with patch.object(connector, "_load_credentials", side_effect=ValueError(error_msg)):
-
         result = await connector.authenticate()
         assert result is False
         assert connector._auth_error == error_msg
@@ -223,14 +224,12 @@ async def test_sync_gmail_first_sync(connector, db):
         conn.execute(
             """INSERT INTO connector_state (connector_id, status, last_sync, sync_cursor)
                VALUES (?, 'active', datetime('now'), NULL)""",
-            (connector.CONNECTOR_ID,)
+            (connector.CONNECTOR_ID,),
         )
 
     # Mock Gmail messages.list response
     mock_messages = [{"id": f"msg{i}"} for i in range(5)]
-    connector._gmail_service.users().messages().list().execute.return_value = {
-        "messages": mock_messages
-    }
+    connector._gmail_service.users().messages().list().execute.return_value = {"messages": mock_messages}
 
     # Mock Gmail messages.get response
     mock_message = {
@@ -247,7 +246,7 @@ async def test_sync_gmail_first_sync(connector, db):
             ],
             "mimeType": "text/plain",
             "body": {"data": "VGVzdCBib2R5"},  # base64 "Test body"
-        }
+        },
     }
     connector._gmail_service.users().messages().get().execute.return_value = mock_message
 
@@ -267,13 +266,11 @@ async def test_sync_gmail_incremental_sync(connector, db):
         conn.execute(
             """INSERT INTO connector_state (connector_id, status, last_sync, sync_cursor)
                VALUES (?, 'active', datetime('now'), '1708000000')""",
-            (connector.CONNECTOR_ID,)
+            (connector.CONNECTOR_ID,),
         )
 
     # Mock empty response for incremental sync
-    connector._gmail_service.users().messages().list().execute.return_value = {
-        "messages": []
-    }
+    connector._gmail_service.users().messages().list().execute.return_value = {"messages": []}
 
     count = await connector._sync_gmail()
 
@@ -290,18 +287,11 @@ async def test_sync_gmail_with_pagination(connector):
     connector._gmail_service = MagicMock()
 
     # First page with nextPageToken
-    first_page = {
-        "messages": [{"id": "msg1"}],
-        "nextPageToken": "token123"
-    }
+    first_page = {"messages": [{"id": "msg1"}], "nextPageToken": "token123"}
     # Second page without nextPageToken
-    second_page = {
-        "messages": [{"id": "msg2"}]
-    }
+    second_page = {"messages": [{"id": "msg2"}]}
 
-    connector._gmail_service.users().messages().list().execute.side_effect = [
-        first_page, second_page
-    ]
+    connector._gmail_service.users().messages().list().execute.side_effect = [first_page, second_page]
 
     # Mock message details
     mock_message = {
@@ -318,7 +308,7 @@ async def test_sync_gmail_with_pagination(connector):
             ],
             "mimeType": "text/plain",
             "body": {"data": "VGVzdA=="},
-        }
+        },
     }
     connector._gmail_service.users().messages().get().execute.return_value = mock_message
 
@@ -346,7 +336,7 @@ async def test_process_gmail_message_inbound(connector):
             ],
             "mimeType": "text/plain",
             "body": {"data": "VGVzdCBib2R5"},  # base64 "Test body"
-        }
+        },
     }
 
     with patch.object(connector, "_publish_with_retry", new_callable=AsyncMock) as mock_publish:
@@ -384,7 +374,7 @@ async def test_process_gmail_message_outbound(connector):
             ],
             "mimeType": "text/plain",
             "body": {"data": "T3V0Ym91bmQgYm9keQ=="},  # base64 "Outbound body"
-        }
+        },
     }
 
     with patch.object(connector, "_publish_with_retry", new_callable=AsyncMock) as mock_publish:
@@ -416,8 +406,8 @@ async def test_process_gmail_message_with_attachments(connector):
                 {"mimeType": "text/plain", "body": {"data": "Qm9keQ=="}},
                 {"filename": "document.pdf", "mimeType": "application/pdf"},
                 {"filename": "image.png", "mimeType": "image/png"},
-            ]
-        }
+            ],
+        },
     }
 
     with patch.object(connector, "_publish_with_retry", new_callable=AsyncMock) as mock_publish:
@@ -447,7 +437,7 @@ async def test_process_gmail_message_urgent_priority(connector):
             ],
             "mimeType": "text/plain",
             "body": {"data": "Qm9keQ=="},
-        }
+        },
     }
 
     with patch.object(connector, "_publish_with_retry", new_callable=AsyncMock) as mock_publish:
@@ -462,7 +452,7 @@ async def test_extract_gmail_body_plain_text(connector):
     """Test extracting plain text body from Gmail payload."""
     payload = {
         "mimeType": "text/plain",
-        "body": {"data": "VGVzdCBib2R5"}  # base64 "Test body"
+        "body": {"data": "VGVzdCBib2R5"},  # base64 "Test body"
     }
 
     plain, html = connector._extract_gmail_body(payload)
@@ -475,13 +465,11 @@ async def test_extract_gmail_body_plain_text(connector):
 async def test_extract_gmail_body_html(connector):
     """Test extracting HTML body from Gmail payload."""
     import base64
+
     html_content = "<html><body>Test</body></html>"
     encoded = base64.urlsafe_b64encode(html_content.encode()).decode()
 
-    payload = {
-        "mimeType": "text/html",
-        "body": {"data": encoded}
-    }
+    payload = {"mimeType": "text/html", "body": {"data": encoded}}
 
     plain, html = connector._extract_gmail_body(payload)
 
@@ -497,15 +485,9 @@ async def test_extract_gmail_body_multipart(connector):
     payload = {
         "mimeType": "multipart/alternative",
         "parts": [
-            {
-                "mimeType": "text/plain",
-                "body": {"data": base64.urlsafe_b64encode(b"Plain text").decode()}
-            },
-            {
-                "mimeType": "text/html",
-                "body": {"data": base64.urlsafe_b64encode(b"<html>HTML</html>").decode()}
-            }
-        ]
+            {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"Plain text").decode()}},
+            {"mimeType": "text/html", "body": {"data": base64.urlsafe_b64encode(b"<html>HTML</html>").decode()}},
+        ],
     }
 
     plain, html = connector._extract_gmail_body(payload)
@@ -556,11 +538,8 @@ async def test_sync_calendar_success(connector):
                 "location": "Conference Room",
                 "start": {"dateTime": "2026-02-20T10:00:00Z"},
                 "end": {"dateTime": "2026-02-20T11:00:00Z"},
-                "attendees": [
-                    {"email": "alice@example.com"},
-                    {"email": "bob@example.com"}
-                ],
-                "organizer": {"email": "organizer@example.com"}
+                "attendees": [{"email": "alice@example.com"}, {"email": "bob@example.com"}],
+                "organizer": {"email": "organizer@example.com"},
             }
         ]
     }
@@ -585,7 +564,7 @@ async def test_sync_calendar_all_day_event(connector):
                 "summary": "Holiday",
                 "start": {"date": "2026-02-20"},
                 "end": {"date": "2026-02-21"},
-                "attendees": []
+                "attendees": [],
             }
         ]
     }
@@ -607,9 +586,16 @@ async def test_sync_calendar_multiple_calendars(connector):
     connector._calendars = ["primary", "work@example.com"]
 
     # Mock response for each calendar
-    mock_events = {"items": [{"id": "event1", "summary": "Event",
-                               "start": {"dateTime": "2026-02-20T10:00:00Z"},
-                               "end": {"dateTime": "2026-02-20T11:00:00Z"}}]}
+    mock_events = {
+        "items": [
+            {
+                "id": "event1",
+                "summary": "Event",
+                "start": {"dateTime": "2026-02-20T10:00:00Z"},
+                "end": {"dateTime": "2026-02-20T11:00:00Z"},
+            }
+        ]
+    }
 
     connector._calendar_service.events().list().execute.return_value = mock_events
 
@@ -648,13 +634,13 @@ async def test_sync_contacts_success(connector, db):
             {
                 "names": [{"displayName": "Alice Smith"}],
                 "emailAddresses": [{"value": "alice@example.com"}],
-                "phoneNumbers": [{"value": "+15551234567"}]
+                "phoneNumbers": [{"value": "+15551234567"}],
             },
             {
                 "names": [{"displayName": "Bob Jones"}],
                 "emailAddresses": [{"value": "bob@example.com"}],
-                "phoneNumbers": []
-            }
+                "phoneNumbers": [],
+            },
         ]
     }
 
@@ -682,13 +668,12 @@ async def test_sync_contacts_deduplication(connector, db):
         conn.execute(
             """INSERT INTO contacts (id, name, emails, phones, channels, domains, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, '["personal"]', ?, ?)""",
-            (contact_id, "Alice Old", json.dumps(["alice@example.com"]),
-             json.dumps([]), json.dumps({}), now, now)
+            (contact_id, "Alice Old", json.dumps(["alice@example.com"]), json.dumps([]), json.dumps({}), now, now),
         )
         conn.execute(
             """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
                VALUES (?, 'email', ?)""",
-            ("alice@example.com", contact_id)
+            ("alice@example.com", contact_id),
         )
 
     # Mock Google contact with same email
@@ -697,7 +682,7 @@ async def test_sync_contacts_deduplication(connector, db):
             {
                 "names": [{"displayName": "Alice Smith"}],
                 "emailAddresses": [{"value": "alice@example.com"}],
-                "phoneNumbers": [{"value": "+15551234567"}]
+                "phoneNumbers": [{"value": "+15551234567"}],
             }
         ]
     }
@@ -727,26 +712,20 @@ async def test_sync_contacts_with_pagination(connector, db):
             {
                 "names": [{"displayName": "Alice"}],
                 "emailAddresses": [{"value": "alice@example.com"}],
-                "phoneNumbers": []
+                "phoneNumbers": [],
             }
         ],
-        "nextPageToken": "token123"
+        "nextPageToken": "token123",
     }
 
     # Second page
     second_page = {
         "connections": [
-            {
-                "names": [{"displayName": "Bob"}],
-                "emailAddresses": [{"value": "bob@example.com"}],
-                "phoneNumbers": []
-            }
+            {"names": [{"displayName": "Bob"}], "emailAddresses": [{"value": "bob@example.com"}], "phoneNumbers": []}
         ]
     }
 
-    connector._people_service.people().connections().list().execute.side_effect = [
-        first_page, second_page
-    ]
+    connector._people_service.people().connections().list().execute.side_effect = [first_page, second_page]
 
     count = await connector._sync_contacts()
 
@@ -761,7 +740,7 @@ async def test_upsert_contact_new(connector, db):
     person = {
         "names": [{"displayName": "Charlie Brown"}],
         "emailAddresses": [{"value": "charlie@example.com"}],
-        "phoneNumbers": [{"value": "+15559999999"}]
+        "phoneNumbers": [{"value": "+15559999999"}],
     }
 
     with db.get_connection("entities") as conn:
@@ -770,9 +749,7 @@ async def test_upsert_contact_new(connector, db):
         assert count == 1
 
         # Verify contact was created
-        contact = conn.execute(
-            "SELECT * FROM contacts WHERE name = ?", ("Charlie Brown",)
-        ).fetchone()
+        contact = conn.execute("SELECT * FROM contacts WHERE name = ?", ("Charlie Brown",)).fetchone()
         assert contact is not None
         assert json.loads(contact["emails"]) == ["charlie@example.com"]
 
@@ -782,11 +759,7 @@ async def test_upsert_contact_skip_no_contact_info(connector, db):
     """Test upsert skips contacts without email or phone."""
     now = datetime.now(timezone.utc).isoformat()
 
-    person = {
-        "names": [{"displayName": "No Contact"}],
-        "emailAddresses": [],
-        "phoneNumbers": []
-    }
+    person = {"names": [{"displayName": "No Contact"}], "emailAddresses": [], "phoneNumbers": []}
 
     with db.get_connection("entities") as conn:
         count = connector._upsert_contact(conn, person, {}, now)
@@ -808,11 +781,7 @@ async def test_execute_send_email(connector):
     mock_result = {"id": "sent123"}
     connector._gmail_service.users().messages().send().execute.return_value = mock_result
 
-    params = {
-        "to": ["recipient@example.com"],
-        "subject": "Test Email",
-        "body": "This is a test email body"
-    }
+    params = {"to": ["recipient@example.com"], "subject": "Test Email", "body": "This is a test email body"}
 
     result = await connector.execute("send_email", params)
 
@@ -835,7 +804,7 @@ async def test_execute_send_email_with_cc_and_html(connector):
         "cc": ["cc@example.com"],
         "subject": "Test Email",
         "body": "Plain text",
-        "body_html": "<html><body>HTML body</body></html>"
+        "body_html": "<html><body>HTML body</body></html>",
     }
 
     result = await connector.execute("send_email", params)
@@ -857,7 +826,7 @@ async def test_execute_reply_email(connector):
         "original_subject": "Original Subject",
         "in_reply_to": "<msg123@example.com>",
         "thread_id": "thread123",
-        "body": "This is my reply"
+        "body": "This is my reply",
     }
 
     result = await connector.execute("reply_email", params)
@@ -871,10 +840,7 @@ async def test_execute_create_event(connector):
     """Test creating a calendar event."""
     connector._calendar_service = MagicMock()
 
-    mock_result = {
-        "id": "event123",
-        "htmlLink": "https://calendar.google.com/event?eid=event123"
-    }
+    mock_result = {"id": "event123", "htmlLink": "https://calendar.google.com/event?eid=event123"}
     connector._calendar_service.events().insert().execute.return_value = mock_result
 
     params = {
@@ -885,7 +851,7 @@ async def test_execute_create_event(connector):
         "end_time": "2026-02-20T11:00:00Z",
         "is_all_day": False,
         "timezone": "UTC",
-        "attendees": ["alice@example.com", "bob@example.com"]
+        "attendees": ["alice@example.com", "bob@example.com"],
     }
 
     result = await connector.execute("create_event", params)
@@ -903,11 +869,7 @@ async def test_execute_create_all_day_event(connector):
     mock_result = {"id": "event123", "htmlLink": "https://calendar.google.com/event?eid=event123"}
     connector._calendar_service.events().insert().execute.return_value = mock_result
 
-    params = {
-        "title": "Holiday",
-        "start_time": "2026-02-20",
-        "is_all_day": True
-    }
+    params = {"title": "Holiday", "start_time": "2026-02-20", "is_all_day": True}
 
     result = await connector.execute("create_event", params)
 
@@ -990,13 +952,14 @@ async def test_health_check_attempts_token_refresh(connector):
     mock_creds = MagicMock()
     mock_creds.valid = True
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=time.time() - 3600), \
-         patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value={"refresh_token": "tok123"}), \
-         patch.object(connector, "_load_credentials", return_value=mock_creds), \
-         patch.object(connector, "authenticate", return_value=True) as mock_auth:
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getmtime", return_value=time.time() - 3600),
+        patch("builtins.open", MagicMock()),
+        patch("json.load", return_value={"refresh_token": "tok123"}),
+        patch.object(connector, "_load_credentials", return_value=mock_creds),
+        patch.object(connector, "authenticate", return_value=True) as mock_auth,
+    ):
         result = await connector.health_check()
 
     assert result["status"] == "recovered"
@@ -1009,13 +972,13 @@ async def test_health_check_reports_refresh_failure_details(connector):
     """Test health check reports specific error when token refresh fails."""
     connector._gmail_service = None
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=time.time() - 7200), \
-         patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value={"refresh_token": "tok123"}), \
-         patch.object(connector, "_load_credentials",
-                      side_effect=ValueError("Token refresh failed (invalid_grant)")):
-
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getmtime", return_value=time.time() - 7200),
+        patch("builtins.open", MagicMock()),
+        patch("json.load", return_value={"refresh_token": "tok123"}),
+        patch.object(connector, "_load_credentials", side_effect=ValueError("Token refresh failed (invalid_grant)")),
+    ):
         result = await connector.health_check()
 
     assert result["status"] == "error"
@@ -1032,10 +995,11 @@ async def test_health_check_reports_refresh_failure_details(connector):
 @pytest.mark.asyncio
 async def test_start_with_delayed_sync(connector):
     """Test start() uses delayed sync loop to avoid NATS flooding."""
-    with patch.object(connector, "authenticate", return_value=True), \
-         patch.object(connector, "_delayed_sync_loop", new_callable=AsyncMock) as mock_delayed, \
-         patch.object(connector.bus, "subscribe", new_callable=AsyncMock):
-
+    with (
+        patch.object(connector, "authenticate", return_value=True),
+        patch.object(connector, "_delayed_sync_loop", new_callable=AsyncMock) as mock_delayed,
+        patch.object(connector.bus, "subscribe", new_callable=AsyncMock),
+    ):
         await connector.start()
 
         # Should have called delayed sync loop
@@ -1056,10 +1020,7 @@ async def test_publish_with_retry_timeout_recovery(connector):
     """Test publish with retry recovers from timeout errors."""
     with patch.object(connector, "publish_event", new_callable=AsyncMock) as mock_publish:
         # First call times out, second succeeds
-        mock_publish.side_effect = [
-            Exception("timeout error"),
-            None
-        ]
+        mock_publish.side_effect = [Exception("timeout error"), None]
 
         await connector._publish_with_retry("test.event", {"data": "test"}, max_retries=3)
 

@@ -36,6 +36,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _set_samples(ums, profile_type: str, count: int) -> None:
     """Manually set samples_count for a signal profile row."""
     with ums.db.get_connection("user_model") as conn:
@@ -66,6 +67,7 @@ def _build_inbound_contacts(count: int, base_inbound: int = 10) -> dict:
 # Cold-start: relationship profile with inbound-only data
 # ---------------------------------------------------------------------------
 
+
 class TestColdStartRelationship:
     """run_all_inference() must produce facts when only inbound relationship data exists."""
 
@@ -93,12 +95,8 @@ class TestColdStartRelationship:
         )
 
         # Verify the communication volume fact exists
-        volume_fact = next(
-            (f for f in all_facts if f["key"] == "communication_volume_category"), None
-        )
-        assert volume_fact is not None, (
-            "Expected communication_volume_category fact from 300-contact inbound profile"
-        )
+        volume_fact = next((f for f in all_facts if f["key"] == "communication_volume_category"), None)
+        assert volume_fact is not None, "Expected communication_volume_category fact from 300-contact inbound profile"
         assert volume_fact["value"] == "high_volume_email"  # 300 contacts > 50 threshold
 
     def test_inbound_with_diverse_domains_produces_domain_breadth_fact(self, user_model_store):
@@ -117,12 +115,8 @@ class TestColdStartRelationship:
         inferrer.run_all_inference()
 
         all_facts = user_model_store.get_semantic_facts()
-        domain_fact = next(
-            (f for f in all_facts if f["key"] == "contact_network_breadth"), None
-        )
-        assert domain_fact is not None, (
-            "Expected contact_network_breadth fact from 20-domain inbound-only profile"
-        )
+        domain_fact = next((f for f in all_facts if f["key"] == "contact_network_breadth"), None)
+        assert domain_fact is not None, "Expected contact_network_breadth fact from 20-domain inbound-only profile"
         assert domain_fact["value"] == "diverse_multi_domain_network"
 
     def test_inbound_only_facts_written_with_no_episodes(self, user_model_store):
@@ -152,9 +146,7 @@ class TestColdStartRelationship:
         assert len(all_facts) >= 1
 
         # Fact should have empty source_episodes (no episodes to link)
-        volume_fact = next(
-            (f for f in all_facts if f["key"] == "communication_volume_category"), None
-        )
+        volume_fact = next((f for f in all_facts if f["key"] == "communication_volume_category"), None)
         assert volume_fact is not None
         assert volume_fact["source_episodes"] == []  # episode_id was None → empty list
 
@@ -162,6 +154,7 @@ class TestColdStartRelationship:
 # ---------------------------------------------------------------------------
 # Per-method facts_written in _last_inference_results
 # ---------------------------------------------------------------------------
+
 
 class TestDiagnosticsPerMethodResults:
     """run_all_inference() must report per-method facts_written in _last_inference_results."""
@@ -185,15 +178,11 @@ class TestDiagnosticsPerMethodResults:
 
         # Every method result must have facts_written (even if 0)
         for r in inferrer._last_inference_results:
-            assert "facts_written" in r, (
-                f"Method '{r.get('type', '?')}' result missing facts_written key: {r}"
-            )
+            assert "facts_written" in r, f"Method '{r.get('type', '?')}' result missing facts_written key: {r}"
             assert isinstance(r["facts_written"], int), (
                 f"facts_written must be int for method '{r.get('type', '?')}', got {type(r['facts_written'])}"
             )
-            assert r["facts_written"] >= 0, (
-                f"facts_written must be non-negative for '{r.get('type', '?')}'"
-            )
+            assert r["facts_written"] >= 0, f"facts_written must be non-negative for '{r.get('type', '?')}'"
 
     def test_total_facts_written_equals_sum_of_per_method(self, user_model_store):
         """_total_facts_written_last_cycle should equal sum of per-method facts_written."""
@@ -204,9 +193,7 @@ class TestDiagnosticsPerMethodResults:
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.run_all_inference()
 
-        per_method_total = sum(
-            r.get("facts_written", 0) for r in inferrer._last_inference_results
-        )
+        per_method_total = sum(r.get("facts_written", 0) for r in inferrer._last_inference_results)
         assert inferrer._total_facts_written_last_cycle == per_method_total, (
             f"_total_facts_written_last_cycle ({inferrer._total_facts_written_last_cycle}) "
             f"!= sum of per-method facts_written ({per_method_total})"
@@ -239,6 +226,7 @@ class TestDiagnosticsPerMethodResults:
 # Pre-run profile diagnostic logging
 # ---------------------------------------------------------------------------
 
+
 class TestColdStartDiagnosticLogging:
     """run_all_inference() must log profile sample counts before running methods."""
 
@@ -262,10 +250,7 @@ class TestColdStartDiagnosticLogging:
             inferrer.run_all_inference()
 
         # Verify the cold-start diagnostic log line was emitted
-        cold_start_lines = [
-            r.message for r in caplog.records
-            if "cold-start diagnostics" in r.message
-        ]
+        cold_start_lines = [r.message for r in caplog.records if "cold-start diagnostics" in r.message]
         assert len(cold_start_lines) >= 1, (
             "Expected a 'cold-start diagnostics' log line but none found. "
             f"Log messages: {[r.message for r in caplog.records]}"
@@ -273,18 +258,20 @@ class TestColdStartDiagnosticLogging:
 
         # The log line must include sample counts for key profiles
         diag_line = cold_start_lines[0]
-        assert "relationship=" in diag_line, (
-            f"Expected 'relationship=' in diagnostic log: {diag_line}"
-        )
-        assert "220351" in diag_line, (
-            f"Expected relationship sample count '220351' in diagnostic log: {diag_line}"
-        )
+        assert "relationship=" in diag_line, f"Expected 'relationship=' in diagnostic log: {diag_line}"
+        assert "220351" in diag_line, f"Expected relationship sample count '220351' in diagnostic log: {diag_line}"
         # All 9 profile types should appear in the log
-        for profile_name in ["linguistic", "relationship", "topic", "cadence", "mood",
-                              "temporal", "spatial", "decision"]:
-            assert profile_name in diag_line, (
-                f"Expected '{profile_name}' in diagnostic log: {diag_line}"
-            )
+        for profile_name in [
+            "linguistic",
+            "relationship",
+            "topic",
+            "cadence",
+            "mood",
+            "temporal",
+            "spatial",
+            "decision",
+        ]:
+            assert profile_name in diag_line, f"Expected '{profile_name}' in diagnostic log: {diag_line}"
 
     def test_per_method_log_in_inference_summary(self, user_model_store, caplog):
         """_log_inference_summary() should include per-method breakdown in its log line.
@@ -303,13 +290,8 @@ class TestColdStartDiagnosticLogging:
             inferrer.run_all_inference()
 
         # Verify the per-method summary log line exists
-        summary_lines = [
-            r.message for r in caplog.records
-            if "per_method" in r.message
-        ]
-        assert len(summary_lines) >= 1, (
-            "Expected a log line with 'per_method' breakdown but none found."
-        )
+        summary_lines = [r.message for r in caplog.records if "per_method" in r.message]
+        assert len(summary_lines) >= 1, "Expected a log line with 'per_method' breakdown but none found."
         summary_line = summary_lines[0]
         # relationship should appear in the per-method breakdown
         assert "relationship" in summary_line

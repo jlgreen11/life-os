@@ -44,7 +44,7 @@ def test_extract_outbound_template(db, user_model_store, relationship_extractor)
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
             "SELECT * FROM communication_templates WHERE contact_id = ? AND context = ?",
-            ("alice@example.com", "user_to_contact")
+            ("alice@example.com", "user_to_contact"),
         ).fetchall()
 
         assert len(templates) == 1
@@ -87,7 +87,7 @@ def test_extract_inbound_template(db, user_model_store, relationship_extractor):
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
             "SELECT * FROM communication_templates WHERE contact_id = ? AND context = ?",
-            ("bob@company.com", "contact_to_user")
+            ("bob@company.com", "contact_to_user"),
         ).fetchall()
 
         assert len(templates) == 1
@@ -146,8 +146,7 @@ def test_bidirectional_templates_separate_storage(db, user_model_store, relation
     # Verify TWO separate templates exist
     with db.get_connection("user_model") as conn:
         all_templates = conn.execute(
-            "SELECT * FROM communication_templates WHERE contact_id = ? ORDER BY context",
-            (contact,)
+            "SELECT * FROM communication_templates WHERE contact_id = ? ORDER BY context", (contact,)
         ).fetchall()
 
         assert len(all_templates) == 2
@@ -203,8 +202,7 @@ def test_incremental_template_updates(db, user_model_store, relationship_extract
 
     with db.get_connection("user_model") as conn:
         template_v1 = conn.execute(
-            "SELECT formality, samples_analyzed FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT formality, samples_analyzed FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
         assert template_v1["samples_analyzed"] == 1
@@ -215,8 +213,7 @@ def test_incremental_template_updates(db, user_model_store, relationship_extract
 
     with db.get_connection("user_model") as conn:
         template_v2 = conn.execute(
-            "SELECT formality, samples_analyzed FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT formality, samples_analyzed FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
         assert template_v2["samples_analyzed"] == 2  # Incremented
@@ -249,8 +246,7 @@ def test_template_extraction_skips_short_messages(db, user_model_store, relation
     # No template should be created
     with db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM communication_templates WHERE contact_id = ?",
-            ("eve@example.com",)
+            "SELECT COUNT(*) as cnt FROM communication_templates WHERE contact_id = ?", ("eve@example.com",)
         ).fetchone()["cnt"]
 
         assert count == 0
@@ -281,8 +277,7 @@ def test_template_extraction_emoji_detection(db, user_model_store, relationship_
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
         assert template["uses_emoji"] == 1  # Emoji detected
@@ -303,8 +298,7 @@ def test_template_extraction_emoji_detection(db, user_model_store, relationship_
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
         # Emoji flag should still be true (sticky)
@@ -336,11 +330,11 @@ def test_template_extraction_common_phrases(db, user_model_store, relationship_e
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT common_phrases FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT common_phrases FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
         import json
+
         phrases = json.loads(template["common_phrases"])
 
         # "project" should be in the top phrases (appeared 6 times)
@@ -372,13 +366,11 @@ def test_template_extraction_multiple_recipients(db, user_model_store, relations
     # Both recipients should have templates
     with db.get_connection("user_model") as conn:
         henry_template = conn.execute(
-            "SELECT * FROM communication_templates WHERE contact_id = ?",
-            ("henry@example.com",)
+            "SELECT * FROM communication_templates WHERE contact_id = ?", ("henry@example.com",)
         ).fetchone()
 
         iris_template = conn.execute(
-            "SELECT * FROM communication_templates WHERE contact_id = ?",
-            ("iris@example.com",)
+            "SELECT * FROM communication_templates WHERE contact_id = ?", ("iris@example.com",)
         ).fetchone()
 
         assert henry_template is not None
@@ -414,11 +406,11 @@ def test_template_extraction_preserves_example_ids(db, user_model_store, relatio
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT example_message_ids FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT example_message_ids FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
         import json
+
         example_ids = json.loads(template["example_message_ids"])
 
         # Should have exactly 10 IDs (the last 10)
@@ -471,7 +463,7 @@ def test_template_extraction_channel_separation(db, user_model_store, relationsh
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
             "SELECT channel, formality, greeting FROM communication_templates WHERE contact_id = ? ORDER BY channel",
-            (contact,)
+            (contact,),
         ).fetchall()
 
         assert len(templates) == 2
@@ -525,13 +517,11 @@ def test_inbound_template_formality_detection(db, user_model_store, relationship
 
     with db.get_connection("user_model") as conn:
         formal_template = conn.execute(
-            "SELECT formality FROM communication_templates WHERE contact_id = ?",
-            ("lawyer@lawfirm.com",)
+            "SELECT formality FROM communication_templates WHERE contact_id = ?", ("lawyer@lawfirm.com",)
         ).fetchone()
 
         casual_template = conn.execute(
-            "SELECT formality FROM communication_templates WHERE contact_id = ?",
-            ("buddy@example.com",)
+            "SELECT formality FROM communication_templates WHERE contact_id = ?", ("buddy@example.com",)
         ).fetchone()
 
         # Formal message should have high formality score

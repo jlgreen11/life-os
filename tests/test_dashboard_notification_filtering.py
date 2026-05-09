@@ -44,13 +44,15 @@ def mock_life_os():
     life_os.db.get_connection = Mock(
         return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock(return_value=False))
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+    )
 
     # --- Event bus ---
     life_os.event_bus = Mock()
@@ -70,10 +72,17 @@ def mock_life_os():
     # --- Signal extractor ---
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
 
     # --- Notification manager ---
     life_os.notification_manager = Mock()
@@ -151,6 +160,7 @@ MIXED_NOTIFICATIONS = [
 # Test: email topic includes only email-domain notifications
 # ---------------------------------------------------------------------------
 
+
 def test_email_topic_includes_email_notifications(client, mock_life_os):
     """GET /api/dashboard/feed?topic=email includes notifications with domain='email'."""
     mock_life_os.notification_manager.get_pending.return_value = MIXED_NOTIFICATIONS
@@ -168,6 +178,7 @@ def test_email_topic_includes_email_notifications(client, mock_life_os):
 # Test: messages topic includes only message-domain notifications
 # ---------------------------------------------------------------------------
 
+
 def test_messages_topic_includes_message_notifications(client, mock_life_os):
     """GET /api/dashboard/feed?topic=messages includes notifications with domain='message'."""
     mock_life_os.notification_manager.get_pending.return_value = MIXED_NOTIFICATIONS
@@ -184,6 +195,7 @@ def test_messages_topic_includes_message_notifications(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Test: prediction/system/calendar notifications excluded from email topic
 # ---------------------------------------------------------------------------
+
 
 def test_email_topic_excludes_non_email_notifications(client, mock_life_os):
     """Notifications with domain='prediction', 'system', or 'calendar' are excluded
@@ -206,6 +218,7 @@ def test_email_topic_excludes_non_email_notifications(client, mock_life_os):
 # Test: badges endpoint returns correct counts
 # ---------------------------------------------------------------------------
 
+
 def test_badges_returns_correct_email_and_msg_counts(client, mock_life_os):
     """GET /api/dashboard/badges returns accurate email_count and msg_count
     based on the domain column."""
@@ -216,13 +229,14 @@ def test_badges_returns_correct_email_and_msg_counts(client, mock_life_os):
     data = response.json()
 
     badges = data["badges"]
-    assert badges["email"] == 2     # n1, n2 have domain="email"
+    assert badges["email"] == 2  # n1, n2 have domain="email"
     assert badges["messages"] == 1  # n3 has domain="message"
 
 
 # ---------------------------------------------------------------------------
 # Test: feed items have correct channel field
 # ---------------------------------------------------------------------------
+
 
 def test_feed_items_have_correct_channel(client, mock_life_os):
     """Notification feed items have channel='email' for email domain,
@@ -238,14 +252,15 @@ def test_feed_items_have_correct_channel(client, mock_life_os):
     assert notif_items["n1"]["channel"] == "email"
     assert notif_items["n2"]["channel"] == "email"
     assert notif_items["n3"]["channel"] == "message"
-    assert notif_items["n4"]["channel"] == "system"   # prediction -> system
+    assert notif_items["n4"]["channel"] == "system"  # prediction -> system
     assert notif_items["n5"]["channel"] == "system"
-    assert notif_items["n6"]["channel"] == "system"   # calendar -> system
+    assert notif_items["n6"]["channel"] == "system"  # calendar -> system
 
 
 # ---------------------------------------------------------------------------
 # Test: feed item metadata includes source_event_id for deduplication
 # ---------------------------------------------------------------------------
+
 
 def test_feed_item_metadata_includes_source_event_id(client, mock_life_os):
     """Notification feed items include metadata.source_event_id so the
@@ -266,6 +281,7 @@ def test_feed_item_metadata_includes_source_event_id(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Test: inbox topic includes all notification domains
 # ---------------------------------------------------------------------------
+
 
 def test_inbox_topic_includes_all_notifications(client, mock_life_os):
     """GET /api/dashboard/feed?topic=inbox includes notifications from all domains."""

@@ -31,6 +31,7 @@ from services.signal_extractor.linguistic import LinguisticExtractor
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_extractor() -> LinguisticExtractor:
     """Build a LinguisticExtractor with a mocked UserModelStore.
 
@@ -76,6 +77,7 @@ def _last_inbound_data(extractor: LinguisticExtractor) -> dict:
 # Tests: presence of previously missing metrics
 # ---------------------------------------------------------------------------
 
+
 class TestInboundAveragesMissingMetrics:
     """Confirm that per_contact_averages now includes the 3 previously missing metrics."""
 
@@ -106,8 +108,7 @@ class TestInboundAveragesMissingMetrics:
         data = _last_inbound_data(extractor)
         avg = data["per_contact_averages"]["bob@example.com"]
         assert "ellipsis_rate" in avg, (
-            "ellipsis_rate must be stored in per_contact_averages "
-            "(signals casual/hesitant writing style)"
+            "ellipsis_rate must be stored in per_contact_averages (signals casual/hesitant writing style)"
         )
 
     def test_unique_word_ratio_present_in_inbound_averages(self):
@@ -121,14 +122,14 @@ class TestInboundAveragesMissingMetrics:
         data = _last_inbound_data(extractor)
         avg = data["per_contact_averages"]["carol@example.com"]
         assert "unique_word_ratio" in avg, (
-            "unique_word_ratio must be stored in per_contact_averages "
-            "(vocabulary richness signal for style matching)"
+            "unique_word_ratio must be stored in per_contact_averages (vocabulary richness signal for style matching)"
         )
 
 
 # ---------------------------------------------------------------------------
 # Tests: correct values
 # ---------------------------------------------------------------------------
+
 
 class TestInboundAverageValues:
     """Verify that the newly added metrics contain numerically correct values."""
@@ -197,14 +198,13 @@ class TestInboundAverageValues:
         data = _last_inbound_data(extractor)
         avg = data["per_contact_averages"]["grace@example.com"]
         ratio = avg["unique_word_ratio"]
-        assert 0.0 <= ratio <= 1.0, (
-            f"unique_word_ratio must be in [0, 1], got {ratio}"
-        )
+        assert 0.0 <= ratio <= 1.0, f"unique_word_ratio must be in [0, 1], got {ratio}"
 
 
 # ---------------------------------------------------------------------------
 # Tests: multi-message averaging
 # ---------------------------------------------------------------------------
+
 
 class TestInboundAveragesAreActualMeans:
     """Verify that multiple messages produce proper statistical means, not last-value overwrites."""
@@ -221,18 +221,16 @@ class TestInboundAveragesAreActualMeans:
 
         individual_rates = []
         messages = [
-            "Are you available? Can we talk?",       # 2 questions → rate > 0
-            "I just wanted to check in with you.",    # 0 questions → rate 0
-            "What time works? Is morning okay?",      # 2 questions → rate > 0
+            "Are you available? Can we talk?",  # 2 questions → rate > 0
+            "I just wanted to check in with you.",  # 0 questions → rate 0
+            "What time works? Is morning okay?",  # 2 questions → rate > 0
         ]
         for body in messages:
             # Feed accumulated profile data back before each extract() call so
             # the profile grows the same way as in production.
             try:
                 existing_data = _last_inbound_data(extractor)
-                extractor.ums.get_signal_profile.return_value = {
-                    "data": existing_data
-                }
+                extractor.ums.get_signal_profile.return_value = {"data": existing_data}
             except AssertionError:
                 pass  # First iteration: profile is empty (mock returns None)
 
@@ -287,6 +285,7 @@ class TestInboundAveragesAreActualMeans:
 # Tests: existing metrics unaffected
 # ---------------------------------------------------------------------------
 
+
 class TestExistingMetricsUnchanged:
     """Confirm that the 6 pre-existing metrics still work correctly after the fix."""
 
@@ -320,9 +319,7 @@ class TestExistingMetricsUnchanged:
             # Feed accumulated profile back before each extract call.
             try:
                 existing_data = _last_inbound_data(extractor)
-                extractor.ums.get_signal_profile.return_value = {
-                    "data": existing_data
-                }
+                extractor.ums.get_signal_profile.return_value = {"data": existing_data}
             except AssertionError:
                 pass  # First iteration: profile is empty (mock returns None)
 
@@ -336,6 +333,4 @@ class TestExistingMetricsUnchanged:
 
         data = _last_inbound_data(extractor)
         count = data["per_contact_averages"][contact]["samples_count"]
-        assert count == messages_to_send, (
-            f"Expected samples_count={messages_to_send}, got {count}"
-        )
+        assert count == messages_to_send, f"Expected samples_count={messages_to_send}, got {count}"

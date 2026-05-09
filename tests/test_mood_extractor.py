@@ -122,9 +122,7 @@ class TestMoodInferenceEngine:
         mood_signals = signals[0]["signals"]
 
         # Should contain both message_length and negative_language signals
-        negative_signal = next(
-            s for s in mood_signals if s["signal_type"] == "negative_language"
-        )
+        negative_signal = next(s for s in mood_signals if s["signal_type"] == "negative_language")
         assert negative_signal["weight"] == 0.6  # High weight for negative language
         assert negative_signal["value"] > 0  # Non-zero negative word density
         assert negative_signal["source"] == "imessage"
@@ -557,9 +555,12 @@ class TestMoodInferenceEngine:
 
     def test_get_baseline_uses_custom_baseline_when_available(self, engine, user_model_store):
         """Should use custom baseline from baselines profile when available."""
-        user_model_store.update_signal_profile("baselines", {
-            "message_length_words": 50.0,
-        })
+        user_model_store.update_signal_profile(
+            "baselines",
+            {
+                "message_length_words": 50.0,
+            },
+        )
 
         baseline = engine._get_baseline("message_length_words")
         assert baseline == 50.0

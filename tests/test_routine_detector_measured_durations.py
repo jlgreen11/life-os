@@ -24,21 +24,25 @@ from services.routine_detector.detector import RoutineDetector
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _episode(user_model_store, interaction_type: str, ts: datetime, location: str | None = None) -> None:
     """Insert a minimal episode row into the user-model database."""
-    user_model_store.store_episode({
-        "id": str(uuid.uuid4()),
-        "timestamp": ts.isoformat(),
-        "event_id": str(uuid.uuid4()),
-        "interaction_type": interaction_type,
-        "content_summary": interaction_type.replace("_", " ").title(),
-        "location": location,
-    })
+    user_model_store.store_episode(
+        {
+            "id": str(uuid.uuid4()),
+            "timestamp": ts.isoformat(),
+            "event_id": str(uuid.uuid4()),
+            "interaction_type": interaction_type,
+            "content_summary": interaction_type.replace("_", " ").title(),
+            "location": location,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # _compute_step_duration_map
 # ---------------------------------------------------------------------------
+
 
 class TestComputeStepDurationMap:
     """Unit tests for the shared duration-measurement helper."""
@@ -119,17 +123,17 @@ class TestComputeStepDurationMap:
 # _detect_location_routines — measured durations
 # ---------------------------------------------------------------------------
 
+
 class TestLocationRoutineMeasuredDurations:
     """Verify that location routines use measured, not hardcoded, step durations."""
 
-    def _build_location_pattern(self, user_model_store, location: str, days: int = 7,
-                                 gap_minutes: float = 25.0) -> None:
+    def _build_location_pattern(
+        self, user_model_store, location: str, days: int = 7, gap_minutes: float = 25.0
+    ) -> None:
         """Insert <days> days of a two-step location routine with a fixed gap."""
         base = datetime.now(timezone.utc) - timedelta(days=days)
         for day_offset in range(days):
-            day = (base + timedelta(days=day_offset)).replace(
-                hour=18, minute=0, second=0, microsecond=0
-            )
+            day = (base + timedelta(days=day_offset)).replace(hour=18, minute=0, second=0, microsecond=0)
             _episode(user_model_store, "arrive_home", day, location=location)
             _episode(user_model_store, "check_mail", day + timedelta(minutes=gap_minutes), location=location)
 
@@ -145,9 +149,7 @@ class TestLocationRoutineMeasuredDurations:
         routine = location_routines[0]
 
         # Verify the arrive_home step does NOT use the old 5.0-minute placeholder.
-        arrive_step = next(
-            (s for s in routine["steps"] if s["action"] == "arrive_home"), None
-        )
+        arrive_step = next((s for s in routine["steps"] if s["action"] == "arrive_home"), None)
         assert arrive_step is not None
         # The measured gap from arrive_home to check_mail is 20 min; must not be 5.0.
         assert arrive_step["typical_duration_minutes"] != 5.0, (
@@ -177,17 +179,17 @@ class TestLocationRoutineMeasuredDurations:
 # _detect_event_triggered_routines — measured durations
 # ---------------------------------------------------------------------------
 
+
 class TestEventTriggeredRoutineMeasuredDurations:
     """Verify that event-triggered routines use measured, not hardcoded, step durations."""
 
-    def _build_event_trigger_pattern(self, user_model_store, trigger: str, days: int = 8,
-                                      gap1_min: float = 12.0, gap2_min: float = 25.0) -> None:
+    def _build_event_trigger_pattern(
+        self, user_model_store, trigger: str, days: int = 8, gap1_min: float = 12.0, gap2_min: float = 25.0
+    ) -> None:
         """Insert <days> days of a 3-step event-triggered routine with known gaps."""
         base = datetime.now(timezone.utc) - timedelta(days=days)
         for day_offset in range(days):
-            day = (base + timedelta(days=day_offset)).replace(
-                hour=10, minute=0, second=0, microsecond=0
-            )
+            day = (base + timedelta(days=day_offset)).replace(hour=10, minute=0, second=0, microsecond=0)
             # Trigger
             _episode(user_model_store, trigger, day)
             # Step 1 follows at gap1_min
@@ -206,9 +208,7 @@ class TestEventTriggeredRoutineMeasuredDurations:
         The important assertion is that neither step uses the old 5.0 placeholder.
         """
         detector = RoutineDetector(db, user_model_store)
-        self._build_event_trigger_pattern(
-            user_model_store, trigger="end_meeting", gap1_min=10.0, gap2_min=20.0
-        )
+        self._build_event_trigger_pattern(user_model_store, trigger="end_meeting", gap1_min=10.0, gap2_min=20.0)
 
         routines = detector.detect_routines(lookback_days=30)
         triggered = [r for r in routines if "End Meeting" in r.get("name", "")]
@@ -220,21 +220,17 @@ class TestEventTriggeredRoutineMeasuredDurations:
         assert write_step is not None
         # write_notes → send_followup gap is ~20 min; must NOT be the old 5.0 placeholder
         assert write_step["typical_duration_minutes"] != 5.0, (
-            "Step duration should be measured (~20 min from write_notes→send_followup), "
-            "not the old hardcoded 5.0"
+            "Step duration should be measured (~20 min from write_notes→send_followup), not the old hardcoded 5.0"
         )
         # The measured gap (write_notes → send_followup) is gap2_min = 20 min
         assert abs(write_step["typical_duration_minutes"] - 20.0) < 2.0, (
-            f"Expected ~20 min (write_notes→send_followup gap), "
-            f"got {write_step['typical_duration_minutes']}"
+            f"Expected ~20 min (write_notes→send_followup gap), got {write_step['typical_duration_minutes']}"
         )
 
     def test_total_duration_reflects_measured_steps(self, db, user_model_store):
         """Event-triggered routine total duration should equal sum of measured steps."""
         detector = RoutineDetector(db, user_model_store)
-        self._build_event_trigger_pattern(
-            user_model_store, trigger="finish_sprint", gap1_min=8.0, gap2_min=16.0
-        )
+        self._build_event_trigger_pattern(user_model_store, trigger="finish_sprint", gap1_min=8.0, gap2_min=16.0)
 
         routines = detector.detect_routines(lookback_days=30)
         triggered = [r for r in routines if "Finish Sprint" in r.get("name", "")]
@@ -251,9 +247,7 @@ class TestEventTriggeredRoutineMeasuredDurations:
         detector = RoutineDetector(db, user_model_store)
         # 3-step routine with 30-min gaps: old total = 3 * 5.0 = 15.0 (wrong)
         # new total = ~30.0 + ~30.0 + ~30.0 = ~90.0 (correct, or at least ≠ 15)
-        self._build_event_trigger_pattern(
-            user_model_store, trigger="deploy_release", gap1_min=30.0, gap2_min=30.0
-        )
+        self._build_event_trigger_pattern(user_model_store, trigger="deploy_release", gap1_min=30.0, gap2_min=30.0)
 
         routines = detector.detect_routines(lookback_days=30)
         triggered = [r for r in routines if "Deploy Release" in r.get("name", "")]

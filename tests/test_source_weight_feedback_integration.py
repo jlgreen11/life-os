@@ -19,6 +19,7 @@ from services.insight_engine.source_weights import SourceWeightManager
 # Fixtures
 # -------------------------------------------------------------------
 
+
 @pytest.fixture()
 def source_weight_manager(db):
     """A SourceWeightManager with default weights seeded."""
@@ -60,6 +61,7 @@ def _get_weight(db, source_key):
 # -------------------------------------------------------------------
 # Test: _resolve_notification_source_key
 # -------------------------------------------------------------------
+
 
 class TestResolveNotificationSourceKey:
     """Unit tests for LifeOS._resolve_notification_source_key."""
@@ -129,6 +131,7 @@ class TestResolveNotificationSourceKey:
 # -------------------------------------------------------------------
 # Test: Stage 1.2b pipeline integration
 # -------------------------------------------------------------------
+
 
 class TestPipelineSourceWeightFeedback:
     """Integration tests verifying the Stage 1.2b wiring in master_event_handler.
@@ -223,6 +226,7 @@ class TestPipelineSourceWeightFeedback:
                 notif_id = event["payload"]["notification_id"]
                 # Use a real _resolve that returns a source_key
                 from main import LifeOS
+
                 stub = MagicMock(spec=LifeOS)
                 stub.db = db
                 stub.source_weight_manager = broken_swm

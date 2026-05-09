@@ -46,10 +46,16 @@ from services.prediction_engine.engine import PredictionEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_prediction(db, prediction_type: str, was_accurate: bool = None,
-                       was_surfaced: bool = True, resolved_at: str = None,
-                       resolution_reason: str = None,
-                       contact_email: str = None) -> str:
+
+def _insert_prediction(
+    db,
+    prediction_type: str,
+    was_accurate: bool = None,
+    was_surfaced: bool = True,
+    resolved_at: str = None,
+    resolution_reason: str = None,
+    contact_email: str = None,
+) -> str:
     """Insert a prediction row and return its ID.
 
     Args:
@@ -111,16 +117,13 @@ def test_predictions_table_has_resolution_reason_column(db):
 
 def test_resolution_reason_column_is_nullable(db):
     """resolution_reason should be nullable (pre-v4 rows have no reason)."""
-    pred_id = _insert_prediction(db, "opportunity", was_accurate=False,
-                                 resolved_at=datetime.now(timezone.utc).isoformat())
-    with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
-    assert row is not None
-    assert row["resolution_reason"] is None, (
-        "resolution_reason should be NULL for pre-v4 rows (no reason supplied)"
+    pred_id = _insert_prediction(
+        db, "opportunity", was_accurate=False, resolved_at=datetime.now(timezone.utc).isoformat()
     )
+    with db.get_connection("user_model") as conn:
+        row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
+    assert row is not None
+    assert row["resolution_reason"] is None, "resolution_reason should be NULL for pre-v4 rows (no reason supplied)"
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +138,7 @@ def test_get_resolution_reason_returns_fast_path_for_automated_sender():
     uses self._is_automated_sender, which is a pure function.
     """
     from unittest.mock import MagicMock
+
     mock_db = MagicMock()
     tracker = BehavioralAccuracyTracker(mock_db)
 
@@ -152,6 +156,7 @@ def test_get_resolution_reason_returns_fast_path_for_automated_sender():
 def test_get_resolution_reason_returns_fast_path_for_mailer_daemon():
     """_get_resolution_reason returns 'automated_sender_fast_path' for mailer-daemon."""
     from unittest.mock import MagicMock
+
     mock_db = MagicMock()
     tracker = BehavioralAccuracyTracker(mock_db)
 
@@ -175,6 +180,7 @@ def test_get_resolution_reason_returns_none_for_real_contact():
     IS a real behavioral signal that should count against accuracy.
     """
     from unittest.mock import MagicMock
+
     mock_db = MagicMock()
     tracker = BehavioralAccuracyTracker(mock_db)
 
@@ -191,6 +197,7 @@ def test_get_resolution_reason_returns_none_for_real_contact():
 def test_get_resolution_reason_returns_none_for_missing_signals():
     """_get_resolution_reason returns None when supporting_signals is empty."""
     from unittest.mock import MagicMock
+
     mock_db = MagicMock()
     tracker = BehavioralAccuracyTracker(mock_db)
 
@@ -211,6 +218,7 @@ def test_get_resolution_reason_returns_none_for_accurate_prediction():
     resolution means the user DID reach out — this is a real behavioral signal.
     """
     from unittest.mock import MagicMock
+
     mock_db = MagicMock()
     tracker = BehavioralAccuracyTracker(mock_db)
 
@@ -241,14 +249,13 @@ def test_accuracy_multiplier_excludes_fast_path_resolutions(db, user_model_store
 
     # 5 accurate predictions (real user behavior)
     for _ in range(5):
-        _insert_prediction(db, "opportunity", was_accurate=True,
-                           resolved_at=now, resolution_reason=None)
+        _insert_prediction(db, "opportunity", was_accurate=True, resolved_at=now, resolution_reason=None)
 
     # 20 fast-path inaccurate predictions (historical bug, not real behavior)
     for _ in range(20):
-        _insert_prediction(db, "opportunity", was_accurate=False,
-                           resolved_at=now,
-                           resolution_reason="automated_sender_fast_path")
+        _insert_prediction(
+            db, "opportunity", was_accurate=False, resolved_at=now, resolution_reason="automated_sender_fast_path"
+        )
 
     multiplier = engine._get_accuracy_multiplier("opportunity")
 
@@ -270,9 +277,9 @@ def test_accuracy_multiplier_with_no_real_behavior_rows_returns_default(db, user
 
     # 15 fast-path resolutions only (no real behavior)
     for _ in range(15):
-        _insert_prediction(db, "opportunity", was_accurate=False,
-                           resolved_at=now,
-                           resolution_reason="automated_sender_fast_path")
+        _insert_prediction(
+            db, "opportunity", was_accurate=False, resolved_at=now, resolution_reason="automated_sender_fast_path"
+        )
 
     multiplier = engine._get_accuracy_multiplier("opportunity")
     assert multiplier == 1.0, (
@@ -304,13 +311,13 @@ def test_opportunity_accuracy_multiplier_recovers_with_real_behavior(db, user_mo
 
     # 33 real inaccurate (user genuinely didn't reach out)
     for _ in range(33):
-        _insert_prediction(db, "opportunity", was_accurate=False, resolved_at=now,
-                           resolution_reason=None)
+        _insert_prediction(db, "opportunity", was_accurate=False, resolved_at=now, resolution_reason=None)
 
     # 174 fast-path inaccurate (excluded from count)
     for _ in range(174):
-        _insert_prediction(db, "opportunity", was_accurate=False, resolved_at=now,
-                           resolution_reason="automated_sender_fast_path")
+        _insert_prediction(
+            db, "opportunity", was_accurate=False, resolved_at=now, resolution_reason="automated_sender_fast_path"
+        )
 
     multiplier = engine._get_accuracy_multiplier("opportunity")
 
@@ -320,9 +327,7 @@ def test_opportunity_accuracy_multiplier_recovers_with_real_behavior(db, user_mo
         "Opportunity predictions should surface after excluding fast-path pollution."
     )
     # Sanity check: multiplier is not penalized
-    assert multiplier != 0.3, (
-        "Multiplier should NOT be the 0.3 penalty floor — real accuracy is healthy."
-    )
+    assert multiplier != 0.3, "Multiplier should NOT be the 0.3 penalty floor — real accuracy is healthy."
 
 
 # ---------------------------------------------------------------------------
@@ -342,8 +347,7 @@ def test_real_inaccurate_rows_still_penalize_accuracy(db, user_model_store):
     # 1 accurate, 9 real inaccurate = 10% accuracy → penalty floor
     _insert_prediction(db, "opportunity", was_accurate=True, resolved_at=now)
     for _ in range(9):
-        _insert_prediction(db, "opportunity", was_accurate=False, resolved_at=now,
-                           resolution_reason=None)
+        _insert_prediction(db, "opportunity", was_accurate=False, resolved_at=now, resolution_reason=None)
 
     multiplier = engine._get_accuracy_multiplier("opportunity")
     # 10% accuracy over 10 real samples → penalty floor 0.3
@@ -375,8 +379,7 @@ def test_resolve_prediction_stores_resolution_reason(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         row = conn.execute(
-            "SELECT was_accurate, user_response, resolution_reason, resolved_at "
-            "FROM predictions WHERE id = ?",
+            "SELECT was_accurate, user_response, resolution_reason, resolved_at FROM predictions WHERE id = ?",
             (pred_id,),
         ).fetchone()
 
@@ -394,11 +397,8 @@ def test_resolve_prediction_without_resolution_reason_stores_null(db, user_model
     user_model_store.resolve_prediction(pred_id, was_accurate=True, user_response="inferred")
 
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
 
     assert row["resolution_reason"] is None, (
-        "resolution_reason should be NULL when not explicitly provided "
-        "(backward compatibility with pre-v4 resolutions)"
+        "resolution_reason should be NULL when not explicitly provided (backward compatibility with pre-v4 resolutions)"
     )

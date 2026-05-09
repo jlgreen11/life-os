@@ -33,9 +33,7 @@ def _setup_minimal_dbs(tmp_path: Path) -> None:
     """Create minimal stub databases so analyze() doesn't error on missing DBs."""
     # events.db — with source column for the events section
     ev_conn = sqlite3.connect(str(tmp_path / "events.db"))
-    ev_conn.execute(
-        "CREATE TABLE events (id TEXT, type TEXT, source TEXT, timestamp TEXT, payload TEXT)"
-    )
+    ev_conn.execute("CREATE TABLE events (id TEXT, type TEXT, source TEXT, timestamp TEXT, payload TEXT)")
     ev_conn.commit()
     ev_conn.close()
 
@@ -47,14 +45,10 @@ def _setup_minimal_dbs(tmp_path: Path) -> None:
         "created_at TEXT, resolved_at TEXT, filter_reason TEXT, user_response TEXT)"
     )
     um_conn.execute(
-        "CREATE TABLE signal_profiles (profile_type TEXT PRIMARY KEY, "
-        "samples_count INTEGER, updated_at TEXT)"
+        "CREATE TABLE signal_profiles (profile_type TEXT PRIMARY KEY, samples_count INTEGER, updated_at TEXT)"
     )
     um_conn.execute("CREATE TABLE insights (id TEXT PRIMARY KEY, type TEXT, feedback TEXT)")
-    um_conn.execute(
-        "CREATE TABLE episodes (id TEXT PRIMARY KEY, interaction_type TEXT, "
-        "timestamp TEXT)"
-    )
+    um_conn.execute("CREATE TABLE episodes (id TEXT PRIMARY KEY, interaction_type TEXT, timestamp TEXT)")
     um_conn.execute("CREATE TABLE semantic_facts (id TEXT PRIMARY KEY, category TEXT)")
     um_conn.execute("CREATE TABLE routines (id TEXT PRIMARY KEY)")
     um_conn.execute("CREATE TABLE workflows (id TEXT PRIMARY KEY)")
@@ -65,21 +59,14 @@ def _setup_minimal_dbs(tmp_path: Path) -> None:
     # state.db
     st_conn = sqlite3.connect(str(tmp_path / "state.db"))
     st_conn.execute("CREATE TABLE notifications (id TEXT, status TEXT)")
-    st_conn.execute(
-        "CREATE TABLE tasks (id TEXT, status TEXT, created_at TEXT)"
-    )
-    st_conn.execute(
-        "CREATE TABLE connector_state (connector_id TEXT, status TEXT, "
-        "last_sync TEXT, last_error TEXT)"
-    )
+    st_conn.execute("CREATE TABLE tasks (id TEXT, status TEXT, created_at TEXT)")
+    st_conn.execute("CREATE TABLE connector_state (connector_id TEXT, status TEXT, last_sync TEXT, last_error TEXT)")
     st_conn.commit()
     st_conn.close()
 
     # preferences.db
     pref_conn = sqlite3.connect(str(tmp_path / "preferences.db"))
-    pref_conn.execute(
-        "CREATE TABLE feedback_log (id TEXT, action_type TEXT, feedback_type TEXT)"
-    )
+    pref_conn.execute("CREATE TABLE feedback_log (id TEXT, action_type TEXT, feedback_type TEXT)")
     pref_conn.execute(
         "CREATE TABLE source_weights (source_key TEXT, user_weight REAL, "
         "ai_drift REAL, ai_updated_at TEXT, interactions INTEGER, "
@@ -126,9 +113,7 @@ class TestWorkflowDiagnosticsSectionPresent:
 
         report = analyze(str(tmp_path))
 
-        assert "workflow_diagnostics" in report["sections"], (
-            "workflow_diagnostics section must be present in report"
-        )
+        assert "workflow_diagnostics" in report["sections"], "workflow_diagnostics section must be present in report"
         wf = report["sections"]["workflow_diagnostics"]
         assert "thresholds" in wf
         assert "email" in wf
@@ -222,12 +207,8 @@ class TestWorkflowDiagnosticsLowSentAnomaly:
         report = analyze(str(tmp_path))
         anomalies = report["anomalies"]
 
-        email_anomalies = [
-            a for a in anomalies if a["category"] == "workflow_email_imbalance"
-        ]
-        assert len(email_anomalies) == 1, (
-            f"Expected 1 workflow_email_imbalance anomaly, got {len(email_anomalies)}"
-        )
+        email_anomalies = [a for a in anomalies if a["category"] == "workflow_email_imbalance"]
+        assert len(email_anomalies) == 1, f"Expected 1 workflow_email_imbalance anomaly, got {len(email_anomalies)}"
         assert "200 received" in email_anomalies[0]["message"]
         assert "2 sent" in email_anomalies[0]["message"]
 
@@ -245,9 +226,7 @@ class TestWorkflowDiagnosticsLowSentAnomaly:
         _insert_events(tmp_path, events)
 
         report = analyze(str(tmp_path))
-        email_anomalies = [
-            a for a in report["anomalies"] if a["category"] == "workflow_email_imbalance"
-        ]
+        email_anomalies = [a for a in report["anomalies"] if a["category"] == "workflow_email_imbalance"]
         assert len(email_anomalies) == 0
 
 
@@ -260,9 +239,13 @@ class TestWorkflowDiagnosticsEpisodeTypes:
         _setup_minimal_dbs(tmp_path)
 
         episodes = [
-            ("email",), ("email",), ("email",),
-            ("task",), ("task",),
-            (None,), (None,),
+            ("email",),
+            ("email",),
+            ("email",),
+            ("task",),
+            ("task",),
+            (None,),
+            (None,),
             ("unknown",),
         ]
         _insert_episodes(tmp_path, episodes)
@@ -283,19 +266,11 @@ class TestWorkflowDiagnosticsEpisodeTypes:
         _setup_minimal_dbs(tmp_path)
 
         # 8 bad types, 2 good types = 80% bad
-        episodes = (
-            [(None,)] * 4
-            + [("unknown",)] * 2
-            + [("communication",)] * 2
-            + [("email",)] * 2
-        )
+        episodes = [(None,)] * 4 + [("unknown",)] * 2 + [("communication",)] * 2 + [("email",)] * 2
         _insert_episodes(tmp_path, episodes)
 
         report = analyze(str(tmp_path))
-        type_anomalies = [
-            a for a in report["anomalies"]
-            if a["category"] == "workflow_stale_interaction_types"
-        ]
+        type_anomalies = [a for a in report["anomalies"] if a["category"] == "workflow_stale_interaction_types"]
         assert len(type_anomalies) == 1
         assert "8/10" in type_anomalies[0]["message"]
 
@@ -309,8 +284,5 @@ class TestWorkflowDiagnosticsEpisodeTypes:
         _insert_episodes(tmp_path, episodes)
 
         report = analyze(str(tmp_path))
-        type_anomalies = [
-            a for a in report["anomalies"]
-            if a["category"] == "workflow_stale_interaction_types"
-        ]
+        type_anomalies = [a for a in report["anomalies"] if a["category"] == "workflow_stale_interaction_types"]
         assert len(type_anomalies) == 0

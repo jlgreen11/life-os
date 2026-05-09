@@ -47,24 +47,20 @@ class CadenceExtractor(BaseExtractor):
         # We look up the original inbound message by ID to compute the delta.
         if event_type in [EventType.EMAIL_SENT.value, EventType.MESSAGE_SENT.value]:
             if payload.get("is_reply") and payload.get("in_reply_to"):
-                response_time = self._calculate_response_time(
-                    payload["in_reply_to"], timestamp
-                )
+                response_time = self._calculate_response_time(payload["in_reply_to"], timestamp)
                 if response_time is not None:
                     # Grab the first recipient as the contact identifier for
                     # per-contact response-time breakdowns.
-                    contact = (
-                        payload.get("to_addresses", [None])[0]
-                        if payload.get("to_addresses")
-                        else None
+                    contact = payload.get("to_addresses", [None])[0] if payload.get("to_addresses") else None
+                    signals.append(
+                        {
+                            "type": "cadence_response_time",
+                            "timestamp": timestamp,
+                            "contact_id": contact,
+                            "channel": source,
+                            "response_time_seconds": response_time,
+                        }
                     )
-                    signals.append({
-                        "type": "cadence_response_time",
-                        "timestamp": timestamp,
-                        "contact_id": contact,
-                        "channel": source,
-                        "response_time_seconds": response_time,
-                    })
 
         # ----- Inbound message tracking -----
         # Record every inbound message per contact, regardless of whether it's
@@ -74,10 +70,12 @@ class CadenceExtractor(BaseExtractor):
         if event_type in [EventType.EMAIL_RECEIVED.value, EventType.MESSAGE_RECEIVED.value]:
             contact = payload.get("sender") or payload.get("from_address")
             if contact:
-                signals.append({
-                    "type": "cadence_inbound_received",
-                    "contact_id": contact,
-                })
+                signals.append(
+                    {
+                        "type": "cadence_inbound_received",
+                        "contact_id": contact,
+                    }
+                )
 
         # ----- Conversation initiation tracking -----
         # Detect whether this message starts a new conversation (initiation)
@@ -89,54 +87,48 @@ class CadenceExtractor(BaseExtractor):
             is_outbound = "sent" in event_type.lower()
             if is_outbound:
                 # User initiated — contact is the first recipient.
-                contact = (
-                    payload.get("to_addresses", [None])[0]
-                    if payload.get("to_addresses")
-                    else None
-                )
+                contact = payload.get("to_addresses", [None])[0] if payload.get("to_addresses") else None
                 if contact:
-                    signals.append({
-                        "type": "cadence_initiation",
-                        "contact_id": contact,
-                        "initiator": "user",
-                    })
+                    signals.append(
+                        {
+                            "type": "cadence_initiation",
+                            "contact_id": contact,
+                            "initiator": "user",
+                        }
+                    )
             else:
                 # Contact initiated — contact is the sender.
                 contact = payload.get("sender") or payload.get("from_address")
                 if contact:
-                    signals.append({
-                        "type": "cadence_initiation",
-                        "contact_id": contact,
-                        "initiator": "contact",
-                    })
+                    signals.append(
+                        {
+                            "type": "cadence_initiation",
+                            "contact_id": contact,
+                            "initiator": "contact",
+                        }
+                    )
 
         # ----- Thread/conversation tracking -----
         # Track message-level thread activity to compute thread_completion_rate
         # (does the user follow through on conversations?) and avg_thread_length
         # (how many messages per conversation?).  Uses thread_id, in_reply_to,
         # or subject as the thread key — whichever is available.
-        thread_key = (
-            payload.get("thread_id")
-            or payload.get("in_reply_to")
-            or payload.get("subject")
-        )
+        thread_key = payload.get("thread_id") or payload.get("in_reply_to") or payload.get("subject")
         if thread_key:
             is_outbound = "sent" in event_type.lower()
             if is_outbound:
-                contact = (
-                    payload.get("to_addresses", [None])[0]
-                    if payload.get("to_addresses")
-                    else None
-                )
+                contact = payload.get("to_addresses", [None])[0] if payload.get("to_addresses") else None
             else:
                 contact = payload.get("sender") or payload.get("from_address")
-            signals.append({
-                "type": "cadence_thread_activity",
-                "thread_id": thread_key,
-                "direction": "outbound" if is_outbound else "inbound",
-                "contact_id": contact,
-                "timestamp": timestamp,
-            })
+            signals.append(
+                {
+                    "type": "cadence_thread_activity",
+                    "thread_id": thread_key,
+                    "direction": "outbound" if is_outbound else "inbound",
+                    "contact_id": contact,
+                    "timestamp": timestamp,
+                }
+            )
 
         # ----- Activity-window detection -----
         # Record the hour-of-day and day-of-week for every communication event
@@ -146,19 +138,22 @@ class CadenceExtractor(BaseExtractor):
             # Normalise the trailing "Z" to a proper UTC offset so fromisoformat
             # can parse it consistently across Python versions.
             dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            signals.append({
-                "type": "cadence_activity",
-                "timestamp": timestamp,
-                "hour": dt.hour,
-                "day_of_week": dt.strftime("%A").lower(),
-                "direction": "outbound" if "sent" in event_type.lower() else "inbound",
-                "channel": source,
-            })
+            signals.append(
+                {
+                    "type": "cadence_activity",
+                    "timestamp": timestamp,
+                    "hour": dt.hour,
+                    "day_of_week": dt.strftime("%A").lower(),
+                    "direction": "outbound" if "sent" in event_type.lower() else "inbound",
+                    "channel": source,
+                }
+            )
         except (ValueError, AttributeError) as e:
             # If the timestamp is missing or malformed we skip the activity
             # signal rather than failing the whole extraction.
-            logger.debug('cadence_extractor: skipping event %s — malformed timestamp: %s',
-                         event.get('id', 'unknown'), e)
+            logger.debug(
+                "cadence_extractor: skipping event %s — malformed timestamp: %s", event.get("id", "unknown"), e
+            )
 
         # Persist the signals into the running cadence profile.
         # Wrapped in try/except so that a persistence failure still returns the
@@ -168,12 +163,13 @@ class CadenceExtractor(BaseExtractor):
         except Exception as e:
             logger.error(
                 "cadence: _update_profile failed for event %s: %s",
-                event.get("id", "?"), e, exc_info=True,
+                event.get("id", "?"),
+                e,
+                exc_info=True,
             )
         return signals
 
-    def _calculate_response_time(self, original_message_id: str,
-                                  response_timestamp: str) -> Optional[float]:
+    def _calculate_response_time(self, original_message_id: str, response_timestamp: str) -> Optional[float]:
         """Look up the original inbound message and calculate response time.
 
         Queries the event store for the event whose payload.message_id
@@ -201,12 +197,8 @@ class CadenceExtractor(BaseExtractor):
             return None
 
         try:
-            original_dt = datetime.fromisoformat(
-                row["timestamp"].replace("Z", "+00:00")
-            )
-            response_dt = datetime.fromisoformat(
-                response_timestamp.replace("Z", "+00:00")
-            )
+            original_dt = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+            response_dt = datetime.fromisoformat(response_timestamp.replace("Z", "+00:00"))
             delta = (response_dt - original_dt).total_seconds()
             # Only return positive deltas — a negative value would mean the
             # "reply" was timestamped before the original, which indicates a
@@ -232,15 +224,19 @@ class CadenceExtractor(BaseExtractor):
         # code below uses explicit setdefault / key-existence checks everywhere,
         # so no auto-vivification is needed.
         existing = self.ums.get_signal_profile("cadence")
-        data = existing["data"] if existing else {
-            "response_times": [],
-            "hourly_activity": {},
-            "daily_activity": {},
-            "per_contact_response_times": {},
-            "per_channel_response_times": {},
-            "per_contact_initiations": {},
-            "per_contact_inbound_count": {},
-        }
+        data = (
+            existing["data"]
+            if existing
+            else {
+                "response_times": [],
+                "hourly_activity": {},
+                "daily_activity": {},
+                "per_contact_response_times": {},
+                "per_channel_response_times": {},
+                "per_contact_initiations": {},
+                "per_contact_inbound_count": {},
+            }
+        )
 
         # Ensure fields exist for profiles bootstrapped before they were added.
         if "per_contact_initiations" not in data:
@@ -300,9 +296,7 @@ class CadenceExtractor(BaseExtractor):
                 # the user consistently ignores.
                 contact = signal.get("contact_id")
                 if contact:
-                    data["per_contact_inbound_count"][contact] = (
-                        data["per_contact_inbound_count"].get(contact, 0) + 1
-                    )
+                    data["per_contact_inbound_count"][contact] = data["per_contact_inbound_count"].get(contact, 0) + 1
 
             elif signal["type"] == "cadence_thread_activity":
                 # Track per-thread message activity for thread_completion_rate
@@ -424,7 +418,7 @@ class CadenceExtractor(BaseExtractor):
         mean = sum(values) / len(values)
         # Population standard deviation across all known hour buckets.
         variance = sum((v - mean) ** 2 for v in values) / len(values)
-        std_dev = variance ** 0.5
+        std_dev = variance**0.5
 
         # Threshold: mean + 0.5 * σ so broad active windows are fully captured.
         threshold = mean + 0.5 * std_dev
@@ -476,9 +470,7 @@ class CadenceExtractor(BaseExtractor):
 
         # Use the first non-quiet hour as the scan anchor so that spans which
         # cross midnight (e.g., 22–06) are detected as a single contiguous run.
-        non_quiet_anchor = next(
-            (h for h in range(24) if full[h] > threshold), None
-        )
+        non_quiet_anchor = next((h for h in range(24) if full[h] > threshold), None)
         if non_quiet_anchor is None:
             # Pathological case: every hour is quiet — store as single 24-h span.
             data["quiet_hours_observed"] = [(0, 0)]
@@ -540,11 +532,7 @@ class CadenceExtractor(BaseExtractor):
             domain_times[domain].extend(times)
 
         # Compute average per domain; require ≥3 samples for reliability.
-        avg_by_domain = {
-            domain: sum(times) / len(times)
-            for domain, times in domain_times.items()
-            if len(times) >= 3
-        }
+        avg_by_domain = {domain: sum(times) / len(times) for domain, times in domain_times.items() if len(times) >= 3}
 
         if avg_by_domain:
             data["avg_response_time_by_domain"] = avg_by_domain
@@ -563,11 +551,7 @@ class CadenceExtractor(BaseExtractor):
         if not per_contact:
             return
 
-        avg_by_contact = {
-            contact: sum(times) / len(times)
-            for contact, times in per_contact.items()
-            if len(times) >= 3
-        }
+        avg_by_contact = {contact: sum(times) / len(times) for contact, times in per_contact.items() if len(times) >= 3}
 
         if avg_by_contact:
             data["avg_response_time_by_contact"] = avg_by_contact
@@ -585,11 +569,7 @@ class CadenceExtractor(BaseExtractor):
         if not per_channel:
             return
 
-        avg_by_channel = {
-            channel: sum(times) / len(times)
-            for channel, times in per_channel.items()
-            if len(times) >= 3
-        }
+        avg_by_channel = {channel: sum(times) / len(times) for channel, times in per_channel.items() if len(times) >= 3}
 
         if avg_by_channel:
             data["avg_response_time_by_channel"] = avg_by_channel
@@ -669,12 +649,14 @@ class CadenceExtractor(BaseExtractor):
             unreplied = inbound_count - replied_count
 
             if unreplied > 0:
-                entries.append({
-                    "contact_id": contact,
-                    "unreplied_count": unreplied,
-                    "unreplied_ratio": unreplied / inbound_count,
-                    "total_inbound": inbound_count,
-                })
+                entries.append(
+                    {
+                        "contact_id": contact,
+                        "unreplied_count": unreplied,
+                        "unreplied_ratio": unreplied / inbound_count,
+                        "total_inbound": inbound_count,
+                    }
+                )
 
         # Sort by unreplied_ratio descending (most-ignored contacts first).
         entries.sort(key=lambda e: e["unreplied_ratio"], reverse=True)

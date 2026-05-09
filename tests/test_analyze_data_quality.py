@@ -249,9 +249,7 @@ class TestHealthyDatabase:
 
         for name, section in report["sections"].items():
             if isinstance(section, dict):
-                assert "error" not in section, (
-                    f"Section '{name}' has unexpected error: {section.get('error')}"
-                )
+                assert "error" not in section, f"Section '{name}' has unexpected error: {section.get('error')}"
 
     def test_database_health_all_ok(self, tmp_path):
         """All databases should report status 'ok' in database_health."""
@@ -908,8 +906,7 @@ class TestMissingSignalProfiles:
         conn = sqlite3.connect(str(tmp_path / "user_model.db"))
         for ptype in self.EXPECTED_TYPES:
             conn.execute(
-                "INSERT INTO signal_profiles (profile_type, samples_count, updated_at) "
-                "VALUES (?, 1, datetime('now'))",
+                "INSERT INTO signal_profiles (profile_type, samples_count, updated_at) VALUES (?, 1, datetime('now'))",
                 (ptype,),
             )
         conn.commit()
@@ -1071,13 +1068,16 @@ class TestEventSourcedPredictionActivity:
         """event_activity counts prediction-related events from events.db."""
         _create_all_dbs(tmp_path)
 
-        _insert_prediction_events(tmp_path, [
-            ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
-            ("e2", "usermodel.prediction.generated", "2026-03-01T11:00:00Z"),
-            ("e3", "usermodel.prediction.generated", "2026-03-01T12:00:00Z"),
-            ("e4", "usermodel.prediction.deduplicated", "2026-03-01T10:30:00Z"),
-            ("e5", "usermodel.prediction.deduplicated", "2026-03-01T11:30:00Z"),
-        ])
+        _insert_prediction_events(
+            tmp_path,
+            [
+                ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
+                ("e2", "usermodel.prediction.generated", "2026-03-01T11:00:00Z"),
+                ("e3", "usermodel.prediction.generated", "2026-03-01T12:00:00Z"),
+                ("e4", "usermodel.prediction.deduplicated", "2026-03-01T10:30:00Z"),
+                ("e5", "usermodel.prediction.deduplicated", "2026-03-01T11:30:00Z"),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         pp = report["sections"]["prediction_pipeline"]
@@ -1093,10 +1093,13 @@ class TestEventSourcedPredictionActivity:
         """
         _create_all_dbs(tmp_path)
 
-        _insert_prediction_events(tmp_path, [
-            ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
-            ("e2", "usermodel.prediction.generated", "2026-03-01T11:00:00Z"),
-        ])
+        _insert_prediction_events(
+            tmp_path,
+            [
+                ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
+                ("e2", "usermodel.prediction.generated", "2026-03-01T11:00:00Z"),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         pp = report["sections"]["prediction_pipeline"]
@@ -1110,11 +1113,14 @@ class TestEventSourcedPredictionActivity:
         """last_generation_event returns the most recent prediction.generated timestamp."""
         _create_all_dbs(tmp_path)
 
-        _insert_prediction_events(tmp_path, [
-            ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
-            ("e2", "usermodel.prediction.generated", "2026-03-02T15:30:00Z"),
-            ("e3", "usermodel.prediction.generated", "2026-03-01T08:00:00Z"),
-        ])
+        _insert_prediction_events(
+            tmp_path,
+            [
+                ("e1", "usermodel.prediction.generated", "2026-03-01T10:00:00Z"),
+                ("e2", "usermodel.prediction.generated", "2026-03-02T15:30:00Z"),
+                ("e3", "usermodel.prediction.generated", "2026-03-01T08:00:00Z"),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         pp = report["sections"]["prediction_pipeline"]
@@ -1211,13 +1217,16 @@ class TestPredictionDetail:
     def test_confidence_histogram_buckets(self, tmp_path):
         """Confidence histogram groups predictions into correct buckets."""
         _create_all_dbs(tmp_path)
-        _insert_predictions_with_confidence(tmp_path, [
-            ("p1", "NEED", 0.05, 0, "filtered", "confidence:0.05"),
-            ("p2", "NEED", 0.15, 0, "filtered", "confidence:0.15"),
-            ("p3", "NEED", 0.25, 0, "filtered", "confidence:0.25"),
-            ("p4", "RISK", 0.55, 1, "acted_on", None),
-            ("p5", "RISK", 0.95, 1, "acted_on", None),
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path,
+            [
+                ("p1", "NEED", 0.05, 0, "filtered", "confidence:0.05"),
+                ("p2", "NEED", 0.15, 0, "filtered", "confidence:0.15"),
+                ("p3", "NEED", 0.25, 0, "filtered", "confidence:0.25"),
+                ("p4", "RISK", 0.55, 1, "acted_on", None),
+                ("p5", "RISK", 0.95, 1, "acted_on", None),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         hist = report["sections"]["prediction_pipeline"]["prediction_detail"]["confidence_histogram"]
@@ -1231,12 +1240,15 @@ class TestPredictionDetail:
     def test_type_breakdown_generated_vs_surfaced(self, tmp_path):
         """Type breakdown correctly counts total and surfaced per type."""
         _create_all_dbs(tmp_path)
-        _insert_predictions_with_confidence(tmp_path, [
-            ("p1", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
-            ("p2", "NEED", 0.2, 0, "filtered", "confidence:0.2"),
-            ("p3", "NEED", 0.5, 1, "acted_on", None),
-            ("p4", "RISK", 0.6, 1, "acted_on", None),
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path,
+            [
+                ("p1", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
+                ("p2", "NEED", 0.2, 0, "filtered", "confidence:0.2"),
+                ("p3", "NEED", 0.5, 1, "acted_on", None),
+                ("p4", "RISK", 0.6, 1, "acted_on", None),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         breakdown = report["sections"]["prediction_pipeline"]["prediction_detail"]["type_breakdown"]
@@ -1250,10 +1262,7 @@ class TestPredictionDetail:
         """Recent filtered list returns up to 10 most recent filtered predictions."""
         _create_all_dbs(tmp_path)
         # Insert 12 filtered predictions
-        preds = [
-            (f"p{i}", "NEED", 0.1 + i * 0.01, 0, "filtered", f"confidence:{0.1 + i * 0.01}")
-            for i in range(12)
-        ]
+        preds = [(f"p{i}", "NEED", 0.1 + i * 0.01, 0, "filtered", f"confidence:{0.1 + i * 0.01}") for i in range(12)]
         _insert_predictions_with_confidence(tmp_path, preds)
 
         report = analyze(str(tmp_path))
@@ -1270,11 +1279,14 @@ class TestPredictionDetail:
     def test_stored_prediction_count(self, tmp_path):
         """stored_prediction_count reflects total predictions in DB."""
         _create_all_dbs(tmp_path)
-        _insert_predictions_with_confidence(tmp_path, [
-            ("p1", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
-            ("p2", "RISK", 0.5, 1, "acted_on", None),
-            ("p3", "REMINDER", 0.7, 1, "acted_on", None),
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path,
+            [
+                ("p1", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
+                ("p2", "RISK", 0.5, 1, "acted_on", None),
+                ("p3", "REMINDER", 0.7, 1, "acted_on", None),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         detail = report["sections"]["prediction_pipeline"]["prediction_detail"]
@@ -1288,10 +1300,10 @@ class TestPredictionDetailAnomalies:
         """Anomaly detected when all predictions are below 0.3 confidence."""
         _create_all_dbs(tmp_path)
         # Insert 6 predictions all below 0.3
-        _insert_predictions_with_confidence(tmp_path, [
-            (f"p{i}", "NEED", 0.05 + i * 0.03, 0, "filtered", f"confidence:{0.05 + i * 0.03}")
-            for i in range(6)
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path,
+            [(f"p{i}", "NEED", 0.05 + i * 0.03, 0, "filtered", f"confidence:{0.05 + i * 0.03}") for i in range(6)],
+        )
 
         report = analyze(str(tmp_path))
         categories = [a["category"] for a in report["anomalies"]]
@@ -1300,14 +1312,17 @@ class TestPredictionDetailAnomalies:
     def test_no_low_confidence_anomaly_when_mixed(self, tmp_path):
         """No low-confidence anomaly when some predictions are above 0.3."""
         _create_all_dbs(tmp_path)
-        _insert_predictions_with_confidence(tmp_path, [
-            ("p1", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
-            ("p2", "NEED", 0.2, 0, "filtered", "confidence:0.2"),
-            ("p3", "RISK", 0.5, 1, "acted_on", None),
-            ("p4", "RISK", 0.7, 1, "acted_on", None),
-            ("p5", "NEED", 0.15, 0, "filtered", "confidence:0.15"),
-            ("p6", "NEED", 0.25, 0, "filtered", "confidence:0.25"),
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path,
+            [
+                ("p1", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
+                ("p2", "NEED", 0.2, 0, "filtered", "confidence:0.2"),
+                ("p3", "RISK", 0.5, 1, "acted_on", None),
+                ("p4", "RISK", 0.7, 1, "acted_on", None),
+                ("p5", "NEED", 0.15, 0, "filtered", "confidence:0.15"),
+                ("p6", "NEED", 0.25, 0, "filtered", "confidence:0.25"),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         categories = [a["category"] for a in report["anomalies"]]
@@ -1316,10 +1331,9 @@ class TestPredictionDetailAnomalies:
     def test_single_type_monoculture_anomaly(self, tmp_path):
         """Anomaly detected when all predictions are the same type."""
         _create_all_dbs(tmp_path)
-        _insert_predictions_with_confidence(tmp_path, [
-            (f"p{i}", "NEED", 0.1 + i * 0.1, i > 3, None if i <= 3 else "acted_on", None)
-            for i in range(8)
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path, [(f"p{i}", "NEED", 0.1 + i * 0.1, i > 3, None if i <= 3 else "acted_on", None) for i in range(8)]
+        )
 
         report = analyze(str(tmp_path))
         categories = [a["category"] for a in report["anomalies"]]
@@ -1328,14 +1342,17 @@ class TestPredictionDetailAnomalies:
     def test_no_monoculture_anomaly_with_multiple_types(self, tmp_path):
         """No monoculture anomaly when multiple prediction types exist."""
         _create_all_dbs(tmp_path)
-        _insert_predictions_with_confidence(tmp_path, [
-            ("p1", "NEED", 0.2, 0, "filtered", "confidence:0.2"),
-            ("p2", "RISK", 0.3, 0, "filtered", "confidence:0.3"),
-            ("p3", "REMINDER", 0.5, 1, "acted_on", None),
-            ("p4", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
-            ("p5", "RISK", 0.4, 1, "acted_on", None),
-            ("p6", "OPPORTUNITY", 0.6, 1, "acted_on", None),
-        ])
+        _insert_predictions_with_confidence(
+            tmp_path,
+            [
+                ("p1", "NEED", 0.2, 0, "filtered", "confidence:0.2"),
+                ("p2", "RISK", 0.3, 0, "filtered", "confidence:0.3"),
+                ("p3", "REMINDER", 0.5, 1, "acted_on", None),
+                ("p4", "NEED", 0.1, 0, "filtered", "confidence:0.1"),
+                ("p5", "RISK", 0.4, 1, "acted_on", None),
+                ("p6", "OPPORTUNITY", 0.6, 1, "acted_on", None),
+            ],
+        )
 
         report = analyze(str(tmp_path))
         categories = [a["category"] for a in report["anomalies"]]

@@ -68,11 +68,7 @@ class SpatialExtractor(BaseExtractor):
         # Email events with timezone or location metadata (weak spatial signals)
         if event_type == "email.received":
             payload = event.get("payload", {})
-            return bool(
-                payload.get("timezone")
-                or payload.get("sender_timezone")
-                or payload.get("location")
-            )
+            return bool(payload.get("timezone") or payload.get("sender_timezone") or payload.get("location"))
 
         return False
 
@@ -99,7 +95,7 @@ class SpatialExtractor(BaseExtractor):
         # Parse timestamp
         if isinstance(timestamp, str):
             try:
-                timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
             except Exception:
                 timestamp = datetime.now(timezone.utc)
 
@@ -117,11 +113,11 @@ class SpatialExtractor(BaseExtractor):
             end_time = payload.get("end_time")
             if start_time and end_time:
                 try:
-                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
                     duration_minutes = (end_dt - start_dt).total_seconds() / 60
                 except Exception as e:
-                    logger.debug('spatial_extractor: skipping duration calc — malformed time: %s', e)
+                    logger.debug("spatial_extractor: skipping duration calc — malformed time: %s", e)
 
             # Infer domain from calendar event metadata
             # Work indicators: attendees, work hours, work-related keywords
@@ -255,9 +251,7 @@ class SpatialExtractor(BaseExtractor):
 
         return [signal]
 
-    def _update_inferred_location(
-        self, location: str, source_field: str, timestamp: datetime
-    ):
+    def _update_inferred_location(self, location: str, source_field: str, timestamp: datetime):
         """Store a low-confidence inferred location separately from known places.
 
         Inferred locations (from email timezone headers, etc.) are kept in a
@@ -319,9 +313,7 @@ class SpatialExtractor(BaseExtractor):
             if isinstance(inferred_locs, dict):
                 for loc_key, loc_val in inferred_locs.items():
                     if not isinstance(loc_val, dict):
-                        bad_fields.append(
-                            f"inferred_locations[{loc_key!r}]={type(loc_val).__name__}"
-                        )
+                        bad_fields.append(f"inferred_locations[{loc_key!r}]={type(loc_val).__name__}")
                         continue
                     for field, fval in loc_val.items():
                         if field == "sources" and isinstance(fval, dict):
@@ -339,10 +331,7 @@ class SpatialExtractor(BaseExtractor):
                             try:
                                 json.dumps(fval)
                             except (TypeError, ValueError):
-                                bad_fields.append(
-                                    f"inferred_locations[{loc_key!r}][{field!r}]"
-                                    f"={type(fval).__name__}"
-                                )
+                                bad_fields.append(f"inferred_locations[{loc_key!r}][{field!r}]={type(fval).__name__}")
             for key, val in profile_data.items():
                 if key != "inferred_locations":
                     try:
@@ -477,24 +466,15 @@ class SpatialExtractor(BaseExtractor):
         # Compute derived metrics for this place
         # Dominant domain: whichever has the most observations
         if place["domain_counts"]:
-            place["dominant_domain"] = max(
-                place["domain_counts"].items(),
-                key=lambda x: x[1]
-            )[0]
+            place["dominant_domain"] = max(place["domain_counts"].items(), key=lambda x: x[1])[0]
 
         # Average duration per visit
         if place["total_duration_minutes"] > 0 and place["visit_count"] > 0:
-            place["average_duration_minutes"] = (
-                place["total_duration_minutes"] / place["visit_count"]
-            )
+            place["average_duration_minutes"] = place["total_duration_minutes"] / place["visit_count"]
 
         # Top activities (sorted by frequency)
         if place["activity_counts"]:
-            sorted_activities = sorted(
-                place["activity_counts"].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )
+            sorted_activities = sorted(place["activity_counts"].items(), key=lambda x: x[1], reverse=True)
             place["typical_activities"] = [act for act, _count in sorted_activities[:5]]
 
         # Pass the raw dict — update_signal_profile() handles JSON serialization.
@@ -515,9 +495,7 @@ class SpatialExtractor(BaseExtractor):
             if isinstance(behaviors, dict):
                 for place_key, place_val in behaviors.items():
                     if not isinstance(place_val, dict):
-                        bad_fields.append(
-                            f"place_behaviors[{place_key!r}]={type(place_val).__name__}"
-                        )
+                        bad_fields.append(f"place_behaviors[{place_key!r}]={type(place_val).__name__}")
                         continue
                     for field, fval in place_val.items():
                         if field == "activity_counts" and isinstance(fval, dict):
@@ -546,10 +524,7 @@ class SpatialExtractor(BaseExtractor):
                             try:
                                 json.dumps(fval)
                             except (TypeError, ValueError):
-                                bad_fields.append(
-                                    f"place_behaviors[{place_key!r}][{field!r}]"
-                                    f"={type(fval).__name__}"
-                                )
+                                bad_fields.append(f"place_behaviors[{place_key!r}][{field!r}]={type(fval).__name__}")
 
             logger.error(
                 "SpatialExtractor._update_spatial_profile: profile_data contains "
@@ -608,7 +583,7 @@ class SpatialExtractor(BaseExtractor):
                 continue
 
             try:
-                last_visit = datetime.fromisoformat(last_visit_str.replace('Z', '+00:00'))
+                last_visit = datetime.fromisoformat(last_visit_str.replace("Z", "+00:00"))
                 hours_since = (now - last_visit).total_seconds() / 3600
 
                 # Only consider places visited in last 24 hours

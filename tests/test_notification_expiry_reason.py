@@ -40,8 +40,7 @@ def notification_manager(db, mock_event_bus):
     return NotificationManager(db, mock_event_bus, config={}, timezone="UTC")
 
 
-def _insert_notification(db, notif_id: str, status: str, hours_ago: float,
-                         expiry_reason: str | None = None):
+def _insert_notification(db, notif_id: str, status: str, hours_ago: float, expiry_reason: str | None = None):
     """Insert a notification row directly with a backdated created_at.
 
     Args:
@@ -51,17 +50,14 @@ def _insert_notification(db, notif_id: str, status: str, hours_ago: float,
         hours_ago: How many hours in the past to set created_at
         expiry_reason: Optional expiry_reason value (NULL if omitted)
     """
-    created_at = (
-        datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications
                (id, title, body, priority, status, created_at, expiry_reason)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, f"Notification {notif_id}", "body", "normal",
-             status, created_at, expiry_reason),
+            (notif_id, f"Notification {notif_id}", "body", "normal", status, created_at, expiry_reason),
         )
 
 
@@ -135,9 +131,7 @@ class TestExpiryReasonOnExpire:
         assert expired_count == 3
 
         with db.get_connection("state") as conn:
-            rows = conn.execute(
-                "SELECT expiry_reason FROM notifications WHERE status = 'expired'"
-            ).fetchall()
+            rows = conn.execute("SELECT expiry_reason FROM notifications WHERE status = 'expired'").fetchall()
 
         assert all(row["expiry_reason"] == "age_exceeded" for row in rows)
 
@@ -225,8 +219,7 @@ class TestDeliveryDiagnosticsBreakdown:
         _insert_notification(db, "notif-delivered", "delivered", hours_ago=72)
         _insert_notification(db, "notif-dismissed", "dismissed", hours_ago=72)
         # One genuinely expired row
-        _insert_notification(db, "notif-expired", "expired", hours_ago=72,
-                             expiry_reason="age_exceeded")
+        _insert_notification(db, "notif-expired", "expired", hours_ago=72, expiry_reason="age_exceeded")
 
         result = notification_manager.delivery_diagnostics()
 
@@ -278,8 +271,5 @@ class TestMigrationIdempotency:
     def test_expiry_reason_column_exists_after_init(self, db):
         """After initialization, PRAGMA table_info shows expiry_reason column."""
         with db.get_connection("state") as conn:
-            columns = [
-                row[1]
-                for row in conn.execute("PRAGMA table_info(notifications)").fetchall()
-            ]
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(notifications)").fetchall()]
         assert "expiry_reason" in columns

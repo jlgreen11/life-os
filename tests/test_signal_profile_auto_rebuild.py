@@ -21,15 +21,17 @@ def _store_test_event(db, event_id, event_type, source, payload, metadata=None, 
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
     es = EventStore(db)
-    es.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": source,
-        "timestamp": timestamp,
-        "priority": "normal",
-        "payload": payload,
-        "metadata": metadata or {},
-    })
+    es.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": source,
+            "timestamp": timestamp,
+            "priority": "normal",
+            "payload": payload,
+            "metadata": metadata or {},
+        }
+    )
 
 
 def _populate_healthy_profile(db, user_model_store, profile_type):
@@ -48,16 +50,32 @@ def test_all_profiles_present_returns_early(db, user_model_store):
 
     # Pre-populate every expected profile with healthy data and sufficient samples.
     expected = [
-        "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-        "relationships", "topics", "temporal", "spatial", "decision",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "topics",
+        "temporal",
+        "spatial",
+        "decision",
     ]
     for profile_type in expected:
         _populate_healthy_profile(db, user_model_store, profile_type)
 
     # Store an event so the "no events" guard doesn't interfere.
-    _store_test_event(db, "e1", "email.received", "test", {
-        "subject": "Hi", "body": "Hello", "from": "a@b.com", "to": ["u@x.com"],
-    })
+    _store_test_event(
+        db,
+        "e1",
+        "email.received",
+        "test",
+        {
+            "subject": "Hi",
+            "body": "Hello",
+            "from": "a@b.com",
+            "to": ["u@x.com"],
+        },
+    )
 
     with patch.object(pipeline, "rebuild_profiles_from_events") as mock_rebuild:
         result = pipeline.check_and_rebuild_missing_profiles()
@@ -79,12 +97,19 @@ def test_missing_profiles_with_events_triggers_rebuild(db, user_model_store):
 
     # Store several email events so the pipeline has data to process.
     for i in range(5):
-        _store_test_event(db, f"rebuild-{i}", "email.received", "proton_mail", {
-            "subject": f"Email {i}",
-            "body": f"Message content number {i} with some text about projects.",
-            "from": "alice@company.com",
-            "to": ["user@example.com"],
-        }, timestamp=f"2026-03-01T{10 + i}:00:00+00:00")
+        _store_test_event(
+            db,
+            f"rebuild-{i}",
+            "email.received",
+            "proton_mail",
+            {
+                "subject": f"Email {i}",
+                "body": f"Message content number {i} with some text about projects.",
+                "from": "alice@company.com",
+                "to": ["user@example.com"],
+            },
+            timestamp=f"2026-03-01T{10 + i}:00:00+00:00",
+        )
 
     result = pipeline.check_and_rebuild_missing_profiles()
 
@@ -121,9 +146,18 @@ def test_exception_during_rebuild_caught_gracefully(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # Store an event so the rebuild path is entered.
-    _store_test_event(db, "e1", "email.received", "test", {
-        "subject": "Hi", "body": "Hello", "from": "a@b.com", "to": ["u@x.com"],
-    })
+    _store_test_event(
+        db,
+        "e1",
+        "email.received",
+        "test",
+        {
+            "subject": "Hi",
+            "body": "Hello",
+            "from": "a@b.com",
+            "to": ["u@x.com"],
+        },
+    )
 
     with patch.object(pipeline, "rebuild_profiles_from_events", side_effect=RuntimeError("DB exploded")):
         # Should NOT raise — fail-open.
@@ -139,8 +173,15 @@ def test_idempotent_when_profiles_exist(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     expected = [
-        "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-        "relationships", "topics", "temporal", "spatial", "decision",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "topics",
+        "temporal",
+        "spatial",
+        "decision",
     ]
     for profile_type in expected:
         _populate_healthy_profile(db, user_model_store, profile_type)

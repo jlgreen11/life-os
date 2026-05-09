@@ -37,8 +37,7 @@ class TestGetDiagnosticsReturnsAllFields:
             "health",
         }
         assert expected_keys == set(diag.keys()), (
-            f"Missing keys: {expected_keys - set(diag.keys())}, "
-            f"Extra keys: {set(diag.keys()) - expected_keys}"
+            f"Missing keys: {expected_keys - set(diag.keys())}, Extra keys: {set(diag.keys()) - expected_keys}"
         )
 
 

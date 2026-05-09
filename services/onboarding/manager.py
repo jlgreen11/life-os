@@ -53,7 +53,6 @@ ONBOARDING_PHASES = [
         ),
         "type": "info",
     },
-
     # --- Phase 1: Communication Style ---
     # These three screens capture how the AI should talk to the user.
     # The values ("minimal"/"detailed", "warm"/"professional"/"casual", etc.)
@@ -106,7 +105,6 @@ ONBOARDING_PHASES = [
         ],
         "maps_to": "proactivity",
     },
-
     # --- Phase 2: Autonomy ---
     # Controls the "leash length" — how much the AI can do without asking.
     # "supervised" = ask about everything, "high" = handle as much as possible.
@@ -141,7 +139,6 @@ ONBOARDING_PHASES = [
         ],
         "maps_to": "draft_replies",
     },
-
     # --- Phase 3: Life Structure ---
     # Free-text inputs that are parsed into structured data by the
     # _parse_domains and _parse_contacts helpers below.
@@ -166,7 +163,6 @@ ONBOARDING_PHASES = [
         "type": "free_text",
         "maps_to": "priority_contacts",
     },
-
     # --- Phase 4: Privacy & Boundaries ---
     # The boundary_mode controls whether work events bleed into personal
     # time and vice versa. The Vault is an optional encrypted compartment
@@ -204,7 +200,6 @@ ONBOARDING_PHASES = [
         ],
         "maps_to": "vault_enabled",
     },
-
     # --- Phase 5: Attention ---
     # Notification mode + quiet hours together define when and how
     # the system is allowed to interrupt the user.
@@ -235,7 +230,6 @@ ONBOARDING_PHASES = [
         "maps_to": "quiet_hours",
         "hint": "Example: '10pm to 7am' or 'I don't need quiet hours'",
     },
-
     # --- Phase 6: Close (info-only, no input captured) ---
     # Reassures the user about data ownership and privacy before starting.
     {
@@ -255,6 +249,7 @@ ONBOARDING_PHASES = [
 # ---------------------------------------------------------------------------
 # Onboarding Manager
 # ---------------------------------------------------------------------------
+
 
 class OnboardingManager:
     """Manages the onboarding flow and persists preferences."""
@@ -327,19 +322,13 @@ class OnboardingManager:
         # Free-text responses are natural language; the _parse_* helpers
         # convert them into lists/dicts the rest of the system can use.
         if "life_domains" in preferences:
-            preferences["life_domains"] = self._parse_domains(
-                preferences["life_domains"]
-            )
+            preferences["life_domains"] = self._parse_domains(preferences["life_domains"])
 
         if "priority_contacts" in preferences:
-            preferences["priority_contacts"] = self._parse_contacts(
-                preferences["priority_contacts"]
-            )
+            preferences["priority_contacts"] = self._parse_contacts(preferences["priority_contacts"])
 
         if "quiet_hours" in preferences:
-            preferences["quiet_hours"] = self._parse_quiet_hours(
-                preferences["quiet_hours"]
-            )
+            preferences["quiet_hours"] = self._parse_quiet_hours(preferences["quiet_hours"])
 
         # --- Step 3: Handle vault setup ---
         # Convert the boolean "vault_enabled" answer into a vaults config
@@ -391,18 +380,53 @@ class OnboardingManager:
 
     # Relationship phrases to detect (order matters — check longer phrases first)
     _RELATIONSHIP_PHRASES = [
-        "brother in law", "sister in law", "mother in law", "father in law",
-        "daughter in law", "son in law",
-        "step brother", "step sister", "step mother", "step father",
-        "step daughter", "step son",
-        "best friend", "close friend",
-        "brother", "sister", "mother", "father", "mom", "dad",
-        "daughter", "son", "wife", "husband", "spouse", "partner",
-        "uncle", "aunt", "cousin", "nephew", "niece",
-        "grandmother", "grandfather", "grandma", "grandpa",
-        "boss", "manager", "coworker", "colleague", "teammate",
-        "mentor", "assistant", "client", "contractor",
-        "friend", "neighbor", "roommate",
+        "brother in law",
+        "sister in law",
+        "mother in law",
+        "father in law",
+        "daughter in law",
+        "son in law",
+        "step brother",
+        "step sister",
+        "step mother",
+        "step father",
+        "step daughter",
+        "step son",
+        "best friend",
+        "close friend",
+        "brother",
+        "sister",
+        "mother",
+        "father",
+        "mom",
+        "dad",
+        "daughter",
+        "son",
+        "wife",
+        "husband",
+        "spouse",
+        "partner",
+        "uncle",
+        "aunt",
+        "cousin",
+        "nephew",
+        "niece",
+        "grandmother",
+        "grandfather",
+        "grandma",
+        "grandpa",
+        "boss",
+        "manager",
+        "coworker",
+        "colleague",
+        "teammate",
+        "mentor",
+        "assistant",
+        "client",
+        "contractor",
+        "friend",
+        "neighbor",
+        "roommate",
     ]
 
     def _parse_contacts(self, text: str) -> list[dict]:
@@ -457,7 +481,7 @@ class OnboardingManager:
         stripped = lowered
         for prefix in ("my ", "our "):
             if stripped.startswith(prefix):
-                stripped = stripped[len(prefix):]
+                stripped = stripped[len(prefix) :]
                 break
 
         # Check if any relationship phrase appears
@@ -509,7 +533,8 @@ class OnboardingManager:
         #   Group 6: end am/pm    (optional)
         # The separator between start and end can be "to" or "-".
         import re
-        time_pattern = r'(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?'
+
+        time_pattern = r"(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?"
         match = re.search(time_pattern, text)
 
         if match:
@@ -526,21 +551,26 @@ class OnboardingManager:
             if end_ampm == "pm" and end_h < 12:
                 end_h += 12
             if start_ampm == "am" and start_h == 12:
-                start_h = 0   # 12am = midnight = 00:00
+                start_h = 0  # 12am = midnight = 00:00
             if end_ampm == "am" and end_h == 12:
-                end_h = 0     # 12am = midnight = 00:00
+                end_h = 0  # 12am = midnight = 00:00
 
             # Default to every day of the week. The user can customize
             # per-day ranges later through the settings UI.
-            return [{
-                "start": f"{start_h:02d}:{start_m:02d}",
-                "end": f"{end_h:02d}:{end_m:02d}",
-                "days": ["monday", "tuesday", "wednesday", "thursday",
-                         "friday", "saturday", "sunday"],
-            }]
+            return [
+                {
+                    "start": f"{start_h:02d}:{start_m:02d}",
+                    "end": f"{end_h:02d}:{end_m:02d}",
+                    "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+                }
+            ]
 
         # Default fallback: if the user said something like "yes" or
         # "evening" without specific times, use a sensible default.
-        return [{"start": "22:00", "end": "07:00",
-                 "days": ["monday", "tuesday", "wednesday", "thursday",
-                          "friday", "saturday", "sunday"]}]
+        return [
+            {
+                "start": "22:00",
+                "end": "07:00",
+                "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+            }
+        ]

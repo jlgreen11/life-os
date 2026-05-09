@@ -34,8 +34,7 @@ async def test_auto_resolve_stale_predictions_basic(db, notification_manager):
                (id, prediction_type, description, confidence, confidence_gate,
                 time_horizon, suggested_action, was_surfaced)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (prediction_id, "reminder", "Test reminder", 0.7, "DEFAULT",
-             "24_hours", "Do something", 1),
+            (prediction_id, "reminder", "Test reminder", 0.7, "DEFAULT", "24_hours", "Do something", 1),
         )
 
     # Create a notification linked to this prediction, delivered 25h ago
@@ -89,8 +88,7 @@ async def test_auto_resolve_respects_timeout(db, notification_manager):
                (id, prediction_type, description, confidence, confidence_gate,
                 time_horizon, suggested_action, was_surfaced)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (prediction_id, "reminder", "Fresh reminder", 0.7, "DEFAULT",
-             "24_hours", "Do something", 1),
+            (prediction_id, "reminder", "Fresh reminder", 0.7, "DEFAULT", "24_hours", "Do something", 1),
         )
 
     notif_id = "notif-fresh"
@@ -138,8 +136,7 @@ async def test_auto_resolve_skips_non_delivered_status(db, notification_manager)
                    (id, prediction_type, description, confidence, confidence_gate,
                     time_horizon, suggested_action, was_surfaced)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (pred_id, "reminder", f"{status} reminder", 0.7, "DEFAULT",
-                 "24_hours", "Do something", 1),
+                (pred_id, "reminder", f"{status} reminder", 0.7, "DEFAULT", "24_hours", "Do something", 1),
             )
 
         with db.get_connection("state") as conn:
@@ -197,8 +194,19 @@ async def test_auto_resolve_skips_already_resolved(db, notification_manager):
                (id, prediction_type, description, confidence, confidence_gate,
                 time_horizon, suggested_action, was_surfaced, was_accurate, resolved_at, user_response)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (prediction_id, "reminder", "Already resolved", 0.7, "DEFAULT",
-             "24_hours", "Do something", 1, 1, now.isoformat(), "acted_on"),
+            (
+                prediction_id,
+                "reminder",
+                "Already resolved",
+                0.7,
+                "DEFAULT",
+                "24_hours",
+                "Do something",
+                1,
+                1,
+                now.isoformat(),
+                "acted_on",
+            ),
         )
 
     notif_id = "notif-already-resolved"
@@ -236,8 +244,7 @@ async def test_auto_resolve_multiple_stale_predictions(db, notification_manager)
                    (id, prediction_type, description, confidence, confidence_gate,
                     time_horizon, suggested_action, was_surfaced)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (pred_id, "reminder", f"Reminder {i}", 0.7, "DEFAULT",
-                 "24_hours", "Do something", 1),
+                (pred_id, "reminder", f"Reminder {i}", 0.7, "DEFAULT", "24_hours", "Do something", 1),
             )
 
         with db.get_connection("state") as conn:
@@ -281,8 +288,7 @@ async def test_auto_resolve_custom_timeout(db, notification_manager):
                (id, prediction_type, description, confidence, confidence_gate,
                 time_horizon, suggested_action, was_surfaced)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (prediction_id, "reminder", "Custom timeout", 0.7, "DEFAULT",
-             "24_hours", "Do something", 1),
+            (prediction_id, "reminder", "Custom timeout", 0.7, "DEFAULT", "24_hours", "Do something", 1),
         )
 
     notif_id = "notif-custom-timeout"

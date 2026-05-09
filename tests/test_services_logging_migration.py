@@ -31,8 +31,7 @@ def test_event_bus_uses_logging_module():
     import services.event_bus.bus as bus_module
 
     assert hasattr(bus_module, "logger"), (
-        "services.event_bus.bus must expose a module-level 'logger' "
-        "created with logging.getLogger(__name__)"
+        "services.event_bus.bus must expose a module-level 'logger' created with logging.getLogger(__name__)"
     )
     assert isinstance(bus_module.logger, logging.Logger)
 
@@ -54,8 +53,7 @@ def test_ai_engine_uses_logging_module():
     import services.ai_engine.engine as engine_module
 
     assert hasattr(engine_module, "logger"), (
-        "services.ai_engine.engine must expose a module-level 'logger' "
-        "created with logging.getLogger(__name__)"
+        "services.ai_engine.engine must expose a module-level 'logger' created with logging.getLogger(__name__)"
     )
     assert isinstance(engine_module.logger, logging.Logger)
 
@@ -123,8 +121,7 @@ def test_task_manager_uses_logging_module():
     import services.task_manager.manager as manager_module
 
     assert hasattr(manager_module, "logger"), (
-        "services.task_manager.manager must expose a module-level 'logger' "
-        "created with logging.getLogger(__name__)"
+        "services.task_manager.manager must expose a module-level 'logger' created with logging.getLogger(__name__)"
     )
     assert isinstance(manager_module.logger, logging.Logger)
 
@@ -157,8 +154,7 @@ def test_event_bus_has_no_print_calls(tmp_path):
     docstring_end = source.find('"""', source.find('"""') + 3) + 3
     live_source = source[docstring_end:]
     assert "print(" not in live_source, (
-        "services.event_bus.bus contains a print() call outside the docstring; "
-        "replace with logger.error/warning/info"
+        "services.event_bus.bus contains a print() call outside the docstring; replace with logger.error/warning/info"
     )
 
 
@@ -169,8 +165,7 @@ def test_ai_engine_has_no_print_calls():
 
     source = inspect.getsource(engine_module)
     assert "print(" not in source, (
-        "services.ai_engine.engine contains a print() call; "
-        "replace with logger.error/warning/info"
+        "services.ai_engine.engine contains a print() call; replace with logger.error/warning/info"
     )
 
 
@@ -181,8 +176,7 @@ def test_signal_pipeline_has_no_print_calls():
 
     source = inspect.getsource(pipeline_module)
     assert "print(" not in source, (
-        "services.signal_extractor.pipeline contains a print() call; "
-        "replace with logger.error/warning/info"
+        "services.signal_extractor.pipeline contains a print() call; replace with logger.error/warning/info"
     )
 
 
@@ -193,8 +187,7 @@ def test_decision_extractor_has_no_print_calls():
 
     source = inspect.getsource(decision_module)
     assert "print(" not in source, (
-        "services.signal_extractor.decision contains a print() call; "
-        "replace with logger.error/warning/info"
+        "services.signal_extractor.decision contains a print() call; replace with logger.error/warning/info"
     )
 
 
@@ -205,8 +198,7 @@ def test_task_manager_has_no_print_calls():
 
     source = inspect.getsource(manager_module)
     assert "print(" not in source, (
-        "services.task_manager.manager contains a print() call; "
-        "replace with logger.error/warning/info"
+        "services.task_manager.manager contains a print() call; replace with logger.error/warning/info"
     )
 
 
@@ -226,14 +218,11 @@ def test_event_bus_handler_error_uses_logger_error(caplog):
 
     # Simulate the error logging path directly.
     with caplog.at_level(logging.ERROR, logger="services.event_bus.bus"):
-        bus_module.logger.error(
-            "Event handler error for %s: %s", "email.*", ValueError("test"), exc_info=False
-        )
+        bus_module.logger.error("Event handler error for %s: %s", "email.*", ValueError("test"), exc_info=False)
 
-    assert any(
-        "Event handler error" in r.message and r.levelno == logging.ERROR
-        for r in caplog.records
-    ), "EventBus handler errors must be logged at ERROR level"
+    assert any("Event handler error" in r.message and r.levelno == logging.ERROR for r in caplog.records), (
+        "EventBus handler errors must be logged at ERROR level"
+    )
 
 
 def test_ai_engine_vector_fallback_uses_logger_warning(caplog):
@@ -246,14 +235,11 @@ def test_ai_engine_vector_fallback_uses_logger_warning(caplog):
     import services.ai_engine.engine as engine_module
 
     with caplog.at_level(logging.WARNING, logger="services.ai_engine.engine"):
-        engine_module.logger.warning(
-            "Vector search failed, falling back to SQL LIKE: %s", RuntimeError("test")
-        )
+        engine_module.logger.warning("Vector search failed, falling back to SQL LIKE: %s", RuntimeError("test"))
 
-    assert any(
-        "Vector search failed" in r.message and r.levelno == logging.WARNING
-        for r in caplog.records
-    ), "AIEngine vector search fallback must be logged at WARNING level"
+    assert any("Vector search failed" in r.message and r.levelno == logging.WARNING for r in caplog.records), (
+        "AIEngine vector search fallback must be logged at WARNING level"
+    )
 
 
 def test_signal_pipeline_extractor_error_uses_logger_error(caplog):
@@ -271,8 +257,7 @@ def test_signal_pipeline_extractor_error_uses_logger_error(caplog):
         )
 
     assert any(
-        "Extractor" in r.message and "error" in r.message and r.levelno == logging.ERROR
-        for r in caplog.records
+        "Extractor" in r.message and "error" in r.message and r.levelno == logging.ERROR for r in caplog.records
     ), "Pipeline extractor errors must be logged at ERROR level"
 
 
@@ -286,11 +271,8 @@ def test_signal_pipeline_mood_persistence_failure_uses_logger_warning(caplog):
     import services.signal_extractor.pipeline as pipeline_module
 
     with caplog.at_level(logging.WARNING, logger="services.signal_extractor.pipeline"):
-        pipeline_module.logger.warning(
-            "Failed to persist mood snapshot to history: %s", OSError("test")
-        )
+        pipeline_module.logger.warning("Failed to persist mood snapshot to history: %s", OSError("test"))
 
-    assert any(
-        "mood snapshot" in r.message and r.levelno == logging.WARNING
-        for r in caplog.records
-    ), "Mood persistence failures must be logged at WARNING level"
+    assert any("mood snapshot" in r.message and r.levelno == logging.WARNING for r in caplog.records), (
+        "Mood persistence failures must be logged at WARNING level"
+    )

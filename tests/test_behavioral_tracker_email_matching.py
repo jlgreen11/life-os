@@ -60,12 +60,14 @@ async def test_email_sent_with_to_addresses_list(db):
                 "email.sent",
                 "proton_mail",
                 sent_at.isoformat(),
-                json.dumps({
-                    "message_id": "<test@mail.example.com>",
-                    "to_addresses": ["alice@example.com"],  # LIST format
-                    "from_address": "user@example.com",
-                    "subject": "Re: Follow up",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "<test@mail.example.com>",
+                        "to_addresses": ["alice@example.com"],  # LIST format
+                        "from_address": "user@example.com",
+                        "subject": "Re: Follow up",
+                    }
+                ),
             ),
         )
 
@@ -126,11 +128,13 @@ async def test_message_sent_with_to_string(db):
                 "message.sent",
                 "signal",
                 sent_at.isoformat(),
-                json.dumps({
-                    "to": "bob@example.com",  # STRING format
-                    "from": "user",
-                    "body": "Hey Bob, following up...",
-                }),
+                json.dumps(
+                    {
+                        "to": "bob@example.com",  # STRING format
+                        "from": "user",
+                        "body": "Hey Bob, following up...",
+                    }
+                ),
             ),
         )
 
@@ -181,12 +185,14 @@ async def test_multiple_recipients_in_to_addresses(db):
                 "email.sent",
                 "google",
                 sent_at.isoformat(),
-                json.dumps({
-                    "message_id": "<test@mail.example.com>",
-                    "to_addresses": ["alice@example.com", "bob@example.com", "carol@example.com"],
-                    "from_address": "user@example.com",
-                    "subject": "Team update",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "<test@mail.example.com>",
+                        "to_addresses": ["alice@example.com", "bob@example.com", "carol@example.com"],
+                        "from_address": "user@example.com",
+                        "subject": "Team update",
+                    }
+                ),
             ),
         )
 
@@ -280,9 +286,11 @@ async def test_case_insensitive_matching(db):
                 "email.sent",
                 "google",
                 sent_at.isoformat(),
-                json.dumps({
-                    "to_addresses": ["alice.smith@example.com"],  # lowercase
-                }),
+                json.dumps(
+                    {
+                        "to_addresses": ["alice.smith@example.com"],  # lowercase
+                    }
+                ),
             ),
         )
 
@@ -332,9 +340,11 @@ async def test_ignores_unsurfaced_predictions(db):
                 "email.sent",
                 "google",
                 sent_at.isoformat(),
-                json.dumps({
-                    "to_addresses": ["eve@example.com"],
-                }),
+                json.dumps(
+                    {
+                        "to_addresses": ["eve@example.com"],
+                    }
+                ),
             ),
         )
 
@@ -429,10 +439,12 @@ async def test_handles_missing_to_fields_gracefully(db):
                 "email.sent",
                 "google",
                 sent_at.isoformat(),
-                json.dumps({
-                    "message_id": "<test@example.com>",
-                    # Missing to_addresses field
-                }),
+                json.dumps(
+                    {
+                        "message_id": "<test@example.com>",
+                        # Missing to_addresses field
+                    }
+                ),
             ),
         )
 

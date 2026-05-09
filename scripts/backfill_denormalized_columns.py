@@ -24,7 +24,6 @@ Why this matters:
 - Complete backfill enables Layer 3 procedural memory (0 workflows → N workflows)
 """
 
-import json
 import logging
 import sqlite3
 import sys
@@ -33,10 +32,7 @@ from pathlib import Path
 # Add parent directory to path so we can import from the project
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +72,8 @@ def backfill_email_received_events(conn: sqlite3.Connection) -> int:
     total_updated = 0
 
     while True:
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE events
             SET email_from = LOWER(json_extract(payload, '$.from_address'))
             WHERE id IN (
@@ -87,7 +84,9 @@ def backfill_email_received_events(conn: sqlite3.Connection) -> int:
                   AND json_extract(payload, '$.from_address') IS NOT NULL
                 LIMIT ?
             )
-        """, (batch_size,))
+        """,
+            (batch_size,),
+        )
 
         updated = cursor.rowcount
         total_updated += updated
@@ -225,13 +224,15 @@ def main():
         calendar_count = backfill_calendar_events(conn)
 
         logger.info("Backfill complete!")
-        logger.info(f"Summary:")
+        logger.info("Summary:")
         logger.info(f"  email.received email_from: {email_received_count}")
         logger.info(f"  email.sent email_from: {sent_from_count}")
         logger.info(f"  email.sent email_to: {sent_to_count}")
         logger.info(f"  task.* task_id: {task_count}")
         logger.info(f"  calendar.event.* calendar_event_id: {calendar_count}")
-        logger.info(f"  Total events backfilled: {email_received_count + sent_from_count + sent_to_count + task_count + calendar_count}")
+        logger.info(
+            f"  Total events backfilled: {email_received_count + sent_from_count + sent_to_count + task_count + calendar_count}"
+        )
 
         # Verify backfill completeness
         cursor = conn.cursor()

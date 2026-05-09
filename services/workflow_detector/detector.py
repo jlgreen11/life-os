@@ -388,10 +388,9 @@ class WorkflowDetector:
         max_gap = timedelta(hours=self.max_step_gap_hours)
 
         # Statistics: sender → {receive_count, following_actions → {action_type → [delays]}}
-        sender_stats: dict[str, dict[str, Any]] = defaultdict(lambda: {
-            'receive_count': 0,
-            'following_actions': defaultdict(list)
-        })
+        sender_stats: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"receive_count": 0, "following_actions": defaultdict(list)}
+        )
 
         # Sliding window: sender → [(timestamp, email_id), ...]
         # Tracks recent received emails that might trigger responses
@@ -400,7 +399,8 @@ class WorkflowDetector:
         # Fetch all relevant events in chronological order (single scan, O(n))
         with self.db.get_connection("events") as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT id, type, timestamp, email_from, email_to
                 FROM events
                 WHERE julianday(timestamp) > julianday(?)
@@ -411,15 +411,17 @@ class WorkflowDetector:
                       OR type != 'email.received'
                   )
                 ORDER BY timestamp ASC
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
 
             # Process events in chronological order
             for event_id, event_type, timestamp_str, email_from, email_to in cursor:
-                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
 
-                if event_type == 'email.received':
+                if event_type == "email.received":
                     # Track this received email in the sliding window
-                    sender_stats[email_from]['receive_count'] += 1
+                    sender_stats[email_from]["receive_count"] += 1
                     active_received[email_from].append((timestamp, event_id))
 
                 else:
@@ -431,8 +433,7 @@ class WorkflowDetector:
                     for sender, received_list in active_received.items():
                         # Remove emails older than max_gap from this response
                         active_received[sender] = [
-                            (recv_ts, recv_id) for recv_ts, recv_id in received_list
-                            if timestamp - recv_ts <= max_gap
+                            (recv_ts, recv_id) for recv_ts, recv_id in received_list if timestamp - recv_ts <= max_gap
                         ]
                         if not active_received[sender]:
                             expired_senders.append(sender)
@@ -446,13 +447,13 @@ class WorkflowDetector:
                             # Check if this response is relevant to this sender
                             is_match = False
 
-                            if event_type == 'email.sent':
+                            if event_type == "email.sent":
                                 # For sent emails, check if recipient matches sender.
                                 # email_to is populated from json_extract(payload, '$.to_addresses')
                                 # which stores a JSON array string like '["user@example.com"]'.
                                 # Parse it properly and do case-insensitive exact matching.
                                 try:
-                                    if email_to and email_to.startswith('['):
+                                    if email_to and email_to.startswith("["):
                                         recipients = json.loads(email_to)
                                     elif email_to:
                                         recipients = [email_to]
@@ -473,17 +474,17 @@ class WorkflowDetector:
                                 # Calculate average delay from all active received emails
                                 for recv_ts, recv_id in received_list:
                                     delay_hours = (timestamp - recv_ts).total_seconds() / 3600
-                                    sender_stats[sender]['following_actions'][event_type].append(delay_hours)
+                                    sender_stats[sender]["following_actions"][event_type].append(delay_hours)
 
         # Build workflows from aggregated statistics
         for sender, stats in sender_stats.items():
-            receive_count = stats['receive_count']
+            receive_count = stats["receive_count"]
             if receive_count < self.min_occurrences:
                 continue
 
             # Aggregate following actions: count occurrences and average delay
             following_actions = []
-            for action_type, delays in stats['following_actions'].items():
+            for action_type, delays in stats["following_actions"].items():
                 count = len(delays)
                 if count >= self.min_occurrences:
                     avg_hours = sum(delays) / count
@@ -505,7 +506,9 @@ class WorkflowDetector:
                         tools.append(source)
 
                 # Calculate success rate (assume email.sent means completion)
-                completion_count = sum(count for event_type, count, _ in following_actions if event_type == "email.sent")
+                completion_count = sum(
+                    count for event_type, count, _ in following_actions if event_type == "email.sent"
+                )
                 success_rate = min(1.0, completion_count / receive_count)
 
                 # Calculate typical duration
@@ -525,15 +528,24 @@ class WorkflowDetector:
                         "times_observed": receive_count,
                     }
                     workflows.append(workflow)
-                    logger.debug(f"Detected email workflow for {sender}: {len(steps)} steps, {completion_count} completions")
+                    logger.debug(
+                        f"Detected email workflow for {sender}: {len(steps)} steps, {completion_count} completions"
+                    )
                 else:
                     # Log why this sender was rejected for debugging workflow detection issues
                     if not following_actions:
-                        logger.debug("Workflow candidate '%s' rejected: %d receives but 0 following actions", sender, receive_count)
+                        logger.debug(
+                            "Workflow candidate '%s' rejected: %d receives but 0 following actions",
+                            sender,
+                            receive_count,
+                        )
                     elif completion_count < self.min_completions:
                         logger.debug(
                             "Workflow candidate '%s' rejected: %d receives, %d completions < min %d",
-                            sender, receive_count, completion_count, self.min_completions,
+                            sender,
+                            receive_count,
+                            completion_count,
+                            self.min_completions,
                         )
 
         # Cap at top 20 senders by email volume to keep workflow storage manageable
@@ -780,10 +792,7 @@ class WorkflowDetector:
         max_gap = timedelta(hours=self.max_step_gap_hours)
 
         # Statistics: {following_actions → {action_type → [delays]}}
-        task_stats = {
-            'total_tasks': 0,
-            'following_actions': defaultdict(list)
-        }
+        task_stats = {"total_tasks": 0, "following_actions": defaultdict(list)}
 
         # Sliding window: list of (timestamp, task_id) for recently created tasks
         active_tasks: list[tuple[datetime, str]] = []
@@ -791,44 +800,44 @@ class WorkflowDetector:
         # Fetch all relevant events in chronological order
         with self.db.get_connection("events") as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT id, type, timestamp, task_id
                 FROM events
                 WHERE julianday(timestamp) > julianday(?)
                   AND type IN ('task.created', 'email.sent', 'email.received',
                                'calendar.event.created', 'message.sent', 'task.completed')
                 ORDER BY timestamp ASC
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
 
             for event_id, event_type, timestamp_str, task_id in cursor:
-                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
 
-                if event_type == 'task.created':
+                if event_type == "task.created":
                     # Track this task in the sliding window
-                    task_stats['total_tasks'] += 1
+                    task_stats["total_tasks"] += 1
                     active_tasks.append((timestamp, task_id or event_id))
 
                 else:
                     # This is a potential follow-up action
                     # Expire old tasks outside the time window
-                    active_tasks = [
-                        (task_ts, t_id) for task_ts, t_id in active_tasks
-                        if timestamp - task_ts <= max_gap
-                    ]
+                    active_tasks = [(task_ts, t_id) for task_ts, t_id in active_tasks if timestamp - task_ts <= max_gap]
 
                     # Match this event to active tasks
                     if active_tasks:
                         # Calculate average delay from all active tasks
                         for task_ts, t_id in active_tasks:
                             delay_hours = (timestamp - task_ts).total_seconds() / 3600
-                            task_stats['following_actions'][event_type].append(delay_hours)
+                            task_stats["following_actions"][event_type].append(delay_hours)
 
-        if task_stats['total_tasks'] < self.min_occurrences:
+        if task_stats["total_tasks"] < self.min_occurrences:
             return workflows
 
         # Aggregate following actions
         task_actions = []
-        for action_type, delays in task_stats['following_actions'].items():
+        for action_type, delays in task_stats["following_actions"].items():
             count = len(delays)
             if count >= self.min_occurrences:
                 avg_hours = sum(delays) / count
@@ -850,7 +859,7 @@ class WorkflowDetector:
 
             # Calculate success rate (tasks that reached completion)
             completion_count = sum(count for event_type, count, _ in task_actions if event_type == "task.completed")
-            success_rate = min(1.0, completion_count / task_stats['total_tasks'])
+            success_rate = min(1.0, completion_count / task_stats["total_tasks"])
 
             # Calculate typical duration
             typical_duration = task_actions[0][2] * 60 if task_actions and task_actions[0][2] else None
@@ -863,7 +872,7 @@ class WorkflowDetector:
                     "typical_duration_minutes": typical_duration,
                     "tools_used": tools,
                     "success_rate": success_rate,
-                    "times_observed": task_stats['total_tasks'],
+                    "times_observed": task_stats["total_tasks"],
                 }
                 workflows.append(workflow)
                 logger.debug(f"Detected task workflow: {len(steps)} steps, {completion_count} completions")
@@ -894,9 +903,9 @@ class WorkflowDetector:
 
         # Statistics: {event_count, prep_actions, followup_actions}
         calendar_stats = {
-            'event_count': 0,
-            'prep_actions': defaultdict(list),   # action_type → [delays before event]
-            'followup_actions': defaultdict(list)  # action_type → [delays after event]
+            "event_count": 0,
+            "prep_actions": defaultdict(list),  # action_type → [delays before event]
+            "followup_actions": defaultdict(list),  # action_type → [delays after event]
         }
 
         # Two sliding windows:
@@ -908,29 +917,31 @@ class WorkflowDetector:
         # Fetch all relevant events in chronological order
         with self.db.get_connection("events") as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT id, type, timestamp, calendar_event_id
                 FROM events
                 WHERE julianday(timestamp) > julianday(?)
                   AND type IN ('calendar.event.created', 'email.received', 'email.sent',
                                'task.created', 'message.sent')
                 ORDER BY timestamp ASC
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
 
             for event_id, event_type, timestamp_str, calendar_event_id in cursor:
-                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
 
-                if event_type == 'calendar.event.created':
+                if event_type == "calendar.event.created":
                     # This is a calendar event - track it in both windows
-                    calendar_stats['event_count'] += 1
+                    calendar_stats["event_count"] += 1
                     event_key = (timestamp, calendar_event_id or event_id)
                     upcoming_events.append(event_key)
                     recent_events.append(event_key)
 
                     # Expire old upcoming events (no longer relevant for prep detection)
                     upcoming_events = [
-                        (evt_ts, evt_id) for evt_ts, evt_id in upcoming_events
-                        if evt_ts - timestamp <= max_gap
+                        (evt_ts, evt_id) for evt_ts, evt_id in upcoming_events if evt_ts - timestamp <= max_gap
                     ]
 
                 else:
@@ -938,44 +949,45 @@ class WorkflowDetector:
 
                     # Check if this is prep for any upcoming calendar events
                     prep_matches = [
-                        (evt_ts, evt_id) for evt_ts, evt_id in upcoming_events
+                        (evt_ts, evt_id)
+                        for evt_ts, evt_id in upcoming_events
                         if evt_ts > timestamp and evt_ts - timestamp <= max_gap
                     ]
-                    if prep_matches and event_type in ('email.received', 'task.created'):
+                    if prep_matches and event_type in ("email.received", "task.created"):
                         for evt_ts, evt_id in prep_matches:
                             delay_hours = (evt_ts - timestamp).total_seconds() / 3600
-                            calendar_stats['prep_actions'][event_type].append(delay_hours)
+                            calendar_stats["prep_actions"][event_type].append(delay_hours)
 
                     # Check if this is follow-up to any recent calendar events
                     followup_matches = [
-                        (evt_ts, evt_id) for evt_ts, evt_id in recent_events
+                        (evt_ts, evt_id)
+                        for evt_ts, evt_id in recent_events
                         if timestamp > evt_ts and timestamp - evt_ts <= max_gap
                     ]
-                    if followup_matches and event_type in ('email.sent', 'task.created', 'message.sent'):
+                    if followup_matches and event_type in ("email.sent", "task.created", "message.sent"):
                         for evt_ts, evt_id in followup_matches:
                             delay_hours = (timestamp - evt_ts).total_seconds() / 3600
-                            calendar_stats['followup_actions'][event_type].append(delay_hours)
+                            calendar_stats["followup_actions"][event_type].append(delay_hours)
 
                     # Expire old recent events (no longer relevant for follow-up detection)
                     recent_events = [
-                        (evt_ts, evt_id) for evt_ts, evt_id in recent_events
-                        if timestamp - evt_ts <= max_gap
+                        (evt_ts, evt_id) for evt_ts, evt_id in recent_events if timestamp - evt_ts <= max_gap
                     ]
 
-        if calendar_stats['event_count'] < self.min_occurrences:
+        if calendar_stats["event_count"] < self.min_occurrences:
             return workflows
 
         # Aggregate calendar actions
         calendar_actions = []
-        for action_type, delays in calendar_stats['prep_actions'].items():
+        for action_type, delays in calendar_stats["prep_actions"].items():
             count = len(delays)
             if count >= self.min_occurrences:
-                calendar_actions.append((action_type, count, 'before'))
+                calendar_actions.append((action_type, count, "before"))
 
-        for action_type, delays in calendar_stats['followup_actions'].items():
+        for action_type, delays in calendar_stats["followup_actions"].items():
             count = len(delays)
             if count >= self.min_occurrences:
-                calendar_actions.append((action_type, count, 'after'))
+                calendar_actions.append((action_type, count, "after"))
 
         if len(calendar_actions) >= self.min_steps:
             steps = []
@@ -997,7 +1009,7 @@ class WorkflowDetector:
 
             # Estimate success rate (if follow-up actions occurred)
             followup_count = sum(count for _, count, timing in calendar_actions if timing == "after")
-            success_rate = min(1.0, followup_count / calendar_stats['event_count'])
+            success_rate = min(1.0, followup_count / calendar_stats["event_count"])
 
             if followup_count >= self.min_completions:
                 workflow = {
@@ -1007,7 +1019,7 @@ class WorkflowDetector:
                     "typical_duration_minutes": None,  # Spans event duration
                     "tools_used": tools,
                     "success_rate": success_rate,
-                    "times_observed": calendar_stats['event_count'],
+                    "times_observed": calendar_stats["event_count"],
                 }
                 workflows.append(workflow)
                 logger.debug(f"Detected calendar workflow: {len(steps)} steps, {followup_count} completions")
@@ -1049,9 +1061,7 @@ class WorkflowDetector:
         # INTERNAL_TYPE_SQL_FILTER references `interaction_type` (episodes column);
         # here we replicate the same prefix exclusions for `type` (events column).
         events_internal_filter = (
-            "AND type NOT LIKE 'usermodel_%' "
-            "AND type NOT LIKE 'system_%' "
-            "AND type NOT LIKE 'test%'"
+            "AND type NOT LIKE 'usermodel_%' AND type NOT LIKE 'system_%' AND type NOT LIKE 'test%'"
         )
 
         # Query qualifying email.received events from events.db.
@@ -1140,8 +1150,7 @@ class WorkflowDetector:
             }
             workflows.append(workflow)
             logger.debug(
-                "WorkflowDetector: fallback detected email thread workflow for %s: "
-                "%d sessions, %d steps",
+                "WorkflowDetector: fallback detected email thread workflow for %s: %d sessions, %d steps",
                 sender,
                 completion_count,
                 len(steps),
@@ -1207,7 +1216,8 @@ class WorkflowDetector:
                     return self._detect_interaction_workflows_from_events(lookback_days)
 
                 cursor = conn.cursor()
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     SELECT id, interaction_type, timestamp
                     FROM episodes
                     WHERE julianday(timestamp) > julianday(?)
@@ -1215,10 +1225,12 @@ class WorkflowDetector:
                       AND interaction_type NOT IN ('unknown', 'communication')
                       {self.INTERNAL_TYPE_SQL_FILTER}
                     ORDER BY timestamp ASC
-                """, (cutoff.isoformat(),))
+                """,
+                    (cutoff.isoformat(),),
+                )
 
                 for episode_id, interaction_type, timestamp_str in cursor:
-                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
                     # Episodes may store date-only strings (e.g. "2026-02-16") which
                     # parse as naive datetimes.  Make them UTC-aware so the sliding
                     # window subtraction (timestamp - prev_ts) does not raise a
@@ -1237,8 +1249,7 @@ class WorkflowDetector:
 
                         # Remove old interactions outside the time window
                         active_interactions[prev_type] = [
-                            (prev_ts, prev_id) for prev_ts, prev_id in prev_list
-                            if timestamp - prev_ts <= max_gap
+                            (prev_ts, prev_id) for prev_ts, prev_id in prev_list if timestamp - prev_ts <= max_gap
                         ]
 
                         if not active_interactions[prev_type]:
@@ -1281,7 +1292,9 @@ class WorkflowDetector:
                 avg_observations = total_observations / len(following_actions)
 
                 # Estimate success rate (assume if all steps occurred, it succeeded)
-                success_rate = min(1.0, following_actions[-1][1] / following_actions[0][1]) if following_actions else 0.5
+                success_rate = (
+                    min(1.0, following_actions[-1][1] / following_actions[0][1]) if following_actions else 0.5
+                )
                 # Use the least frequent following action count as completion count
                 completion_count = following_actions[-1][1] if following_actions else 0
 

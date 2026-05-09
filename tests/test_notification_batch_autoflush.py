@@ -36,14 +36,21 @@ def notification_manager(db, mock_event_bus):
     return NotificationManager(db, mock_event_bus, config, timezone="UTC")
 
 
-def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
-                         priority="normal", status="pending", domain=None,
-                         source_event_id=None, hours_ago=0):
+def _insert_notification(
+    db,
+    *,
+    notif_id=None,
+    title="Test",
+    body="Body",
+    priority="normal",
+    status="pending",
+    domain=None,
+    source_event_id=None,
+    hours_ago=0,
+):
     """Insert a notification with a specific age into the state database."""
     notif_id = notif_id or str(uuid.uuid4())
-    created_at = (
-        datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             "INSERT INTO notifications (id, title, body, priority, status, domain, "
@@ -70,15 +77,9 @@ async def test_auto_deliver_stale_batch_delivers_old_pending(db, notification_ma
     assert count == 2
 
     with db.get_connection("state") as conn:
-        recent = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (recent_id,)
-        ).fetchone()
-        old = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (old_id,)
-        ).fetchone()
-        very_old = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (very_old_id,)
-        ).fetchone()
+        recent = conn.execute("SELECT status FROM notifications WHERE id = ?", (recent_id,)).fetchone()
+        old = conn.execute("SELECT status FROM notifications WHERE id = ?", (old_id,)).fetchone()
+        very_old = conn.execute("SELECT status FROM notifications WHERE id = ?", (very_old_id,)).fetchone()
 
     assert recent["status"] == "pending"
     assert old["status"] == "delivered"
@@ -107,17 +108,18 @@ async def test_auto_deliver_stale_batch_marks_prediction_surfaced(db, notificati
         )
 
     _insert_notification(
-        db, title="Prediction alert", hours_ago=8,
-        domain="prediction", source_event_id=pred_id,
+        db,
+        title="Prediction alert",
+        hours_ago=8,
+        domain="prediction",
+        source_event_id=pred_id,
     )
 
     count = await notification_manager.auto_deliver_stale_batch(max_pending_hours=6)
     assert count == 1
 
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
 
     assert row is not None
     assert row["was_surfaced"] == 1
@@ -126,23 +128,15 @@ async def test_auto_deliver_stale_batch_marks_prediction_surfaced(db, notificati
 @pytest.mark.asyncio
 async def test_auto_deliver_does_not_touch_delivered_or_expired(db, notification_manager):
     """Already-delivered and expired notifications are not re-delivered."""
-    delivered_id = _insert_notification(
-        db, title="Already delivered", hours_ago=10, status="delivered"
-    )
-    expired_id = _insert_notification(
-        db, title="Already expired", hours_ago=10, status="expired"
-    )
+    delivered_id = _insert_notification(db, title="Already delivered", hours_ago=10, status="delivered")
+    expired_id = _insert_notification(db, title="Already expired", hours_ago=10, status="expired")
 
     count = await notification_manager.auto_deliver_stale_batch(max_pending_hours=6)
     assert count == 0
 
     with db.get_connection("state") as conn:
-        delivered = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (delivered_id,)
-        ).fetchone()
-        expired = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (expired_id,)
-        ).fetchone()
+        delivered = conn.execute("SELECT status FROM notifications WHERE id = ?", (delivered_id,)).fetchone()
+        expired = conn.execute("SELECT status FROM notifications WHERE id = ?", (expired_id,)).fetchone()
 
     assert delivered["status"] == "delivered"
     assert expired["status"] == "expired"
@@ -156,12 +150,8 @@ async def test_auto_deliver_handles_batched_status(db, notification_manager):
     auto_deliver_stale_batch() must handle both 'pending' and 'batched' status
     so that digest-queued notifications don't expire unseen.
     """
-    old_batched_id = _insert_notification(
-        db, title="Old batched", hours_ago=8, status="batched"
-    )
-    recent_batched_id = _insert_notification(
-        db, title="Recent batched", hours_ago=2, status="batched"
-    )
+    old_batched_id = _insert_notification(db, title="Old batched", hours_ago=8, status="batched")
+    recent_batched_id = _insert_notification(db, title="Recent batched", hours_ago=2, status="batched")
 
     count = await notification_manager.auto_deliver_stale_batch(max_pending_hours=6)
 
@@ -169,12 +159,8 @@ async def test_auto_deliver_handles_batched_status(db, notification_manager):
     assert count == 1
 
     with db.get_connection("state") as conn:
-        old_row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (old_batched_id,)
-        ).fetchone()
-        recent_row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (recent_batched_id,)
-        ).fetchone()
+        old_row = conn.execute("SELECT status FROM notifications WHERE id = ?", (old_batched_id,)).fetchone()
+        recent_row = conn.execute("SELECT status FROM notifications WHERE id = ?", (recent_batched_id,)).fetchone()
 
     assert old_row["status"] == "delivered", "Old batched notification should be delivered"
     assert recent_row["status"] == "batched", "Recent batched notification should remain batched"

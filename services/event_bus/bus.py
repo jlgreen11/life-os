@@ -8,10 +8,10 @@ or service without touching anything else.
 Usage:
     bus = EventBus("nats://localhost:4222")
     await bus.connect()
-    
+
     # Publish
     await bus.publish("email.received", payload)
-    
+
     # Subscribe
     async def handler(event):
         print(f"Got: {event}")
@@ -166,19 +166,24 @@ class EventBus:
         if self._nc:
             await self._nc.close()
 
-    async def publish(self, event_type: str, payload: dict[str, Any],
-                      source: str = "system", priority: str = "normal",
-                      metadata: Optional[dict] = None) -> str:
+    async def publish(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        source: str = "system",
+        priority: str = "normal",
+        metadata: Optional[dict] = None,
+    ) -> str:
         """
         Publish an event to the bus.
-        
+
         Args:
             event_type: Dotted event type (e.g., "email.received")
             payload: Event data
             source: Which connector/service is publishing
             priority: Event priority level
             metadata: Optional metadata (contacts, domain, etc.)
-            
+
         Returns:
             The event ID
         """
@@ -190,12 +195,12 @@ class EventBus:
         # This ensures all subscribers can handle events uniformly regardless
         # of the payload structure.
         event = {
-            "id": event_id,             # Unique identifier for this event instance
-            "type": event_type,          # Dotted type (e.g., "email.received")
-            "source": source,            # Originating service/connector name
+            "id": event_id,  # Unique identifier for this event instance
+            "type": event_type,  # Dotted type (e.g., "email.received")
+            "source": source,  # Originating service/connector name
             "timestamp": datetime.now(timezone.utc).isoformat(),  # ISO 8601 UTC
-            "priority": priority,        # Routing hint for consumers
-            "payload": payload,          # The actual event data (schema varies by type)
+            "priority": priority,  # Routing hint for consumers
+            "payload": payload,  # The actual event data (schema varies by type)
             "metadata": metadata or {},  # Optional: contact IDs, domain, tags, etc.
         }
 
@@ -219,7 +224,7 @@ class EventBus:
     ):
         """
         Subscribe to events matching a pattern.
-        
+
         Args:
             pattern: Subject pattern (e.g., "email.*" or ">" for all)
             handler: Async callback that receives the event dict
@@ -272,8 +277,7 @@ class EventBus:
         # Track the subscription handle for cleanup during disconnect().
         self._subscriptions.append(sub)
 
-    async def subscribe_all(self, handler: Callable[[dict], Coroutine],
-                            consumer_name: str = "all-events"):
+    async def subscribe_all(self, handler: Callable[[dict], Coroutine], consumer_name: str = "all-events"):
         """Subscribe to every event in the system.
 
         Convenience method that subscribes to the ">" wildcard, which matches
@@ -282,8 +286,7 @@ class EventBus:
         """
         await self.subscribe(">", handler, consumer_name)
 
-    async def request(self, event_type: str, payload: dict,
-                      timeout: float = 5.0) -> Optional[dict]:
+    async def request(self, event_type: str, payload: dict, timeout: float = 5.0) -> Optional[dict]:
         """
         Publish an event and wait for a response (request-reply pattern).
         Useful for synchronous queries to services.

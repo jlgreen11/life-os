@@ -97,28 +97,19 @@ class TestEpisodeEnergyBackfill:
         from scripts.backfill_episode_energy_levels import compute_circadian_energy
 
         with db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT id, timestamp FROM episodes WHERE energy_level IS NULL"
-            ).fetchall()
+            rows = conn.execute("SELECT id, timestamp FROM episodes WHERE energy_level IS NULL").fetchall()
 
             for row in rows:
                 energy = compute_circadian_energy(row["timestamp"])
-                conn.execute(
-                    "UPDATE episodes SET energy_level = ? WHERE id = ?",
-                    (energy, row["id"])
-                )
+                conn.execute("UPDATE episodes SET energy_level = ? WHERE id = ?", (energy, row["id"]))
 
         # Verify all episodes now have energy_level
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NULL"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NULL").fetchone()
             assert row["count"] == 0
 
             # Verify energy values are correct
-            results = conn.execute(
-                "SELECT id, energy_level FROM episodes ORDER BY id"
-            ).fetchall()
+            results = conn.execute("SELECT id, energy_level FROM episodes ORDER BY id").fetchall()
 
             assert results[0]["id"] == "ep1"
             assert results[0]["energy_level"] == 0.8  # 10 AM = peak morning
@@ -145,22 +136,15 @@ class TestEpisodeEnergyBackfill:
         from scripts.backfill_episode_energy_levels import compute_circadian_energy
 
         with db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT id, timestamp FROM episodes WHERE energy_level IS NULL"
-            ).fetchall()
+            rows = conn.execute("SELECT id, timestamp FROM episodes WHERE energy_level IS NULL").fetchall()
 
             for row in rows:
                 energy = compute_circadian_energy(row["timestamp"])
-                conn.execute(
-                    "UPDATE episodes SET energy_level = ? WHERE id = ?",
-                    (energy, row["id"])
-                )
+                conn.execute("UPDATE episodes SET energy_level = ? WHERE id = ?", (energy, row["id"]))
 
         # Verify ep1 was updated but ep2 preserved
         with db.get_connection("user_model") as conn:
-            results = conn.execute(
-                "SELECT id, energy_level FROM episodes ORDER BY id"
-            ).fetchall()
+            results = conn.execute("SELECT id, energy_level FROM episodes ORDER BY id").fetchall()
 
             assert results[0]["id"] == "ep1"
             assert results[0]["energy_level"] == 0.8  # Updated
@@ -174,38 +158,32 @@ class TestEpisodeEnergyBackfill:
         with db.get_connection("user_model") as conn:
             for i in range(1000):
                 hour = i % 24
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO episodes
                     (id, timestamp, event_id, interaction_type, content_summary, energy_level)
                     VALUES (?, ?, ?, 'email_received', 'Test', NULL)
-                """, (f"ep{i}", f"2026-02-16T{hour:02d}:00:00+00:00", f"evt{i}"))
+                """,
+                    (f"ep{i}", f"2026-02-16T{hour:02d}:00:00+00:00", f"evt{i}"),
+                )
 
         # Run backfill
         from scripts.backfill_episode_energy_levels import compute_circadian_energy
 
         with db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT id, timestamp FROM episodes WHERE energy_level IS NULL"
-            ).fetchall()
+            rows = conn.execute("SELECT id, timestamp FROM episodes WHERE energy_level IS NULL").fetchall()
 
             for row in rows:
                 energy = compute_circadian_energy(row["timestamp"])
-                conn.execute(
-                    "UPDATE episodes SET energy_level = ? WHERE id = ?",
-                    (energy, row["id"])
-                )
+                conn.execute("UPDATE episodes SET energy_level = ? WHERE id = ?", (energy, row["id"]))
 
         # Verify all 1000 episodes have energy_level
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NOT NULL"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NOT NULL").fetchone()
             assert row["count"] == 1000
 
             # Verify energy distribution makes sense (should have variety)
-            row = conn.execute(
-                "SELECT MIN(energy_level) as min_e, MAX(energy_level) as max_e FROM episodes"
-            ).fetchone()
+            row = conn.execute("SELECT MIN(energy_level) as min_e, MAX(energy_level) as max_e FROM episodes").fetchone()
             assert row["min_e"] >= 0.2  # Lowest energy (early morning)
             assert row["max_e"] <= 0.8  # Highest energy (mid-morning)
 
@@ -225,22 +203,15 @@ class TestEpisodeEnergyBackfill:
         from scripts.backfill_episode_energy_levels import compute_circadian_energy
 
         with db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT id, timestamp FROM episodes WHERE energy_level IS NULL"
-            ).fetchall()
+            rows = conn.execute("SELECT id, timestamp FROM episodes WHERE energy_level IS NULL").fetchall()
 
             for row in rows:
                 energy = compute_circadian_energy(row["timestamp"])
-                conn.execute(
-                    "UPDATE episodes SET energy_level = ? WHERE id = ?",
-                    (energy, row["id"])
-                )
+                conn.execute("UPDATE episodes SET energy_level = ? WHERE id = ?", (energy, row["id"]))
 
         # Verify all have valid energy values
         with db.get_connection("user_model") as conn:
-            results = conn.execute(
-                "SELECT id, energy_level FROM episodes ORDER BY id"
-            ).fetchall()
+            results = conn.execute("SELECT id, energy_level FROM episodes ORDER BY id").fetchall()
 
             assert all(0.0 <= r["energy_level"] <= 1.0 for r in results)
             assert results[0]["energy_level"] == 0.2  # Midnight

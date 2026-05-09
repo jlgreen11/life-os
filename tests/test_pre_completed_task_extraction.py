@@ -66,9 +66,7 @@ async def test_extract_future_task_creates_pending(task_manager_with_mock_ai, mo
 
     # Verify task was created as pending
     with db.get_connection("state") as conn:
-        tasks = conn.execute(
-            "SELECT title, status, source FROM tasks"
-        ).fetchall()
+        tasks = conn.execute("SELECT title, status, source FROM tasks").fetchall()
 
     assert len(tasks) == 1
     task = dict(tasks[0])
@@ -78,9 +76,7 @@ async def test_extract_future_task_creates_pending(task_manager_with_mock_ai, mo
 
 
 @pytest.mark.asyncio
-async def test_extract_completed_task_creates_and_completes(
-    task_manager_with_mock_ai, mock_ai_engine, db, event_bus
-):
+async def test_extract_completed_task_creates_and_completes(task_manager_with_mock_ai, mock_ai_engine, db, event_bus):
     """
     Already-completed tasks (completed: true) should be immediately marked complete.
 
@@ -113,9 +109,7 @@ async def test_extract_completed_task_creates_and_completes(
 
     # Verify task was created AND completed
     with db.get_connection("state") as conn:
-        tasks = conn.execute(
-            "SELECT title, status, completed_at FROM tasks"
-        ).fetchall()
+        tasks = conn.execute("SELECT title, status, completed_at FROM tasks").fetchall()
 
     assert len(tasks) == 1
     task = dict(tasks[0])
@@ -169,9 +163,7 @@ async def test_extract_mixed_completion_states(task_manager_with_mock_ai, mock_a
 
     # Verify tasks were created with correct statuses
     with db.get_connection("state") as conn:
-        tasks = conn.execute(
-            "SELECT title, status FROM tasks ORDER BY title"
-        ).fetchall()
+        tasks = conn.execute("SELECT title, status FROM tasks ORDER BY title").fetchall()
 
     assert len(tasks) == 3
 
@@ -246,9 +238,7 @@ async def test_ai_extraction_detects_future_tense_tasks(mock_ai_engine):
 
 
 @pytest.mark.asyncio
-async def test_backward_compatibility_missing_completed_field(
-    task_manager_with_mock_ai, mock_ai_engine, db
-):
+async def test_backward_compatibility_missing_completed_field(task_manager_with_mock_ai, mock_ai_engine, db):
     """
     Backward compatibility: tasks without "completed" field default to pending.
 
@@ -274,9 +264,7 @@ async def test_backward_compatibility_missing_completed_field(
 
     # Verify task defaults to pending
     with db.get_connection("state") as conn:
-        tasks = conn.execute(
-            "SELECT status FROM tasks"
-        ).fetchall()
+        tasks = conn.execute("SELECT status FROM tasks").fetchall()
 
     assert len(tasks) == 1
     assert dict(tasks[0])["status"] == "pending"
@@ -350,9 +338,7 @@ async def test_notification_completion_extraction(mock_ai_engine):
 
 
 @pytest.mark.asyncio
-async def test_workflow_detection_benefits_from_completion(
-    task_manager_with_mock_ai, mock_ai_engine, db
-):
+async def test_workflow_detection_benefits_from_completion(task_manager_with_mock_ai, mock_ai_engine, db):
     """
     Integration scenario: historical email backfill enables workflow detection.
 
@@ -411,9 +397,7 @@ async def test_workflow_detection_benefits_from_completion(
 
     # Verify: 2 tasks created, second one is completed
     with db.get_connection("state") as conn:
-        tasks = conn.execute(
-            "SELECT status FROM tasks ORDER BY created_at"
-        ).fetchall()
+        tasks = conn.execute("SELECT status FROM tasks ORDER BY created_at").fetchall()
 
     assert len(tasks) == 2
     statuses = [dict(t)["status"] for t in tasks]
@@ -443,9 +427,7 @@ async def test_ingest_tasks_with_completion_flags(task_manager_with_mock_ai, db)
 
     # Verify correct completion states
     with db.get_connection("state") as conn:
-        tasks = conn.execute(
-            "SELECT title, status FROM tasks ORDER BY title"
-        ).fetchall()
+        tasks = conn.execute("SELECT title, status FROM tasks ORDER BY title").fetchall()
 
     tasks_dict = {dict(t)["title"]: dict(t)["status"] for t in tasks}
     assert tasks_dict["Task A"] == "pending"

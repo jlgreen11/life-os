@@ -32,9 +32,9 @@ def _make_engine(db) -> InsightEngine:
     return InsightEngine(db=db, ums=ums)
 
 
-def _set_topics_profile(ums: UserModelStore, topic_counts: dict,
-                        recent_topics: list | None = None,
-                        samples_count: int = 25) -> None:
+def _set_topics_profile(
+    ums: UserModelStore, topic_counts: dict, recent_topics: list | None = None, samples_count: int = 25
+) -> None:
     """Write a topics signal profile with the given data.
 
     Calls update_signal_profile() ``samples_count`` times so the stored
@@ -48,8 +48,7 @@ def _set_topics_profile(ums: UserModelStore, topic_counts: dict,
         ums.update_signal_profile("topics", data)
 
 
-def _set_temporal_profile(ums: UserModelStore, data: dict,
-                          samples_count: int = 10) -> None:
+def _set_temporal_profile(ums: UserModelStore, data: dict, samples_count: int = 10) -> None:
     """Write a temporal signal profile with the given data.
 
     Calls update_signal_profile() ``samples_count`` times so the stored
@@ -68,9 +67,17 @@ def test_topic_interest_returns_insights_at_25_samples(db):
     """_topic_interest_insights() produces insights with 25 samples (above MIN_SAMPLES=20)."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {
-        "work": 200, "project": 150, "team": 100, "email": 80, "meeting": 60,
-    }, samples_count=25)
+    _set_topics_profile(
+        ums,
+        {
+            "work": 200,
+            "project": 150,
+            "team": 100,
+            "email": 80,
+            "meeting": 60,
+        },
+        samples_count=25,
+    )
 
     insights = engine._topic_interest_insights()
     top = [i for i in insights if i.category == "top_interests"]
@@ -81,9 +88,17 @@ def test_topic_interest_returns_empty_at_15_samples(db):
     """_topic_interest_insights() returns empty with 15 samples (below MIN_SAMPLES=20)."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_topics_profile(ums, {
-        "work": 200, "project": 150, "team": 100, "email": 80, "meeting": 60,
-    }, samples_count=15)
+    _set_topics_profile(
+        ums,
+        {
+            "work": 200,
+            "project": 150,
+            "team": 100,
+            "email": 80,
+            "meeting": 60,
+        },
+        samples_count=15,
+    )
 
     insights = engine._topic_interest_insights()
     assert insights == [], "Expected no insights with 15 samples (below MIN_SAMPLES=20)"
@@ -98,10 +113,14 @@ def test_temporal_pattern_returns_empty_at_10_samples(db):
     """_temporal_pattern_insights() returns empty with 10 samples (below MIN_SAMPLES=50)."""
     ums = UserModelStore(db)
     engine = InsightEngine(db=db, ums=ums)
-    _set_temporal_profile(ums, {
-        "activity_by_hour": {str(h): 5 for h in range(24)},
-        "activity_by_day": {"Monday": 20, "Tuesday": 15, "Wednesday": 10},
-    }, samples_count=10)
+    _set_temporal_profile(
+        ums,
+        {
+            "activity_by_hour": {str(h): 5 for h in range(24)},
+            "activity_by_day": {"Monday": 20, "Tuesday": 15, "Wednesday": 10},
+        },
+        samples_count=10,
+    )
 
     insights = engine._temporal_pattern_insights()
     assert insights == [], "Expected no insights with 10 samples (below MIN_SAMPLES=50)"
@@ -132,6 +151,5 @@ def test_diagnostic_thresholds_match_inner_constants(db):
         assert correlator_name in report, f"{correlator_name} missing from diagnostic report"
         actual_min = report[correlator_name]["min_required"]
         assert actual_min == expected_min, (
-            f"{correlator_name}: diagnostic min_required={actual_min} "
-            f"but inner MIN_SAMPLES={expected_min}"
+            f"{correlator_name}: diagnostic min_required={actual_min} but inner MIN_SAMPLES={expected_min}"
         )

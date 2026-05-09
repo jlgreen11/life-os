@@ -57,9 +57,7 @@ def _insert_published_conflict(db, id_a, id_b, *, detected_at=None):
 def _count_published_conflicts(db) -> int:
     """Count conflict_detector rows in the published_conflicts table."""
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM published_conflicts WHERE source = 'conflict_detector'"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM published_conflicts WHERE source = 'conflict_detector'").fetchone()
     return row[0]
 
 
@@ -139,12 +137,8 @@ class TestConflictAutoCleanup:
     async def test_cleanup_error_does_not_block_detection(self, db, event_bus):
         """If cleanup_old_conflicts raises, check_and_publish should still detect conflicts."""
         # Insert two overlapping events so there's a conflict to detect
-        _insert_calendar_event(
-            db, summary="Meeting A", start_time=_future_iso(2), end_time=_future_iso(3)
-        )
-        _insert_calendar_event(
-            db, summary="Meeting B", start_time=_future_iso(2.5), end_time=_future_iso(3.5)
-        )
+        _insert_calendar_event(db, summary="Meeting A", start_time=_future_iso(2), end_time=_future_iso(3))
+        _insert_calendar_event(db, summary="Meeting B", start_time=_future_iso(2.5), end_time=_future_iso(3.5))
 
         detector = ConflictDetector(db)
 

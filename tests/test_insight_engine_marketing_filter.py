@@ -38,12 +38,11 @@ from services.insight_engine.models import Insight
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_ums(contacts: dict) -> MagicMock:
     """Return a mock UserModelStore whose relationships profile contains *contacts*."""
     ums = MagicMock()
-    ums.get_signal_profile.return_value = {
-        "data": {"contacts": contacts}
-    }
+    ums.get_signal_profile.return_value = {"data": {"contacts": contacts}}
     return ums
 
 
@@ -103,9 +102,7 @@ class TestMarketingFilterApplied:
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
-        assert insights == [], (
-            "noreply@ is an automated sender and must not generate an insight"
-        )
+        assert insights == [], "noreply@ is an automated sender and must not generate an insight"
 
     def test_newsletter_address_excluded(self):
         """newsletter@ addresses must be filtered out."""
@@ -187,22 +184,16 @@ class TestInboundOnlyFilter:
     def test_inbound_only_contact_excluded(self):
         """A contact the user has never messaged must be excluded."""
         contacts = {
-            "stranger@example.com": _make_contact(
-                days_since=30, avg_gap_days=10, outbound_count=0
-            ),
+            "stranger@example.com": _make_contact(days_since=30, avg_gap_days=10, outbound_count=0),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
-        assert insights == [], (
-            "Inbound-only contact: user never replied, so no relationship to maintain"
-        )
+        assert insights == [], "Inbound-only contact: user never replied, so no relationship to maintain"
 
     def test_bidirectional_contact_included(self):
         """A contact the user has messaged at least once must be eligible."""
         contacts = {
-            "colleague@example.com": _make_contact(
-                days_since=30, avg_gap_days=10, outbound_count=1
-            ),
+            "colleague@example.com": _make_contact(days_since=30, avg_gap_days=10, outbound_count=1),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
@@ -211,9 +202,7 @@ class TestInboundOnlyFilter:
     def test_high_outbound_contact_included(self):
         """A frequently messaged contact must pass the inbound-only filter."""
         contacts = {
-            "bestfriend@example.com": _make_contact(
-                days_since=30, avg_gap_days=10, outbound_count=100
-            ),
+            "bestfriend@example.com": _make_contact(days_since=30, avg_gap_days=10, outbound_count=100),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
@@ -246,16 +235,12 @@ class TestFractionalGapCalculation:
         # Build a contact with daily interactions; 10 days since last contact.
         # avg_gap ≈ 1 day, so threshold = 1.5 days. 10 days > 1.5 → SHOULD fire.
         contacts = {
-            "daily_colleague@example.com": _make_contact(
-                days_since=10, avg_gap_days=1, outbound_count=5
-            ),
+            "daily_colleague@example.com": _make_contact(days_since=10, avg_gap_days=1, outbound_count=5),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
         # 10 days since last contact, 10 > 1.5 threshold AND 10 > 7-day minimum
-        assert len(insights) == 1, (
-            "Contact with avg_gap=1d, 10 days stale should surface (10 > 1.5 * 1)"
-        )
+        assert len(insights) == 1, "Contact with avg_gap=1d, 10 days stale should surface (10 > 1.5 * 1)"
 
     def test_contact_not_stale_enough_does_not_fire(self):
         """A contact with 5-day gap and avg_gap=5 days must NOT generate an insight.
@@ -264,15 +249,11 @@ class TestFractionalGapCalculation:
         Also, the 7-day minimum is not met (5 < 7).
         """
         contacts = {
-            "weekly_contact@example.com": _make_contact(
-                days_since=5, avg_gap_days=5, outbound_count=3
-            ),
+            "weekly_contact@example.com": _make_contact(days_since=5, avg_gap_days=5, outbound_count=3),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
-        assert insights == [], (
-            "Contact 5 days stale with 5-day avg gap does not meet threshold"
-        )
+        assert insights == [], "Contact 5 days stale with 5-day avg gap does not meet threshold"
 
     def test_contact_well_below_threshold_does_not_fire(self):
         """A contact at 1.2× the average gap (below 1.5×) must NOT fire.
@@ -280,9 +261,7 @@ class TestFractionalGapCalculation:
         avg_gap=10 days → threshold=15 days.  Contact stale 12 days → 12 < 15 → no insight.
         """
         contacts = {
-            "threshold_contact@example.com": _make_contact(
-                days_since=12, avg_gap_days=10, outbound_count=2
-            ),
+            "threshold_contact@example.com": _make_contact(days_since=12, avg_gap_days=10, outbound_count=2),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
@@ -291,9 +270,7 @@ class TestFractionalGapCalculation:
     def test_contact_just_over_threshold_fires(self):
         """A contact at 1.6× the average gap and >7 days must fire."""
         contacts = {
-            "overdue_contact@example.com": _make_contact(
-                days_since=16, avg_gap_days=10, outbound_count=2
-            ),
+            "overdue_contact@example.com": _make_contact(days_since=16, avg_gap_days=10, outbound_count=2),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
@@ -302,17 +279,13 @@ class TestFractionalGapCalculation:
     def test_insight_days_displayed_as_integer(self):
         """The insight summary should display whole-day counts for readability."""
         contacts = {
-            "bob@example.com": _make_contact(
-                days_since=20, avg_gap_days=7, outbound_count=5
-            ),
+            "bob@example.com": _make_contact(days_since=20, avg_gap_days=7, outbound_count=5),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
         assert len(insights) == 1
         # Summary must contain integer day count (e.g. "20 days"), not "20.0 days"
-        assert "20 days" in insights[0].summary, (
-            f"Expected integer in summary, got: {insights[0].summary}"
-        )
+        assert "20 days" in insights[0].summary, f"Expected integer in summary, got: {insights[0].summary}"
 
 
 # ---------------------------------------------------------------------------
@@ -326,15 +299,11 @@ class TestCombinedFilters:
     def test_three_contacts_only_one_surfaces(self):
         """Marketing sender, inbound-only, and genuine contact — only genuine fires."""
         contacts = {
-            "noreply@corp.com": _make_contact(
-                days_since=30, avg_gap_days=10, outbound_count=5
-            ),  # marketing → blocked
+            "noreply@corp.com": _make_contact(days_since=30, avg_gap_days=10, outbound_count=5),  # marketing → blocked
             "stranger@example.com": _make_contact(
                 days_since=30, avg_gap_days=10, outbound_count=0
             ),  # inbound-only → blocked
-            "friend@example.com": _make_contact(
-                days_since=30, avg_gap_days=10, outbound_count=3
-            ),  # genuine → surfaces
+            "friend@example.com": _make_contact(days_since=30, avg_gap_days=10, outbound_count=3),  # genuine → surfaces
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
@@ -371,9 +340,7 @@ class TestCombinedFilters:
     def test_insight_type_is_relationship_intelligence(self):
         """Surfaced insights must be typed 'relationship_intelligence'."""
         contacts = {
-            "colleague@example.com": _make_contact(
-                days_since=20, avg_gap_days=7, outbound_count=4
-            ),
+            "colleague@example.com": _make_contact(days_since=20, avg_gap_days=7, outbound_count=4),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
@@ -384,14 +351,10 @@ class TestCombinedFilters:
     def test_confidence_bounded_between_0_and_0_8(self):
         """Confidence must never exceed 0.8 regardless of how stale the contact is."""
         contacts = {
-            "very_stale@example.com": _make_contact(
-                days_since=365, avg_gap_days=7, outbound_count=5
-            ),
+            "very_stale@example.com": _make_contact(days_since=365, avg_gap_days=7, outbound_count=5),
         }
         engine = _engine_with_contacts(contacts)
         insights = engine._contact_gap_insights()
         assert len(insights) == 1
-        assert insights[0].confidence <= 0.8, (
-            f"Confidence capped at 0.8, got {insights[0].confidence}"
-        )
+        assert insights[0].confidence <= 0.8, f"Confidence capped at 0.8, got {insights[0].confidence}"
         assert insights[0].confidence > 0.0

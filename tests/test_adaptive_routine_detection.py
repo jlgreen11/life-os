@@ -301,10 +301,52 @@ async def test_adaptive_retry_progression_cold_start_to_stable(db, user_model_st
     # Simulate progression: first call finds 0, second finds 1, third finds 3
     detection_results = [
         ([], []),  # 0 patterns
-        ([{"name": "Morning", "trigger": "morning", "steps": [], "typical_duration_minutes": 5, "consistency_score": 0.8, "times_observed": 10, "variations": []}], []),  # 1 pattern
-        ([{"name": "Morning", "trigger": "morning", "steps": [], "typical_duration_minutes": 5, "consistency_score": 0.8, "times_observed": 10, "variations": []},
-          {"name": "Evening", "trigger": "evening", "steps": [], "typical_duration_minutes": 10, "consistency_score": 0.7, "times_observed": 8, "variations": []}],
-         [{"name": "Workflow1", "trigger": "event", "steps": [], "typical_duration_minutes": 15, "consistency_score": 0.9, "times_observed": 12}]),  # 3 patterns
+        (
+            [
+                {
+                    "name": "Morning",
+                    "trigger": "morning",
+                    "steps": [],
+                    "typical_duration_minutes": 5,
+                    "consistency_score": 0.8,
+                    "times_observed": 10,
+                    "variations": [],
+                }
+            ],
+            [],
+        ),  # 1 pattern
+        (
+            [
+                {
+                    "name": "Morning",
+                    "trigger": "morning",
+                    "steps": [],
+                    "typical_duration_minutes": 5,
+                    "consistency_score": 0.8,
+                    "times_observed": 10,
+                    "variations": [],
+                },
+                {
+                    "name": "Evening",
+                    "trigger": "evening",
+                    "steps": [],
+                    "typical_duration_minutes": 10,
+                    "consistency_score": 0.7,
+                    "times_observed": 8,
+                    "variations": [],
+                },
+            ],
+            [
+                {
+                    "name": "Workflow1",
+                    "trigger": "event",
+                    "steps": [],
+                    "typical_duration_minutes": 15,
+                    "consistency_score": 0.9,
+                    "times_observed": 12,
+                }
+            ],
+        ),  # 3 patterns
     ]
 
     call_count = [0]

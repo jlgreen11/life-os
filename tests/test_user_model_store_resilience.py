@@ -90,12 +90,8 @@ class TestStoreEpisodeResilience:
         # Telemetry falls back to event_store when event_bus is None.
         # Since the DB write failed, NO telemetry event should be written.
         with event_store.db.get_connection("events") as conn:
-            rows = conn.execute(
-                "SELECT * FROM events WHERE type = 'usermodel.episode.stored'"
-            ).fetchall()
-        assert len(rows) == 0, (
-            "Telemetry was emitted despite DB write failure — phantom telemetry regression"
-        )
+            rows = conn.execute("SELECT * FROM events WHERE type = 'usermodel.episode.stored'").fetchall()
+        assert len(rows) == 0, "Telemetry was emitted despite DB write failure — phantom telemetry regression"
 
 
 class TestUpdateSignalProfileResilience:
@@ -125,12 +121,8 @@ class TestUpdateSignalProfileResilience:
         corrupt_store.update_signal_profile("mood", {"energy": 0.6})
 
         with event_store.db.get_connection("events") as conn:
-            rows = conn.execute(
-                "SELECT * FROM events WHERE type = 'usermodel.signal_profile.updated'"
-            ).fetchall()
-        assert len(rows) == 0, (
-            "Telemetry was emitted despite DB write failure — phantom telemetry bug"
-        )
+            rows = conn.execute("SELECT * FROM events WHERE type = 'usermodel.signal_profile.updated'").fetchall()
+        assert len(rows) == 0, "Telemetry was emitted despite DB write failure — phantom telemetry bug"
 
 
 class TestGetSignalProfileResilience:
@@ -174,9 +166,7 @@ class TestStoreMoodResilience:
         corrupt_store.store_mood({"energy_level": 0.5, "trend": "declining"})
 
         with event_store.db.get_connection("events") as conn:
-            rows = conn.execute(
-                "SELECT * FROM events WHERE type = 'usermodel.mood.recorded'"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM events WHERE type = 'usermodel.mood.recorded'").fetchall()
         assert len(rows) >= 1
 
 
@@ -189,9 +179,7 @@ class TestNormalOperationUnchanged:
         user_model_store.store_episode(episode)
 
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT id FROM episodes WHERE id = ?", ("ep-test-001",)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM episodes WHERE id = ?", ("ep-test-001",)).fetchone()
         assert row is not None
 
     def test_update_and_get_signal_profile_works_normally(self, user_model_store):

@@ -39,59 +39,70 @@ def test_email_workflow_requires_recipient_match(db, user_model_store):
     with db.get_connection("events") as conn:
         for i in range(3):
             # Email received from boss
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-recv-{i}",
-                "email.received",
-                "proton_mail",
-                (base_time + timedelta(hours=i*2)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "from_address": "boss@company.com",
-                    "to_addresses": ["me@example.com"],
-                    "subject": f"Task {i}",
-                    "body": "Please send me the report."
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-recv-{i}",
+                    "email.received",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i * 2)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {
+                            "from_address": "boss@company.com",
+                            "to_addresses": ["me@example.com"],
+                            "subject": f"Task {i}",
+                            "body": "Please send me the report.",
+                        }
+                    ),
+                    "{}",
+                ),
+            )
 
             # Email sent to friend (unrelated - should NOT be counted)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-friend-{i}",
-                "email.sent",
-                "proton_mail",
-                (base_time + timedelta(hours=i*2, minutes=15)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "to_addresses": ["friend@example.com"],
-                    "subject": f"Chat {i}",
-                    "body": "Want to grab lunch?"
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-friend-{i}",
+                    "email.sent",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i * 2, minutes=15)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {"to_addresses": ["friend@example.com"], "subject": f"Chat {i}", "body": "Want to grab lunch?"}
+                    ),
+                    "{}",
+                ),
+            )
 
             # Email sent to boss (actual response - SHOULD be counted)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-boss-{i}",
-                "email.sent",
-                "proton_mail",
-                (base_time + timedelta(hours=i*2, minutes=30)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "to_addresses": ["boss@company.com"],
-                    "subject": f"Re: Task {i}",
-                    "body": "Here's the report you requested."
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-boss-{i}",
+                    "email.sent",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i * 2, minutes=30)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {
+                            "to_addresses": ["boss@company.com"],
+                            "subject": f"Re: Task {i}",
+                            "body": "Here's the report you requested.",
+                        }
+                    ),
+                    "{}",
+                ),
+            )
         conn.commit()
 
     # Run workflow detection
@@ -129,42 +140,52 @@ def test_workflow_prevents_marketing_email_false_positives(db, user_model_store)
         for sender in marketing_senders:
             for i in range(3):
                 # Marketing email received
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    f"evt-{sender}-{i}",
-                    "email.received",
-                    "proton_mail",
-                    (base_time + timedelta(minutes=i*10)).isoformat(),
-                    Priority.LOW.value,
-                    json.dumps({
-                        "from_address": sender,
-                        "to_addresses": ["me@example.com"],
-                        "subject": "Special offer!",
-                        "body": "Buy now and save 50%!"
-                    }),
-                    "{}"
-                ))
+                """,
+                    (
+                        f"evt-{sender}-{i}",
+                        "email.received",
+                        "proton_mail",
+                        (base_time + timedelta(minutes=i * 10)).isoformat(),
+                        Priority.LOW.value,
+                        json.dumps(
+                            {
+                                "from_address": sender,
+                                "to_addresses": ["me@example.com"],
+                                "subject": "Special offer!",
+                                "body": "Buy now and save 50%!",
+                            }
+                        ),
+                        "{}",
+                    ),
+                )
 
         # User sends 3 emails to their actual contact (NOT to any marketing sender)
         for i in range(3):
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-real-email-{i}",
-                "email.sent",
-                "proton_mail",
-                (base_time + timedelta(hours=1, minutes=i*10)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "to_addresses": ["friend@example.com"],
-                    "subject": "Let's meet up",
-                    "body": "Are you free this weekend?"
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-real-email-{i}",
+                    "email.sent",
+                    "proton_mail",
+                    (base_time + timedelta(hours=1, minutes=i * 10)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {
+                            "to_addresses": ["friend@example.com"],
+                            "subject": "Let's meet up",
+                            "body": "Are you free this weekend?",
+                        }
+                    ),
+                    "{}",
+                ),
+            )
         conn.commit()
 
     # Run workflow detection
@@ -173,8 +194,7 @@ def test_workflow_prevents_marketing_email_false_positives(db, user_model_store)
     # Should NOT detect workflows for any marketing senders
     # (the sent emails were not to any of them)
     marketing_workflows = [
-        w for w in workflows
-        if any(sender.lower() in w["name"].lower() for sender in marketing_senders)
+        w for w in workflows if any(sender.lower() in w["name"].lower() for sender in marketing_senders)
     ]
     assert len(marketing_workflows) == 0, (
         f"Should not detect marketing workflows (sent emails unrelated), "
@@ -191,41 +211,51 @@ def test_workflow_without_recipient_data_excluded(db, user_model_store):
     with db.get_connection("events") as conn:
         for i in range(3):
             # Email received from client
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-recv-{i}",
-                "email.received",
-                "proton_mail",
-                (base_time + timedelta(hours=i)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "from_address": "client@corp.com",
-                    "to_addresses": ["me@example.com"],
-                    "subject": "Project update",
-                    "body": "How's the project going?"
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-recv-{i}",
+                    "email.received",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {
+                            "from_address": "client@corp.com",
+                            "to_addresses": ["me@example.com"],
+                            "subject": "Project update",
+                            "body": "How's the project going?",
+                        }
+                    ),
+                    "{}",
+                ),
+            )
 
             # Email sent without recipient info (malformed/legacy data)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-sent-{i}",
-                "email.sent",
-                "proton_mail",
-                (base_time + timedelta(hours=i, minutes=30)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "subject": "Re: Project update",
-                    "body": "Going great!"
-                    # Missing to_addresses field
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-sent-{i}",
+                    "email.sent",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i, minutes=30)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {
+                            "subject": "Re: Project update",
+                            "body": "Going great!",
+                            # Missing to_addresses field
+                        }
+                    ),
+                    "{}",
+                ),
+            )
         conn.commit()
 
     # Run workflow detection
@@ -248,42 +278,46 @@ def test_workflow_case_insensitive_email_matching(db, user_model_store):
     with db.get_connection("events") as conn:
         for i in range(3):
             # Received email (all from same lowercase sender)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-recv-{i}",
-                "email.received",
-                "proton_mail",
-                (base_time + timedelta(hours=i)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "from_address": "boss@company.com",
-                    "to_addresses": ["me@example.com"],
-                    "subject": f"Task {i}",
-                    "body": "Please handle this."
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-recv-{i}",
+                    "email.received",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps(
+                        {
+                            "from_address": "boss@company.com",
+                            "to_addresses": ["me@example.com"],
+                            "subject": f"Task {i}",
+                            "body": "Please handle this.",
+                        }
+                    ),
+                    "{}",
+                ),
+            )
 
             # Sent response with varying case
             response_addresses = ["Boss@Company.com", "boss@COMPANY.com", "BOSS@company.COM"]
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f"evt-sent-{i}",
-                "email.sent",
-                "proton_mail",
-                (base_time + timedelta(hours=i, minutes=30)).isoformat(),
-                Priority.NORMAL.value,
-                json.dumps({
-                    "to_addresses": [response_addresses[i]],
-                    "subject": f"Re: Task {i}",
-                    "body": "Done."
-                }),
-                "{}"
-            ))
+            """,
+                (
+                    f"evt-sent-{i}",
+                    "email.sent",
+                    "proton_mail",
+                    (base_time + timedelta(hours=i, minutes=30)).isoformat(),
+                    Priority.NORMAL.value,
+                    json.dumps({"to_addresses": [response_addresses[i]], "subject": f"Re: Task {i}", "body": "Done."}),
+                    "{}",
+                ),
+            )
         conn.commit()
 
     # Run workflow detection

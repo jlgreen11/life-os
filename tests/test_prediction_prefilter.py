@@ -41,24 +41,25 @@ async def test_prefilter_skips_existing_unresolved_prediction(db, event_store, u
         )
 
     # Seed an event so generate_predictions() doesn't skip via _has_new_events
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "msg-prefilter-1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "msg-prefilter-1"},
+            "metadata": {},
+        }
+    )
 
     # Run prediction generation
     predictions = await engine.generate_predictions({})
 
     # Verify no prediction with the same (type, description) was returned
     for p in predictions:
-        assert not (
-            p.prediction_type == "reminder"
-            and p.description == "You haven't contacted Alice in 14 days"
-        ), "Pre-filter should have removed the duplicate prediction"
+        assert not (p.prediction_type == "reminder" and p.description == "You haven't contacted Alice in 14 days"), (
+            "Pre-filter should have removed the duplicate prediction"
+        )
 
 
 @pytest.mark.asyncio
@@ -87,14 +88,16 @@ async def test_prefilter_allows_different_description(db, event_store, user_mode
         )
 
     # Seed an event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "msg-prefilter-2"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "msg-prefilter-2"},
+            "metadata": {},
+        }
+    )
 
     predictions = await engine.generate_predictions({})
 
@@ -144,8 +147,9 @@ async def test_prefilter_ignores_old_resolved_predictions(db, event_store, user_
         ).fetchall()
         existing = {(r[0], r[1]) for r in rows}
 
-    assert ("reminder", "Old resolved prediction") not in existing, \
+    assert ("reminder", "Old resolved prediction") not in existing, (
         "Old resolved predictions should not be in the pre-filter set"
+    )
 
 
 @pytest.mark.asyncio
@@ -186,8 +190,9 @@ async def test_prefilter_includes_recently_filtered_predictions(db, event_store,
         ).fetchall()
         existing = {(r[0], r[1]) for r in rows}
 
-    assert ("risk", "Recently filtered risk prediction") in existing, \
+    assert ("risk", "Recently filtered risk prediction") in existing, (
         "Recently filtered predictions should be in the pre-filter set"
+    )
 
 
 @pytest.mark.asyncio
@@ -196,14 +201,16 @@ async def test_prefilter_graceful_on_empty_db(db, event_store, user_model_store)
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     # Seed an event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "msg-prefilter-3"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "msg-prefilter-3"},
+            "metadata": {},
+        }
+    )
 
     # Should not crash with empty predictions table
     predictions = await engine.generate_predictions({})

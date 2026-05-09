@@ -5,6 +5,7 @@ Verifies that the diagnostics endpoint and PredictionEngine.get_diagnostics()
 correctly identify data availability, blockers, and recommendations for each
 prediction type.
 """
+
 import asyncio
 import json
 import uuid
@@ -47,17 +48,19 @@ async def test_diagnostics_with_email_data(db, user_model_store, event_store):
     # Create unreplied emails
     now = datetime.now(timezone.utc)
     for i in range(10):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "test",
-            "timestamp": (now - timedelta(hours=12)).isoformat(),
-            "payload": {
-                "from_address": f"user{i}@example.com",
-                "subject": f"Test email {i}",
-                "message_id": f"msg-{i}",
-            },
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "test",
+                "timestamp": (now - timedelta(hours=12)).isoformat(),
+                "payload": {
+                    "from_address": f"user{i}@example.com",
+                    "subject": f"Test email {i}",
+                    "message_id": f"msg-{i}",
+                },
+            }
+        )
 
     engine = PredictionEngine(db, user_model_store)
     diagnostics = await engine.get_diagnostics()
@@ -81,18 +84,20 @@ async def test_diagnostics_with_calendar_all_day_events(db, user_model_store, ev
     # Create all-day calendar events
     now = datetime.now(timezone.utc)
     for i in range(5):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "calendar.event.created",
-            "source": "test",
-            "timestamp": now.isoformat(),
-            "payload": {
-                "title": f"All-day event {i}",
-                "start_time": (now + timedelta(days=i)).date().isoformat(),
-                "end_time": (now + timedelta(days=i+1)).date().isoformat(),
-                "is_all_day": True,
-            },
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "calendar.event.created",
+                "source": "test",
+                "timestamp": now.isoformat(),
+                "payload": {
+                    "title": f"All-day event {i}",
+                    "start_time": (now + timedelta(days=i)).date().isoformat(),
+                    "end_time": (now + timedelta(days=i + 1)).date().isoformat(),
+                    "is_all_day": True,
+                },
+            }
+        )
 
     engine = PredictionEngine(db, user_model_store)
     diagnostics = await engine.get_diagnostics()
@@ -116,18 +121,20 @@ async def test_diagnostics_with_timed_calendar_events(db, user_model_store, even
     # Create timed calendar events
     now = datetime.now(timezone.utc)
     for i in range(3):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "calendar.event.created",
-            "source": "test",
-            "timestamp": now.isoformat(),
-            "payload": {
-                "title": f"Timed meeting {i}",
-                "start_time": (now + timedelta(hours=i)).isoformat(),
-                "end_time": (now + timedelta(hours=i+1)).isoformat(),
-                "is_all_day": False,
-            },
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "calendar.event.created",
+                "source": "test",
+                "timestamp": now.isoformat(),
+                "payload": {
+                    "title": f"Timed meeting {i}",
+                    "start_time": (now + timedelta(hours=i)).isoformat(),
+                    "end_time": (now + timedelta(hours=i + 1)).isoformat(),
+                    "is_all_day": False,
+                },
+            }
+        )
 
     engine = PredictionEngine(db, user_model_store)
     diagnostics = await engine.get_diagnostics()
@@ -153,16 +160,14 @@ async def test_diagnostics_with_relationship_data(db, user_model_store):
                 "interaction_count": 10,
                 "last_interaction": datetime.now(timezone.utc).isoformat(),
                 "interaction_timestamps": [
-                    (datetime.now(timezone.utc) - timedelta(days=i)).isoformat()
-                    for i in range(10)
+                    (datetime.now(timezone.utc) - timedelta(days=i)).isoformat() for i in range(10)
                 ],
             },
             "colleague@example.com": {
                 "interaction_count": 8,
                 "last_interaction": datetime.now(timezone.utc).isoformat(),
                 "interaction_timestamps": [
-                    (datetime.now(timezone.utc) - timedelta(days=i)).isoformat()
-                    for i in range(8)
+                    (datetime.now(timezone.utc) - timedelta(days=i)).isoformat() for i in range(8)
                 ],
             },
             # Marketing contact - should be filtered
@@ -202,17 +207,19 @@ async def test_diagnostics_with_transaction_data(db, user_model_store, event_sto
     # Create transactions
     now = datetime.now(timezone.utc)
     for i in range(10):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "finance.transaction.new",
-            "source": "test",
-            "timestamp": (now - timedelta(days=i)).isoformat(),
-            "payload": {
-                "amount": -100.0,
-                "category": "food" if i % 2 == 0 else "transport",
-                "description": f"Transaction {i}",
-            },
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "finance.transaction.new",
+                "source": "test",
+                "timestamp": (now - timedelta(days=i)).isoformat(),
+                "payload": {
+                    "amount": -100.0,
+                    "category": "food" if i % 2 == 0 else "transport",
+                    "description": f"Transaction {i}",
+                },
+            }
+        )
 
     engine = PredictionEngine(db, user_model_store)
     diagnostics = await engine.get_diagnostics()
@@ -263,17 +270,19 @@ async def test_diagnostics_overall_health_calculation(db, user_model_store, even
 
     # Scenario 2: Add email data - health should be "degraded" (1 active type)
     now = datetime.now(timezone.utc)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": (now - timedelta(hours=5)).isoformat(),
-        "payload": {
-            "from_address": "real.person@example.com",
-            "subject": "Important question",
-            "message_id": "msg-123",
-        },
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": (now - timedelta(hours=5)).isoformat(),
+            "payload": {
+                "from_address": "real.person@example.com",
+                "subject": "Important question",
+                "message_id": "msg-123",
+            },
+        }
+    )
 
     diagnostics = await engine.get_diagnostics()
     # Health may be degraded or blocked depending on whether predictions generate
@@ -282,31 +291,35 @@ async def test_diagnostics_overall_health_calculation(db, user_model_store, even
     # Scenario 3: Add multiple data sources - health should improve
     # Add timed calendar events
     for i in range(2):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "calendar.event.created",
-            "source": "test",
-            "timestamp": now.isoformat(),
-            "payload": {
-                "title": f"Meeting {i}",
-                "start_time": (now + timedelta(hours=i+1)).isoformat(),
-                "end_time": (now + timedelta(hours=i+2)).isoformat(),
-                "is_all_day": False,
-            },
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "calendar.event.created",
+                "source": "test",
+                "timestamp": now.isoformat(),
+                "payload": {
+                    "title": f"Meeting {i}",
+                    "start_time": (now + timedelta(hours=i + 1)).isoformat(),
+                    "end_time": (now + timedelta(hours=i + 2)).isoformat(),
+                    "is_all_day": False,
+                },
+            }
+        )
 
     # Add transactions
     for i in range(10):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "finance.transaction.new",
-            "source": "test",
-            "timestamp": (now - timedelta(days=i)).isoformat(),
-            "payload": {
-                "amount": -50.0,
-                "category": "food",
-            },
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "finance.transaction.new",
+                "source": "test",
+                "timestamp": (now - timedelta(days=i)).isoformat(),
+                "payload": {
+                    "amount": -50.0,
+                    "category": "food",
+                },
+            }
+        )
 
     diagnostics = await engine.get_diagnostics()
     # With more data sources, blocked types should decrease
@@ -324,8 +337,7 @@ async def test_diagnostics_recommendations_present(db, user_model_store):
     # Each blocked type should have recommendations
     for type_name, type_data in diagnostics["prediction_types"].items():
         if type_data["status"] == "blocked":
-            assert len(type_data["recommendations"]) > 0, \
-                f"{type_name} is blocked but has no recommendations"
+            assert len(type_data["recommendations"]) > 0, f"{type_name} is blocked but has no recommendations"
 
             # Recommendations should be actionable strings
             for rec in type_data["recommendations"]:

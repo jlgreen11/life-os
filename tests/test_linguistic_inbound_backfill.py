@@ -100,23 +100,33 @@ def test_backfill_inbound_creates_profile_from_received_emails(db, user_model_st
     """
     events = [
         _email_received(
-            "evt-recv-1", "alice@example.com", "2026-02-01T09:00:00Z",
+            "evt-recv-1",
+            "alice@example.com",
+            "2026-02-01T09:00:00Z",
             body="Hi there! Just wanted to check in on the project. How's everything going?",
         ),
         _email_received(
-            "evt-recv-2", "alice@example.com", "2026-02-02T10:00:00Z",
+            "evt-recv-2",
+            "alice@example.com",
+            "2026-02-02T10:00:00Z",
             body="Thanks for the update! I think we should proceed with the implementation plan.",
         ),
         _email_received(
-            "evt-recv-3", "bob@example.com", "2026-02-03T11:00:00Z",
+            "evt-recv-3",
+            "bob@example.com",
+            "2026-02-03T11:00:00Z",
             body="Please provide a comprehensive status update on the deliverables accordingly.",
         ),
         _email_received(
-            "evt-recv-4", "bob@example.com", "2026-02-04T14:00:00Z",
+            "evt-recv-4",
+            "bob@example.com",
+            "2026-02-04T14:00:00Z",
             body="Furthermore, we need to review the budget allocations for next quarter.",
         ),
         _email_received(
-            "evt-recv-5", "carol@example.com", "2026-02-05T09:00:00Z",
+            "evt-recv-5",
+            "carol@example.com",
+            "2026-02-05T09:00:00Z",
             body="Hey! So I was thinking about maybe grabbing lunch sometime this week?",
         ),
     ]
@@ -157,7 +167,9 @@ def test_backfill_inbound_ignores_outbound_events(db, user_model_store):
         },
         # This inbound event should be processed
         _email_received(
-            "evt-recv-1", "alice@example.com", "2026-02-01T09:00:00Z",
+            "evt-recv-1",
+            "alice@example.com",
+            "2026-02-01T09:00:00Z",
             body="Hi! Let me know how the project is going when you get a chance.",
         ),
     ]
@@ -174,11 +186,15 @@ def test_backfill_inbound_processes_message_received(db, user_model_store):
     """Backfill should process message.received events (Signal, iMessage, etc.)."""
     events = [
         _message_received(
-            "evt-msg-1", "alice@signal", "2026-02-01T10:00:00Z",
+            "evt-msg-1",
+            "alice@signal",
+            "2026-02-01T10:00:00Z",
             body="Hey, are you around? I wanted to talk about the weekend plans.",
         ),
         _message_received(
-            "evt-msg-2", "bob@signal", "2026-02-02T11:00:00Z",
+            "evt-msg-2",
+            "bob@signal",
+            "2026-02-02T11:00:00Z",
             body="Sounds good! Let me know when you're free for the meeting.",
         ),
     ]
@@ -203,11 +219,15 @@ def test_backfill_inbound_builds_per_contact_data(db, user_model_store):
     """
     events = [
         _email_received(
-            "evt-recv-1", "alice@example.com", "2026-02-01T09:00:00Z",
+            "evt-recv-1",
+            "alice@example.com",
+            "2026-02-01T09:00:00Z",
             body="Hi! Just wanted to check in on the project. How is everything going?",
         ),
         _email_received(
-            "evt-recv-2", "bob@example.com", "2026-02-02T10:00:00Z",
+            "evt-recv-2",
+            "bob@example.com",
+            "2026-02-02T10:00:00Z",
             body="Please provide a comprehensive status update on the aforementioned deliverables.",
         ),
     ]
@@ -231,7 +251,9 @@ def test_backfill_inbound_dry_run_no_writes(db, user_model_store):
     """Dry run should not write to the database."""
     events = [
         _email_received(
-            "evt-recv-1", "alice@example.com", "2026-02-01T09:00:00Z",
+            "evt-recv-1",
+            "alice@example.com",
+            "2026-02-01T09:00:00Z",
             body="Hello! I wanted to discuss the upcoming project timeline with you.",
         ),
     ]
@@ -262,7 +284,9 @@ def test_backfill_inbound_limit_parameter(db, user_model_store):
     """The limit parameter should restrict processing to N events."""
     events = [
         _email_received(
-            f"evt-{i}", "alice@example.com", f"2026-02-{i + 1:02d}T10:00:00Z",
+            f"evt-{i}",
+            "alice@example.com",
+            f"2026-02-{i + 1:02d}T10:00:00Z",
             body=f"Message number {i}. This is a test of the linguistic extractor processing.",
         )
         for i in range(5)

@@ -56,21 +56,21 @@ async def test_all_day_events_included_in_calendar_conflicts(db, user_model_stor
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "All-Day Conference",
-                    "start_time": tomorrow_date_str,  # Date-only for tomorrow
-                    "end_time": day_after_tomorrow_date_str,  # Ends the following midnight
-                    "is_all_day": True,
-                }),
+                json.dumps(
+                    {
+                        "title": "All-Day Conference",
+                        "start_time": tomorrow_date_str,  # Date-only for tomorrow
+                        "end_time": day_after_tomorrow_date_str,  # Ends the following midnight
+                        "is_all_day": True,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
 
         # Event 2: Timed meeting at 10:00 AM tomorrow — this falls inside the all-day
         # span (midnight→midnight) regardless of the current UTC hour.
-        meeting_time = (now + timedelta(days=1)).replace(
-            hour=10, minute=0, second=0, microsecond=0
-        )
+        meeting_time = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -80,12 +80,14 @@ async def test_all_day_events_included_in_calendar_conflicts(db, user_model_stor
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Client Meeting",
-                    "start_time": meeting_time.isoformat(),
-                    "end_time": (meeting_time + timedelta(hours=1)).isoformat(),
-                    "is_all_day": False,
-                }),
+                json.dumps(
+                    {
+                        "title": "Client Meeting",
+                        "start_time": meeting_time.isoformat(),
+                        "end_time": (meeting_time + timedelta(hours=1)).isoformat(),
+                        "is_all_day": False,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -122,12 +124,14 @@ async def test_all_day_events_excluded_from_past_window(db, user_model_store):
                 "caldav_test",
                 (now - timedelta(days=1)).isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Yesterday's Event",
-                    "start_time": yesterday_date_str,  # Yesterday
-                    "end_time": today_date_str,  # Ends today at midnight (already passed)
-                    "is_all_day": True,
-                }),
+                json.dumps(
+                    {
+                        "title": "Yesterday's Event",
+                        "start_time": yesterday_date_str,  # Yesterday
+                        "end_time": today_date_str,  # Ends today at midnight (already passed)
+                        "is_all_day": True,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -161,12 +165,14 @@ async def test_all_day_events_included_in_preparation_needs(db, user_model_store
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Flight to NYC",
-                    "start_time": tomorrow_date_str,  # Date-only, parses as midnight tomorrow
-                    "end_time": day_after_tomorrow_str,  # Ends day after at midnight
-                    "is_all_day": True,
-                }),
+                json.dumps(
+                    {
+                        "title": "Flight to NYC",
+                        "start_time": tomorrow_date_str,  # Date-only, parses as midnight tomorrow
+                        "end_time": day_after_tomorrow_str,  # Ends day after at midnight
+                        "is_all_day": True,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -203,12 +209,14 @@ async def test_timed_events_use_time_based_window(db, user_model_store):
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Team Standup",
-                    "start_time": future_time.isoformat(),
-                    "end_time": (future_time + timedelta(minutes=30)).isoformat(),
-                    "is_all_day": False,
-                }),
+                json.dumps(
+                    {
+                        "title": "Team Standup",
+                        "start_time": future_time.isoformat(),
+                        "end_time": (future_time + timedelta(minutes=30)).isoformat(),
+                        "is_all_day": False,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -245,12 +253,14 @@ async def test_all_day_event_today_included_even_after_midnight(db, user_model_s
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Today's All-Day Event",
-                    "start_time": today_date_str,  # Midnight was hours ago
-                    "end_time": tomorrow_date_str,  # Ends tomorrow at midnight
-                    "is_all_day": True,
-                }),
+                json.dumps(
+                    {
+                        "title": "Today's All-Day Event",
+                        "start_time": today_date_str,  # Midnight was hours ago
+                        "end_time": tomorrow_date_str,  # Ends tomorrow at midnight
+                        "is_all_day": True,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -265,12 +275,14 @@ async def test_all_day_event_today_included_even_after_midnight(db, user_model_s
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Another Today Event",
-                    "start_time": today_date_str,
-                    "end_time": tomorrow_date_str,  # Ends tomorrow at midnight
-                    "is_all_day": True,
-                }),
+                json.dumps(
+                    {
+                        "title": "Another Today Event",
+                        "start_time": today_date_str,
+                        "end_time": tomorrow_date_str,  # Ends tomorrow at midnight
+                        "is_all_day": True,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -308,13 +320,15 @@ async def test_all_day_vs_timed_conflict_detection(db, user_model_store):
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Travel Day - NYC",
-                    "start_time": tomorrow_date_str,
-                    "end_time": day_after_tomorrow_str,  # Ends day after at midnight
-                    "is_all_day": True,
-                    "location": "New York",
-                }),
+                json.dumps(
+                    {
+                        "title": "Travel Day - NYC",
+                        "start_time": tomorrow_date_str,
+                        "end_time": day_after_tomorrow_str,  # Ends day after at midnight
+                        "is_all_day": True,
+                        "location": "New York",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -329,13 +343,15 @@ async def test_all_day_vs_timed_conflict_detection(db, user_model_store):
                 "caldav_test",
                 now.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Office Team Meeting",
-                    "start_time": tomorrow_timed.isoformat(),
-                    "end_time": (tomorrow_timed + timedelta(hours=1)).isoformat(),
-                    "is_all_day": False,
-                    "location": "San Francisco Office",
-                }),
+                json.dumps(
+                    {
+                        "title": "Office Team Meeting",
+                        "start_time": tomorrow_timed.isoformat(),
+                        "end_time": (tomorrow_timed + timedelta(hours=1)).isoformat(),
+                        "is_all_day": False,
+                        "location": "San Francisco Office",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -386,12 +402,14 @@ async def test_preparation_needs_window_12_to_48_hours(db, user_model_store):
                     "caldav_test",
                     now.isoformat(),
                     "normal",
-                    json.dumps({
-                        "title": title,
-                        "start_time": start_str,
-                        "end_time": end_str,
-                        "is_all_day": True,
-                    }),
+                    json.dumps(
+                        {
+                            "title": title,
+                            "start_time": start_str,
+                            "end_time": end_str,
+                            "is_all_day": True,
+                        }
+                    ),
                     json.dumps({}),
                 ),
             )
@@ -403,5 +421,6 @@ async def test_preparation_needs_window_12_to_48_hours(db, user_model_store):
 
     # Check that the 24-hour event is included
     titles = [p.description for p in predictions]
-    assert any("24 hours" in desc or "Flight in 24 hours" in desc for desc in titles), \
+    assert any("24 hours" in desc or "Flight in 24 hours" in desc for desc in titles), (
         "Event in preparation window should generate prediction"
+    )

@@ -22,22 +22,20 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from services.event_bus.bus import EventBus
 from storage.database import DatabaseManager
 from storage.event_store import EventStore
-from services.event_bus.bus import EventBus
 
 
 async def detect_conflicts_for_all_events(
-    event_store: EventStore,
-    event_bus: EventBus,
-    dry_run: bool = False
+    event_store: EventStore, event_bus: EventBus, dry_run: bool = False
 ) -> dict[str, int]:
     """
     Detect conflicts across all historical calendar events.
@@ -77,7 +75,7 @@ async def detect_conflicts_for_all_events(
     print("Fetching historical calendar events...")
     calendar_events = event_store.get_events(
         event_type="calendar.event.created",
-        limit=10000  # Generous upper bound
+        limit=10000,  # Generous upper bound
     )
 
     stats["events_analyzed"] = len(calendar_events)
@@ -239,7 +237,7 @@ async def main():
         print(f"Conflict events published: {stats['events_published']}")
         print()
 
-        if stats['conflicts_detected'] > 0:
+        if stats["conflicts_detected"] > 0:
             print(f"✓ Published {stats['events_published']} calendar.conflict.detected events")
             print("  These will now trigger the 'High priority: calendar conflict' rule")
         else:

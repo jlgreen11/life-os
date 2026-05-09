@@ -44,11 +44,11 @@ class RedditConnector(BrowserBaseConnector):
 
     CONNECTOR_ID = "reddit"
     DISPLAY_NAME = "Reddit"
-    SITE_ID = "reddit"                       # Credential vault key
+    SITE_ID = "reddit"  # Credential vault key
     LOGIN_URL = "https://old.reddit.com/login"
-    SYNC_INTERVAL_SECONDS = 600              # 10-minute polling interval
-    MIN_REQUEST_INTERVAL = 3.0               # 3 seconds between page loads
-    MAX_PAGES_PER_SYNC = 5                   # Safety cap on pages per sync
+    SYNC_INTERVAL_SECONDS = 600  # 10-minute polling interval
+    MIN_REQUEST_INTERVAL = 3.0  # 3 seconds between page loads
+    MAX_PAGES_PER_SYNC = 5  # Safety cap on pages per sync
 
     def get_login_selectors(self) -> dict[str, str]:
         """CSS selectors for the old.reddit.com login form."""
@@ -67,8 +67,7 @@ class RedditConnector(BrowserBaseConnector):
         except Exception:
             return False
 
-    async def browser_sync(self, page: Any, human: HumanEmulator,
-                           interactor: PageInteractor) -> int:
+    async def browser_sync(self, page: Any, human: HumanEmulator, interactor: PageInteractor) -> int:
         """Two-phase sync: (1) scrape the personalised front page for new posts,
         then (2) check the inbox for unread messages/replies."""
         count = 0
@@ -103,7 +102,8 @@ class RedditConnector(BrowserBaseConnector):
             is_priority = post["subreddit"].lower() in [s.lower() for s in priority_subs]
 
             await self.publish_event(
-                "content.reddit.new_post", payload,
+                "content.reddit.new_post",
+                payload,
                 priority="normal" if is_priority else "low",
                 metadata={
                     "domain": "media",
@@ -220,6 +220,7 @@ class RedditConnector(BrowserBaseConnector):
         if cursor:
             try:
                 import json
+
                 return set(json.loads(cursor))
             except Exception:
                 pass
@@ -248,6 +249,7 @@ class RedditConnector(BrowserBaseConnector):
             connector._update_seen_ids(["t3_abc123", "t3_def456"])
         """
         import json
+
         cursor = self.get_sync_cursor()
         existing: list[str] = []
         if cursor:
@@ -283,6 +285,9 @@ class RedditConnector(BrowserBaseConnector):
     async def health_check(self) -> dict[str, Any]:
         if self._page:
             logged_in = await self.is_logged_in(self._page)
-            return {"status": "ok" if logged_in else "session_expired",
-                    "connector": self.CONNECTOR_ID, "mode": "browser"}
+            return {
+                "status": "ok" if logged_in else "session_expired",
+                "connector": self.CONNECTOR_ID,
+                "mode": "browser",
+            }
         return {"status": "not_started", "connector": self.CONNECTOR_ID}

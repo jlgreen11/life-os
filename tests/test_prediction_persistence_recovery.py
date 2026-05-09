@@ -47,14 +47,16 @@ def _make_prediction(**overrides) -> Prediction:
 
 def _insert_event(event_store):
     """Insert a generic event to advance the cursor so generate_predictions runs."""
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@test.com", "subject": "Test", "message_id": str(uuid.uuid4())},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@test.com", "subject": "Test", "message_id": str(uuid.uuid4())},
+            "metadata": {},
+        }
+    )
 
 
 async def _run_engine_with_fake_predictions(engine, predictions):
@@ -143,8 +145,8 @@ class TestPersistenceRecovery:
         engine._persistence_failure_detected = True
 
         # Make the DB write test fail by dropping the predictions table
-        with db.get_connection('user_model') as conn:
-            conn.execute('DROP TABLE IF EXISTS predictions')
+        with db.get_connection("user_model") as conn:
+            conn.execute("DROP TABLE IF EXISTS predictions")
 
         result = await engine.generate_predictions({})
 
@@ -187,7 +189,7 @@ class TestPersistenceRecovery:
         await _run_engine_with_fake_predictions(engine, preds)
 
         # Check that recovery_mode was recorded in diagnostics
-        assert engine._last_generation_stats.get('recovery_mode') is True
+        assert engine._last_generation_stats.get("recovery_mode") is True
 
     @pytest.mark.asyncio
     async def test_persistence_test_row_cleaned_up(self, db, event_store, user_model_store):
@@ -203,10 +205,8 @@ class TestPersistenceRecovery:
         await _run_engine_with_fake_predictions(engine, preds)
 
         # Verify the test row is gone
-        with db.get_connection('user_model') as conn:
-            row = conn.execute(
-                "SELECT id FROM predictions WHERE id = '__persistence_test__'"
-            ).fetchone()
+        with db.get_connection("user_model") as conn:
+            row = conn.execute("SELECT id FROM predictions WHERE id = '__persistence_test__'").fetchone()
         assert row is None, "Test prediction row should be cleaned up after recovery"
 
     @pytest.mark.asyncio

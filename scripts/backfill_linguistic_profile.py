@@ -238,7 +238,7 @@ def backfill_linguistic_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_linguistic] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_linguistic] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_linguistic] Events processed: {events_processed}")
     print(f"[backfill_linguistic] Signals extracted: {signals_extracted}")
     print(
@@ -252,14 +252,14 @@ def backfill_linguistic_profile(
     )
 
     if dry_run:
-        print(f"[backfill_linguistic] DRY RUN — no changes written to database")
+        print("[backfill_linguistic] DRY RUN — no changes written to database")
 
     # Show linguistic profile averages for verification.
     if final_profile and not dry_run:
         data = final_profile["data"]
         averages = data.get("averages", {})
         if averages:
-            print(f"\n[backfill_linguistic] ===== LINGUISTIC PROFILE =====")
+            print("\n[backfill_linguistic] ===== LINGUISTIC PROFILE =====")
             for key, value in sorted(averages.items()):
                 print(f"  {key}: {value:.3f}" if isinstance(value, float) else f"  {key}: {value}")
 

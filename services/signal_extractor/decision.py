@@ -103,10 +103,12 @@ class DecisionExtractor(BaseExtractor):
                     signals.append(delegation_signal)
                 else:
                     # Non-delegation outbound message: counted for the ratio only
-                    signals.append({
-                        "type": "outbound_nondelegation",
-                        "timestamp": dt.isoformat(),
-                    })
+                    signals.append(
+                        {
+                            "type": "outbound_nondelegation",
+                            "timestamp": dt.isoformat(),
+                        }
+                    )
 
             # Detect decision response patterns in inbound messages.
             # Stakeholders may approve/reject the user's proposals or seek
@@ -242,16 +244,29 @@ class DecisionExtractor(BaseExtractor):
 
         # Delegation indicators
         delegation_patterns = [
-            "you decide", "you choose", "you pick", "up to you",
-            "whatever you prefer", "whatever you want", "your call",
-            "i don't care", "doesn't matter to me", "either way",
+            "you decide",
+            "you choose",
+            "you pick",
+            "up to you",
+            "whatever you prefer",
+            "whatever you want",
+            "your call",
+            "i don't care",
+            "doesn't matter to me",
+            "either way",
         ]
 
         # Opinion-seeking patterns (soft delegation)
         opinion_patterns = [
-            "what do you think", "what's your opinion", "should i",
-            "would you", "do you think i should", "any thoughts",
-            "what would you do", "advice", "suggestions",
+            "what do you think",
+            "what's your opinion",
+            "should i",
+            "would you",
+            "do you think i should",
+            "any thoughts",
+            "what would you do",
+            "advice",
+            "suggestions",
         ]
 
         is_delegating = any(pattern in content_lower for pattern in delegation_patterns)
@@ -311,33 +326,77 @@ class DecisionExtractor(BaseExtractor):
         # Avoid generic words like "proceed" that can appear in rejection context
         # (e.g. "reconsider before proceeding") — use unambiguous approval phrases.
         approval_patterns = [
-            "looks good", "sounds good", "that works", "i agree",
-            "approved", "approve", "go ahead",
-            "great idea", "love it", "perfect", "exactly right",
-            "fully support", "on board", "let's do it", "let's go with",
-            "i'm in", "works for me", "fine with me", "happy with that",
-            "thumbs up", "yes, let's", "yes, please proceed",
-            "please proceed", "go ahead and proceed",
+            "looks good",
+            "sounds good",
+            "that works",
+            "i agree",
+            "approved",
+            "approve",
+            "go ahead",
+            "great idea",
+            "love it",
+            "perfect",
+            "exactly right",
+            "fully support",
+            "on board",
+            "let's do it",
+            "let's go with",
+            "i'm in",
+            "works for me",
+            "fine with me",
+            "happy with that",
+            "thumbs up",
+            "yes, let's",
+            "yes, please proceed",
+            "please proceed",
+            "go ahead and proceed",
         ]
 
         # Patterns indicating a stakeholder rejected or questioned the user's decision
         rejection_patterns = [
-            "i disagree", "disagree", "i don't think", "not sure about",
-            "concerns about", "concerned about", "reconsider", "think again",
-            "not advisable", "bad idea", "won't work", "doesn't work",
-            "problem with", "issue with", "pushback", "push back",
-            "hold off", "wait on", "let's not", "i'd rather not",
-            "not a good fit", "not the right time",
+            "i disagree",
+            "disagree",
+            "i don't think",
+            "not sure about",
+            "concerns about",
+            "concerned about",
+            "reconsider",
+            "think again",
+            "not advisable",
+            "bad idea",
+            "won't work",
+            "doesn't work",
+            "problem with",
+            "issue with",
+            "pushback",
+            "push back",
+            "hold off",
+            "wait on",
+            "let's not",
+            "i'd rather not",
+            "not a good fit",
+            "not the right time",
         ]
 
         # Patterns indicating the contact is seeking the user's decision/input
         input_seeking_patterns = [
-            "what do you think", "your thoughts", "your opinion",
-            "need your input", "need your feedback", "need your approval",
-            "your call", "up to you", "your decision", "you decide",
-            "what would you like", "what's your preference",
-            "let me know what you think", "thoughts?", "opinion?",
-            "can you weigh in", "what do you prefer",
+            "what do you think",
+            "your thoughts",
+            "your opinion",
+            "need your input",
+            "need your feedback",
+            "need your approval",
+            "your call",
+            "up to you",
+            "your decision",
+            "you decide",
+            "what would you like",
+            "what's your preference",
+            "let me know what you think",
+            "thoughts?",
+            "opinion?",
+            "can you weigh in",
+            "what do you prefer",
         ]
 
         is_approval = any(pattern in content_lower for pattern in approval_patterns)
@@ -400,10 +459,19 @@ class DecisionExtractor(BaseExtractor):
         body_lower = body.lower()
 
         urgency_keywords = [
-            "urgent", "asap", "as soon as possible", "deadline",
-            "immediately", "time-sensitive", "time sensitive",
-            "critical", "emergency", "rush", "overdue",
-            "action required", "response required",
+            "urgent",
+            "asap",
+            "as soon as possible",
+            "deadline",
+            "immediately",
+            "time-sensitive",
+            "time sensitive",
+            "critical",
+            "emergency",
+            "rush",
+            "overdue",
+            "action required",
+            "response required",
         ]
 
         subject_match = any(kw in subject_lower for kw in urgency_keywords)
@@ -455,14 +523,28 @@ class DecisionExtractor(BaseExtractor):
         body_lower = body.lower()
 
         action_patterns = [
-            "please review", "can you", "could you", "need your",
-            "waiting for", "waiting on", "would you",
-            "please confirm", "please respond", "please advise",
-            "please let me know", "kindly review",
-            "i need you to", "we need you to", "could you please",
-            "please provide", "your input needed", "need your help",
-            "need your approval", "need your feedback",
-            "action required", "action needed",
+            "please review",
+            "can you",
+            "could you",
+            "need your",
+            "waiting for",
+            "waiting on",
+            "would you",
+            "please confirm",
+            "please respond",
+            "please advise",
+            "please let me know",
+            "kindly review",
+            "i need you to",
+            "we need you to",
+            "could you please",
+            "please provide",
+            "your input needed",
+            "need your help",
+            "need your approval",
+            "need your feedback",
+            "action required",
+            "action needed",
         ]
 
         if not any(pattern in body_lower for pattern in action_patterns):
@@ -518,11 +600,21 @@ class DecisionExtractor(BaseExtractor):
 
         # Explicit information-delivery phrases in the body
         info_delivery_patterns = [
-            "as requested", "as discussed", "attached is", "attached are",
-            "here is the", "here are the", "please find attached",
-            "please find enclosed", "i've attached", "i have attached",
-            "forwarding the", "fyi", "for your information",
-            "per your request", "following up",
+            "as requested",
+            "as discussed",
+            "attached is",
+            "attached are",
+            "here is the",
+            "here are the",
+            "please find attached",
+            "please find enclosed",
+            "i've attached",
+            "i have attached",
+            "forwarding the",
+            "fyi",
+            "for your information",
+            "per your request",
+            "following up",
         ]
         has_info_delivery = any(p in body_lower for p in info_delivery_patterns)
 
@@ -785,8 +877,8 @@ class DecisionExtractor(BaseExtractor):
                 prev_delegation_count = profile_dict.get("_delegation_event_count", 0)
                 prev_total_count = profile_dict.get("_total_outbound_count", 0)
 
-                prev_delegation_count += 1   # this signal IS a delegation event
-                prev_total_count += 1        # it is also an outbound message
+                prev_delegation_count += 1  # this signal IS a delegation event
+                prev_total_count += 1  # it is also an outbound message
                 profile_dict["_delegation_event_count"] = prev_delegation_count
                 profile_dict["_total_outbound_count"] = prev_total_count
 
@@ -795,9 +887,7 @@ class DecisionExtractor(BaseExtractor):
 
                 # EMA blend into the stored comfort score (α=0.3)
                 current_comfort = profile_dict.get("delegation_comfort", 0.5)
-                profile_dict["delegation_comfort"] = round(
-                    0.7 * current_comfort + 0.3 * instant_ratio, 4
-                )
+                profile_dict["delegation_comfort"] = round(0.7 * current_comfort + 0.3 * instant_ratio, 4)
 
                 # ----------------------------------------------------------------
                 # Update delegation_by_domain — per-recipient delegation tendency.
@@ -811,9 +901,7 @@ class DecisionExtractor(BaseExtractor):
                     current_by_domain = profile_dict.get("delegation_by_domain", {})
                     if recipient in current_by_domain:
                         # EMA: new delegation toward this recipient
-                        current_by_domain[recipient] = round(
-                            0.7 * current_by_domain[recipient] + 0.3 * 1.0, 4
-                        )
+                        current_by_domain[recipient] = round(0.7 * current_by_domain[recipient] + 0.3 * 1.0, 4)
                     else:
                         current_by_domain[recipient] = 1.0  # first delegation to them
                     profile_dict["delegation_by_domain"] = current_by_domain
@@ -863,9 +951,7 @@ class DecisionExtractor(BaseExtractor):
                 delegation_count = profile_dict.get("_delegation_event_count", 0)
                 instant_ratio = delegation_count / prev_total_count if prev_total_count > 0 else 0.0
                 current_comfort = profile_dict.get("delegation_comfort", 0.5)
-                profile_dict["delegation_comfort"] = round(
-                    0.7 * current_comfort + 0.3 * instant_ratio, 4
-                )
+                profile_dict["delegation_comfort"] = round(0.7 * current_comfort + 0.3 * instant_ratio, 4)
 
             elif signal["type"] == "commitment_pattern":
                 domain = signal["domain"]
@@ -911,9 +997,7 @@ class DecisionExtractor(BaseExtractor):
                 # events arrive, commitment_pattern signals dilute the score.
                 # ----------------------------------------------------------------
                 current_freq = profile_dict.get("mind_change_frequency", 0.1)
-                profile_dict["mind_change_frequency"] = round(
-                    0.7 * current_freq + 0.3 * 1.0, 4
-                )
+                profile_dict["mind_change_frequency"] = round(0.7 * current_freq + 0.3 * 1.0, 4)
 
             elif signal["type"] == "decision_signal":
                 # ----------------------------------------------------------------
@@ -978,14 +1062,10 @@ class DecisionExtractor(BaseExtractor):
                 if response_type in ("approval", "rejection"):
                     approval_value = 1.0 if response_type == "approval" else 0.0
                     current_rate = profile_dict.get("stakeholder_approval_rate", 0.5)
-                    profile_dict["stakeholder_approval_rate"] = round(
-                        0.7 * current_rate + 0.3 * approval_value, 4
-                    )
+                    profile_dict["stakeholder_approval_rate"] = round(0.7 * current_rate + 0.3 * approval_value, 4)
 
                 # Increment total response count for informational use.
-                profile_dict["_response_total_count"] = (
-                    profile_dict.get("_response_total_count", 0) + 1
-                )
+                profile_dict["_response_total_count"] = profile_dict.get("_response_total_count", 0) + 1
 
         # Update timestamp
         profile_dict["last_updated"] = timestamp.isoformat()

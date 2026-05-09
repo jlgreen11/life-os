@@ -173,8 +173,15 @@ class TestClassifyNotificationSource:
             conn.execute(
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                ("evt-001", "email.received", "proton_mail", "2026-01-01T00:00:00Z",
-                 "medium", json.dumps({"from": "alice@company.com"}), json.dumps({})),
+                (
+                    "evt-001",
+                    "email.received",
+                    "proton_mail",
+                    "2026-01-01T00:00:00Z",
+                    "medium",
+                    json.dumps({"from": "alice@company.com"}),
+                    json.dumps({}),
+                ),
             )
 
         mock_swm.classify_event.return_value = "email.personal"

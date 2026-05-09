@@ -49,14 +49,16 @@ async def test_runtime_diagnostics_populated_after_run(db, event_store, user_mod
     engine = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
 
     # Add an event so the engine actually runs (not skipped)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "diag-1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@example.com", "subject": "Test", "message_id": "diag-1"},
+            "metadata": {},
+        }
+    )
 
     await engine.generate_predictions({})
     diag = engine.get_runtime_diagnostics()
@@ -126,30 +128,34 @@ async def test_consecutive_zero_runs_resets_on_success(db, event_store, user_mod
     # Now insert calendar events that will produce a CONFLICT prediction.
     # Two overlapping events in the next 48h window.
     now = datetime.now(timezone.utc)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "title": "Meeting A",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "title": "Meeting B",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "title": "Meeting A",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "title": "Meeting B",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Force time-based trigger and run
     engine._last_time_based_run = datetime.now(timezone.utc) - timedelta(minutes=20)
@@ -177,14 +183,16 @@ async def test_diagnostics_persisted_to_state_table(db, event_store, user_model_
     engine1 = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
 
     # Add an event and run predictions
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@example.com", "subject": "Persist test", "message_id": "persist-1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@example.com", "subject": "Persist test", "message_id": "persist-1"},
+            "metadata": {},
+        }
+    )
     await engine1.generate_predictions({})
 
     # Verify diagnostics were stored
@@ -237,14 +245,16 @@ async def test_cumulative_statistics_across_runs(db, event_store, user_model_sto
 
     # Run 3 cycles
     for i in range(3):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "test",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {"from_address": "test@example.com", "subject": f"Test {i}", "message_id": f"cum-{i}"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "test",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": {"from_address": "test@example.com", "subject": f"Test {i}", "message_id": f"cum-{i}"},
+                "metadata": {},
+            }
+        )
         engine._last_time_based_run = datetime.now(timezone.utc) - timedelta(minutes=20)
         await engine.generate_predictions({})
 

@@ -42,9 +42,18 @@ def _make_mgr(db, event_bus, *, notification_mode: str = "batched") -> Notificat
     return mgr
 
 
-def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
-                          priority="normal", domain=None, source_event_id=None,
-                          status="batched", hours_ago=0):
+def _insert_notification(
+    db,
+    *,
+    notif_id=None,
+    title="Test",
+    body="Body",
+    priority="normal",
+    domain=None,
+    source_event_id=None,
+    status="batched",
+    hours_ago=0,
+):
     """Insert a notification directly into the DB with full timestamp control.
 
     Args:
@@ -62,9 +71,7 @@ def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
         The notification ID string.
     """
     notif_id = notif_id or str(uuid.uuid4())
-    created_at = (
-        datetime.now(UTC) - timedelta(hours=hours_ago)
-    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    created_at = (datetime.now(UTC) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications
@@ -78,9 +85,7 @@ def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
 def _get_status(db, notif_id: str) -> str | None:
     """Return the current DB status of a notification, or None if not found."""
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (notif_id,)
-        ).fetchone()
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
     return row["status"] if row else None
 
 
@@ -141,9 +146,7 @@ async def test_immediate_notification_not_stored_as_batched(db, event_bus):
 
     assert notif_id is not None
     status = _get_status(db, notif_id)
-    assert status != "batched", (
-        f"Critical notification should never be stored as 'batched' (got '{status}')"
-    )
+    assert status != "batched", f"Critical notification should never be stored as 'batched' (got '{status}')"
 
 
 # ============================================================================
@@ -191,9 +194,7 @@ async def test_get_digest_excludes_pending_notifications(db, event_bus):
     digest_ids = {item["id"] for item in digest}
 
     assert batched_id in digest_ids, "Batched notification should appear in digest"
-    assert pending_id not in digest_ids, (
-        "Pending (immediate-queue) notification should not appear in digest"
-    )
+    assert pending_id not in digest_ids, "Pending (immediate-queue) notification should not appear in digest"
 
 
 @pytest.mark.asyncio
@@ -221,16 +222,17 @@ async def test_get_digest_prediction_surfacing(db, event_bus):
         )
 
     _insert_notification(
-        db, title="Prediction notice", domain="prediction",
-        source_event_id=pred_id, status="batched",
+        db,
+        title="Prediction notice",
+        domain="prediction",
+        source_event_id=pred_id,
+        status="batched",
     )
 
     await mgr.get_digest()
 
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
     assert row is not None
     assert row["was_surfaced"] == 1, "Prediction should be marked as surfaced after digest delivery"
 
@@ -264,9 +266,7 @@ async def test_batched_notifications_survive_restart(db, event_bus):
     digest = await mgr2.get_digest()
     digest_ids = {item["id"] for item in digest}
 
-    assert notif_id in digest_ids, (
-        "Batched notification should survive restart and appear in the next digest"
-    )
+    assert notif_id in digest_ids, "Batched notification should survive restart and appear in the next digest"
     assert _get_status(db, notif_id) == "delivered", (
         "Notification should be marked 'delivered' after post-restart digest"
     )
@@ -283,7 +283,10 @@ async def test_auto_deliver_stale_batch_delivers_old_batched(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     notif_id = _insert_notification(
-        db, title="Old batched item", status="batched", hours_ago=8,
+        db,
+        title="Old batched item",
+        status="batched",
+        hours_ago=8,
     )
 
     delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=6)
@@ -298,7 +301,10 @@ async def test_auto_deliver_stale_batch_skips_recent_batched(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     notif_id = _insert_notification(
-        db, title="Recent batched item", status="batched", hours_ago=2,
+        db,
+        title="Recent batched item",
+        status="batched",
+        hours_ago=2,
     )
 
     delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=6)
@@ -313,10 +319,16 @@ async def test_auto_deliver_stale_batch_handles_both_statuses(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     pending_id = _insert_notification(
-        db, title="Old pending", status="pending", hours_ago=8,
+        db,
+        title="Old pending",
+        status="pending",
+        hours_ago=8,
     )
     batched_id = _insert_notification(
-        db, title="Old batched", status="batched", hours_ago=8,
+        db,
+        title="Old batched",
+        status="batched",
+        hours_ago=8,
     )
 
     delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=6)
@@ -336,7 +348,10 @@ def test_expire_stale_notifications_expires_old_batched(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     notif_id = _insert_notification(
-        db, title="Old batched", status="batched", hours_ago=50,
+        db,
+        title="Old batched",
+        status="batched",
+        hours_ago=50,
     )
 
     expired_count, expired_ids = mgr.expire_stale_notifications(max_age_hours=48)
@@ -351,14 +366,15 @@ def test_expire_stale_notifications_skips_recent_batched(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     notif_id = _insert_notification(
-        db, title="Recent batched", status="batched", hours_ago=2,
+        db,
+        title="Recent batched",
+        status="batched",
+        hours_ago=2,
     )
 
     mgr.expire_stale_notifications(max_age_hours=48)
 
-    assert _get_status(db, notif_id) == "batched", (
-        "Recent batched notification should not be expired"
-    )
+    assert _get_status(db, notif_id) == "batched", "Recent batched notification should not be expired"
 
 
 def test_expire_stale_notifications_handles_both_statuses(db, event_bus):
@@ -366,10 +382,16 @@ def test_expire_stale_notifications_handles_both_statuses(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     old_pending_id = _insert_notification(
-        db, title="Old pending", status="pending", hours_ago=50,
+        db,
+        title="Old pending",
+        status="pending",
+        hours_ago=50,
     )
     old_batched_id = _insert_notification(
-        db, title="Old batched", status="batched", hours_ago=50,
+        db,
+        title="Old batched",
+        status="batched",
+        hours_ago=50,
     )
 
     expired_count, expired_ids = mgr.expire_stale_notifications(max_age_hours=48)

@@ -27,9 +27,18 @@ from services.notification_manager.manager import NotificationManager
 # ============================================================================
 
 
-def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
-                         priority="normal", domain=None, source_event_id=None,
-                         status="pending", hours_ago=0):
+def _insert_notification(
+    db,
+    *,
+    notif_id=None,
+    title="Test",
+    body="Body",
+    priority="normal",
+    domain=None,
+    source_event_id=None,
+    status="pending",
+    hours_ago=0,
+):
     """Insert a notification with a created_at timestamp offset by hours_ago.
 
     Args:
@@ -47,9 +56,7 @@ def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
         The notification ID.
     """
     notif_id = notif_id or str(uuid.uuid4())
-    created_at = (
-        datetime.now(timezone.utc) - timedelta(hours=hours_ago)
-    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications
@@ -63,9 +70,7 @@ def _insert_notification(db, *, notif_id=None, title="Test", body="Body",
 def _get_notification_status(db, notif_id):
     """Read the current status of a notification from the DB."""
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (notif_id,)
-        ).fetchone()
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
     return row["status"] if row else None
 
 
@@ -80,18 +85,13 @@ async def test_auto_deliver_stale_batch_delivers_old_pending(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     # Insert 3 notifications created 8 hours ago (beyond default 6-hour threshold)
-    ids = [
-        _insert_notification(db, title=f"Old notification {i}", hours_ago=8)
-        for i in range(3)
-    ]
+    ids = [_insert_notification(db, title=f"Old notification {i}", hours_ago=8) for i in range(3)]
 
     delivered_count = await mgr.auto_deliver_stale_batch(max_pending_hours=6)
 
     assert delivered_count == 3, "All 3 old pending notifications should be delivered"
     for nid in ids:
-        assert _get_notification_status(db, nid) == "delivered", (
-            f"Notification {nid} should have status 'delivered'"
-        )
+        assert _get_notification_status(db, nid) == "delivered", f"Notification {nid} should have status 'delivered'"
 
 
 @pytest.mark.asyncio
@@ -100,18 +100,13 @@ async def test_auto_deliver_stale_batch_skips_recent_pending(db, event_bus):
     mgr = NotificationManager(db, event_bus, config={}, timezone="UTC")
 
     # Insert 2 notifications created 2 hours ago (within 6-hour threshold)
-    ids = [
-        _insert_notification(db, title=f"Recent notification {i}", hours_ago=2)
-        for i in range(2)
-    ]
+    ids = [_insert_notification(db, title=f"Recent notification {i}", hours_ago=2) for i in range(2)]
 
     delivered_count = await mgr.auto_deliver_stale_batch(max_pending_hours=6)
 
     assert delivered_count == 0, "No recent notifications should be delivered"
     for nid in ids:
-        assert _get_notification_status(db, nid) == "pending", (
-            f"Notification {nid} should remain 'pending'"
-        )
+        assert _get_notification_status(db, nid) == "pending", f"Notification {nid} should remain 'pending'"
 
 
 @pytest.mark.asyncio
@@ -138,8 +133,11 @@ async def test_auto_deliver_stale_batch_marks_prediction_surfaced(db, event_bus)
 
     # Insert a prediction notification created 8 hours ago
     notif_id = _insert_notification(
-        db, title="Prediction alert", domain="prediction",
-        source_event_id=pred_id, hours_ago=8,
+        db,
+        title="Prediction alert",
+        domain="prediction",
+        source_event_id=pred_id,
+        hours_ago=8,
     )
 
     delivered_count = await mgr.auto_deliver_stale_batch(max_pending_hours=6)
@@ -149,9 +147,7 @@ async def test_auto_deliver_stale_batch_marks_prediction_surfaced(db, event_bus)
 
     # Verify prediction was marked as surfaced
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
     assert row is not None, "Prediction row should exist"
     assert row["was_surfaced"] == 1, "Prediction should be marked as surfaced after auto-delivery"
 
@@ -163,10 +159,16 @@ async def test_auto_deliver_stale_batch_skips_non_pending(db, event_bus):
 
     # Insert old notifications with non-pending statuses
     delivered_id = _insert_notification(
-        db, title="Already delivered", status="delivered", hours_ago=8,
+        db,
+        title="Already delivered",
+        status="delivered",
+        hours_ago=8,
     )
     expired_id = _insert_notification(
-        db, title="Already expired", status="expired", hours_ago=8,
+        db,
+        title="Already expired",
+        status="expired",
+        hours_ago=8,
     )
 
     delivered_count = await mgr.auto_deliver_stale_batch(max_pending_hours=6)

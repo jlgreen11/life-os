@@ -123,7 +123,7 @@ class PredictionEngine:
     """
 
     def __init__(self, db: DatabaseManager, ums: UserModelStore, timezone: str = "America/Los_Angeles"):
-        self.db = db   # Database access for events, user_model, and preferences tables
+        self.db = db  # Database access for events, user_model, and preferences tables
         self.ums = ums  # User-model store for signal profiles and semantic memory
         self._tz_name = timezone
         self._last_event_cursor: int = 0  # rowid of last processed event
@@ -222,9 +222,7 @@ class PredictionEngine:
         set in __init__ (cursor=0, last_run=None) are preserved.
         """
         with self.db.get_connection("user_model") as conn:
-            rows = conn.execute(
-                "SELECT key, value FROM prediction_engine_state"
-            ).fetchall()
+            rows = conn.execute("SELECT key, value FROM prediction_engine_state").fetchall()
 
         state = {row["key"]: row["value"] for row in rows}
 
@@ -288,8 +286,7 @@ class PredictionEngine:
         concurrency issue — no lock is needed.
         """
         logger.info(
-            "PredictionEngine: resetting state (was: cursor=%d, last_run=%s, "
-            "total_runs=%d, consecutive_zero=%d)",
+            "PredictionEngine: resetting state (was: cursor=%d, last_run=%s, total_runs=%d, consecutive_zero=%d)",
             self._last_event_cursor,
             self._last_time_based_run,
             self._total_runs,
@@ -407,9 +404,7 @@ class PredictionEngine:
         return {
             "engine_state": {
                 "last_event_cursor": self._last_event_cursor,
-                "last_time_based_run": (
-                    self._last_time_based_run.isoformat() if self._last_time_based_run else None
-                ),
+                "last_time_based_run": (self._last_time_based_run.isoformat() if self._last_time_based_run else None),
             },
             "run_statistics": self._last_run_diagnostics,
             "health": "degraded" if self._consecutive_zero_runs >= 4 else "ok",
@@ -461,8 +456,7 @@ class PredictionEngine:
             with self.db.get_connection("user_model") as conn:
                 # Last time predictions were successfully stored this session
                 state_row = conn.execute(
-                    "SELECT value FROM prediction_engine_state "
-                    "WHERE key = 'last_successful_generation'"
+                    "SELECT value FROM prediction_engine_state WHERE key = 'last_successful_generation'"
                 ).fetchone()
                 if state_row:
                     result["last_successful_generation"] = state_row["value"]
@@ -485,10 +479,7 @@ class PredictionEngine:
 
         # Flag the mismatch that triggered the original data-quality alert:
         # generation events indicate predictions were produced, but none are stored.
-        result["count_mismatch"] = (
-            result["generation_events_count"] > 0
-            and result["current_prediction_count"] == 0
-        )
+        result["count_mismatch"] = result["generation_events_count"] > 0 and result["current_prediction_count"] == 0
 
         # --- predictions table schema check ---
         # A schema mismatch after a DB migration can cause silent write failures
@@ -496,14 +487,19 @@ class PredictionEngine:
         # Checks all columns needed by store_prediction(), including those that go
         # beyond the minimal DB write test INSERT used in the recovery block.
         _expected_cols = {
-            "id", "prediction_type", "description", "confidence", "confidence_gate",
-            "time_horizon", "was_surfaced", "supporting_signals", "filter_reason",
+            "id",
+            "prediction_type",
+            "description",
+            "confidence",
+            "confidence_gate",
+            "time_horizon",
+            "was_surfaced",
+            "supporting_signals",
+            "filter_reason",
         }
         try:
             with self.db.get_connection("user_model") as conn:
-                _actual_cols = {
-                    r[1] for r in conn.execute("PRAGMA table_info(predictions)").fetchall()
-                }
+                _actual_cols = {r[1] for r in conn.execute("PRAGMA table_info(predictions)").fetchall()}
             _missing = _expected_cols - _actual_cols
             if _missing:
                 result["schema_status"] = f"missing_columns: {sorted(_missing)}"
@@ -563,9 +559,7 @@ class PredictionEngine:
         prediction pipeline fails mid-way.
         """
         with self.db.get_connection("events") as conn:
-            row = conn.execute(
-                "SELECT MAX(rowid) as max_id FROM events"
-            ).fetchone()
+            row = conn.execute("SELECT MAX(rowid) as max_id FROM events").fetchone()
             current_max = row["max_id"] if row and row["max_id"] else 0
 
         if current_max <= self._last_event_cursor:
@@ -638,27 +632,25 @@ class PredictionEngine:
         if self._persistence_failure_detected:
             self._recovery_attempt_count += 1
             logger.warning(
-                'Prediction persistence failure detected in previous cycle — '
-                'running recovery attempt #%d: verifying DB, clearing pre-filter cache',
+                "Prediction persistence failure detected in previous cycle — "
+                "running recovery attempt #%d: verifying DB, clearing pre-filter cache",
                 self._recovery_attempt_count,
             )
             try:
-                test_id = '__persistence_test__'
-                with self.db.get_connection('user_model') as conn:
+                test_id = "__persistence_test__"
+                with self.db.get_connection("user_model") as conn:
                     conn.execute(
-                        'INSERT OR REPLACE INTO predictions '
-                        '(id, prediction_type, description, confidence, confidence_gate, '
-                        'resolved_at, user_response) '
+                        "INSERT OR REPLACE INTO predictions "
+                        "(id, prediction_type, description, confidence, confidence_gate, "
+                        "resolved_at, user_response) "
                         'VALUES (?, ?, ?, ?, ?, datetime("now"), ?)',
-                        (test_id, 'test', 'persistence_check', 0.0, 'OBSERVE', 'filtered'),
+                        (test_id, "test", "persistence_check", 0.0, "OBSERVE", "filtered"),
                     )
-                with self.db.get_connection('user_model') as conn:
-                    row = conn.execute(
-                        'SELECT id FROM predictions WHERE id = ?', (test_id,)
-                    ).fetchone()
+                with self.db.get_connection("user_model") as conn:
+                    row = conn.execute("SELECT id FROM predictions WHERE id = ?", (test_id,)).fetchone()
                     if row:
-                        conn.execute('DELETE FROM predictions WHERE id = ?', (test_id,))
-                        logger.info('Persistence recovery: DB write test PASSED — clearing failure flag')
+                        conn.execute("DELETE FROM predictions WHERE id = ?", (test_id,))
+                        logger.info("Persistence recovery: DB write test PASSED — clearing failure flag")
                         self._persistence_failure_detected = False
                         # Reset the pre-filter cache so this cycle does a full DB
                         # refresh — the table may have changed during DB recovery.
@@ -671,57 +663,61 @@ class PredictionEngine:
                         # Includes columns needed by store_prediction() that go beyond
                         # the minimal set used by the DB write test above.
                         _expected_cols = {
-                            'id', 'prediction_type', 'description', 'confidence',
-                            'confidence_gate', 'time_horizon', 'was_surfaced',
-                            'supporting_signals', 'filter_reason',
+                            "id",
+                            "prediction_type",
+                            "description",
+                            "confidence",
+                            "confidence_gate",
+                            "time_horizon",
+                            "was_surfaced",
+                            "supporting_signals",
+                            "filter_reason",
                         }
                         try:
-                            with self.db.get_connection('user_model') as schema_conn:
+                            with self.db.get_connection("user_model") as schema_conn:
                                 _actual_cols = {
-                                    r[1] for r in schema_conn.execute(
-                                        'PRAGMA table_info(predictions)'
-                                    ).fetchall()
+                                    r[1] for r in schema_conn.execute("PRAGMA table_info(predictions)").fetchall()
                                 }
                             _missing_cols = _expected_cols - _actual_cols
                             if _missing_cols:
                                 logger.critical(
-                                    'Persistence recovery: predictions table schema mismatch — '
-                                    'missing columns: %s. Silent write failures may occur. '
-                                    'A DB migration may be required.',
+                                    "Persistence recovery: predictions table schema mismatch — "
+                                    "missing columns: %s. Silent write failures may occur. "
+                                    "A DB migration may be required.",
                                     sorted(_missing_cols),
                                 )
                             else:
                                 logger.debug(
-                                    'Persistence recovery: predictions table schema OK (%d columns present)',
+                                    "Persistence recovery: predictions table schema OK (%d columns present)",
                                     len(_actual_cols),
                                 )
                         except Exception as _schema_err:
                             logger.warning(
-                                'Persistence recovery: schema check failed (non-fatal): %s',
+                                "Persistence recovery: schema check failed (non-fatal): %s",
                                 _schema_err,
                             )
                     else:
                         if self._recovery_attempt_count > 3:
                             logger.critical(
-                                'Prediction persistence: recovery attempted %d times without '
-                                'success. DB write test row not found after INSERT. '
-                                'store_failure_count=%d, last_errors=%s',
+                                "Prediction persistence: recovery attempted %d times without "
+                                "success. DB write test row not found after INSERT. "
+                                "store_failure_count=%d, last_errors=%s",
                                 self._recovery_attempt_count,
                                 self._store_failure_count,
                                 self._last_store_errors[-3:] if self._last_store_errors else [],
                             )
                         else:
                             logger.critical(
-                                'Persistence recovery: DB write test FAILED — predictions '
-                                'table is not persisting writes. Skipping this cycle.'
+                                "Persistence recovery: DB write test FAILED — predictions "
+                                "table is not persisting writes. Skipping this cycle."
                             )
                         return []
             except Exception as e:
                 if self._recovery_attempt_count > 3:
                     logger.critical(
-                        'Prediction persistence: recovery attempted %d times without '
-                        'success. DB write test raised %s: %s. '
-                        'store_failure_count=%d, persistence_failure_detected=%s',
+                        "Prediction persistence: recovery attempted %d times without "
+                        "success. DB write test raised %s: %s. "
+                        "store_failure_count=%d, persistence_failure_detected=%s",
                         self._recovery_attempt_count,
                         type(e).__name__,
                         e,
@@ -730,13 +726,12 @@ class PredictionEngine:
                     )
                 else:
                     logger.critical(
-                        'Persistence recovery: DB write test raised %s: %s — '
-                        'skipping this cycle', type(e).__name__, e
+                        "Persistence recovery: DB write test raised %s: %s — skipping this cycle", type(e).__name__, e
                     )
                 return []
 
             # Mark this cycle as running in recovery mode for diagnostics
-            generation_stats['recovery_mode'] = True
+            generation_stats["recovery_mode"] = True
 
         try:
             has_new_events = self._has_new_events()
@@ -768,8 +763,7 @@ class PredictionEngine:
             try:
                 with self.db.get_connection("user_model") as conn:
                     row = conn.execute(
-                        "SELECT value FROM prediction_engine_state "
-                        "WHERE key = 'last_successful_generation'"
+                        "SELECT value FROM prediction_engine_state WHERE key = 'last_successful_generation'"
                     ).fetchone()
                 if row:
                     last_success = datetime.fromisoformat(row["value"])
@@ -813,7 +807,7 @@ class PredictionEngine:
         if _force_refresh or _periodic_refresh:
             # Rebuild cache from DB
             try:
-                with self.db.get_connection('user_model') as conn:
+                with self.db.get_connection("user_model") as conn:
                     rows = conn.execute(
                         """SELECT prediction_type, description, time_horizon FROM predictions
                            WHERE resolved_at IS NULL
@@ -823,7 +817,7 @@ class PredictionEngine:
                 self._prefilter_cache = existing_predictions
                 refresh_reason = "forced" if _force_refresh else "periodic"
                 logger.debug(
-                    'Pre-filter cache refreshed (%s): %d existing predictions, cycle=%d',
+                    "Pre-filter cache refreshed (%s): %d existing predictions, cycle=%d",
                     refresh_reason,
                     len(existing_predictions),
                     self._prefilter_refresh_cycle,
@@ -833,8 +827,7 @@ class PredictionEngine:
                 # cross-cycle dedup.  Log a warning so operators notice the gap.
                 existing_predictions = self._prefilter_cache
                 logger.warning(
-                    'Pre-filter DB refresh failed (using stale in-memory cache, '
-                    '%d entries): %s',
+                    "Pre-filter DB refresh failed (using stale in-memory cache, %d entries): %s",
                     len(existing_predictions),
                     e,
                 )
@@ -842,7 +835,7 @@ class PredictionEngine:
             # Use cached set — already up-to-date from the last cycle's store run
             existing_predictions = self._prefilter_cache
             logger.debug(
-                'Pre-filter: using cached set (%d entries, cycle=%d)',
+                "Pre-filter: using cached set (%d entries, cycle=%d)",
                 len(existing_predictions),
                 self._prefilter_refresh_cycle,
             )
@@ -851,7 +844,7 @@ class PredictionEngine:
 
         if existing_predictions:
             logger.debug(
-                'Pre-filter: %d existing predictions will be skipped',
+                "Pre-filter: %d existing predictions will be skipped",
                 len(existing_predictions),
             )
 
@@ -864,9 +857,9 @@ class PredictionEngine:
         if not existing_predictions and (self._store_failure_count > 0 or self._total_runs > 0):
             if not self._persistence_failure_detected:
                 logger.warning(
-                    'Predictions table is empty but generation history exists '
-                    '(store_failures=%d, total_runs=%d) — '
-                    'flagging for persistence recovery on next cycle',
+                    "Predictions table is empty but generation history exists "
+                    "(store_failures=%d, total_runs=%d) — "
+                    "flagging for persistence recovery on next cycle",
                     self._store_failure_count,
                     self._total_runs,
                 )
@@ -891,59 +884,59 @@ class PredictionEngine:
         if time_based_due:
             try:
                 calendar_preds = await self._check_calendar_conflicts(current_context)
-                generation_stats['calendar_conflicts'] = len(calendar_preds)
+                generation_stats["calendar_conflicts"] = len(calendar_preds)
                 predictions.extend(calendar_preds)
             except Exception as e:
-                generation_stats['calendar_conflicts'] = f'error: {e}'
+                generation_stats["calendar_conflicts"] = f"error: {e}"
                 logger.error("calendar_conflicts check failed: %s", e)
 
             try:
                 routine_preds = await self._check_routine_deviations(current_context)
-                generation_stats['routine_deviations'] = len(routine_preds)
+                generation_stats["routine_deviations"] = len(routine_preds)
                 predictions.extend(routine_preds)
             except Exception as e:
-                generation_stats['routine_deviations'] = f'error: {e}'
+                generation_stats["routine_deviations"] = f"error: {e}"
                 logger.error("routine_deviations check failed: %s", e)
 
             try:
                 relationship_preds = await self._check_relationship_maintenance(current_context)
-                generation_stats['relationship_maintenance'] = len(relationship_preds)
+                generation_stats["relationship_maintenance"] = len(relationship_preds)
                 predictions.extend(relationship_preds)
             except Exception as e:
-                generation_stats['relationship_maintenance'] = f'error: {e}'
+                generation_stats["relationship_maintenance"] = f"error: {e}"
                 logger.error("relationship_maintenance check failed: %s", e)
 
             try:
                 prep_preds = await self._check_preparation_needs(current_context)
-                generation_stats['preparation_needs'] = len(prep_preds)
+                generation_stats["preparation_needs"] = len(prep_preds)
                 predictions.extend(prep_preds)
             except Exception as e:
-                generation_stats['preparation_needs'] = f'error: {e}'
+                generation_stats["preparation_needs"] = f"error: {e}"
                 logger.error("preparation_needs check failed: %s", e)
 
             try:
                 reminder_preds = await self._check_calendar_event_reminders(current_context)
-                generation_stats['calendar_reminders'] = len(reminder_preds)
+                generation_stats["calendar_reminders"] = len(reminder_preds)
                 predictions.extend(reminder_preds)
             except Exception as e:
-                generation_stats['calendar_reminders'] = f'error: {e}'
+                generation_stats["calendar_reminders"] = f"error: {e}"
                 logger.error("calendar_reminders check failed: %s", e)
 
             try:
                 connector_preds = await self._check_connector_health(current_context)
-                generation_stats['connector_health'] = len(connector_preds)
+                generation_stats["connector_health"] = len(connector_preds)
                 predictions.extend(connector_preds)
             except Exception as e:
-                generation_stats['connector_health'] = f'error: {e}'
+                generation_stats["connector_health"] = f"error: {e}"
                 logger.error("connector_health check failed: %s", e)
         else:
             # Skip time-based predictions, mark as not run
-            generation_stats['calendar_conflicts'] = '(skipped: no time trigger)'
-            generation_stats['routine_deviations'] = '(skipped: no time trigger)'
-            generation_stats['relationship_maintenance'] = '(skipped: no time trigger)'
-            generation_stats['preparation_needs'] = '(skipped: no time trigger)'
-            generation_stats['calendar_reminders'] = '(skipped: no time trigger)'
-            generation_stats['connector_health'] = '(skipped: no time trigger)'
+            generation_stats["calendar_conflicts"] = "(skipped: no time trigger)"
+            generation_stats["routine_deviations"] = "(skipped: no time trigger)"
+            generation_stats["relationship_maintenance"] = "(skipped: no time trigger)"
+            generation_stats["preparation_needs"] = "(skipped: no time trigger)"
+            generation_stats["calendar_reminders"] = "(skipped: no time trigger)"
+            generation_stats["connector_health"] = "(skipped: no time trigger)"
 
         # HYBRID predictions: Run on EITHER trigger (new events OR time-based).
         # Follow-up checks need to run on time-based triggers too, because emails
@@ -952,10 +945,10 @@ class PredictionEngine:
         # (already_predicted_messages set) prevents duplicate predictions.
         try:
             followup_preds = await self._check_follow_up_needs(current_context)
-            generation_stats['follow_up_needs'] = len(followup_preds)
+            generation_stats["follow_up_needs"] = len(followup_preds)
             predictions.extend(followup_preds)
         except Exception as e:
-            generation_stats['follow_up_needs'] = f'error: {e}'
+            generation_stats["follow_up_needs"] = f"error: {e}"
             logger.error("follow_up_needs check failed: %s", e)
 
         # EVENT-BASED predictions: Run when new events arrive
@@ -963,14 +956,14 @@ class PredictionEngine:
         if has_new_events:
             try:
                 spending_preds = await self._check_spending_patterns(current_context)
-                generation_stats['spending_patterns'] = len(spending_preds)
+                generation_stats["spending_patterns"] = len(spending_preds)
                 predictions.extend(spending_preds)
             except Exception as e:
-                generation_stats['spending_patterns'] = f'error: {e}'
+                generation_stats["spending_patterns"] = f"error: {e}"
                 logger.error("spending_patterns check failed: %s", e)
         else:
             # Skip event-based predictions, mark as not run
-            generation_stats['spending_patterns'] = '(skipped: no new events)'
+            generation_stats["spending_patterns"] = "(skipped: no new events)"
 
         # Filter out predictions that match existing unresolved ones.
         # This mirrors the dedup check in store_prediction() but avoids
@@ -978,13 +971,12 @@ class PredictionEngine:
         if existing_predictions:
             before_count = len(predictions)
             predictions = [
-                p for p in predictions
-                if (p.prediction_type, p.description, p.time_horizon) not in existing_predictions
+                p for p in predictions if (p.prediction_type, p.description, p.time_horizon) not in existing_predictions
             ]
             skipped = before_count - len(predictions)
             if skipped:
-                generation_stats['pre_filtered'] = skipped
-                logger.debug('Pre-filter: skipped %d duplicate predictions', skipped)
+                generation_stats["pre_filtered"] = skipped
+                logger.debug("Pre-filter: skipped %d duplicate predictions", skipped)
 
         # Intra-batch dedup: remove duplicate predictions generated within this
         # cycle by different _check_* methods (e.g. _check_relationship_maintenance
@@ -1001,13 +993,16 @@ class PredictionEngine:
                 unique_predictions.append(p)
         intra_dupes = len(predictions) - len(unique_predictions)
         if intra_dupes:
-            generation_stats['intra_batch_dedup'] = intra_dupes
-            logger.debug('Intra-batch dedup: removed %d duplicate predictions', intra_dupes)
+            generation_stats["intra_batch_dedup"] = intra_dupes
+            logger.debug("Intra-batch dedup: removed %d duplicate predictions", intra_dupes)
         predictions = unique_predictions
 
         logger.info(
             "Generated predictions by type: %s (total=%d) [triggers: events=%s, time=%s]",
-            generation_stats, len(predictions), has_new_events, time_based_due,
+            generation_stats,
+            len(predictions),
+            has_new_events,
+            time_based_due,
         )
 
         # --- Not-relevant suppression ---
@@ -1021,7 +1016,8 @@ class PredictionEngine:
             suppressed_count = before_suppression - len(predictions)
             if suppressed_count:
                 logger.debug(
-                    "Suppressed %d predictions based on not_relevant feedback", suppressed_count,
+                    "Suppressed %d predictions based on not_relevant feedback",
+                    suppressed_count,
                 )
 
         # --- Accuracy-based confidence decay/boost ---
@@ -1089,13 +1085,15 @@ class PredictionEngine:
                 surf_diag["filtered_by_reaction"]["total"] += 1
                 # Capture sample filtered reasons (capped at 5)
                 if len(surf_diag["sample_filtered_reasons"]) < 5:
-                    surf_diag["sample_filtered_reasons"].append({
-                        "prediction_type": pred.prediction_type,
-                        "score": reaction_score,
-                        "reaction": reaction.predicted_reaction,
-                        "reason": f"reaction:{reaction.predicted_reaction}",
-                        "reasoning": reasoning,
-                    })
+                    surf_diag["sample_filtered_reasons"].append(
+                        {
+                            "prediction_type": pred.prediction_type,
+                            "score": reaction_score,
+                            "reaction": reaction.predicted_reaction,
+                            "reason": f"reaction:{reaction.predicted_reaction}",
+                            "reasoning": reasoning,
+                        }
+                    )
 
         # Confidence floor — don't surface anything below SUGGEST threshold (0.3).
         # This enables relationship maintenance, preparation, and other valuable
@@ -1111,13 +1109,15 @@ class PredictionEngine:
                 surf_diag["filtered_by_confidence"] += 1
                 # Capture sample filtered reasons (capped at 5)
                 if len(surf_diag["sample_filtered_reasons"]) < 5:
-                    surf_diag["sample_filtered_reasons"].append({
-                        "prediction_type": p.prediction_type,
-                        "score": None,
-                        "reaction": "passed_reaction",
-                        "reason": f"confidence:{p.confidence:.3f}",
-                        "reasoning": f"below 0.3 threshold (confidence={p.confidence:.3f})",
-                    })
+                    surf_diag["sample_filtered_reasons"].append(
+                        {
+                            "prediction_type": p.prediction_type,
+                            "score": None,
+                            "reaction": "passed_reaction",
+                            "reason": f"confidence:{p.confidence:.3f}",
+                            "reasoning": f"below 0.3 threshold (confidence={p.confidence:.3f})",
+                        }
+                    )
         filtered = filtered_after_confidence
 
         # Persist surfacing diagnostics for this run
@@ -1137,8 +1137,12 @@ class PredictionEngine:
         filtered.sort(key=lambda p: p.confidence, reverse=True)
 
         # Log filtering results for observability
-        filtered_by_reaction = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("reaction:")])
-        filtered_by_confidence = len([p for p in predictions if p.filter_reason and p.filter_reason.startswith("confidence:")])
+        filtered_by_reaction = len(
+            [p for p in predictions if p.filter_reason and p.filter_reason.startswith("reaction:")]
+        )
+        filtered_by_confidence = len(
+            [p for p in predictions if p.filter_reason and p.filter_reason.startswith("confidence:")]
+        )
 
         # Track consecutive zero-surfacing cycles and escalate log level
         # when the surfacing rate stays at 0% for too long.
@@ -1153,12 +1157,18 @@ class PredictionEngine:
                 "check reaction prediction and confidence gates. "
                 "This run: %d raw → %d surfaced (filtered: %d by reaction, %d by confidence)",
                 self._zero_surfacing_cycles,
-                len(predictions), len(filtered), filtered_by_reaction, filtered_by_confidence,
+                len(predictions),
+                len(filtered),
+                filtered_by_reaction,
+                filtered_by_confidence,
             )
         else:
             logger.debug(
                 "Filtering: %d raw → %d surfaced (filtered: %d by reaction, %d by confidence)",
-                len(predictions), len(filtered), filtered_by_reaction, filtered_by_confidence,
+                len(predictions),
+                len(filtered),
+                filtered_by_reaction,
+                filtered_by_confidence,
             )
 
         # Store ALL predictions (including filtered-out ones) for accuracy
@@ -1183,7 +1193,7 @@ class PredictionEngine:
             # from accumulating in the database indefinitely.
             if not pred.was_surfaced:
                 pred.resolved_at = now
-                pred.user_response = 'filtered'
+                pred.user_response = "filtered"
                 # Ensure filter_reason is set (if not already set by filtering logic above)
                 if not pred.filter_reason:
                     pred.filter_reason = "unknown (should not happen)"
@@ -1203,13 +1213,15 @@ class PredictionEngine:
                 self._store_failure_count += 1
                 # Keep a capped ring buffer of the 10 most recent store errors
                 # so diagnostics can show actionable details without unbounded growth.
-                self._last_store_errors.append({
-                    "timestamp": now,
-                    "prediction_id": pred.id,
-                    "prediction_type": pred.prediction_type if hasattr(pred, "prediction_type") else "unknown",
-                    "error_message": str(e),
-                    "error_type": type(e).__name__,
-                })
+                self._last_store_errors.append(
+                    {
+                        "timestamp": now,
+                        "prediction_id": pred.id,
+                        "prediction_type": pred.prediction_type if hasattr(pred, "prediction_type") else "unknown",
+                        "error_message": str(e),
+                        "error_type": type(e).__name__,
+                    }
+                )
                 if len(self._last_store_errors) > 10:
                     self._last_store_errors = self._last_store_errors[-10:]
 
@@ -1535,13 +1547,15 @@ class PredictionEngine:
                     in_window = not event_ended and event_starts_soon
 
                 if in_window:
-                    parsed_events.append({
-                        "start_dt": start_dt,
-                        "end_dt": end_dt,
-                        "payload": payload,
-                        "event_id": event["id"],
-                        "is_all_day": is_all_day,
-                    })
+                    parsed_events.append(
+                        {
+                            "start_dt": start_dt,
+                            "end_dt": end_dt,
+                            "payload": payload,
+                            "event_id": event["id"],
+                            "is_all_day": is_all_day,
+                        }
+                    )
 
             except Exception:
                 # Fail-open: skip individual parse errors without breaking
@@ -1556,7 +1570,10 @@ class PredictionEngine:
             logger.info(
                 "calendar_conflicts: %d events fetched, %d in 48h window "
                 "(all_day=%d, timed=%d) — need ≥2 for conflict detection, skipping",
-                len(events), len(parsed_events), all_day_count, timed_count,
+                len(events),
+                len(parsed_events),
+                all_day_count,
+                timed_count,
             )
             return predictions
 
@@ -1588,74 +1605,83 @@ class PredictionEngine:
                 # For timed events, always flag.
                 is_all_day_conflict = curr.get("is_all_day") or next_evt.get("is_all_day")
 
-                predictions.append(Prediction(
-                    prediction_type="conflict",
-                    description=(
-                        f"Calendar overlap: '{curr['payload'].get('title', 'Event')}' "
-                        f"and '{next_evt['payload'].get('title', 'Event')}' overlap"
-                        + ("" if is_all_day_conflict else f" by {abs(int(gap_minutes))} minutes")
-                    ),
-                    confidence=0.8 if is_all_day_conflict else 0.95,
-                    confidence_gate=ConfidenceGate.DEFAULT,
-                    time_horizon="24_hours",
-                    suggested_action="Reschedule one of the conflicting events",
-                    # supporting_signals enables BehavioralAccuracyTracker._infer_conflict_accuracy()
-                    # to detect when the user resolved the conflict by checking whether either
-                    # conflicting_event_ids appears in calendar.event.updated/deleted events.
-                    # Without this, _infer_conflict_accuracy returns None immediately (line 327)
-                    # and conflict predictions remain unresolved indefinitely.
-                    supporting_signals={
-                        "conflicting_event_ids": [curr["event_id"], next_evt["event_id"]],
-                        "event_titles": [
-                            curr["payload"].get("title", "Event"),
-                            next_evt["payload"].get("title", "Event"),
-                        ],
-                        "event_start_times": [
-                            curr["start_dt"].isoformat(),
-                            next_evt["start_dt"].isoformat(),
-                        ],
-                        "overlap_minutes": abs(int(gap_minutes)),
-                        "is_all_day_conflict": is_all_day_conflict,
-                    },
-                ))
+                predictions.append(
+                    Prediction(
+                        prediction_type="conflict",
+                        description=(
+                            f"Calendar overlap: '{curr['payload'].get('title', 'Event')}' "
+                            f"and '{next_evt['payload'].get('title', 'Event')}' overlap"
+                            + ("" if is_all_day_conflict else f" by {abs(int(gap_minutes))} minutes")
+                        ),
+                        confidence=0.8 if is_all_day_conflict else 0.95,
+                        confidence_gate=ConfidenceGate.DEFAULT,
+                        time_horizon="24_hours",
+                        suggested_action="Reschedule one of the conflicting events",
+                        # supporting_signals enables BehavioralAccuracyTracker._infer_conflict_accuracy()
+                        # to detect when the user resolved the conflict by checking whether either
+                        # conflicting_event_ids appears in calendar.event.updated/deleted events.
+                        # Without this, _infer_conflict_accuracy returns None immediately (line 327)
+                        # and conflict predictions remain unresolved indefinitely.
+                        supporting_signals={
+                            "conflicting_event_ids": [curr["event_id"], next_evt["event_id"]],
+                            "event_titles": [
+                                curr["payload"].get("title", "Event"),
+                                next_evt["payload"].get("title", "Event"),
+                            ],
+                            "event_start_times": [
+                                curr["start_dt"].isoformat(),
+                                next_evt["start_dt"].isoformat(),
+                            ],
+                            "overlap_minutes": abs(int(gap_minutes)),
+                            "is_all_day_conflict": is_all_day_conflict,
+                        },
+                    )
+                )
             elif gap_minutes < 15 and not (curr.get("is_all_day") or next_evt.get("is_all_day")):
                 # Very tight transition (only for timed events — all-day events
                 # don't have tight transitions by definition).
-                predictions.append(Prediction(
-                    prediction_type="risk",
-                    description=(
-                        f"Only {int(gap_minutes)} minutes between "
-                        f"'{curr['payload'].get('title', 'Event')}' and "
-                        f"'{next_evt['payload'].get('title', 'Event')}'"
-                    ),
-                    confidence=0.7,
-                    confidence_gate=ConfidenceGate.SUGGEST,
-                    time_horizon="24_hours",
-                    suggested_action="Consider adding buffer time",
-                    # supporting_signals enables BehavioralAccuracyTracker._infer_risk_accuracy()
-                    # to look up whether the user modified either event to add buffer time.
-                    # Without event IDs, the risk accuracy tracker cannot correlate this
-                    # prediction with calendar updates.
-                    supporting_signals={
-                        "conflicting_event_ids": [curr["event_id"], next_evt["event_id"]],
-                        "event_titles": [
-                            curr["payload"].get("title", "Event"),
-                            next_evt["payload"].get("title", "Event"),
-                        ],
-                        "event_start_times": [
-                            curr["start_dt"].isoformat(),
-                            next_evt["start_dt"].isoformat(),
-                        ],
-                        "gap_minutes": int(gap_minutes),
-                    },
-                ))
+                predictions.append(
+                    Prediction(
+                        prediction_type="risk",
+                        description=(
+                            f"Only {int(gap_minutes)} minutes between "
+                            f"'{curr['payload'].get('title', 'Event')}' and "
+                            f"'{next_evt['payload'].get('title', 'Event')}'"
+                        ),
+                        confidence=0.7,
+                        confidence_gate=ConfidenceGate.SUGGEST,
+                        time_horizon="24_hours",
+                        suggested_action="Consider adding buffer time",
+                        # supporting_signals enables BehavioralAccuracyTracker._infer_risk_accuracy()
+                        # to look up whether the user modified either event to add buffer time.
+                        # Without event IDs, the risk accuracy tracker cannot correlate this
+                        # prediction with calendar updates.
+                        supporting_signals={
+                            "conflicting_event_ids": [curr["event_id"], next_evt["event_id"]],
+                            "event_titles": [
+                                curr["payload"].get("title", "Event"),
+                                next_evt["payload"].get("title", "Event"),
+                            ],
+                            "event_start_times": [
+                                curr["start_dt"].isoformat(),
+                                next_evt["start_dt"].isoformat(),
+                            ],
+                            "gap_minutes": int(gap_minutes),
+                        },
+                    )
+                )
 
         # Diagnostic summary
         logger.info(
             "calendar_conflicts: Analyzed %d synced events → %d in 48h window "
             "(all_day=%d, timed=%d) → %d comparisons (skipped %d all-day pairs) → %d predictions",
-            len(events), len(parsed_events), all_day_count, timed_count,
-            comparisons_made, skipped_all_day_pairs, len(predictions),
+            len(events),
+            len(parsed_events),
+            all_day_count,
+            timed_count,
+            comparisons_made,
+            skipped_all_day_pairs,
+            len(predictions),
         )
 
         return predictions
@@ -1712,13 +1738,15 @@ class PredictionEngine:
                     start_dt = start_dt.replace(tzinfo=UTC)
 
                 if window_start <= start_dt <= window_end:
-                    upcoming.append({
-                        "event_id": event["id"],
-                        "title": payload.get("title", payload.get("summary", "Upcoming event")),
-                        "start_dt": start_dt,
-                        "location": payload.get("location", ""),
-                        "payload": payload,
-                    })
+                    upcoming.append(
+                        {
+                            "event_id": event["id"],
+                            "title": payload.get("title", payload.get("summary", "Upcoming event")),
+                            "start_dt": start_dt,
+                            "location": payload.get("location", ""),
+                            "payload": payload,
+                        }
+                    )
             except (json.JSONDecodeError, ValueError, TypeError):
                 continue
 
@@ -1754,27 +1782,29 @@ class PredictionEngine:
             hours_until = (evt["start_dt"] - now).total_seconds() / 3600
             location_str = f" at {evt['location']}" if evt["location"] else ""
 
-            predictions.append(Prediction(
-                id=str(uuid.uuid4()),
-                prediction_type="reminder",
-                description=f"Upcoming: {evt['title']}{location_str} in {hours_until:.0f} hours",
-                confidence=0.85,  # High confidence — it's a real scheduled event
-                confidence_gate=ConfidenceGate.DEFAULT,
-                time_horizon="24_hours",
-                suggested_action=f"Prepare for {evt['title']}",
-                supporting_signals={
-                    "calendar_event_id": evt["event_id"],
-                    "event_title": evt["title"],
-                    "event_start": evt["start_dt"].isoformat(),
-                    "hours_until": round(hours_until, 1),
-                    "location": evt["location"],
-                },
-            ))
+            predictions.append(
+                Prediction(
+                    id=str(uuid.uuid4()),
+                    prediction_type="reminder",
+                    description=f"Upcoming: {evt['title']}{location_str} in {hours_until:.0f} hours",
+                    confidence=0.85,  # High confidence — it's a real scheduled event
+                    confidence_gate=ConfidenceGate.DEFAULT,
+                    time_horizon="24_hours",
+                    suggested_action=f"Prepare for {evt['title']}",
+                    supporting_signals={
+                        "calendar_event_id": evt["event_id"],
+                        "event_title": evt["title"],
+                        "event_start": evt["start_dt"].isoformat(),
+                        "hours_until": round(hours_until, 1),
+                        "location": evt["location"],
+                    },
+                )
+            )
 
         logger.info(
-            "calendar_reminders: %d upcoming events in 2-24h window, "
-            "%d new reminders (skipped %d already predicted)",
-            len(upcoming), len(predictions),
+            "calendar_reminders: %d upcoming events in 2-24h window, %d new reminders (skipped %d already predicted)",
+            len(upcoming),
+            len(predictions),
             len(existing_event_ids & {e["event_id"] for e in upcoming}),
         )
         return predictions
@@ -1853,14 +1883,15 @@ class PredictionEngine:
         try:
             rel_profile = self.ums.get_signal_profile("relationships")
         except Exception as e:
-            logger.warning("follow_up_needs: get_signal_profile('relationships') failed (disabling priority boost): %s", e)
+            logger.warning(
+                "follow_up_needs: get_signal_profile('relationships') failed (disabling priority boost): %s", e
+            )
             rel_profile = None
         rel_contacts = rel_profile["data"].get("contacts", {}) if rel_profile else {}
 
         if not rel_profile or not rel_contacts:
             logger.info(
-                "follow_up_needs: relationships signal profile is %s — "
-                "priority contact boost disabled",
+                "follow_up_needs: relationships signal profile is %s — priority contact boost disabled",
                 "empty" if rel_profile else "unavailable",
             )
 
@@ -1871,8 +1902,7 @@ class PredictionEngine:
         priority_contacts: set[str] = {
             addr.lower()
             for addr, data in rel_contacts.items()
-            if data.get("outbound_count", 0) > 0
-            and not self._is_marketing_or_noreply(addr, {})
+            if data.get("outbound_count", 0) > 0 and not self._is_marketing_or_noreply(addr, {})
         }
 
         # First, quickly check what messages we've already created predictions for
@@ -1899,9 +1929,7 @@ class PredictionEngine:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.debug("follow_up: skipping malformed dedup entry: %s", e)
         except Exception as e:
-            logger.warning(
-                "follow_up dedup query failed (skipping dedup, may produce duplicates): %s", e
-            )
+            logger.warning("follow_up dedup query failed (skipping dedup, may produce duplicates): %s", e)
 
         # Determine lookback window: 72h on first cycle (to catch unreplied emails
         # from startup or after a connector outage), then 24h on subsequent cycles.
@@ -1942,9 +1970,7 @@ class PredictionEngine:
 
                 if latest_row:
                     try:
-                        latest_ts = datetime.fromisoformat(
-                            latest_row["timestamp"].replace("Z", "+00:00")
-                        )
+                        latest_ts = datetime.fromisoformat(latest_row["timestamp"].replace("Z", "+00:00"))
                         staleness = datetime.now(UTC) - latest_ts
                         max_lookback = timedelta(days=14)
 
@@ -1973,10 +1999,7 @@ class PredictionEngine:
                                 (fallback_cutoff,),
                             ).fetchall()
                     except (ValueError, TypeError) as e:
-                        logger.warning(
-                            "follow_up_needs: stale-data fallback failed "
-                            "to parse latest timestamp: %s", e
-                        )
+                        logger.warning("follow_up_needs: stale-data fallback failed to parse latest timestamp: %s", e)
 
             # Outbound messages in the same window (use widest cutoff to
             # cover both standard and fallback periods)
@@ -1985,9 +2008,7 @@ class PredictionEngine:
                 # Use the oldest inbound timestamp as the outbound cutoff
                 # to ensure we catch replies to fallback-window emails too.
                 try:
-                    oldest_inbound_ts = min(
-                        msg["timestamp"] for msg in inbound
-                    )
+                    oldest_inbound_ts = min(msg["timestamp"] for msg in inbound)
                     if oldest_inbound_ts < outbound_cutoff:
                         outbound_cutoff = oldest_inbound_ts
                 except (ValueError, TypeError):
@@ -2063,7 +2084,7 @@ class PredictionEngine:
             # explicit "requires_response" flag (+0.2). Capped at 0.9.
             confidence = 0.4
             if is_priority:
-                confidence = 0.7   # Priority contacts start higher
+                confidence = 0.7  # Priority contacts start higher
             if hours_ago > 24:
                 confidence = min(confidence + 0.2, 0.9)  # Aging messages get more urgent
             if payload.get("requires_response"):
@@ -2071,26 +2092,25 @@ class PredictionEngine:
 
             subject = payload.get("subject", "No subject")
             resolved_name = self._resolve_contact_name(from_addr)
-            predictions.append(Prediction(
-                prediction_type="reminder",
-                description=(
-                    f"Unreplied message from {resolved_name}: \"{subject}\" "
-                    f"({int(hours_ago)} hours ago)"
-                ),
-                confidence=confidence,
-                confidence_gate=self._gate_from_confidence(confidence),
-                time_horizon="2_hours",
-                suggested_action=f"Reply to {resolved_name} ({from_addr})",
-                relevant_contacts=[from_addr],
-                supporting_signals={
-                    "contact_email": from_addr,
-                    "contact_name": resolved_name,
-                    "message_id": message_id,
-                    "hours_since_received": hours_ago,
-                    "is_priority_contact": is_priority,
-                    "requires_response": payload.get("requires_response", False),
-                },
-            ))
+            predictions.append(
+                Prediction(
+                    prediction_type="reminder",
+                    description=(f'Unreplied message from {resolved_name}: "{subject}" ({int(hours_ago)} hours ago)'),
+                    confidence=confidence,
+                    confidence_gate=self._gate_from_confidence(confidence),
+                    time_horizon="2_hours",
+                    suggested_action=f"Reply to {resolved_name} ({from_addr})",
+                    relevant_contacts=[from_addr],
+                    supporting_signals={
+                        "contact_email": from_addr,
+                        "contact_name": resolved_name,
+                        "message_id": message_id,
+                        "hours_since_received": hours_ago,
+                        "is_priority_contact": is_priority,
+                        "requires_response": payload.get("requires_response", False),
+                    },
+                )
+            )
 
         return predictions
 
@@ -2125,17 +2145,12 @@ class PredictionEngine:
         # is broken.  There is no events.db fallback for routines because
         # routine definitions are only stored in user_model.db.
         if not self.db.is_user_model_healthy():
-            logger.debug(
-                "routine_deviations: user_model.db is degraded — skipping "
-                "(routines require user_model.db)"
-            )
+            logger.debug("routine_deviations: user_model.db is degraded — skipping (routines require user_model.db)")
             return predictions
 
         # Load established routines from procedural memory
         with self.db.get_connection("user_model") as conn:
-            routines = conn.execute(
-                "SELECT * FROM routines WHERE consistency_score > 0.6"
-            ).fetchall()
+            routines = conn.execute("SELECT * FROM routines WHERE consistency_score > 0.6").fetchall()
 
         if not routines:
             logger.info("routine_deviations: 0 routines with consistency_score > 0.6 — skipping")
@@ -2167,9 +2182,7 @@ class PredictionEngine:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.debug("routine_deviation: skipping malformed dedup entry: %s", e)
         except Exception as e:
-            logger.warning(
-                "routine_deviation dedup query failed (skipping dedup, may produce duplicates): %s", e
-            )
+            logger.warning("routine_deviation dedup query failed (skipping dedup, may produce duplicates): %s", e)
 
         # For each routine, check if it should have been completed by now
         for routine in routines:
@@ -2237,7 +2250,7 @@ class PredictionEngine:
                 with self.db.get_connection("events") as conn:
                     result = conn.execute(
                         f"""SELECT COUNT(*) as count FROM events
-                           WHERE type IN ({','.join('?' * len(expected_event_types))})
+                           WHERE type IN ({",".join("?" * len(expected_event_types))})
                            AND timestamp > ?""",
                         (*expected_event_types, today_start.isoformat()),
                     ).fetchone()
@@ -2255,19 +2268,21 @@ class PredictionEngine:
                 if confidence < 0.3:
                     continue
 
-                predictions.append(Prediction(
-                    prediction_type="routine_deviation",
-                    description=f"You usually do your '{routine_name}' routine by now",
-                    confidence=confidence,
-                    confidence_gate=self._gate_from_confidence(confidence),
-                    time_horizon=now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat(),
-                    suggested_action=f"Start {routine_name}",
-                    supporting_signals={
-                        "routine_name": routine_name,
-                        "consistency_score": routine["consistency_score"],
-                        "expected_actions": expected_actions,
-                    },
-                ))
+                predictions.append(
+                    Prediction(
+                        prediction_type="routine_deviation",
+                        description=f"You usually do your '{routine_name}' routine by now",
+                        confidence=confidence,
+                        confidence_gate=self._gate_from_confidence(confidence),
+                        time_horizon=now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat(),
+                        suggested_action=f"Start {routine_name}",
+                        supporting_signals={
+                            "routine_name": routine_name,
+                            "consistency_score": routine["consistency_score"],
+                            "expected_actions": expected_actions,
+                        },
+                    )
+                )
 
             except (json.JSONDecodeError, TypeError, KeyError):
                 # Fail-open: skip routines with malformed data
@@ -2276,7 +2291,9 @@ class PredictionEngine:
         # Diagnostic summary
         logger.info(
             "routine_deviations: Analyzed %d routines (already_predicted_today=%d) → %d predictions",
-            len(routines), len(already_predicted_routines), len(predictions),
+            len(routines),
+            len(already_predicted_routines),
+            len(predictions),
         )
 
         return predictions
@@ -2305,12 +2322,14 @@ class PredictionEngine:
             rel_profile = self.ums.get_signal_profile("relationships")
         except Exception as e:
             logger.warning(
-                "relationship_maintenance: get_signal_profile('relationships') "
-                "failed (falling back to events.db): %s", e,
+                "relationship_maintenance: get_signal_profile('relationships') failed (falling back to events.db): %s",
+                e,
             )
             rel_profile = None
         if not rel_profile:
-            logger.info("relationship_maintenance: relationships signal profile unavailable — falling back to events.db")
+            logger.info(
+                "relationship_maintenance: relationships signal profile unavailable — falling back to events.db"
+            )
             contacts = self._build_contacts_from_events()
             if not contacts:
                 logger.info("relationship_maintenance: no contact data available from events.db either — skipping")
@@ -2376,10 +2395,7 @@ class PredictionEngine:
             timestamps = data.get("interaction_timestamps", [])
             if len(timestamps) >= 3:
                 try:
-                    dts = sorted([
-                        datetime.fromisoformat(t.replace("Z", "+00:00"))
-                        for t in timestamps[-10:]
-                    ])
+                    dts = sorted([datetime.fromisoformat(t.replace("Z", "+00:00")) for t in timestamps[-10:]])
                     # Use fractional days for accurate gap calculation
                     gaps = [(dts[i + 1] - dts[i]).total_seconds() / 86400 for i in range(len(dts) - 1)]
                     avg_gap = sum(gaps) / len(gaps) if gaps else 30
@@ -2392,29 +2408,31 @@ class PredictionEngine:
                 if days_since > avg_gap * 1.5 and days_since > 7:
                     confidence = min(0.6, 0.3 + (days_since / avg_gap - 1.5) * 0.2)
                     resolved_name = self._resolve_contact_name(addr)
-                    predictions.append(Prediction(
-                        prediction_type="opportunity",
-                        description=(
-                            f"It's been {_humanize_duration(days_since)} since you last "
-                            f"contacted {resolved_name} (you usually connect every ~{_humanize_duration(avg_gap)})"
-                        ),
-                        confidence=confidence,
-                        confidence_gate=self._gate_from_confidence(confidence),
-                        time_horizon="this_week",
-                        suggested_action=f"Reach out to {resolved_name} ({addr})",
-                        relevant_contacts=[addr],
-                        # supporting_signals enables BehavioralAccuracyTracker._infer_opportunity_accuracy()
-                        # to reliably match this prediction to outbound emails/messages.
-                        # Without these fields, the tracker must regex-parse the description,
-                        # which can fail for email addresses with unusual formatting.
-                        # Also enables the automated-sender fast-path (PR #189) to fire correctly.
-                        supporting_signals={
-                            "contact_email": addr,
-                            "contact_name": resolved_name,
-                            "days_since_last_contact": days_since,
-                            "avg_contact_gap_days": round(avg_gap, 1),
-                        },
-                    ))
+                    predictions.append(
+                        Prediction(
+                            prediction_type="opportunity",
+                            description=(
+                                f"It's been {_humanize_duration(days_since)} since you last "
+                                f"contacted {resolved_name} (you usually connect every ~{_humanize_duration(avg_gap)})"
+                            ),
+                            confidence=confidence,
+                            confidence_gate=self._gate_from_confidence(confidence),
+                            time_horizon="this_week",
+                            suggested_action=f"Reach out to {resolved_name} ({addr})",
+                            relevant_contacts=[addr],
+                            # supporting_signals enables BehavioralAccuracyTracker._infer_opportunity_accuracy()
+                            # to reliably match this prediction to outbound emails/messages.
+                            # Without these fields, the tracker must regex-parse the description,
+                            # which can fail for email addresses with unusual formatting.
+                            # Also enables the automated-sender fast-path (PR #189) to fire correctly.
+                            supporting_signals={
+                                "contact_email": addr,
+                                "contact_name": resolved_name,
+                                "days_since_last_contact": days_since,
+                                "avg_contact_gap_days": round(avg_gap, 1),
+                            },
+                        )
+                    )
 
         # Diagnostic summary — includes breakdown of each filter stage so we can
         # observe the data quality of the relationships profile over time.
@@ -2424,7 +2442,8 @@ class PredictionEngine:
         # Count contacts that have 5+ interactions, passed marketing filter, but
         # were skipped because the user has never sent them anything (pure inbound).
         inbound_only_filtered = sum(
-            1 for addr, data in contacts.items()
+            1
+            for addr, data in contacts.items()
             if data.get("interaction_count", 0) >= 5
             and not self._is_marketing_or_noreply(addr, {})
             and data.get("outbound_count", 0) == 0
@@ -2432,7 +2451,11 @@ class PredictionEngine:
         logger.info(
             "relationship_maintenance: Analyzed %d contacts "
             "(eligible=%d, marketing_filtered=%d, inbound_only_filtered=%d) → %d predictions",
-            total_contacts, eligible, marketing_filtered, inbound_only_filtered, len(predictions),
+            total_contacts,
+            eligible,
+            marketing_filtered,
+            inbound_only_filtered,
+            len(predictions),
         )
 
         return predictions
@@ -2517,7 +2540,8 @@ class PredictionEngine:
                 for addr, data in filtered.items():
                     # Fetch the 10 most recent interaction timestamps for this contact.
                     # Combines both inbound (from_address match) and outbound (to_addresses match).
-                    ts_rows = conn.execute("""
+                    ts_rows = conn.execute(
+                        """
                         SELECT timestamp FROM (
                             SELECT timestamp FROM events
                             WHERE type = 'email.received'
@@ -2532,12 +2556,15 @@ class PredictionEngine:
                         )
                         ORDER BY timestamp DESC
                         LIMIT 10
-                    """, (addr, addr)).fetchall()
+                    """,
+                        (addr, addr),
+                    ).fetchall()
                     data["interaction_timestamps"] = [row["timestamp"] for row in ts_rows]
 
                 logger.info(
                     "_build_contacts_from_events: found %d contacts (%d with 5+ interactions) from events.db",
-                    len(contacts), len(filtered),
+                    len(contacts),
+                    len(filtered),
                 )
                 return filtered
 
@@ -2634,15 +2661,17 @@ class PredictionEngine:
                     in_window = window_start <= start_time <= window_end
 
                 if in_window:
-                    parsed_events.append({
-                        "start_time": start_time,
-                        "payload": payload,
-                        # Include the event's database ID so supporting_signals can reference
-                        # it. _infer_need_accuracy() first tries exact event_id match before
-                        # falling back to fuzzy title matching, so providing this avoids
-                        # false positives when multiple events have similar titles.
-                        "event_id": payload.get("event_id") or event["id"],
-                    })
+                    parsed_events.append(
+                        {
+                            "start_time": start_time,
+                            "payload": payload,
+                            # Include the event's database ID so supporting_signals can reference
+                            # it. _infer_need_accuracy() first tries exact event_id match before
+                            # falling back to fuzzy title matching, so providing this avoids
+                            # false positives when multiple events have similar titles.
+                            "event_id": payload.get("event_id") or event["id"],
+                        }
+                    )
             except (json.JSONDecodeError, ValueError, TypeError, KeyError):
                 # Skip events with malformed payloads or missing start_time
                 continue
@@ -2661,56 +2690,70 @@ class PredictionEngine:
             # Keyword-based check for travel-related events.
             travel_keywords = ["flight", "airport", "hotel", "travel", "trip"]
             if any(kw in title for kw in travel_keywords):
-                predictions.append(Prediction(
-                    prediction_type="need",
-                    description=f"Upcoming travel in {int(hours_until)}h: '{payload.get('title')}'. Time to prepare.",
-                    confidence=0.75,
-                    confidence_gate=ConfidenceGate.DEFAULT,
-                    time_horizon="24_hours",
-                    suggested_action="Check packing list and confirm reservations",
-                    # supporting_signals enables BehavioralAccuracyTracker._infer_need_accuracy()
-                    # to check if the event occurred or was cancelled/rescheduled.
-                    # Without event_start_time, _infer_need_accuracy() returns None immediately
-                    # (line 413) and the prediction can never be resolved.
-                    supporting_signals={
-                        "event_id": event["event_id"],
-                        "event_title": payload.get("title"),
-                        "event_start_time": start_time.isoformat(),
-                        "preparation_type": "travel",
-                    },
-                ))
+                predictions.append(
+                    Prediction(
+                        prediction_type="need",
+                        description=f"Upcoming travel in {int(hours_until)}h: '{payload.get('title')}'. Time to prepare.",
+                        confidence=0.75,
+                        confidence_gate=ConfidenceGate.DEFAULT,
+                        time_horizon="24_hours",
+                        suggested_action="Check packing list and confirm reservations",
+                        # supporting_signals enables BehavioralAccuracyTracker._infer_need_accuracy()
+                        # to check if the event occurred or was cancelled/rescheduled.
+                        # Without event_start_time, _infer_need_accuracy() returns None immediately
+                        # (line 413) and the prediction can never be resolved.
+                        supporting_signals={
+                            "event_id": event["event_id"],
+                            "event_title": payload.get("title"),
+                            "event_start_time": start_time.isoformat(),
+                            "preparation_type": "travel",
+                        },
+                    )
+                )
 
             # --- Large meeting detection ---
             # Meetings with many attendees often need an agenda and talking points.
             attendees = payload.get("attendees", [])
             if len(attendees) > 3:
-                predictions.append(Prediction(
-                    prediction_type="need",
-                    description=f"Large meeting in {int(hours_until)}h: '{payload.get('title')}' with {len(attendees)} attendees",
-                    confidence=0.5,
-                    confidence_gate=ConfidenceGate.SUGGEST,
-                    time_horizon="24_hours",
-                    suggested_action="Review agenda and prepare talking points",
-                    # supporting_signals enables BehavioralAccuracyTracker._infer_need_accuracy()
-                    # to check if the event occurred or was cancelled/rescheduled.
-                    # Without event_start_time, _infer_need_accuracy() returns None immediately
-                    # (line 413) and the prediction can never be resolved.
-                    supporting_signals={
-                        "event_id": event["event_id"],
-                        "event_title": payload.get("title"),
-                        "event_start_time": start_time.isoformat(),
-                        "preparation_type": "large_meeting",
-                        "attendee_count": len(attendees),
-                    },
-                ))
+                predictions.append(
+                    Prediction(
+                        prediction_type="need",
+                        description=f"Large meeting in {int(hours_until)}h: '{payload.get('title')}' with {len(attendees)} attendees",
+                        confidence=0.5,
+                        confidence_gate=ConfidenceGate.SUGGEST,
+                        time_horizon="24_hours",
+                        suggested_action="Review agenda and prepare talking points",
+                        # supporting_signals enables BehavioralAccuracyTracker._infer_need_accuracy()
+                        # to check if the event occurred or was cancelled/rescheduled.
+                        # Without event_start_time, _infer_need_accuracy() returns None immediately
+                        # (line 413) and the prediction can never be resolved.
+                        supporting_signals={
+                            "event_id": event["event_id"],
+                            "event_title": payload.get("title"),
+                            "event_start_time": start_time.isoformat(),
+                            "preparation_type": "large_meeting",
+                            "attendee_count": len(attendees),
+                        },
+                    )
+                )
 
         # Diagnostic summary
-        travel_events = sum(1 for e in parsed_events if any(kw in e["payload"].get("title", "").lower() for kw in ["flight", "airport", "hotel", "travel", "trip"]))
+        travel_events = sum(
+            1
+            for e in parsed_events
+            if any(
+                kw in e["payload"].get("title", "").lower() for kw in ["flight", "airport", "hotel", "travel", "trip"]
+            )
+        )
         large_meetings = sum(1 for e in parsed_events if len(e["payload"].get("attendees", [])) > 3)
         logger.info(
             "preparation_needs: Analyzed %d synced events → %d in 12-48h window "
             "(travel=%d, large_meetings=%d) → %d predictions",
-            len(events), len(parsed_events), travel_events, large_meetings, len(predictions),
+            len(events),
+            len(parsed_events),
+            travel_events,
+            large_meetings,
+            len(predictions),
         )
 
         return predictions
@@ -2760,37 +2803,41 @@ class PredictionEngine:
         for cat, amount in by_category.items():
             pct = amount / total
             if pct > 0.25 and amount > 200:
-                predictions.append(Prediction(
-                    prediction_type="risk",
-                    description=(
-                        f"Spending alert: ${amount:.0f} on '{cat}' this month "
-                        f"({pct * 100:.0f}% of total)"
-                    ),
-                    confidence=0.5,
-                    confidence_gate=ConfidenceGate.SUGGEST,
-                    time_horizon="this_week",
-                    suggested_action=f"Review {cat} spending",
-                    # supporting_signals enables BehavioralAccuracyTracker._infer_risk_accuracy()
-                    # to identify the flagged category and measure whether spending in that
-                    # category decreased after the alert (lines 703-705 of tracker.py).
-                    # Without these fields the tracker must fall back to regex-parsing the
-                    # description, which can fail for category names containing special
-                    # characters.  Providing structured signals is the authoritative path.
-                    supporting_signals={
-                        "category": cat,
-                        "amount": round(amount, 2),
-                        "percentage": round(pct * 100, 1),
-                        "total_spending": round(total, 2),
-                        "transaction_count": len(transactions),
-                    },
-                ))
+                predictions.append(
+                    Prediction(
+                        prediction_type="risk",
+                        description=(
+                            f"Spending alert: ${amount:.0f} on '{cat}' this month ({pct * 100:.0f}% of total)"
+                        ),
+                        confidence=0.5,
+                        confidence_gate=ConfidenceGate.SUGGEST,
+                        time_horizon="this_week",
+                        suggested_action=f"Review {cat} spending",
+                        # supporting_signals enables BehavioralAccuracyTracker._infer_risk_accuracy()
+                        # to identify the flagged category and measure whether spending in that
+                        # category decreased after the alert (lines 703-705 of tracker.py).
+                        # Without these fields the tracker must fall back to regex-parsing the
+                        # description, which can fail for category names containing special
+                        # characters.  Providing structured signals is the authoritative path.
+                        supporting_signals={
+                            "category": cat,
+                            "amount": round(amount, 2),
+                            "percentage": round(pct * 100, 1),
+                            "total_spending": round(total, 2),
+                            "transaction_count": len(transactions),
+                        },
+                    )
+                )
 
         # Diagnostic summary
         high_spend_categories = sum(1 for cat, amt in by_category.items() if amt / total > 0.25 and amt > 200)
         logger.info(
-            "spending_patterns: Analyzed %d transactions "
-            "(total=$%.0f, categories=%d, high_spend=%d) → %d predictions",
-            len(transactions), total, len(by_category), high_spend_categories, len(predictions),
+            "spending_patterns: Analyzed %d transactions (total=$%.0f, categories=%d, high_spend=%d) → %d predictions",
+            len(transactions),
+            total,
+            len(by_category),
+            high_spend_categories,
+            len(predictions),
         )
 
         return predictions
@@ -2850,9 +2897,7 @@ class PredictionEngine:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.debug("connector_health: skipping malformed dedup entry: %s", e)
         except Exception as e:
-            logger.warning(
-                "connector_health dedup query failed (skipping dedup, may produce duplicates): %s", e
-            )
+            logger.warning("connector_health dedup query failed (skipping dedup, may produce duplicates): %s", e)
 
         for row in broken:
             connector_id = row["connector_id"]
@@ -2880,26 +2925,30 @@ class PredictionEngine:
             else:
                 desc = f"{connector_id} connector is in error state — {last_error}"
 
-            predictions.append(Prediction(
-                prediction_type="risk",
-                description=desc,
-                confidence=0.95,
-                confidence_gate=ConfidenceGate.DEFAULT,
-                time_horizon="this_week",
-                suggested_action=f"Check {connector_id} connector configuration and reauthenticate if needed",
-                supporting_signals={
-                    "prediction_source": "connector_health",
-                    "connector_id": connector_id,
-                    "error_count": error_count,
-                    "last_error": last_error,
-                    "last_sync": row["last_sync"],
-                    "days_stale": days_stale,
-                },
-            ))
+            predictions.append(
+                Prediction(
+                    prediction_type="risk",
+                    description=desc,
+                    confidence=0.95,
+                    confidence_gate=ConfidenceGate.DEFAULT,
+                    time_horizon="this_week",
+                    suggested_action=f"Check {connector_id} connector configuration and reauthenticate if needed",
+                    supporting_signals={
+                        "prediction_source": "connector_health",
+                        "connector_id": connector_id,
+                        "error_count": error_count,
+                        "last_error": last_error,
+                        "last_sync": row["last_sync"],
+                        "days_stale": days_stale,
+                    },
+                )
+            )
 
         logger.info(
             "connector_health: %d broken connectors found, %d already predicted, %d new predictions",
-            len(broken), len(already_predicted_connectors), len(predictions),
+            len(broken),
+            len(already_predicted_connectors),
+            len(predictions),
         )
 
         return predictions
@@ -2908,8 +2957,7 @@ class PredictionEngine:
     # Reaction Prediction — Should we surface this?
     # -------------------------------------------------------------------
 
-    async def predict_reaction(self, prediction: Prediction,
-                                context: dict) -> ReactionPrediction:
+    async def predict_reaction(self, prediction: Prediction, context: dict) -> ReactionPrediction:
         """
         Before surfacing a prediction, estimate whether the user will
         find it helpful, annoying, or intrusive right now.
@@ -2963,8 +3011,9 @@ class PredictionEngine:
         # avoid piling more onto an overwhelmed user.
         # REDUCED from −0.2 to −0.1 to avoid over-penalizing.
         stress_signals = mood_data.get("recent_signals", [])
-        stress_count = sum(1 for s in stress_signals[-5:]
-                          if s.get("signal_type") in ["negative_language", "calendar_density"])
+        stress_count = sum(
+            1 for s in stress_signals[-5:] if s.get("signal_type") in ["negative_language", "calendar_density"]
+        )
         if stress_count > 2:
             score -= 0.1
 
@@ -3069,9 +3118,7 @@ class PredictionEngine:
         """
         try:
             with self.db.get_connection("preferences") as conn:
-                row = conn.execute(
-                    "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-                ).fetchone()
+                row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
             if not row:
                 return False
@@ -3196,7 +3243,9 @@ class PredictionEngine:
             logger.warning(
                 "accuracy_multiplier: %s has %.1f%% accuracy over %d samples "
                 "(excluding automated-sender fast-path) — applying heavy-penalty floor (0.3)",
-                prediction_type, accuracy_rate * 100, total,
+                prediction_type,
+                accuracy_rate * 100,
+                total,
             )
             return 0.3
 
@@ -3293,7 +3342,9 @@ class PredictionEngine:
             logger.warning(
                 "contact_accuracy_multiplier: %s has %.1f%% accuracy over %d resolved predictions "
                 "— applying per-contact suppression floor (0.5)",
-                contact_email, accuracy_rate * 100, total,
+                contact_email,
+                accuracy_rate * 100,
+                total,
             )
             return 0.5
 
@@ -3553,7 +3604,9 @@ class PredictionEngine:
         elif timed_count == 0:
             conflict_blockers.append("All calendar events are all-day (0 timed events for conflict detection)")
             conflict_recommendations.append("Verify calendar connector is correctly parsing timed events")
-            conflict_recommendations.append("Check if calendar contains any actual appointments (not just birthdays/holidays)")
+            conflict_recommendations.append(
+                "Check if calendar contains any actual appointments (not just birthdays/holidays)"
+            )
 
         diagnostics["prediction_types"]["conflict"] = {
             "status": conflict_status,
@@ -3575,8 +3628,7 @@ class PredictionEngine:
             rel_profile = None
         if rel_profile:
             contacts = rel_profile["data"].get("contacts", {})
-            eligible_contacts = sum(1 for data in contacts.values()
-                                   if data.get("interaction_count", 0) >= 5)
+            eligible_contacts = sum(1 for data in contacts.values() if data.get("interaction_count", 0) >= 5)
             total_contacts = len(contacts)
         else:
             contacts = {}
@@ -3592,13 +3644,16 @@ class PredictionEngine:
             opportunity_recommendations.append("Ensure email connector is running and processing messages")
         elif eligible_contacts == 0:
             opportunity_blockers.append("No contacts with 5+ interactions (need history to detect maintenance needs)")
-            opportunity_recommendations.append("Wait for more email history to accumulate (need 5+ interactions per contact)")
+            opportunity_recommendations.append(
+                "Wait for more email history to accumulate (need 5+ interactions per contact)"
+            )
         else:
             # Check if all contacts are marketing
-            marketing_count = sum(1 for addr in contacts.keys()
-                                 if self._is_marketing_or_noreply(addr, {}))
+            marketing_count = sum(1 for addr in contacts.keys() if self._is_marketing_or_noreply(addr, {}))
             if marketing_count / total_contacts > 0.9:
-                opportunity_blockers.append(f"{marketing_count}/{total_contacts} contacts are marketing/automated (no human relationships)")
+                opportunity_blockers.append(
+                    f"{marketing_count}/{total_contacts} contacts are marketing/automated (no human relationships)"
+                )
                 opportunity_recommendations.append("This inbox appears to contain primarily marketing emails")
                 opportunity_recommendations.append("Consider filtering marketing emails before they reach Life OS")
 
@@ -3608,9 +3663,9 @@ class PredictionEngine:
             "data_available": {
                 "total_contacts": total_contacts,
                 "eligible_contacts": eligible_contacts,
-                "marketing_filtered": sum(1 for addr in contacts.keys()
-                                         if self._is_marketing_or_noreply(addr, {}))
-                                     if contacts else 0,
+                "marketing_filtered": sum(1 for addr in contacts.keys() if self._is_marketing_or_noreply(addr, {}))
+                if contacts
+                else 0,
             },
             "blockers": opportunity_blockers,
             "recommendations": opportunity_recommendations,
@@ -3700,10 +3755,8 @@ class PredictionEngine:
 
         # --- Overall health ---
         total_predictions_7d = sum(prediction_type_counts.values())
-        active_types = sum(1 for v in diagnostics["prediction_types"].values()
-                          if v["status"] == "active")
-        blocked_types = sum(1 for v in diagnostics["prediction_types"].values()
-                           if v["status"] == "blocked")
+        active_types = sum(1 for v in diagnostics["prediction_types"].values() if v["status"] == "active")
+        blocked_types = sum(1 for v in diagnostics["prediction_types"].values() if v["status"] == "blocked")
 
         if active_types >= 3:
             health = "healthy"
@@ -3714,14 +3767,9 @@ class PredictionEngine:
 
         overall_blockers = []
         # Flag data source errors as an overall blocker
-        errored_sources = [
-            name for name, info in data_source_health.items()
-            if info["status"] == "error"
-        ]
+        errored_sources = [name for name, info in data_source_health.items() if info["status"] == "error"]
         if errored_sources:
-            overall_blockers.append(
-                f"user_model.db may be corrupted (failed profiles: {', '.join(errored_sources)})"
-            )
+            overall_blockers.append(f"user_model.db may be corrupted (failed profiles: {', '.join(errored_sources)})")
             # Data source errors cap health at degraded or worse
             if health == "healthy":
                 health = "degraded"

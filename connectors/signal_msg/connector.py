@@ -164,10 +164,12 @@ class SignalConnector(BaseConnector):
                                 (id, name, phones, channels, domains, created_at, updated_at)
                                VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
                             (
-                                contact_id, name,
+                                contact_id,
+                                name,
                                 json.dumps([number]),
                                 json.dumps({"signal": number}),
-                                now, now,
+                                now,
+                                now,
                             ),
                         )
 
@@ -198,7 +200,7 @@ class SignalConnector(BaseConnector):
 
                 # Create pairwise relationships for group members
                 for i, mid_a in enumerate(member_ids):
-                    for mid_b in member_ids[i + 1:]:
+                    for mid_b in member_ids[i + 1 :]:
                         rel_id = f"signal-group-{group_id}-{mid_a}-{mid_b}"
                         conn.execute(
                             """INSERT INTO entity_relationships
@@ -208,7 +210,9 @@ class SignalConnector(BaseConnector):
                                        'contact', ?, 1.0, ?, ?)
                                ON CONFLICT(id) DO UPDATE SET metadata = ?, created_at = ?""",
                             (
-                                rel_id, mid_a, mid_b,
+                                rel_id,
+                                mid_a,
+                                mid_b,
                                 json.dumps({"group_name": group_name, "group_id": group_id}),
                                 now,
                                 json.dumps({"group_name": group_name, "group_id": group_id}),
@@ -233,9 +237,7 @@ class SignalConnector(BaseConnector):
         if not first_name or len(first_name) < 2:
             return None
 
-        rows = conn.execute(
-            "SELECT id, name FROM contacts"
-        ).fetchall()
+        rows = conn.execute("SELECT id, name FROM contacts").fetchall()
         for row in rows:
             existing_name = row["name"].lower()
             # Match if existing name contains the first name
@@ -335,8 +337,10 @@ class SignalConnector(BaseConnector):
                 }
 
                 await self.publish_event(
-                    "message.received", payload,
-                    priority="normal", metadata=metadata,
+                    "message.received",
+                    payload,
+                    priority="normal",
+                    metadata=metadata,
                 )
                 count += 1
 
@@ -360,11 +364,14 @@ class SignalConnector(BaseConnector):
             message = params["message"]
 
             # Normalise recipient to a list for the signal-cli API.
-            await self._rpc_call("send", {
-                "account": self._phone,
-                "recipients": [recipient] if isinstance(recipient, str) else recipient,
-                "message": message,
-            })
+            await self._rpc_call(
+                "send",
+                {
+                    "account": self._phone,
+                    "recipients": [recipient] if isinstance(recipient, str) else recipient,
+                    "message": message,
+                },
+            )
 
             # Publish a "message.sent" event so the signal-extraction pipeline
             # and conversation history can track outbound messages too.

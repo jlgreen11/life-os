@@ -46,30 +46,35 @@ def notification_manager(db, mock_event_bus):
 @pytest.fixture
 def set_notification_mode(db):
     """Helper to set the user's notification mode preference."""
+
     def _set_mode(mode: str):
         with db.get_connection("preferences") as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO user_preferences (key, value) VALUES (?, ?)",
                 ("notification_mode", mode),
             )
+
     return _set_mode
 
 
 @pytest.fixture
 def set_quiet_hours(db):
     """Helper to set quiet hours configuration."""
+
     def _set_quiet_hours(ranges: list[dict]):
         with db.get_connection("preferences") as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO user_preferences (key, value) VALUES (?, ?)",
                 ("quiet_hours", json.dumps(ranges)),
             )
+
     return _set_quiet_hours
 
 
 @pytest.fixture
 def create_prediction(db):
     """Helper to create a prediction in the user_model database."""
+
     def _create_prediction(prediction_id: str, was_surfaced: int = 0):
         with db.get_connection("user_model") as conn:
             conn.execute(
@@ -86,6 +91,7 @@ def create_prediction(db):
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+
     return _create_prediction
 
 
@@ -146,17 +152,12 @@ async def test_critical_priority_always_delivered(notification_manager, mock_eve
     )
 
     # Should publish notification.delivered event
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_low_priority_batched_in_frequent_mode(
-    notification_manager, set_notification_mode, db
-):
+async def test_low_priority_batched_in_frequent_mode(notification_manager, set_notification_mode, db):
     """Test that low priority notifications are batched even in frequent mode."""
     set_notification_mode("frequent")
 
@@ -177,9 +178,7 @@ async def test_low_priority_batched_in_frequent_mode(
 
 
 @pytest.mark.asyncio
-async def test_quiet_hours_suppresses_normal_priority(
-    notification_manager, set_quiet_hours, mock_event_bus
-):
+async def test_quiet_hours_suppresses_normal_priority(notification_manager, set_quiet_hours, mock_event_bus):
     """Test that normal priority notifications are suppressed during quiet hours."""
     # Set quiet hours for the current time
     now = datetime.now(timezone.utc)
@@ -190,11 +189,15 @@ async def test_quiet_hours_suppresses_normal_priority(
     start_time = (datetime.combine(datetime.today(), current_time) - timedelta(hours=1)).time()
     end_time = (datetime.combine(datetime.today(), current_time) + timedelta(hours=1)).time()
 
-    set_quiet_hours([{
-        "start": start_time.isoformat(),
-        "end": end_time.isoformat(),
-        "days": [current_day],
-    }])
+    set_quiet_hours(
+        [
+            {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat(),
+                "days": [current_day],
+            }
+        ]
+    )
 
     notif_id = await notification_manager.create_notification(
         title="Normal During Quiet",
@@ -206,9 +209,7 @@ async def test_quiet_hours_suppresses_normal_priority(
 
 
 @pytest.mark.asyncio
-async def test_quiet_hours_allows_high_priority(
-    notification_manager, set_quiet_hours, mock_event_bus
-):
+async def test_quiet_hours_allows_high_priority(notification_manager, set_quiet_hours, mock_event_bus):
     """Test that high priority notifications break through quiet hours."""
     # Set quiet hours for the current time
     now = datetime.now(timezone.utc)
@@ -218,11 +219,15 @@ async def test_quiet_hours_allows_high_priority(
     start_time = (datetime.combine(datetime.today(), current_time) - timedelta(hours=1)).time()
     end_time = (datetime.combine(datetime.today(), current_time) + timedelta(hours=1)).time()
 
-    set_quiet_hours([{
-        "start": start_time.isoformat(),
-        "end": end_time.isoformat(),
-        "days": [current_day],
-    }])
+    set_quiet_hours(
+        [
+            {
+                "start": start_time.isoformat(),
+                "end": end_time.isoformat(),
+                "days": [current_day],
+            }
+        ]
+    )
 
     await notification_manager.create_notification(
         title="High During Quiet",
@@ -230,27 +235,26 @@ async def test_quiet_hours_allows_high_priority(
     )
 
     # Should deliver immediately (not suppress)
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_quiet_hours_overnight_spanning(
-    notification_manager, set_quiet_hours, mock_event_bus, db
-):
+async def test_quiet_hours_overnight_spanning(notification_manager, set_quiet_hours, mock_event_bus, db):
     """Test quiet hours that span midnight (e.g., 22:00-07:00)."""
     # Set overnight quiet hours (22:00 to 07:00)
     now = datetime.now(timezone.utc)
     current_day = now.strftime("%A").lower()
 
-    set_quiet_hours([{
-        "start": "22:00:00",
-        "end": "07:00:00",
-        "days": [current_day],
-    }])
+    set_quiet_hours(
+        [
+            {
+                "start": "22:00:00",
+                "end": "07:00:00",
+                "days": [current_day],
+            }
+        ]
+    )
 
     # Test with a time that should be in quiet hours (e.g., 23:00 or 06:00)
     # We'll need to mock the current time for this test
@@ -282,11 +286,15 @@ async def test_quiet_hours_wrong_day_allows_delivery(
     other_days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     other_days.remove(current_day)
 
-    set_quiet_hours([{
-        "start": "00:00:00",
-        "end": "23:59:59",
-        "days": [other_days[0]],  # Different day
-    }])
+    set_quiet_hours(
+        [
+            {
+                "start": "00:00:00",
+                "end": "23:59:59",
+                "days": [other_days[0]],  # Different day
+            }
+        ]
+    )
 
     await notification_manager.create_notification(
         title="Wrong Day",
@@ -294,10 +302,7 @@ async def test_quiet_hours_wrong_day_allows_delivery(
     )
 
     # Should deliver normally (quiet hours don't apply)
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 
@@ -307,9 +312,7 @@ async def test_quiet_hours_wrong_day_allows_delivery(
 
 
 @pytest.mark.asyncio
-async def test_minimal_mode_suppresses_normal(
-    notification_manager, set_notification_mode, db
-):
+async def test_minimal_mode_suppresses_normal(notification_manager, set_notification_mode, db):
     """Test that minimal mode suppresses normal priority notifications."""
     set_notification_mode("minimal")
 
@@ -322,9 +325,7 @@ async def test_minimal_mode_suppresses_normal(
 
 
 @pytest.mark.asyncio
-async def test_minimal_mode_allows_high(
-    notification_manager, set_notification_mode, mock_event_bus
-):
+async def test_minimal_mode_allows_high(notification_manager, set_notification_mode, mock_event_bus):
     """Test that minimal mode allows high priority notifications."""
     set_notification_mode("minimal")
 
@@ -334,17 +335,12 @@ async def test_minimal_mode_allows_high(
     )
 
     # Should deliver
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_batched_mode_batches_normal(
-    notification_manager, set_notification_mode, db
-):
+async def test_batched_mode_batches_normal(notification_manager, set_notification_mode, db):
     """Test that batched mode batches normal priority notifications."""
     set_notification_mode("batched")
 
@@ -360,9 +356,7 @@ async def test_batched_mode_batches_normal(
 
 
 @pytest.mark.asyncio
-async def test_batched_mode_delivers_high(
-    notification_manager, set_notification_mode, mock_event_bus
-):
+async def test_batched_mode_delivers_high(notification_manager, set_notification_mode, mock_event_bus):
     """Test that batched mode delivers high priority immediately."""
     set_notification_mode("batched")
 
@@ -372,17 +366,12 @@ async def test_batched_mode_delivers_high(
     )
 
     # Should deliver immediately
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_frequent_mode_delivers_normal(
-    notification_manager, set_notification_mode, mock_event_bus
-):
+async def test_frequent_mode_delivers_normal(notification_manager, set_notification_mode, mock_event_bus):
     """Test that frequent mode delivers normal priority immediately."""
     set_notification_mode("frequent")
 
@@ -392,10 +381,7 @@ async def test_frequent_mode_delivers_normal(
     )
 
     # Should deliver immediately
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 
@@ -405,9 +391,7 @@ async def test_frequent_mode_delivers_normal(
 
 
 @pytest.mark.asyncio
-async def test_get_digest_returns_batched_notifications(
-    notification_manager, set_notification_mode
-):
+async def test_get_digest_returns_batched_notifications(notification_manager, set_notification_mode):
     """Test that get_digest returns all batched notifications."""
     set_notification_mode("batched")
 
@@ -426,9 +410,7 @@ async def test_get_digest_returns_batched_notifications(
 
 
 @pytest.mark.asyncio
-async def test_get_digest_clears_batch_queue(
-    notification_manager, set_notification_mode
-):
+async def test_get_digest_clears_batch_queue(notification_manager, set_notification_mode):
     """Test that get_digest clears the batch queue after retrieval."""
     set_notification_mode("batched")
 
@@ -445,9 +427,7 @@ async def test_get_digest_clears_batch_queue(
 
 
 @pytest.mark.asyncio
-async def test_get_digest_marks_notifications_delivered(
-    notification_manager, set_notification_mode, db
-):
+async def test_get_digest_marks_notifications_delivered(notification_manager, set_notification_mode, db):
     """Test that get_digest marks notifications as delivered in the database."""
     set_notification_mode("batched")
 
@@ -488,9 +468,7 @@ async def test_mark_read_updates_status(notification_manager, db):
 
 
 @pytest.mark.asyncio
-async def test_mark_acted_on_updates_status_and_publishes_event(
-    notification_manager, mock_event_bus, db
-):
+async def test_mark_acted_on_updates_status_and_publishes_event(notification_manager, mock_event_bus, db):
     """Test that mark_acted_on updates status and publishes feedback event."""
     notif_id = await notification_manager.create_notification("Test", priority="critical")
 
@@ -512,9 +490,7 @@ async def test_mark_acted_on_updates_status_and_publishes_event(
 
 
 @pytest.mark.asyncio
-async def test_dismiss_updates_status_and_publishes_event(
-    notification_manager, mock_event_bus, db
-):
+async def test_dismiss_updates_status_and_publishes_event(notification_manager, mock_event_bus, db):
     """Test that dismiss updates status and publishes feedback event."""
     notif_id = await notification_manager.create_notification("Test", priority="critical")
 
@@ -574,9 +550,7 @@ async def test_prediction_notification_marks_surfaced(
 
 
 @pytest.mark.asyncio
-async def test_acted_on_marks_prediction_accurate(
-    notification_manager, create_prediction, db
-):
+async def test_acted_on_marks_prediction_accurate(notification_manager, create_prediction, db):
     """Test that acting on a prediction notification marks it as accurate."""
     prediction_id = "pred-456"
     create_prediction(prediction_id)
@@ -602,9 +576,7 @@ async def test_acted_on_marks_prediction_accurate(
 
 
 @pytest.mark.asyncio
-async def test_dismiss_marks_prediction_inaccurate(
-    notification_manager, create_prediction, db
-):
+async def test_dismiss_marks_prediction_inaccurate(notification_manager, create_prediction, db):
     """Test that dismissing a prediction notification marks it as inaccurate."""
     prediction_id = "pred-789"
     create_prediction(prediction_id)
@@ -630,9 +602,7 @@ async def test_dismiss_marks_prediction_inaccurate(
 
 
 @pytest.mark.asyncio
-async def test_non_prediction_notification_doesnt_update_predictions(
-    notification_manager, db
-):
+async def test_non_prediction_notification_doesnt_update_predictions(notification_manager, db):
     """Test that non-prediction notifications don't affect the predictions table."""
     notif_id = await notification_manager.create_notification(
         title="Regular Notification",
@@ -653,9 +623,7 @@ async def test_non_prediction_notification_doesnt_update_predictions(
 
 
 @pytest.mark.asyncio
-async def test_auto_resolve_stale_predictions_marks_ignored(
-    notification_manager, create_prediction, db
-):
+async def test_auto_resolve_stale_predictions_marks_ignored(notification_manager, create_prediction, db):
     """Test that stale prediction notifications are auto-resolved as ignored."""
     prediction_id = "pred-stale"
     create_prediction(prediction_id, was_surfaced=1)
@@ -698,9 +666,7 @@ async def test_auto_resolve_stale_predictions_marks_ignored(
 
 
 @pytest.mark.asyncio
-async def test_auto_resolve_stale_predictions_skips_recent(
-    notification_manager, create_prediction, db
-):
+async def test_auto_resolve_stale_predictions_skips_recent(notification_manager, create_prediction, db):
     """Test that recent predictions are not auto-resolved."""
     prediction_id = "pred-recent"
     create_prediction(prediction_id, was_surfaced=1)
@@ -727,9 +693,7 @@ async def test_auto_resolve_stale_predictions_skips_recent(
 
 
 @pytest.mark.asyncio
-async def test_auto_resolve_stale_predictions_skips_already_resolved(
-    notification_manager, create_prediction, db
-):
+async def test_auto_resolve_stale_predictions_skips_already_resolved(notification_manager, create_prediction, db):
     """Test that already-resolved predictions are not re-resolved."""
     prediction_id = "pred-already"
     create_prediction(prediction_id, was_surfaced=1)
@@ -765,9 +729,7 @@ async def test_auto_resolve_stale_predictions_skips_already_resolved(
 
 
 @pytest.mark.asyncio
-async def test_auto_resolve_filtered_predictions(
-    notification_manager, create_prediction, db
-):
+async def test_auto_resolve_filtered_predictions(notification_manager, create_prediction, db):
     """Test that filtered (unsurfaced) predictions are auto-resolved."""
     prediction_id = "pred-filtered"
     create_prediction(prediction_id, was_surfaced=0)
@@ -797,9 +759,7 @@ async def test_auto_resolve_filtered_predictions(
 
 
 @pytest.mark.asyncio
-async def test_auto_resolve_filtered_predictions_skips_surfaced(
-    notification_manager, create_prediction, db
-):
+async def test_auto_resolve_filtered_predictions_skips_surfaced(notification_manager, create_prediction, db):
     """Test that surfaced predictions are not resolved by filtered cleanup."""
     prediction_id = "pred-surfaced"
     create_prediction(prediction_id, was_surfaced=1)
@@ -825,9 +785,7 @@ async def test_auto_resolve_filtered_predictions_skips_surfaced(
 
 
 @pytest.mark.asyncio
-async def test_get_pending_returns_recent_notifications(
-    notification_manager, db
-):
+async def test_get_pending_returns_recent_notifications(notification_manager, db):
     """Test that get_pending returns notifications sorted by priority and recency."""
     # Create notifications with different priorities
     await notification_manager.create_notification("Critical", priority="critical")
@@ -896,7 +854,15 @@ async def test_batched_notifications_survive_restart(db, mock_event_bus):
         for i in range(3):
             conn.execute(
                 "INSERT INTO notifications (id, title, body, priority, domain, status, action_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (f"batch-{i}", f"Batch {i}", f"Body {i}", "normal", "email", "batched", f"https://example.com/action/{i}"),
+                (
+                    f"batch-{i}",
+                    f"Batch {i}",
+                    f"Body {i}",
+                    "normal",
+                    "email",
+                    "batched",
+                    f"https://example.com/action/{i}",
+                ),
             )
 
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
@@ -932,9 +898,9 @@ def test_high_priority_not_batched(db, mock_event_bus):
     nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
     # High/critical items have status='pending', not 'batched' — won't appear in digest
     with db.get_connection("state") as conn:
-        batch_count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM notifications WHERE status = 'batched'"
-        ).fetchone()["cnt"]
+        batch_count = conn.execute("SELECT COUNT(*) as cnt FROM notifications WHERE status = 'batched'").fetchone()[
+            "cnt"
+        ]
     assert batch_count == 0
 
 
@@ -948,9 +914,9 @@ def test_delivered_notifications_not_in_digest(db, mock_event_bus):
 
     # Delivered items should not be in 'batched' status
     with db.get_connection("state") as conn:
-        batch_count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM notifications WHERE status = 'batched'"
-        ).fetchone()["cnt"]
+        batch_count = conn.execute("SELECT COUNT(*) as cnt FROM notifications WHERE status = 'batched'").fetchone()[
+            "cnt"
+        ]
     assert batch_count == 0
 
 
@@ -980,9 +946,7 @@ async def test_batched_notification_delivers_on_digest(db, mock_event_bus):
 
 
 @pytest.mark.asyncio
-async def test_batch_queuing_preserves_action_url(
-    notification_manager, set_notification_mode, db
-):
+async def test_batch_queuing_preserves_action_url(notification_manager, set_notification_mode, db):
     """Test that batched notifications preserve action_url through the full lifecycle.
 
     When a notification with an action_url is routed to batch delivery, the
@@ -1004,9 +968,7 @@ async def test_batch_queuing_preserves_action_url(
 
     # Verify action_url is preserved in the DB batch record
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT status, action_url FROM notifications WHERE id = ?", (notif_id,)
-        ).fetchone()
+        row = conn.execute("SELECT status, action_url FROM notifications WHERE id = ?", (notif_id,)).fetchone()
     assert row["status"] == "batched"
     assert row["action_url"] == action_url
 
@@ -1018,9 +980,7 @@ async def test_batch_queuing_preserves_action_url(
 
 
 @pytest.mark.asyncio
-async def test_batch_queuing_preserves_none_action_url(
-    notification_manager, set_notification_mode, db
-):
+async def test_batch_queuing_preserves_none_action_url(notification_manager, set_notification_mode, db):
     """Test that batched notifications without action_url have it set to None."""
     set_notification_mode("batched")
 
@@ -1031,9 +991,7 @@ async def test_batch_queuing_preserves_none_action_url(
 
     # Verify notification is batched in DB and has null action_url
     with db.get_connection("state") as conn:
-        rows = conn.execute(
-            "SELECT id, status, action_url FROM notifications WHERE status = 'batched'"
-        ).fetchall()
+        rows = conn.execute("SELECT id, status, action_url FROM notifications WHERE status = 'batched'").fetchall()
     assert len(rows) == 1
     assert rows[0]["action_url"] is None
 
@@ -1104,10 +1062,7 @@ async def test_quiet_hours_with_malformed_json(notification_manager, db, mock_ev
     await notification_manager.create_notification("Test", priority="normal")
 
     # Should have delivered (quiet hours fail-open means no suppression)
-    delivered_calls = [
-        call for call in mock_event_bus.publish.call_args_list
-        if call[0][0] == "notification.delivered"
-    ]
+    delivered_calls = [call for call in mock_event_bus.publish.call_args_list if call[0][0] == "notification.delivered"]
     assert len(delivered_calls) == 1
 
 

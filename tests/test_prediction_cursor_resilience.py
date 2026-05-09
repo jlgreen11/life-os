@@ -26,27 +26,27 @@ from services.prediction_engine.engine import PredictionEngine
 
 def _insert_email_event(event_store, subject: str = "Test email") -> None:
     """Insert a simple email event so _has_new_events() returns True."""
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {
-            "from_address": "test@example.com",
-            "subject": subject,
-            "message_id": f"msg-{uuid.uuid4().hex[:8]}",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "from_address": "test@example.com",
+                "subject": subject,
+                "message_id": f"msg-{uuid.uuid4().hex[:8]}",
+            },
+            "metadata": {},
+        }
+    )
 
 
 def _read_persisted_cursor(db) -> int | None:
     """Read the persisted last_event_cursor from the DB, or None if absent."""
     try:
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT value FROM prediction_engine_state WHERE key = 'last_event_cursor'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM prediction_engine_state WHERE key = 'last_event_cursor'").fetchone()
             return int(row["value"]) if row else None
     except Exception:
         return None
@@ -73,9 +73,7 @@ def test_has_new_events_does_not_persist_cursor(db, event_store, user_model_stor
 
     # But the DB should NOT have the cursor persisted yet
     persisted = _read_persisted_cursor(db)
-    assert persisted is None or persisted == 0, (
-        f"Expected cursor not yet persisted to DB, but found {persisted}"
-    )
+    assert persisted is None or persisted == 0, f"Expected cursor not yet persisted to DB, but found {persisted}"
 
 
 # -------------------------------------------------------------------------
@@ -128,7 +126,8 @@ async def test_cursor_not_persisted_on_pipeline_crash(db, event_store, user_mode
     # persistence step. Instead, we patch _get_suppressed_prediction_keys which
     # is called after cursor advance but before cursor persistence.
     with mock.patch.object(
-        engine, "_get_suppressed_prediction_keys",
+        engine,
+        "_get_suppressed_prediction_keys",
         side_effect=RuntimeError("Simulated mid-pipeline crash"),
     ):
         with pytest.raises(RuntimeError, match="Simulated mid-pipeline crash"):
@@ -139,9 +138,7 @@ async def test_cursor_not_persisted_on_pipeline_crash(db, event_store, user_mode
 
     # But the DB should NOT have the new cursor persisted
     persisted = _read_persisted_cursor(db)
-    assert persisted is None or persisted == 0, (
-        f"Expected cursor NOT persisted after crash, but found {persisted}"
-    )
+    assert persisted is None or persisted == 0, f"Expected cursor NOT persisted after crash, but found {persisted}"
 
     # A new engine instance should start fresh and reprocess those events
     engine2 = PredictionEngine(db=db, ums=user_model_store, timezone="UTC")
@@ -177,10 +174,7 @@ async def test_degraded_alert_fires_at_4_consecutive_zeros(db, event_store, user
     assert engine._consecutive_zero_runs == 4
 
     # Check that the degraded warning was logged
-    degraded_warnings = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "DEGRADED" in r.message
-    ]
+    degraded_warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "DEGRADED" in r.message]
     assert len(degraded_warnings) >= 1, (
         f"Expected a DEGRADED warning log at consecutive_zero_runs == 4. "
         f"All warnings: {[r.message for r in caplog.records if r.levelno >= logging.WARNING]}"
@@ -211,13 +205,9 @@ async def test_degraded_alert_does_not_fire_at_5(db, event_store, user_model_sto
     assert engine._consecutive_zero_runs == 5
 
     # The DEGRADED warning should NOT appear for run 5
-    degraded_warnings = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "DEGRADED" in r.message
-    ]
+    degraded_warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "DEGRADED" in r.message]
     assert len(degraded_warnings) == 0, (
-        f"Expected NO DEGRADED warning at consecutive_zero_runs == 5, "
-        f"but got: {[r.message for r in degraded_warnings]}"
+        f"Expected NO DEGRADED warning at consecutive_zero_runs == 5, but got: {[r.message for r in degraded_warnings]}"
     )
 
 
@@ -238,30 +228,34 @@ async def test_consecutive_zeros_resets_on_surfaced_predictions(db, event_store,
     now = datetime.now(timezone.utc)
     from datetime import timedelta
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "title": "Meeting A",
-            "start_time": (now + timedelta(hours=3)).isoformat(),
-            "end_time": (now + timedelta(hours=4)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "title": "Meeting B",
-            "start_time": (now + timedelta(hours=3, minutes=15)).isoformat(),
-            "end_time": (now + timedelta(hours=4, minutes=15)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "title": "Meeting A",
+                "start_time": (now + timedelta(hours=3)).isoformat(),
+                "end_time": (now + timedelta(hours=4)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "title": "Meeting B",
+                "start_time": (now + timedelta(hours=3, minutes=15)).isoformat(),
+                "end_time": (now + timedelta(hours=4, minutes=15)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     result = await engine.generate_predictions({})
 

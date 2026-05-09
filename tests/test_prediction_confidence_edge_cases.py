@@ -128,8 +128,7 @@ async def test_confidence_clamped_after_multiplier(db, user_model_store):
     engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 f"evt-clamp-{uuid.uuid4().hex[:8]}",
                 "email.received",
@@ -145,9 +144,7 @@ async def test_confidence_clamped_after_multiplier(db, user_model_store):
 
     assert len(surfaced) == 1
     # After clamping, 0.9 * 2.0 = 1.8 -> clamped to 1.0
-    assert surfaced[0].confidence == 1.0, (
-        f"Confidence should be clamped to 1.0, got {surfaced[0].confidence}"
-    )
+    assert surfaced[0].confidence == 1.0, f"Confidence should be clamped to 1.0, got {surfaced[0].confidence}"
 
 
 @pytest.mark.asyncio
@@ -194,8 +191,7 @@ async def test_confidence_clamped_negative_multiplier(db, user_model_store):
     engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 f"evt-neg-{uuid.uuid4().hex[:8]}",
                 "email.received",
@@ -211,6 +207,4 @@ async def test_confidence_clamped_negative_multiplier(db, user_model_store):
 
     # Clamped to 0.0, which is < 0.3 OBSERVE threshold, so it gets filtered
     # by the confidence gate and not surfaced
-    assert len(surfaced) == 0, (
-        f"Prediction with negative-clamped confidence should be filtered, got {len(surfaced)}"
-    )
+    assert len(surfaced) == 0, f"Prediction with negative-clamped confidence should be filtered, got {len(surfaced)}"

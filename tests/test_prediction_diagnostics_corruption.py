@@ -63,9 +63,12 @@ async def test_data_sources_reports_available_for_accessible_profiles(db, user_m
     """data_sources section reports 'available' for profiles that
     return data successfully."""
     # Seed a relationships profile so at least one is accessible
-    user_model_store.update_signal_profile("relationships", {
-        "contacts": {"alice@example.com": {"interaction_count": 5}},
-    })
+    user_model_store.update_signal_profile(
+        "relationships",
+        {
+            "contacts": {"alice@example.com": {"interaction_count": 5}},
+        },
+    )
 
     engine = PredictionEngine(db, user_model_store)
     diagnostics = await engine.get_diagnostics()

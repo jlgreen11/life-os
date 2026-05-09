@@ -61,7 +61,7 @@ async def test_process_event_routes_to_all_applicable_extractors(db, user_model_
             "from": "sender@example.com",
             "to": ["user@example.com"],
         },
-        "metadata": {}
+        "metadata": {},
     }
 
     signals = await pipeline.process_event(event)
@@ -84,7 +84,7 @@ async def test_process_event_respects_can_process_gate(db, user_model_store):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "priority": "low",
         "payload": {"status": "ok"},
-        "metadata": {}
+        "metadata": {},
     }
 
     signals = await pipeline.process_event(event)
@@ -110,7 +110,7 @@ async def test_process_event_handles_extractor_errors_gracefully(db, user_model_
             # Missing required fields like 'body' or 'from'
             "subject": "Incomplete email"
         },
-        "metadata": {}
+        "metadata": {},
     }
 
     # Should not raise an exception despite malformed payload
@@ -138,11 +138,9 @@ async def test_process_event_collects_all_signals(db, user_model_store):
             "from": "colleague@work.com",
             "to": ["user@example.com"],
             "is_reply": True,
-            "in_reply_to": "original-123"
+            "in_reply_to": "original-123",
         },
-        "metadata": {
-            "contacts": ["colleague@work.com"]
-        }
+        "metadata": {"contacts": ["colleague@work.com"]},
     }
 
     signals = await pipeline.process_event(event)
@@ -169,9 +167,9 @@ def test_get_current_mood_returns_mood_state(db, user_model_store):
     assert isinstance(mood, MoodState)
 
     # Verify MoodState has expected attributes (using actual field names)
-    assert hasattr(mood, 'emotional_valence')
-    assert hasattr(mood, 'energy_level')
-    assert hasattr(mood, 'confidence')
+    assert hasattr(mood, "emotional_valence")
+    assert hasattr(mood, "energy_level")
+    assert hasattr(mood, "confidence")
 
 
 def test_get_current_mood_uses_dedicated_engine(db, user_model_store):
@@ -232,25 +230,13 @@ def test_get_user_summary_filters_high_confidence_facts(db, user_model_store):
 
     # Store facts with varying confidence levels
     user_model_store.update_semantic_fact(
-        key="low_confidence_fact",
-        category="test",
-        value="test",
-        confidence=0.4,
-        episode_id="test-1"
+        key="low_confidence_fact", category="test", value="test", confidence=0.4, episode_id="test-1"
     )
     user_model_store.update_semantic_fact(
-        key="medium_confidence_fact",
-        category="test",
-        value="test",
-        confidence=0.6,
-        episode_id="test-2"
+        key="medium_confidence_fact", category="test", value="test", confidence=0.6, episode_id="test-2"
     )
     user_model_store.update_semantic_fact(
-        key="high_confidence_fact",
-        category="test",
-        value="test",
-        confidence=0.9,
-        episode_id="test-3"
+        key="high_confidence_fact", category="test", value="test", confidence=0.9, episode_id="test-3"
     )
 
     summary = pipeline.get_user_summary()
@@ -305,7 +291,7 @@ async def test_process_email_event(db, user_model_store):
             "from": "teammate@work.com",
             "to": ["user@example.com"],
         },
-        "metadata": {"contacts": ["teammate@work.com"]}
+        "metadata": {"contacts": ["teammate@work.com"]},
     }
 
     signals = await pipeline.process_event(event)
@@ -328,7 +314,7 @@ async def test_process_message_event(db, user_model_store):
             "from": "+1234567890",
             "is_from_me": False,
         },
-        "metadata": {"contacts": ["+1234567890"]}
+        "metadata": {"contacts": ["+1234567890"]},
     }
 
     signals = await pipeline.process_event(event)
@@ -352,7 +338,7 @@ async def test_process_calendar_event(db, user_model_store):
             "end": "2026-02-16T09:30:00Z",
             "location": "Zoom",
         },
-        "metadata": {}
+        "metadata": {},
     }
 
     signals = await pipeline.process_event(event)
@@ -375,7 +361,7 @@ async def test_process_task_event(db, user_model_store):
             "description": "Prepare Q1 budget review for leadership meeting",
             "due_date": "2026-02-20T17:00:00Z",
         },
-        "metadata": {}
+        "metadata": {},
     }
 
     signals = await pipeline.process_event(event)
@@ -413,10 +399,7 @@ async def test_pipeline_end_to_end_email_flow(db, user_model_store):
             "is_reply": True,
             "in_reply_to": "original-request-456",
         },
-        "metadata": {
-            "contacts": ["alex@company.com"],
-            "domain": "work"
-        }
+        "metadata": {"contacts": ["alex@company.com"], "domain": "work"},
     }
 
     # Process the event
@@ -448,7 +431,7 @@ async def test_pipeline_processes_multiple_events_sequentially(db, user_model_st
                 "from": f"sender{i}@example.com",
                 "to": ["user@example.com"],
             },
-            "metadata": {}
+            "metadata": {},
         }
         for i in range(5)
     ]
@@ -483,15 +466,13 @@ async def test_pipeline_handles_concurrent_processing(db, user_model_store):
                 "from": f"+123456789{i}",
                 "is_from_me": False,
             },
-            "metadata": {}
+            "metadata": {},
         }
         for i in range(3)
     ]
 
     # Process concurrently
-    results = await asyncio.gather(
-        *[pipeline.process_event(event) for event in events]
-    )
+    results = await asyncio.gather(*[pipeline.process_event(event) for event in events])
 
     # Verify all processed successfully
     assert len(results) == 3
@@ -527,10 +508,7 @@ def test_mood_engine_is_same_instance_as_extractor(db, user_model_store):
     assert pipeline.mood_engine is not None
 
     # Find the MoodInferenceEngine in the extractors list
-    mood_extractors_in_pipeline = [
-        e for e in pipeline.extractors
-        if type(e).__name__ == "MoodInferenceEngine"
-    ]
+    mood_extractors_in_pipeline = [e for e in pipeline.extractors if type(e).__name__ == "MoodInferenceEngine"]
 
     # There should be exactly one in the extractors list
     assert len(mood_extractors_in_pipeline) == 1
@@ -607,11 +585,11 @@ async def test_pipeline_continues_after_single_extractor_failure(db, user_model_
         "priority": "normal",
         "payload": {
             "subject": "",  # Empty subject
-            "body": None,   # Null body (edge case)
+            "body": None,  # Null body (edge case)
             "from": "test@example.com",
-            "to": [],       # Empty recipient list
+            "to": [],  # Empty recipient list
         },
-        "metadata": {}
+        "metadata": {},
     }
 
     # Should not raise exception despite edge cases
@@ -631,7 +609,7 @@ async def test_pipeline_handles_missing_payload_fields(db, user_model_store):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "priority": "normal",
         "payload": {},  # Empty payload
-        "metadata": {}
+        "metadata": {},
     }
 
     # Should handle gracefully
@@ -656,7 +634,7 @@ async def test_pipeline_handles_unicode_content(db, user_model_store):
             "from": "test@example.com",
             "to": ["user@example.com"],
         },
-        "metadata": {}
+        "metadata": {},
     }
 
     signals = await pipeline.process_event(event)
@@ -673,15 +651,17 @@ def _store_test_event(db, event_id, event_type, source, payload, metadata=None, 
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
     es = EventStore(db)
-    es.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": source,
-        "timestamp": timestamp,
-        "priority": "normal",
-        "payload": payload,
-        "metadata": metadata or {},
-    })
+    es.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": source,
+            "timestamp": timestamp,
+            "priority": "normal",
+            "payload": payload,
+            "metadata": metadata or {},
+        }
+    )
 
 
 def test_rebuild_profiles_from_events_basic(db, user_model_store):
@@ -689,12 +669,18 @@ def test_rebuild_profiles_from_events_basic(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # Store an email.received event (triggers linguistic, cadence, mood, relationship, topic extractors)
-    _store_test_event(db, "rebuild-1", "email.received", "proton_mail", {
-        "subject": "Weekly sync notes",
-        "body": "Here are the notes from today's sync. Great discussion about the roadmap.",
-        "from": "colleague@work.com",
-        "to": ["user@example.com"],
-    })
+    _store_test_event(
+        db,
+        "rebuild-1",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "Weekly sync notes",
+            "body": "Here are the notes from today's sync. Great discussion about the roadmap.",
+            "from": "colleague@work.com",
+            "to": ["user@example.com"],
+        },
+    )
 
     result = pipeline.rebuild_profiles_from_events()
 
@@ -709,12 +695,19 @@ def test_rebuild_profiles_populates_signal_profiles(db, user_model_store):
 
     # Store several communication events to populate cadence and relationship profiles.
     for i in range(5):
-        _store_test_event(db, f"rebuild-pop-{i}", "email.received", "proton_mail", {
-            "subject": f"Email {i}",
-            "body": f"Message content number {i} with some meaningful text about the project.",
-            "from": "alice@company.com",
-            "to": ["user@example.com"],
-        }, timestamp=f"2026-03-01T{10 + i}:00:00+00:00")
+        _store_test_event(
+            db,
+            f"rebuild-pop-{i}",
+            "email.received",
+            "proton_mail",
+            {
+                "subject": f"Email {i}",
+                "body": f"Message content number {i} with some meaningful text about the project.",
+                "from": "alice@company.com",
+                "to": ["user@example.com"],
+            },
+            timestamp=f"2026-03-01T{10 + i}:00:00+00:00",
+        )
 
     # No profiles should exist yet.
     assert user_model_store.get_signal_profile("cadence") is None
@@ -738,27 +731,48 @@ def test_rebuild_profiles_with_mixed_event_types(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # Email event — triggers linguistic, cadence, mood, relationship, topic
-    _store_test_event(db, "mix-email", "email.received", "proton_mail", {
-        "subject": "Project update",
-        "body": "The project is going well. Let's schedule a review.",
-        "from": "bob@work.com",
-        "to": ["user@example.com"],
-    }, timestamp="2026-03-01T10:00:00+00:00")
+    _store_test_event(
+        db,
+        "mix-email",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "Project update",
+            "body": "The project is going well. Let's schedule a review.",
+            "from": "bob@work.com",
+            "to": ["user@example.com"],
+        },
+        timestamp="2026-03-01T10:00:00+00:00",
+    )
 
     # Calendar event — triggers temporal, topic
-    _store_test_event(db, "mix-cal", "calendar.event.created", "caldav", {
-        "summary": "Team standup",
-        "start": "2026-03-02T09:00:00Z",
-        "end": "2026-03-02T09:30:00Z",
-        "location": "Conference Room A",
-    }, timestamp="2026-03-01T11:00:00+00:00")
+    _store_test_event(
+        db,
+        "mix-cal",
+        "calendar.event.created",
+        "caldav",
+        {
+            "summary": "Team standup",
+            "start": "2026-03-02T09:00:00Z",
+            "end": "2026-03-02T09:30:00Z",
+            "location": "Conference Room A",
+        },
+        timestamp="2026-03-01T11:00:00+00:00",
+    )
 
     # Task event — triggers decision, topic
-    _store_test_event(db, "mix-task", "task.created", "task_manager", {
-        "title": "Review quarterly budget",
-        "description": "Prepare Q1 budget review for leadership meeting",
-        "due_date": "2026-03-20T17:00:00Z",
-    }, timestamp="2026-03-01T12:00:00+00:00")
+    _store_test_event(
+        db,
+        "mix-task",
+        "task.created",
+        "task_manager",
+        {
+            "title": "Review quarterly budget",
+            "description": "Prepare Q1 budget review for leadership meeting",
+            "due_date": "2026-03-20T17:00:00Z",
+        },
+        timestamp="2026-03-01T12:00:00+00:00",
+    )
 
     result = pipeline.rebuild_profiles_from_events()
 
@@ -772,17 +786,26 @@ def test_rebuild_profiles_fail_open_on_extractor_error(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # Store a normal event.
-    _store_test_event(db, "ok-event", "email.received", "proton_mail", {
-        "subject": "Normal email",
-        "body": "This email should process fine.",
-        "from": "alice@company.com",
-        "to": ["user@example.com"],
-    }, timestamp="2026-03-01T10:00:00+00:00")
+    _store_test_event(
+        db,
+        "ok-event",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "Normal email",
+            "body": "This email should process fine.",
+            "from": "alice@company.com",
+            "to": ["user@example.com"],
+        },
+        timestamp="2026-03-01T10:00:00+00:00",
+    )
 
     # Temporarily sabotage one extractor to trigger the fail-open path.
     original_extract = pipeline.extractors[0].extract
+
     def broken_extract(event):
         raise RuntimeError("Simulated extractor failure")
+
     pipeline.extractors[0].extract = broken_extract
 
     try:
@@ -805,12 +828,19 @@ def test_rebuild_profiles_event_limit(db, user_model_store):
 
     # Store 10 events.
     for i in range(10):
-        _store_test_event(db, f"limit-{i}", "email.received", "proton_mail", {
-            "subject": f"Email {i}",
-            "body": f"Content {i}",
-            "from": "sender@example.com",
-            "to": ["user@example.com"],
-        }, timestamp=f"2026-03-01T{10 + i}:00:00+00:00")
+        _store_test_event(
+            db,
+            f"limit-{i}",
+            "email.received",
+            "proton_mail",
+            {
+                "subject": f"Email {i}",
+                "body": f"Content {i}",
+                "from": "sender@example.com",
+                "to": ["user@example.com"],
+            },
+            timestamp=f"2026-03-01T{10 + i}:00:00+00:00",
+        )
 
     # Rebuild with limit of 3.
     result = pipeline.rebuild_profiles_from_events(event_limit=3)
@@ -834,12 +864,19 @@ def test_rebuild_profiles_handles_empty_metadata(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # Insert an event with empty-object metadata via the EventStore.
-    _store_test_event(db, "empty-meta", "email.received", "proton_mail", {
-        "subject": "Test",
-        "body": "Hello world",
-        "from": "a@b.com",
-        "to": ["u@x.com"],
-    }, metadata={})
+    _store_test_event(
+        db,
+        "empty-meta",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "Test",
+            "body": "Hello world",
+            "from": "a@b.com",
+            "to": ["u@x.com"],
+        },
+        metadata={},
+    )
 
     result = pipeline.rebuild_profiles_from_events()
 
@@ -853,26 +890,47 @@ def test_rebuild_profiles_chronological_order(db, user_model_store):
     pipeline = SignalExtractorPipeline(db, user_model_store)
 
     # Store events with explicit timestamps out of insertion order.
-    _store_test_event(db, "chrono-3", "email.received", "proton_mail", {
-        "subject": "Third",
-        "body": "Third message",
-        "from": "alice@company.com",
-        "to": ["user@example.com"],
-    }, timestamp="2026-03-01T12:00:00+00:00")
+    _store_test_event(
+        db,
+        "chrono-3",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "Third",
+            "body": "Third message",
+            "from": "alice@company.com",
+            "to": ["user@example.com"],
+        },
+        timestamp="2026-03-01T12:00:00+00:00",
+    )
 
-    _store_test_event(db, "chrono-1", "email.received", "proton_mail", {
-        "subject": "First",
-        "body": "First message",
-        "from": "alice@company.com",
-        "to": ["user@example.com"],
-    }, timestamp="2026-03-01T10:00:00+00:00")
+    _store_test_event(
+        db,
+        "chrono-1",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "First",
+            "body": "First message",
+            "from": "alice@company.com",
+            "to": ["user@example.com"],
+        },
+        timestamp="2026-03-01T10:00:00+00:00",
+    )
 
-    _store_test_event(db, "chrono-2", "email.received", "proton_mail", {
-        "subject": "Second",
-        "body": "Second message",
-        "from": "alice@company.com",
-        "to": ["user@example.com"],
-    }, timestamp="2026-03-01T11:00:00+00:00")
+    _store_test_event(
+        db,
+        "chrono-2",
+        "email.received",
+        "proton_mail",
+        {
+            "subject": "Second",
+            "body": "Second message",
+            "from": "alice@company.com",
+            "to": ["user@example.com"],
+        },
+        timestamp="2026-03-01T11:00:00+00:00",
+    )
 
     # Track processing order by monkey-patching one extractor.
     processed_ids = []

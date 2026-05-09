@@ -22,20 +22,23 @@ from storage.event_store import EventStore
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _store_event(db, event_id, event_type, source, payload, timestamp=None):
     """Insert a single event into events.db via EventStore."""
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
     es = EventStore(db)
-    es.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": source,
-        "timestamp": timestamp,
-        "priority": "normal",
-        "payload": payload,
-        "metadata": {},
-    })
+    es.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": source,
+            "timestamp": timestamp,
+            "priority": "normal",
+            "payload": payload,
+            "metadata": {},
+        }
+    )
 
 
 def _insert_calendar_events(db, count=55):
@@ -61,9 +64,15 @@ def _insert_calendar_events(db, count=55):
         "Gym - Central Fitness",
     ]
     summaries = [
-        "Team standup", "Design review", "Lunch with Alice",
-        "Sprint planning", "Doctor appointment", "Coffee chat",
-        "Budget review meeting", "Gym workout", "1:1 with Bob",
+        "Team standup",
+        "Design review",
+        "Lunch with Alice",
+        "Sprint planning",
+        "Doctor appointment",
+        "Coffee chat",
+        "Budget review meeting",
+        "Gym workout",
+        "1:1 with Bob",
         "Project sync call",
     ]
 
@@ -162,7 +171,8 @@ class TestTemporalProfileRebuild:
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=1000, missing_profiles=["temporal"],
+            event_limit=1000,
+            missing_profiles=["temporal"],
         )
 
         assert "TemporalExtractor" in result["profiles_rebuilt"], (
@@ -233,7 +243,8 @@ class TestDecisionProfileRebuild:
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=1000, missing_profiles=["decision"],
+            event_limit=1000,
+            missing_profiles=["decision"],
         )
 
         assert "DecisionExtractor" in result["profiles_rebuilt"], (
@@ -250,8 +261,7 @@ class TestDecisionProfileRebuild:
 
         # Calendar events should produce risk_tolerance_by_domain from commitment patterns
         assert data.get("risk_tolerance_by_domain"), (
-            f"risk_tolerance_by_domain is empty. data keys: {list(data.keys())}. "
-            f"{_fmt_health(pipeline)}"
+            f"risk_tolerance_by_domain is empty. data keys: {list(data.keys())}. {_fmt_health(pipeline)}"
         )
 
     def test_decision_profile_tracks_delegation_from_emails(self, db, user_model_store):
@@ -260,7 +270,8 @@ class TestDecisionProfileRebuild:
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=1000, missing_profiles=["decision"],
+            event_limit=1000,
+            missing_profiles=["decision"],
         )
 
         profile = user_model_store.get_signal_profile("decision")
@@ -279,7 +290,8 @@ class TestDecisionProfileRebuild:
         _insert_email_sent_events(db, count=12)
         pipeline = SignalExtractorPipeline(db, user_model_store)
         pipeline.rebuild_profiles_from_events(
-            event_limit=1000, missing_profiles=["decision"],
+            event_limit=1000,
+            missing_profiles=["decision"],
         )
 
         health = pipeline.get_profile_health()
@@ -298,7 +310,8 @@ class TestSpatialProfileRebuild:
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=1000, missing_profiles=["spatial"],
+            event_limit=1000,
+            missing_profiles=["spatial"],
         )
 
         assert "SpatialExtractor" in result["profiles_rebuilt"], (
@@ -323,8 +336,7 @@ class TestSpatialProfileRebuild:
 
         # We should have at least a few distinct locations
         assert len(place_behaviors) >= 3, (
-            f"Expected >= 3 distinct locations, got {len(place_behaviors)}: "
-            f"{list(place_behaviors.keys())}"
+            f"Expected >= 3 distinct locations, got {len(place_behaviors)}: {list(place_behaviors.keys())}"
         )
 
     def test_spatial_skips_events_without_location(self, db, user_model_store):
@@ -358,7 +370,8 @@ class TestLinguisticOutboundRebuild:
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=1000, missing_profiles=["linguistic"],
+            event_limit=1000,
+            missing_profiles=["linguistic"],
         )
 
         assert "LinguisticExtractor" in result["profiles_rebuilt"], (
@@ -386,9 +399,7 @@ class TestFullRebuildWithAllMissingProfiles:
 
         result = pipeline.check_and_rebuild_missing_profiles()
 
-        assert result["skipped"] is False, (
-            f"Rebuild was skipped despite events existing. {result}"
-        )
+        assert result["skipped"] is False, f"Rebuild was skipped despite events existing. {result}"
 
         # All four of the originally-missing profiles should now be rebuilt.
         # Note: cadence, mood_signals, relationships, topics, linguistic_inbound
@@ -426,8 +437,7 @@ class TestFullRebuildWithAllMissingProfiles:
         # None of the profiles we rebuilt should appear in missing_before
         re_missing = rebuilt_first & still_missing
         assert not re_missing, (
-            f"Profiles rebuilt on first call are missing again: {re_missing}. "
-            f"{_fmt_health(pipeline)}"
+            f"Profiles rebuilt on first call are missing again: {re_missing}. {_fmt_health(pipeline)}"
         )
 
     def test_rebuild_result_includes_error_details(self, db, user_model_store):

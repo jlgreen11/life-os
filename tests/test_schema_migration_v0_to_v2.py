@@ -88,57 +88,48 @@ class TestSchemaMigrationV0toV2:
         # Email received events
         for i in range(5):
             event_id = str(uuid4())
-            payload = json.dumps({
-                "from_address": f"sender{i}@example.com",
-                "subject": f"Test Email {i}",
-                "body": "Test body"
-            })
+            payload = json.dumps(
+                {"from_address": f"sender{i}@example.com", "subject": f"Test Email {i}", "body": "Test body"}
+            )
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
-                (event_id, "email.received", "proton", now, payload)
+                (event_id, "email.received", "proton", now, payload),
             )
 
         # Email sent events
         for i in range(3):
             event_id = str(uuid4())
-            payload = json.dumps({
-                "from_address": "user@example.com",
-                "to_addresses": f"recipient{i}@example.com",
-                "subject": f"Reply {i}",
-                "body": "Reply body"
-            })
+            payload = json.dumps(
+                {
+                    "from_address": "user@example.com",
+                    "to_addresses": f"recipient{i}@example.com",
+                    "subject": f"Reply {i}",
+                    "body": "Reply body",
+                }
+            )
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
-                (event_id, "email.sent", "proton", now, payload)
+                (event_id, "email.sent", "proton", now, payload),
             )
 
         # Task events
         for i in range(2):
             event_id = str(uuid4())
             task_id = str(uuid4())
-            payload = json.dumps({
-                "task_id": task_id,
-                "title": f"Task {i}",
-                "description": "Test task"
-            })
+            payload = json.dumps({"task_id": task_id, "title": f"Task {i}", "description": "Test task"})
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
-                (event_id, "task.created", "system", now, payload)
+                (event_id, "task.created", "system", now, payload),
             )
 
         # Calendar events
         for i in range(2):
             event_id = str(uuid4())
             calendar_event_id = str(uuid4())
-            payload = json.dumps({
-                "event_id": calendar_event_id,
-                "title": f"Meeting {i}",
-                "start": now,
-                "end": now
-            })
+            payload = json.dumps({"event_id": calendar_event_id, "title": f"Meeting {i}", "start": now, "end": now})
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
-                (event_id, "calendar.event.created", "caldav", now, payload)
+                (event_id, "calendar.event.created", "caldav", now, payload),
             )
 
         conn.commit()
@@ -289,14 +280,10 @@ class TestSchemaMigrationV0toV2:
         with db.get_connection("events") as conn:
             # Insert a new email.received event
             event_id = str(uuid4())
-            payload = json.dumps({
-                "from_address": "newemail@example.com",
-                "subject": "New Email",
-                "body": "New body"
-            })
+            payload = json.dumps({"from_address": "newemail@example.com", "subject": "New Email", "body": "New body"})
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
-                (event_id, "email.received", "proton", now, payload)
+                (event_id, "email.received", "proton", now, payload),
             )
 
             # Check that email_from was auto-populated by trigger

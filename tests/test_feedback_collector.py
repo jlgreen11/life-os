@@ -16,6 +16,7 @@ from models.core import FeedbackType, Priority
 # Notification Response Tests
 # -----------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_notification_dismissed_quick(db, user_model_store):
     """Test that quick dismissals (<2 sec) create strong negative signal."""
@@ -28,23 +29,25 @@ async def test_notification_dismissed_quick(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.NORMAL.value, "email", "Test title", "Test message",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.NORMAL.value,
+                "email",
+                "Test title",
+                "Test message",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process quick dismissal (1 second)
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.DISMISSED.value,
-        response_time_seconds=1.0
+        notification_id=notif_id, response_type=FeedbackType.DISMISSED.value, response_time_seconds=1.0
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.DISMISSED.value
@@ -74,23 +77,25 @@ async def test_notification_dismissed_slow(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.LOW.value, "calendar", "Test title", "Test reminder",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.LOW.value,
+                "calendar",
+                "Test title",
+                "Test reminder",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process slow dismissal (15 seconds)
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.DISMISSED.value,
-        response_time_seconds=15.0
+        notification_id=notif_id, response_type=FeedbackType.DISMISSED.value, response_time_seconds=15.0
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["response_latency_seconds"] == 15.0
@@ -116,23 +121,25 @@ async def test_notification_dismissed_neutral_zone(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.NORMAL.value, "weather", "Weather", "Rain expected",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.NORMAL.value,
+                "weather",
+                "Weather",
+                "Rain expected",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process dismissal at 5 seconds (in the neutral zone: 2-10 sec)
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.DISMISSED.value,
-        response_time_seconds=5.0
+        notification_id=notif_id, response_type=FeedbackType.DISMISSED.value, response_time_seconds=5.0
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["response_latency_seconds"] == 5.0
@@ -154,29 +161,39 @@ async def test_dismissal_facts_reflect_domain_and_priority(db, user_model_store)
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            ("notif-fast-finance", Priority.HIGH.value, "finance", "Alert", "Big charge",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                "notif-fast-finance",
+                Priority.HIGH.value,
+                "finance",
+                "Alert",
+                "Big charge",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
         conn.execute(
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            ("notif-slow-social", Priority.LOW.value, "social", "Update", "New post",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                "notif-slow-social",
+                Priority.LOW.value,
+                "social",
+                "Update",
+                "New post",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Fast dismiss on the finance notification
     await collector.process_notification_response(
-        notification_id="notif-fast-finance",
-        response_type=FeedbackType.DISMISSED.value,
-        response_time_seconds=0.5
+        notification_id="notif-fast-finance", response_type=FeedbackType.DISMISSED.value, response_time_seconds=0.5
     )
 
     # Slow dismiss on the social notification
     await collector.process_notification_response(
-        notification_id="notif-slow-social",
-        response_type=FeedbackType.DISMISSED.value,
-        response_time_seconds=20.0
+        notification_id="notif-slow-social", response_type=FeedbackType.DISMISSED.value, response_time_seconds=20.0
     )
 
     facts = user_model_store.get_semantic_facts(category="notification_preference")
@@ -208,23 +225,25 @@ async def test_notification_engaged_fast(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.HIGH.value, "task", "Deadline", "Deadline approaching",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.HIGH.value,
+                "task",
+                "Deadline",
+                "Deadline approaching",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process fast engagement (10 seconds)
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.ENGAGED.value,
-        response_time_seconds=10.0
+        notification_id=notif_id, response_type=FeedbackType.ENGAGED.value, response_time_seconds=10.0
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.ENGAGED.value
@@ -249,23 +268,25 @@ async def test_notification_engaged_slow(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.NORMAL.value, "finance", "Transaction", "Transaction alert",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.NORMAL.value,
+                "finance",
+                "Transaction",
+                "Transaction alert",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process slow engagement (60 seconds)
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.ENGAGED.value,
-        response_time_seconds=60.0
+        notification_id=notif_id, response_type=FeedbackType.ENGAGED.value, response_time_seconds=60.0
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["response_latency_seconds"] == 60.0
@@ -288,23 +309,25 @@ async def test_notification_ignored(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.LOW.value, "social", "Social", "New follower",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.LOW.value,
+                "social",
+                "Social",
+                "New follower",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process ignore event
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.IGNORED.value,
-        response_time_seconds=0.0
+        notification_id=notif_id, response_type=FeedbackType.IGNORED.value, response_time_seconds=0.0
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.IGNORED.value
@@ -329,8 +352,15 @@ async def test_notification_response_with_context(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.HIGH.value, "email", "Important", "Important message",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.HIGH.value,
+                "email",
+                "Important",
+                "Important message",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process with custom context
@@ -338,15 +368,12 @@ async def test_notification_response_with_context(db, user_model_store):
         notification_id=notif_id,
         response_type=FeedbackType.ENGAGED.value,
         response_time_seconds=5.0,
-        context={"device": "iphone", "location": "home"}
+        context={"device": "iphone", "location": "home"},
     )
 
     # Verify context was preserved
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (notif_id,)).fetchone()
 
         context = json.loads(feedback["context"])
         assert context["device"] == "iphone"
@@ -361,17 +388,12 @@ async def test_notification_response_nonexistent(db, user_model_store):
 
     # Process response for notification that doesn't exist
     await collector.process_notification_response(
-        notification_id="nonexistent",
-        response_type=FeedbackType.ENGAGED.value,
-        response_time_seconds=10.0
+        notification_id="nonexistent", response_type=FeedbackType.ENGAGED.value, response_time_seconds=10.0
     )
 
     # Should not create feedback record
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            ("nonexistent",)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", ("nonexistent",)).fetchone()
 
         assert feedback is None
 
@@ -379,6 +401,7 @@ async def test_notification_response_nonexistent(db, user_model_store):
 # -----------------------------------------------------------------------------
 # Draft Edit Tests
 # -----------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_draft_accepted_as_is(db, user_model_store):
@@ -389,17 +412,12 @@ async def test_draft_accepted_as_is(db, user_model_store):
     final = original  # Accepted as-is
 
     await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final,
-        contact_id="contact-1",
-        channel="imessage"
+        original_draft=original, final_message=final, contact_id="contact-1", channel="imessage"
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'draft'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'draft'").fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.ENGAGED.value
@@ -421,25 +439,28 @@ async def test_draft_made_more_informal(db, user_model_store):
             """INSERT INTO communication_templates
                (id, context, contact_id, channel, formality, greeting, closing, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("template-1", "work", "contact-2", "email", 0.8, "Hello", "Best regards",
-             datetime.now(timezone.utc).isoformat())
+            (
+                "template-1",
+                "work",
+                "contact-2",
+                "email",
+                0.8,
+                "Hello",
+                "Best regards",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     original = "Hello, I wanted to follow up regarding your previous message."
     final = "Hey, just wanted to follow up lol"
 
     await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final,
-        contact_id="contact-2",
-        channel="email"
+        original_draft=original, final_message=final, contact_id="contact-2", channel="email"
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'draft'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'draft'").fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.OVERRIDDEN.value
@@ -451,10 +472,7 @@ async def test_draft_made_more_informal(db, user_model_store):
 
     # Verify template formality was reduced
     with db.get_connection("user_model") as conn:
-        template = conn.execute(
-            "SELECT * FROM communication_templates WHERE id = ?",
-            ("template-1",)
-        ).fetchone()
+        template = conn.execute("SELECT * FROM communication_templates WHERE id = ?", ("template-1",)).fetchone()
 
         # Original was 0.8, should now be 0.75 (reduced by 0.05)
         assert template["formality"] == 0.75
@@ -471,35 +489,35 @@ async def test_draft_made_more_formal(db, user_model_store):
             """INSERT INTO communication_templates
                (id, context, contact_id, channel, formality, greeting, closing, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("template-2", "casual", "contact-3", "email", 0.3, "Hey", "Thanks",
-             datetime.now(timezone.utc).isoformat())
+            (
+                "template-2",
+                "casual",
+                "contact-3",
+                "email",
+                0.3,
+                "Hey",
+                "Thanks",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     original = "Hey, wanna grab coffee sometime?"
     final = "Good morning, I would like to schedule a meeting regarding the project."
 
     await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final,
-        contact_id="contact-3",
-        channel="email"
+        original_draft=original, final_message=final, contact_id="contact-3", channel="email"
     )
 
     # Verify feedback context
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'draft'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'draft'").fetchone()
 
         context = json.loads(feedback["context"])
         assert context["formality_shift"] == "more_formal"
 
     # Verify template formality was increased
     with db.get_connection("user_model") as conn:
-        template = conn.execute(
-            "SELECT * FROM communication_templates WHERE id = ?",
-            ("template-2",)
-        ).fetchone()
+        template = conn.execute("SELECT * FROM communication_templates WHERE id = ?", ("template-2",)).fetchone()
 
         # Original was 0.3, should now be 0.35 (increased by 0.05)
         assert template["formality"] == 0.35
@@ -511,19 +529,15 @@ async def test_draft_length_change(db, user_model_store):
     collector = FeedbackCollector(db, user_model_store)
 
     original = "Quick update."
-    final = "Quick update on the project status. Everything is on track and we're making good progress toward the deadline."
-
-    await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final,
-        contact_id="contact-4"
+    final = (
+        "Quick update on the project status. Everything is on track and we're making good progress toward the deadline."
     )
+
+    await collector.process_draft_edit(original_draft=original, final_message=final, contact_id="contact-4")
 
     # Verify length change was captured
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'draft'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'draft'").fetchone()
 
         context = json.loads(feedback["context"])
         # User made it much longer
@@ -542,26 +556,28 @@ async def test_draft_template_formality_clamp_low(db, user_model_store):
             """INSERT INTO communication_templates
                (id, context, contact_id, channel, formality, greeting, closing, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("template-3", "very_casual", "contact-5", "sms", 0.02, "yo", "cya",
-             datetime.now(timezone.utc).isoformat())
+            (
+                "template-3",
+                "very_casual",
+                "contact-5",
+                "sms",
+                0.02,
+                "yo",
+                "cya",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     original = "Hello there"
     final = "hey lol"
 
     await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final,
-        contact_id="contact-5",
-        channel="sms"
+        original_draft=original, final_message=final, contact_id="contact-5", channel="sms"
     )
 
     # Verify formality clamped at 0.0
     with db.get_connection("user_model") as conn:
-        template = conn.execute(
-            "SELECT * FROM communication_templates WHERE id = ?",
-            ("template-3",)
-        ).fetchone()
+        template = conn.execute("SELECT * FROM communication_templates WHERE id = ?", ("template-3",)).fetchone()
 
         assert template["formality"] == 0.0
 
@@ -577,26 +593,28 @@ async def test_draft_template_formality_clamp_high(db, user_model_store):
             """INSERT INTO communication_templates
                (id, context, contact_id, channel, formality, greeting, closing, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            ("template-4", "formal", "contact-6", "email", 0.98, "Dear", "Sincerely",
-             datetime.now(timezone.utc).isoformat())
+            (
+                "template-4",
+                "formal",
+                "contact-6",
+                "email",
+                0.98,
+                "Dear",
+                "Sincerely",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     original = "hey"
     final = "Dear Sir, regarding your previous correspondence, please be advised..."
 
     await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final,
-        contact_id="contact-6",
-        channel="email"
+        original_draft=original, final_message=final, contact_id="contact-6", channel="email"
     )
 
     # Verify formality clamped at 1.0
     with db.get_connection("user_model") as conn:
-        template = conn.execute(
-            "SELECT * FROM communication_templates WHERE id = ?",
-            ("template-4",)
-        ).fetchone()
+        template = conn.execute("SELECT * FROM communication_templates WHERE id = ?", ("template-4",)).fetchone()
 
         assert template["formality"] == 1.0
 
@@ -613,14 +631,12 @@ async def test_draft_no_template_exists(db, user_model_store):
         original_draft=original,
         final_message=final,
         contact_id="contact-999",  # No template exists
-        channel="unknown"
+        channel="unknown",
     )
 
     # Verify feedback was still stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'draft'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'draft'").fetchone()
 
         assert feedback is not None
         context = json.loads(feedback["context"])
@@ -630,6 +646,7 @@ async def test_draft_no_template_exists(db, user_model_store):
 # -----------------------------------------------------------------------------
 # Suggestion Response Tests
 # -----------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_suggestion_accepted(db, user_model_store):
@@ -643,21 +660,21 @@ async def test_suggestion_accepted(db, user_model_store):
             """INSERT INTO predictions
                (id, prediction_type, description, confidence, confidence_gate, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (suggestion_id, "next_action", "Send email to John", 0.75, "default",
-             datetime.now(timezone.utc).isoformat())
+            (
+                suggestion_id,
+                "next_action",
+                "Send email to John",
+                0.75,
+                "default",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
-    await collector.process_suggestion_response(
-        suggestion_id=suggestion_id,
-        accepted=True
-    )
+    await collector.process_suggestion_response(suggestion_id=suggestion_id, accepted=True)
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (suggestion_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (suggestion_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.ENGAGED.value
@@ -667,10 +684,7 @@ async def test_suggestion_accepted(db, user_model_store):
 
     # Verify prediction was marked as accurate
     with db.get_connection("user_model") as conn:
-        prediction = conn.execute(
-            "SELECT * FROM predictions WHERE id = ?",
-            (suggestion_id,)
-        ).fetchone()
+        prediction = conn.execute("SELECT * FROM predictions WHERE id = ?", (suggestion_id,)).fetchone()
 
         assert prediction["user_response"] == "accepted"
         assert prediction["was_accurate"] == 1
@@ -689,22 +703,16 @@ async def test_suggestion_rejected_with_alternative(db, user_model_store):
             """INSERT INTO predictions
                (id, prediction_type, description, confidence, confidence_gate, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (suggestion_id, "next_action", "Call mom", 0.65, "suggest",
-             datetime.now(timezone.utc).isoformat())
+            (suggestion_id, "next_action", "Call mom", 0.65, "suggest", datetime.now(timezone.utc).isoformat()),
         )
 
     await collector.process_suggestion_response(
-        suggestion_id=suggestion_id,
-        accepted=False,
-        user_alternative="Send her a text instead"
+        suggestion_id=suggestion_id, accepted=False, user_alternative="Send her a text instead"
     )
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_id = ?",
-            (suggestion_id,)
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_id = ?", (suggestion_id,)).fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.OVERRIDDEN.value
@@ -715,10 +723,7 @@ async def test_suggestion_rejected_with_alternative(db, user_model_store):
 
     # Verify prediction was marked as inaccurate
     with db.get_connection("user_model") as conn:
-        prediction = conn.execute(
-            "SELECT * FROM predictions WHERE id = ?",
-            (suggestion_id,)
-        ).fetchone()
+        prediction = conn.execute("SELECT * FROM predictions WHERE id = ?", (suggestion_id,)).fetchone()
 
         assert prediction["user_response"] == "rejected"
         assert prediction["was_accurate"] == 0
@@ -727,6 +732,7 @@ async def test_suggestion_rejected_with_alternative(db, user_model_store):
 # -----------------------------------------------------------------------------
 # Explicit Feedback Tests
 # -----------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_explicit_positive_feedback(db, user_model_store):
@@ -739,9 +745,7 @@ async def test_explicit_positive_feedback(db, user_model_store):
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'explicit'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'explicit'").fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.EXPLICIT_POSITIVE.value
@@ -759,9 +763,7 @@ async def test_explicit_negative_feedback(db, user_model_store):
 
     # Verify feedback was stored
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'explicit'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'explicit'").fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.EXPLICIT_NEGATIVE.value
@@ -802,9 +804,7 @@ async def test_explicit_feedback_neutral_classification(db, user_model_store):
 
     # Verify feedback was stored as neutral (ENGAGED)
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'explicit'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'explicit'").fetchone()
 
         assert feedback is not None
         # No clear positive or negative words, defaults to ENGAGED
@@ -814,6 +814,7 @@ async def test_explicit_feedback_neutral_classification(db, user_model_store):
 # -----------------------------------------------------------------------------
 # Feedback Summary Tests
 # -----------------------------------------------------------------------------
+
 
 def test_feedback_summary_empty(db, user_model_store):
     """Test feedback summary with no data."""
@@ -836,23 +837,26 @@ async def test_feedback_summary_aggregated(db, user_model_store):
                 """INSERT INTO notifications
                    (id, priority, domain, title, body, status, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (f"notif-{i}", Priority.NORMAL.value, "email", f"Title {i}", f"Message {i}",
-                 "delivered", datetime.now(timezone.utc).isoformat())
+                (
+                    f"notif-{i}",
+                    Priority.NORMAL.value,
+                    "email",
+                    f"Title {i}",
+                    f"Message {i}",
+                    "delivered",
+                    datetime.now(timezone.utc).isoformat(),
+                ),
             )
 
     # Process 3 dismissals and 2 engagements
     for i in range(3):
         await collector.process_notification_response(
-            notification_id=f"notif-{i}",
-            response_type=FeedbackType.DISMISSED.value,
-            response_time_seconds=1.0
+            notification_id=f"notif-{i}", response_type=FeedbackType.DISMISSED.value, response_time_seconds=1.0
         )
 
     for i in range(3, 5):
         await collector.process_notification_response(
-            notification_id=f"notif-{i}",
-            response_type=FeedbackType.ENGAGED.value,
-            response_time_seconds=10.0
+            notification_id=f"notif-{i}", response_type=FeedbackType.ENGAGED.value, response_time_seconds=10.0
         )
 
     summary = collector.get_feedback_summary()
@@ -864,6 +868,7 @@ async def test_feedback_summary_aggregated(db, user_model_store):
 # -----------------------------------------------------------------------------
 # Edge Cases and Error Handling
 # -----------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_multiple_feedback_on_same_action(db, user_model_store):
@@ -877,28 +882,30 @@ async def test_multiple_feedback_on_same_action(db, user_model_store):
             """INSERT INTO notifications
                (id, priority, domain, title, body, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, Priority.HIGH.value, "task", "Test", "Test notification",
-             "delivered", datetime.now(timezone.utc).isoformat())
+            (
+                notif_id,
+                Priority.HIGH.value,
+                "task",
+                "Test",
+                "Test notification",
+                "delivered",
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     # Process multiple responses (edge case: user dismisses, then engages later)
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.DISMISSED.value,
-        response_time_seconds=1.0
+        notification_id=notif_id, response_type=FeedbackType.DISMISSED.value, response_time_seconds=1.0
     )
 
     await collector.process_notification_response(
-        notification_id=notif_id,
-        response_type=FeedbackType.ENGAGED.value,
-        response_time_seconds=300.0
+        notification_id=notif_id, response_type=FeedbackType.ENGAGED.value, response_time_seconds=300.0
     )
 
     # Both should be recorded
     with db.get_connection("preferences") as conn:
         feedback_count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM feedback_log WHERE action_id = ?",
-            (notif_id,)
+            "SELECT COUNT(*) as cnt FROM feedback_log WHERE action_id = ?", (notif_id,)
         ).fetchone()
 
         assert feedback_count["cnt"] == 2
@@ -915,9 +922,7 @@ async def test_feedback_with_empty_context(db, user_model_store):
 
     # Should still create feedback entry
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'explicit'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'explicit'").fetchone()
 
         assert feedback is not None
         context = json.loads(feedback["context"])
@@ -957,16 +962,11 @@ async def test_draft_edit_no_contact_or_channel(db, user_model_store):
     original = "Original text"
     final = "Edited text"
 
-    await collector.process_draft_edit(
-        original_draft=original,
-        final_message=final
-    )
+    await collector.process_draft_edit(original_draft=original, final_message=final)
 
     # Should still create feedback entry
     with db.get_connection("preferences") as conn:
-        feedback = conn.execute(
-            "SELECT * FROM feedback_log WHERE action_type = 'draft'"
-        ).fetchone()
+        feedback = conn.execute("SELECT * FROM feedback_log WHERE action_type = 'draft'").fetchone()
 
         assert feedback is not None
         assert feedback["feedback_type"] == FeedbackType.OVERRIDDEN.value

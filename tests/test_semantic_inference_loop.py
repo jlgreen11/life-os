@@ -22,10 +22,7 @@ from storage.user_model_store import UserModelStore
 def _set_samples(ums, profile_type, count):
     """Helper to manually set samples_count for a profile."""
     with ums.db.get_connection("user_model") as conn:
-        conn.execute(
-            "UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?",
-            (count, profile_type)
-        )
+        conn.execute("UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?", (count, profile_type))
 
 
 class TestSemanticInferenceLoop:
@@ -45,6 +42,7 @@ class TestSemanticInferenceLoop:
 
         # Create a mock inferrer with tracking
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.run_all_inference = mock_run_all_inference
 
@@ -105,6 +103,7 @@ class TestSemanticInferenceLoop:
 
         # Run inference
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_linguistic_profile()
 
@@ -112,9 +111,7 @@ class TestSemanticInferenceLoop:
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
         assert len(facts) > 0, "Expected at least one fact to be inferred"
 
-        formality_fact = next(
-            (f for f in facts if f["key"] == "communication_style_formality"), None
-        )
+        formality_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
         assert formality_fact is not None, "Expected formality fact to be created"
         assert formality_fact["value"] == "formal"
         assert formality_fact["confidence"] >= 0.5
@@ -160,14 +157,13 @@ class TestSemanticInferenceLoop:
 
         # Run inference first time
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_linguistic_profile()
 
         # Get initial confidence
         facts = user_model_store.get_semantic_facts()
-        initial_fact = next(
-            (f for f in facts if f["key"] == "communication_style_formality"), None
-        )
+        initial_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
         assert initial_fact is not None
         initial_confidence = initial_fact["confidence"]
         initial_times_confirmed = initial_fact["times_confirmed"]
@@ -177,19 +173,15 @@ class TestSemanticInferenceLoop:
 
         # Assert: Confidence increased, times_confirmed incremented
         facts = user_model_store.get_semantic_facts()
-        updated_fact = next(
-            (f for f in facts if f["key"] == "communication_style_formality"), None
-        )
+        updated_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
         assert updated_fact is not None
-        assert updated_fact["confidence"] > initial_confidence, \
-            "Confidence should increase on re-confirmation"
-        assert updated_fact["times_confirmed"] > initial_times_confirmed, \
+        assert updated_fact["confidence"] > initial_confidence, "Confidence should increase on re-confirmation"
+        assert updated_fact["times_confirmed"] > initial_times_confirmed, (
             "times_confirmed should increment on re-confirmation"
+        )
 
     @pytest.mark.asyncio
-    async def test_inference_handles_relationship_profile(
-        self, db: DatabaseManager, user_model_store: UserModelStore
-    ):
+    async def test_inference_handles_relationship_profile(self, db: DatabaseManager, user_model_store: UserModelStore):
         """Verify that relationship profile inference creates priority facts."""
         # Create episodes with fast response times
         for i in range(6):
@@ -261,17 +253,15 @@ class TestSemanticInferenceLoop:
 
         # Run inference
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_relationship_profile()
 
         # Assert: High priority fact was created for boss (30 >= 2x avg of 13.3)
         facts = user_model_store.get_semantic_facts()
-        priority_fact = next(
-            (f for f in facts if "relationship_priority_boss@company.com" in f["key"]), None
-        )
+        priority_fact = next((f for f in facts if "relationship_priority_boss@company.com" in f["key"]), None)
         assert priority_fact is not None, (
-            "Expected relationship_priority fact for boss@company.com "
-            "(interaction_count=30 >= 2x avg of 13.3)"
+            "Expected relationship_priority fact for boss@company.com (interaction_count=30 >= 2x avg of 13.3)"
         )
         assert priority_fact["value"] == "high_priority"
         assert priority_fact["confidence"] >= 0.6
@@ -319,9 +309,7 @@ class TestSemanticInferenceLoop:
         assert error_count == 1, "Error should have occurred once"
 
     @pytest.mark.asyncio
-    async def test_inference_skips_when_insufficient_data(
-        self, db: DatabaseManager, user_model_store: UserModelStore
-    ):
+    async def test_inference_skips_when_insufficient_data(self, db: DatabaseManager, user_model_store: UserModelStore):
         """Verify that inference skips profiles with too few samples."""
         # Create linguistic profile with only 5 samples (threshold is 20)
         profile_data = {
@@ -333,19 +321,17 @@ class TestSemanticInferenceLoop:
 
         # Run inference
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_linguistic_profile()
 
         # Assert: No facts were created (insufficient samples)
         facts = user_model_store.get_semantic_facts()
         formality_facts = [f for f in facts if "formality" in f["key"]]
-        assert len(formality_facts) == 0, \
-            "Should not infer facts from profiles with insufficient samples"
+        assert len(formality_facts) == 0, "Should not infer facts from profiles with insufficient samples"
 
     @pytest.mark.asyncio
-    async def test_episode_query_helper_filters_correctly(
-        self, db: DatabaseManager, user_model_store: UserModelStore
-    ):
+    async def test_episode_query_helper_filters_correctly(self, db: DatabaseManager, user_model_store: UserModelStore):
         """Verify that _get_recent_episodes filters by interaction type and contact."""
         # Create mixed episodes
         episodes = [
@@ -393,6 +379,7 @@ class TestSemanticInferenceLoop:
 
         # Test the helper method
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
 
         # Filter by interaction type
@@ -405,17 +392,12 @@ class TestSemanticInferenceLoop:
         assert alice_episodes[0] == "ep-comm-1"
 
         # Combined filters
-        bob_comm = inferrer._get_recent_episodes(
-            interaction_type="communication",
-            contact="bob@example.com"
-        )
+        bob_comm = inferrer._get_recent_episodes(interaction_type="communication", contact="bob@example.com")
         assert len(bob_comm) == 1
         assert bob_comm[0] == "ep-comm-2"
 
     @pytest.mark.asyncio
-    async def test_inference_creates_multiple_fact_types(
-        self, db: DatabaseManager, user_model_store: UserModelStore
-    ):
+    async def test_inference_creates_multiple_fact_types(self, db: DatabaseManager, user_model_store: UserModelStore):
         """Verify that a single profile can generate multiple fact types."""
         # Create episode
         episode = {
@@ -443,7 +425,8 @@ class TestSemanticInferenceLoop:
             "samples": [
                 {"formality": 0.2, "exclamation_rate": 0.8},
                 {"formality": 0.15, "exclamation_rate": 0.9},
-            ] * 15,  # 30 samples
+            ]
+            * 15,  # 30 samples
             "averages": {
                 "formality": 0.175,  # Very casual (< 0.3)
                 "exclamation_rate": 0.85,  # Very enthusiastic (> 0.3)
@@ -454,6 +437,7 @@ class TestSemanticInferenceLoop:
 
         # Run inference
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_linguistic_profile()
 
@@ -461,10 +445,8 @@ class TestSemanticInferenceLoop:
         facts = user_model_store.get_semantic_facts()
         fact_keys = [f["key"] for f in facts]
 
-        assert "communication_style_formality" in fact_keys, \
-            "Should infer formality preference"
-        assert "communication_style_enthusiasm" in fact_keys, \
-            "Should infer enthusiasm preference"
+        assert "communication_style_formality" in fact_keys, "Should infer formality preference"
+        assert "communication_style_enthusiasm" in fact_keys, "Should infer enthusiasm preference"
 
     @pytest.mark.asyncio
     async def test_inference_respects_confidence_thresholds(
@@ -473,24 +455,26 @@ class TestSemanticInferenceLoop:
         """Verify that facts are created with appropriate confidence levels."""
         # Create episodes
         for i in range(3):
-            user_model_store.store_episode({
-                "id": f"ep-conf-{i}",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "event_id": f"evt-conf-{i}",
-                "location": None,
-                "inferred_mood": None,
-                "active_domain": "personal",
-                "energy_level": None,
-                "interaction_type": "communication",
-                "content_summary": f"Test {i}",
-                "content_full": "{}",
-                "contacts_involved": [],
-                "topics": [],
-                "entities": [],
-                "outcome": None,
-                "user_satisfaction": None,
-                "embedding_id": None,
-            })
+            user_model_store.store_episode(
+                {
+                    "id": f"ep-conf-{i}",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "event_id": f"evt-conf-{i}",
+                    "location": None,
+                    "inferred_mood": None,
+                    "active_domain": "personal",
+                    "energy_level": None,
+                    "interaction_type": "communication",
+                    "content_summary": f"Test {i}",
+                    "content_full": "{}",
+                    "contacts_involved": [],
+                    "topics": [],
+                    "entities": [],
+                    "outcome": None,
+                    "user_satisfaction": None,
+                    "embedding_id": None,
+                }
+            )
 
         # Create profile with extreme formality (should produce high confidence)
         profile_data = {
@@ -502,14 +486,12 @@ class TestSemanticInferenceLoop:
 
         # Run inference
         from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
+
         inferrer = SemanticFactInferrer(user_model_store)
         inferrer.infer_from_linguistic_profile()
 
         # Assert: Fact has high confidence (extreme signal + many samples)
         facts = user_model_store.get_semantic_facts()
-        formality_fact = next(
-            (f for f in facts if f["key"] == "communication_style_formality"), None
-        )
+        formality_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
         assert formality_fact is not None
-        assert formality_fact["confidence"] >= 0.7, \
-            "Extreme signals with many samples should produce high confidence"
+        assert formality_fact["confidence"] >= 0.7, "Extreme signals with many samples should produce high confidence"

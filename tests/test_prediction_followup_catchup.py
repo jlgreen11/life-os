@@ -29,19 +29,21 @@ async def test_first_cycle_catches_emails_older_than_24h(db, event_store, user_m
 
     # Insert an email from 36 hours ago — outside the old 24h window
     # but inside the new 72h first-run window
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=36)).isoformat(),
-        "payload": {
-            "from_address": "boss@company.com",
-            "subject": "Quarterly review prep",
-            "snippet": "Please prepare the deck by Friday",
-            "message_id": "msg-36h-old",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=36)).isoformat(),
+            "payload": {
+                "from_address": "boss@company.com",
+                "subject": "Quarterly review prep",
+                "snippet": "Please prepare the deck by Friday",
+                "message_id": "msg-36h-old",
+            },
+            "metadata": {},
+        }
+    )
 
     # First run should use 72h lookback and find this email
     predictions = await engine._check_follow_up_needs({})
@@ -56,19 +58,21 @@ async def test_first_cycle_catches_emails_at_boundary(db, event_store, user_mode
     engine = PredictionEngine(db, user_model_store)
     now = datetime.now(timezone.utc)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=70)).isoformat(),
-        "payload": {
-            "from_address": "colleague@work.com",
-            "subject": "Can you review my PR?",
-            "snippet": "I need your eyes on this",
-            "message_id": "msg-70h-old",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=70)).isoformat(),
+            "payload": {
+                "from_address": "colleague@work.com",
+                "subject": "Can you review my PR?",
+                "snippet": "I need your eyes on this",
+                "message_id": "msg-70h-old",
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_follow_up_needs({})
     assert len(predictions) >= 1, "First cycle should catch emails up to 72h old"
@@ -86,32 +90,36 @@ async def test_subsequent_cycle_uses_24h_lookback(db, event_store, user_model_st
     now = datetime.now(timezone.utc)
 
     # Insert an email from 36 hours ago
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=36)).isoformat(),
-        "payload": {
-            "from_address": "old-email@company.com",
-            "subject": "Old thread",
-            "message_id": "msg-old-thread",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=36)).isoformat(),
+            "payload": {
+                "from_address": "old-email@company.com",
+                "subject": "Old thread",
+                "message_id": "msg-old-thread",
+            },
+            "metadata": {},
+        }
+    )
 
     # Also insert a recent email (6h ago) for the second cycle to find
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "recent@company.com",
-            "subject": "Recent question",
-            "message_id": "msg-recent",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "recent@company.com",
+                "subject": "Recent question",
+                "message_id": "msg-recent",
+            },
+            "metadata": {},
+        }
+    )
 
     # First cycle: uses 72h lookback — finds both emails
     first_preds = await engine._check_follow_up_needs({})
@@ -122,18 +130,20 @@ async def test_subsequent_cycle_uses_24h_lookback(db, event_store, user_model_st
     # Second cycle: uses 24h lookback — only finds recent email
     # But dedup already caught recent@company.com, so no NEW predictions
     # To test the lookback properly, add a new email in the 24h window
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=5)).isoformat(),
-        "payload": {
-            "from_address": "another-recent@company.com",
-            "subject": "Another question",
-            "message_id": "msg-another-recent",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=5)).isoformat(),
+            "payload": {
+                "from_address": "another-recent@company.com",
+                "subject": "Another question",
+                "message_id": "msg-another-recent",
+            },
+            "metadata": {},
+        }
+    )
 
     # Verify the flag was consumed
     assert engine._first_follow_up_run is False, "Flag should be False after first cycle"
@@ -141,13 +151,9 @@ async def test_subsequent_cycle_uses_24h_lookback(db, event_store, user_model_st
     second_preds = await engine._check_follow_up_needs({})
     second_contacts = {p.relevant_contacts[0] for p in second_preds}
     # The 36h-old email should NOT appear in second cycle (outside 24h window)
-    assert "old-email@company.com" not in second_contacts, (
-        "Second cycle should NOT find emails outside 24h window"
-    )
+    assert "old-email@company.com" not in second_contacts, "Second cycle should NOT find emails outside 24h window"
     # The new recent email should be found
-    assert "another-recent@company.com" in second_contacts, (
-        "Second cycle should find emails within 24h window"
-    )
+    assert "another-recent@company.com" in second_contacts, "Second cycle should find emails within 24h window"
 
 
 # -------------------------------------------------------------------------
@@ -162,19 +168,21 @@ async def test_followup_runs_on_time_trigger_without_new_events(db, event_store,
     now = datetime.now(timezone.utc)
 
     # Insert an unreplied email old enough to trigger (6 hours)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "boss@company.com",
-            "subject": "Need your input",
-            "snippet": "Please review the proposal",
-            "message_id": "msg-time-trigger-test",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "boss@company.com",
+                "subject": "Need your input",
+                "snippet": "Please review the proposal",
+                "message_id": "msg-time-trigger-test",
+            },
+            "metadata": {},
+        }
+    )
 
     # First call to generate_predictions sets the cursor and runs
     first_preds = await engine.generate_predictions({})
@@ -195,19 +203,21 @@ async def test_followup_runs_on_time_trigger_without_new_events(db, event_store,
 
     # Add a NEW unreplied email (within 24h, but not as a new cursor event)
     # We need to insert directly to avoid advancing the cursor
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=4)).isoformat(),
-        "payload": {
-            "from_address": "teammate@company.com",
-            "subject": "Sprint planning",
-            "snippet": "What do you think about the timeline?",
-            "message_id": "msg-time-trigger-test-2",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=4)).isoformat(),
+            "payload": {
+                "from_address": "teammate@company.com",
+                "subject": "Sprint planning",
+                "snippet": "What do you think about the timeline?",
+                "message_id": "msg-time-trigger-test-2",
+            },
+            "metadata": {},
+        }
+    )
 
     # Reset time trigger again so it fires
     engine._last_time_based_run = now - timedelta(minutes=20)
@@ -216,9 +226,7 @@ async def test_followup_runs_on_time_trigger_without_new_events(db, event_store,
     # (time_based_due=True but has_new_events may vary due to cursor)
     second_preds = await engine.generate_predictions({})
     # The new email should generate a prediction
-    followup_contacts = [
-        p.relevant_contacts[0] for p in second_preds if p.prediction_type == "reminder"
-    ]
+    followup_contacts = [p.relevant_contacts[0] for p in second_preds if p.prediction_type == "reminder"]
     assert "teammate@company.com" in followup_contacts, (
         "Follow-up should run on time-based trigger and find new unreplied email"
     )
@@ -236,19 +244,21 @@ async def test_deduplication_prevents_duplicates_across_cycles(db, event_store, 
     now = datetime.now(timezone.utc)
 
     # Insert an unreplied email
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "boss@company.com",
-            "subject": "Action needed",
-            "snippet": "Can you handle this?",
-            "message_id": "msg-dedup-test",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "boss@company.com",
+                "subject": "Action needed",
+                "snippet": "Can you handle this?",
+                "message_id": "msg-dedup-test",
+            },
+            "metadata": {},
+        }
+    )
 
     # First cycle: should produce a prediction
     first_preds = await engine.generate_predictions({})
@@ -267,9 +277,7 @@ async def test_deduplication_prevents_duplicates_across_cycles(db, event_store, 
         for p in second_followups
         if p.supporting_signals and p.supporting_signals.get("message_id") == "msg-dedup-test"
     ]
-    assert len(dedup_contacts) == 0, (
-        "Deduplication should prevent the same email from generating a second prediction"
-    )
+    assert len(dedup_contacts) == 0, "Deduplication should prevent the same email from generating a second prediction"
 
 
 @pytest.mark.asyncio
@@ -279,31 +287,35 @@ async def test_deduplication_allows_different_messages(db, event_store, user_mod
     now = datetime.now(timezone.utc)
 
     # Insert two different unreplied emails
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "alice@company.com",
-            "subject": "Budget review",
-            "message_id": "msg-alice-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "alice@company.com",
+                "subject": "Budget review",
+                "message_id": "msg-alice-1",
+            },
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=5)).isoformat(),
-        "payload": {
-            "from_address": "bob@company.com",
-            "subject": "Design feedback",
-            "message_id": "msg-bob-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=5)).isoformat(),
+            "payload": {
+                "from_address": "bob@company.com",
+                "subject": "Design feedback",
+                "message_id": "msg-bob-1",
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_follow_up_needs({})
     contacts = {p.relevant_contacts[0] for p in predictions}

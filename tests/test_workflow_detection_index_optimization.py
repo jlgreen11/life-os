@@ -56,66 +56,76 @@ def populated_db(db):
     for i in range(1000):
         timestamp = base_time + timedelta(hours=i * 0.72)  # ~30 per day
         sender = senders[i % len(senders)]
-        events.append({
-            "id": f"email-received-{i}",
-            "type": "email.received",
-            "source": "email",
-            "timestamp": timestamp.isoformat(),
-            "payload": {
-                "from_address": sender,
-                "subject": f"Test email {i}",
-                "body": "Test content",
-            },
-        })
+        events.append(
+            {
+                "id": f"email-received-{i}",
+                "type": "email.received",
+                "source": "email",
+                "timestamp": timestamp.isoformat(),
+                "payload": {
+                    "from_address": sender,
+                    "subject": f"Test email {i}",
+                    "body": "Test content",
+                },
+            }
+        )
 
     # 100 email.sent events (responses to received emails)
     for i in range(100):
         timestamp = base_time + timedelta(hours=i * 7.2 + 2)  # 2 hours after received
         recipient = senders[i % len(senders)]
-        events.append({
-            "id": f"email-sent-{i}",
-            "type": "email.sent",
-            "source": "email",
-            "timestamp": timestamp.isoformat(),
-            "payload": {
-                "from_address": "user@example.com",
-                "to_addresses": recipient,
-                "subject": f"Re: Test email {i}",
-            },
-        })
+        events.append(
+            {
+                "id": f"email-sent-{i}",
+                "type": "email.sent",
+                "source": "email",
+                "timestamp": timestamp.isoformat(),
+                "payload": {
+                    "from_address": "user@example.com",
+                    "to_addresses": recipient,
+                    "subject": f"Re: Test email {i}",
+                },
+            }
+        )
 
     # 50 task.created events
     for i in range(50):
         timestamp = base_time + timedelta(hours=i * 14.4)  # ~2 per day
-        events.append({
-            "id": f"task-{i}",
-            "type": "task.created",
-            "source": "task_manager",
-            "timestamp": timestamp.isoformat(),
-            "payload": {"task_id": f"task-{i}", "title": f"Task {i}"},
-        })
+        events.append(
+            {
+                "id": f"task-{i}",
+                "type": "task.created",
+                "source": "task_manager",
+                "timestamp": timestamp.isoformat(),
+                "payload": {"task_id": f"task-{i}", "title": f"Task {i}"},
+            }
+        )
 
     # 50 calendar.event.created events
     for i in range(50):
         timestamp = base_time + timedelta(hours=i * 14.4)  # ~2 per day
-        events.append({
-            "id": f"calendar-{i}",
-            "type": "calendar.event.created",
-            "source": "calendar",
-            "timestamp": timestamp.isoformat(),
-            "payload": {"event_id": f"cal-{i}", "title": f"Meeting {i}"},
-        })
+        events.append(
+            {
+                "id": f"calendar-{i}",
+                "type": "calendar.event.created",
+                "source": "calendar",
+                "timestamp": timestamp.isoformat(),
+                "payload": {"event_id": f"cal-{i}", "title": f"Meeting {i}"},
+            }
+        )
 
     # 50 message.sent events
     for i in range(50):
         timestamp = base_time + timedelta(hours=i * 14.4)  # ~2 per day
-        events.append({
-            "id": f"message-{i}",
-            "type": "message.sent",
-            "source": "messaging",
-            "timestamp": timestamp.isoformat(),
-            "payload": {"content": f"Message {i}"},
-        })
+        events.append(
+            {
+                "id": f"message-{i}",
+                "type": "message.sent",
+                "source": "messaging",
+                "timestamp": timestamp.isoformat(),
+                "payload": {"content": f"Message {i}"},
+            }
+        )
 
     # Insert all events
     event_store = EventStore(db)
@@ -162,7 +172,8 @@ def test_email_workflow_query_uses_index(populated_db):
 
     with populated_db.get_connection("events") as conn:
         # Get query plan for email workflow query
-        plan = conn.execute("""
+        plan = conn.execute(
+            """
             EXPLAIN QUERY PLAN
             SELECT id, type, timestamp, email_from, email_to
             FROM events
@@ -174,19 +185,21 @@ def test_email_workflow_query_uses_index(populated_db):
                   OR type != 'email.received'
               )
             ORDER BY timestamp ASC
-        """, (cutoff,)).fetchall()
+        """,
+            (cutoff,),
+        ).fetchall()
 
         # Convert Row objects to dicts for string comparison
         plan_text = "\n".join([" ".join([str(v) for v in dict(row).values()]) for row in plan])
 
         # The query plan should use an index (not SCAN TABLE)
         # SQLite may use idx_events_type or one of the composite indexes depending on selectivity
-        assert "SCAN TABLE" not in plan_text, \
-            f"Query should use an index (not full table scan), got plan: {plan_text}"
+        assert "SCAN TABLE" not in plan_text, f"Query should use an index (not full table scan), got plan: {plan_text}"
 
         # Should use some form of index access (SEARCH or USING INDEX)
-        assert "SEARCH" in plan_text or "USING INDEX" in plan_text, \
+        assert "SEARCH" in plan_text or "USING INDEX" in plan_text, (
             f"Query should use index-based access, got plan: {plan_text}"
+        )
 
 
 def test_email_workflow_query_performance(populated_db):
@@ -195,7 +208,8 @@ def test_email_workflow_query_performance(populated_db):
 
     with populated_db.get_connection("events") as conn:
         start = time.time()
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT id, type, timestamp, email_from, email_to
             FROM events
             WHERE julianday(timestamp) > julianday(?)
@@ -206,7 +220,9 @@ def test_email_workflow_query_performance(populated_db):
                   OR type != 'email.received'
               )
             ORDER BY timestamp ASC
-        """, (cutoff,))
+        """,
+            (cutoff,),
+        )
         rows = cursor.fetchall()
         elapsed = time.time() - start
 
@@ -222,14 +238,17 @@ def test_task_workflow_query_performance(populated_db):
 
     with populated_db.get_connection("events") as conn:
         start = time.time()
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT id, type, timestamp, task_id
             FROM events
             WHERE julianday(timestamp) > julianday(?)
               AND type IN ('task.created', 'email.sent', 'email.received',
                            'calendar.event.created', 'message.sent', 'task.completed')
             ORDER BY timestamp ASC
-        """, (cutoff,))
+        """,
+            (cutoff,),
+        )
         rows = cursor.fetchall()
         elapsed = time.time() - start
 
@@ -243,14 +262,17 @@ def test_calendar_workflow_query_performance(populated_db):
 
     with populated_db.get_connection("events") as conn:
         start = time.time()
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT id, type, timestamp, calendar_event_id
             FROM events
             WHERE julianday(timestamp) > julianday(?)
               AND type IN ('calendar.event.created', 'email.received', 'email.sent',
                            'task.created', 'message.sent')
             ORDER BY timestamp ASC
-        """, (cutoff,))
+        """,
+            (cutoff,),
+        )
         rows = cursor.fetchall()
         elapsed = time.time() - start
 
@@ -298,8 +320,7 @@ def test_index_size_is_reasonable(populated_db):
             # Composite indexes should be reasonable (not bloating the database).
             # On our test dataset (1.25K events), 228KB for 4 composite indexes is reasonable.
             # Real production (800K events): indexes are ~50MB vs. 500MB table = 10%, which is fine.
-            assert total_index_size_kb < 500, \
-                f"Composite indexes are too large: {total_index_size_kb:.1f}KB"
+            assert total_index_size_kb < 500, f"Composite indexes are too large: {total_index_size_kb:.1f}KB"
 
 
 def test_migration_is_idempotent(db):
@@ -365,8 +386,9 @@ def test_composite_indexes_with_partial_filter(populated_db):
             WHERE type = 'index' AND name = 'idx_events_type_timestamp_email_from'
         """).fetchone()
 
-        assert "WHERE type IN ('email.received', 'email.sent')" in index_sql[0], \
+        assert "WHERE type IN ('email.received', 'email.sent')" in index_sql[0], (
             "Index should have partial filter for email types only"
+        )
 
 
 def test_backward_compatibility_with_v2(tmp_path):

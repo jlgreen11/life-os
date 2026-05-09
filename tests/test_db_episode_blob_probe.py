@@ -112,15 +112,10 @@ def test_blob_probes_use_sum_length_not_limit():
         # Extract individual SQL strings (double-quoted)
         sql_strings = re.findall(r'"([^"]+)"', probes_block)
 
-        assert len(sql_strings) >= 7, (
-            f"{method_name}() should have at least 7 blob probes, found {len(sql_strings)}"
-        )
+        assert len(sql_strings) >= 7, f"{method_name}() should have at least 7 blob probes, found {len(sql_strings)}"
 
         for sql in sql_strings:
             assert "LIMIT 1" not in sql, (
-                f"{method_name}() blob_probes contains LIMIT 1: {sql!r}; "
-                "use SUM(LENGTH()) to read all overflow pages"
+                f"{method_name}() blob_probes contains LIMIT 1: {sql!r}; use SUM(LENGTH()) to read all overflow pages"
             )
-            assert "SUM(LENGTH(" in sql, (
-                f"{method_name}() blob_probes missing SUM(LENGTH()): {sql!r}"
-            )
+            assert "SUM(LENGTH(" in sql, f"{method_name}() blob_probes missing SUM(LENGTH()): {sql!r}"

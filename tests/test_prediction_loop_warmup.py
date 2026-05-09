@@ -56,9 +56,7 @@ def _make_lifeos_stub(**overrides):
     stub.semantic_fact_inferrer.run_all_inference = MagicMock()
 
     stub.behavioral_tracker = MagicMock()
-    stub.behavioral_tracker.run_inference_cycle = AsyncMock(
-        return_value={"marked_accurate": 0, "marked_inaccurate": 0}
-    )
+    stub.behavioral_tracker.run_inference_cycle = AsyncMock(return_value={"marked_accurate": 0, "marked_inaccurate": 0})
 
     stub.event_bus = MagicMock()
     stub.event_bus.publish = AsyncMock()
@@ -227,8 +225,9 @@ class TestBehavioralAccuracyLoopWarmup:
 # ---------------------------------------------------------------------------
 
 
-def _insert_task(db, task_id=None, title="Test task", status="pending",
-                 due_date=None, priority="normal", domain="personal"):
+def _insert_task(
+    db, task_id=None, title="Test task", status="pending", due_date=None, priority="normal", domain="personal"
+):
     """Helper to insert a task row directly into the state database."""
     if task_id is None:
         task_id = str(uuid.uuid4())
@@ -251,8 +250,7 @@ class TestTaskOverdueLoopNATSResilience:
     async def test_notification_created_when_publish_raises(self, db, event_bus):
         """When event_bus.publish raises, the notification should still be created."""
         past_due = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-        task_id = _insert_task(db, title="Overdue report", due_date=past_due,
-                               priority="high", domain="work")
+        task_id = _insert_task(db, title="Overdue report", due_date=past_due, priority="high", domain="work")
 
         task_manager = TaskManager(db, event_bus=MagicMock(), ai_engine=None)
         mock_notification_mgr = MagicMock(spec=NotificationManager)
@@ -292,8 +290,7 @@ class TestTaskOverdueLoopNATSResilience:
     async def test_notification_still_created_on_nats_timeout(self, db, event_bus):
         """A NATS timeout should not prevent the overdue notification from being created."""
         past_due = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        task_id = _insert_task(db, title="Call client", due_date=past_due,
-                               priority="normal", domain="personal")
+        task_id = _insert_task(db, title="Call client", due_date=past_due, priority="normal", domain="personal")
 
         task_manager = TaskManager(db, event_bus=MagicMock(), ai_engine=None)
         mock_notification_mgr = MagicMock(spec=NotificationManager)
@@ -359,8 +356,7 @@ class TestTaskOverdueLoopNATSResilience:
     async def test_happy_path_both_publish_and_notification(self, db, event_bus):
         """When NATS is healthy, both the event and notification should succeed."""
         past_due = (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()
-        task_id = _insert_task(db, title="Submit timesheet", due_date=past_due,
-                               priority="high", domain="work")
+        task_id = _insert_task(db, title="Submit timesheet", due_date=past_due, priority="high", domain="work")
 
         task_manager = TaskManager(db, event_bus=MagicMock(), ai_engine=None)
         mock_notification_mgr = MagicMock(spec=NotificationManager)

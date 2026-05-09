@@ -56,9 +56,7 @@ class TestReactionPredictionBaseline:
         assert "score=" in reaction.reasoning
 
     @pytest.mark.asyncio
-    async def test_high_confidence_boosts_score(
-        self, prediction_engine: PredictionEngine
-    ):
+    async def test_high_confidence_boosts_score(self, prediction_engine: PredictionEngine):
         """High-confidence predictions should get a score boost."""
         # Create a fresh prediction with high confidence
         high_conf_prediction = Prediction(
@@ -161,7 +159,13 @@ class TestReactionPredictionDismissalFatigue:
                 conn.execute(
                     """INSERT INTO feedback_log (id, action_id, action_type, feedback_type, timestamp)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (f"dismiss-{i}", f"event-{i}", "notification", "dismissed", (now - timedelta(minutes=30)).isoformat()),
+                    (
+                        f"dismiss-{i}",
+                        f"event-{i}",
+                        "notification",
+                        "dismissed",
+                        (now - timedelta(minutes=30)).isoformat(),
+                    ),
                 )
 
         reaction = await prediction_engine.predict_reaction(base_prediction, {})
@@ -183,7 +187,13 @@ class TestReactionPredictionDismissalFatigue:
                 conn.execute(
                     """INSERT INTO feedback_log (id, action_id, action_type, feedback_type, timestamp)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (f"dismiss-{i}", f"event-{i}", "notification", "dismissed", (now - timedelta(minutes=30)).isoformat()),
+                    (
+                        f"dismiss-{i}",
+                        f"event-{i}",
+                        "notification",
+                        "dismissed",
+                        (now - timedelta(minutes=30)).isoformat(),
+                    ),
                 )
 
         reaction = await prediction_engine.predict_reaction(base_prediction, {})
@@ -199,9 +209,7 @@ class TestReactionPredictionUrgency:
     """Test urgency-based scoring."""
 
     @pytest.mark.asyncio
-    async def test_conflict_gets_urgency_boost(
-        self, prediction_engine: PredictionEngine, base_prediction: Prediction
-    ):
+    async def test_conflict_gets_urgency_boost(self, prediction_engine: PredictionEngine, base_prediction: Prediction):
         """Conflict predictions should get an urgency boost."""
         base_prediction.prediction_type = "conflict"
 
@@ -214,9 +222,7 @@ class TestReactionPredictionUrgency:
         assert score > 0.3
 
     @pytest.mark.asyncio
-    async def test_risk_gets_urgency_boost(
-        self, prediction_engine: PredictionEngine, base_prediction: Prediction
-    ):
+    async def test_risk_gets_urgency_boost(self, prediction_engine: PredictionEngine, base_prediction: Prediction):
         """Risk predictions should get an urgency boost."""
         base_prediction.prediction_type = "risk"
 
@@ -258,7 +264,9 @@ class TestReactionPredictionTimeOfDay:
             # Mock 2pm UTC
             return datetime(2026, 2, 16, 14, 0, 0, tzinfo=timezone.utc)
 
-        monkeypatch.setattr("services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()}))
+        monkeypatch.setattr(
+            "services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()})
+        )
 
         reaction = await prediction_engine.predict_reaction(base_prediction, {})
 
@@ -286,7 +294,9 @@ class TestReactionPredictionTimeOfDay:
             # Mock 5am UTC — no quiet hours configured
             return datetime(2026, 2, 16, 5, 0, 0, tzinfo=timezone.utc)
 
-        monkeypatch.setattr("services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()}))
+        monkeypatch.setattr(
+            "services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()})
+        )
 
         reaction = await prediction_engine.predict_reaction(base_prediction, {})
 
@@ -309,7 +319,9 @@ class TestReactionPredictionTimeOfDay:
             # Mock 11pm UTC
             return datetime(2026, 2, 16, 23, 0, 0, tzinfo=timezone.utc)
 
-        monkeypatch.setattr("services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()}))
+        monkeypatch.setattr(
+            "services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()})
+        )
 
         # Make it a risk prediction (urgent)
         base_prediction.prediction_type = "risk"
@@ -324,9 +336,7 @@ class TestReactionPredictionScoreClassification:
     """Test score-to-label classification."""
 
     @pytest.mark.asyncio
-    async def test_high_score_is_helpful(
-        self, prediction_engine: PredictionEngine, base_prediction: Prediction
-    ):
+    async def test_high_score_is_helpful(self, prediction_engine: PredictionEngine, base_prediction: Prediction):
         """Scores above 0.3 should be classified as 'helpful'."""
         # High confidence + risk urgency should push score high
         base_prediction.confidence = 0.9
@@ -395,14 +405,22 @@ class TestReactionPredictionScoreClassification:
                 conn.execute(
                     """INSERT INTO feedback_log (id, action_id, action_type, feedback_type, timestamp)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (f"dismiss-{i}", f"event-{i}", "notification", "dismissed", (now - timedelta(minutes=30)).isoformat()),
+                    (
+                        f"dismiss-{i}",
+                        f"event-{i}",
+                        "notification",
+                        "dismissed",
+                        (now - timedelta(minutes=30)).isoformat(),
+                    ),
                 )
 
         # Mock late night
         def mock_now():
             return datetime(2026, 2, 16, 23, 0, 0, tzinfo=timezone.utc)
 
-        monkeypatch.setattr("services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()}))
+        monkeypatch.setattr(
+            "services.prediction_engine.engine.datetime", type("datetime", (), {"now": lambda tz: mock_now()})
+        )
 
         reaction = await prediction_engine.predict_reaction(base_prediction, {})
 
@@ -425,9 +443,7 @@ class TestReactionPredictionCalibrationRegression:
     """
 
     @pytest.mark.asyncio
-    async def test_most_predictions_should_surface(
-        self, prediction_engine: PredictionEngine
-    ):
+    async def test_most_predictions_should_surface(self, prediction_engine: PredictionEngine):
         """
         Test that a variety of typical predictions surface instead of
         being suppressed.
@@ -461,4 +477,4 @@ class TestReactionPredictionCalibrationRegression:
 
         # At least 80% should surface (vs. the original 0.045%)
         surface_rate = surfaced_count / len(test_cases)
-        assert surface_rate >= 0.8, f"Only {surface_rate*100:.1f}% surfaced, expected ≥80%"
+        assert surface_rate >= 0.8, f"Only {surface_rate * 100:.1f}% surfaced, expected ≥80%"

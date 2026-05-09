@@ -191,7 +191,7 @@ class TestAssembleBriefingContext:
         context = assembler.assemble_briefing_context()
 
         # Extract task section
-        task_section = context[context.find("Pending tasks:"):]
+        task_section = context[context.find("Pending tasks:") :]
         # Critical should appear before high
         assert task_section.find("Task critical") < task_section.find("Task high")
         # High should appear before normal
@@ -314,11 +314,8 @@ class TestAssembleBriefingContext:
         context = assembler.assemble_briefing_context()
 
         # Count fact lines in the semantic section (each starts with "  - ")
-        facts_section = context[context.find("Layer 2 Semantic Memory"):]
-        fact_lines = [
-            line for line in facts_section.split("\n")
-            if line.strip().startswith("- fact_")
-        ]
+        facts_section = context[context.find("Layer 2 Semantic Memory") :]
+        fact_lines = [line for line in facts_section.split("\n") if line.strip().startswith("- fact_")]
         assert len(fact_lines) <= 18
 
     def test_briefing_includes_mood_signals(self, db, user_model_store):
@@ -525,11 +522,7 @@ class TestAssembleDraftContext:
         # Create relationship profile
         user_model_store.update_signal_profile(
             profile_type="relationships",
-            data={
-                "contacts": {
-                    "dave@client.com": {"interaction_count": 150, "last_contact": "2026-02-14"}
-                }
-            },
+            data={"contacts": {"dave@client.com": {"interaction_count": 150, "last_contact": "2026-02-14"}}},
         )
 
         assembler = ContextAssembler(db, user_model_store)
@@ -835,9 +828,7 @@ class TestPrivateHelpers:
         count = int(first_line.split("Messages in last 12 hours: ")[1])
         assert count == 1
 
-    def test_unread_context_shows_priority_contact_breakdown(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_shows_priority_contact_breakdown(self, db, user_model_store, event_store):
         """Should show priority contact breakdown when relationships profile exists.
 
         A priority contact is one with outbound_count >= 3, meaning the user
@@ -905,9 +896,7 @@ class TestPrivateHelpers:
         # Non-priority automated sender should NOT be called out as priority
         assert "noreply@automated.com" not in result.split("From priority contacts:")[1]
 
-    def test_unread_context_no_breakdown_for_inbound_only_contacts(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_no_breakdown_for_inbound_only_contacts(self, db, user_model_store, event_store):
         """Contacts with outbound_count < 3 should not appear in priority breakdown.
 
         If the user has never written back to a contact (or has done so fewer
@@ -948,9 +937,7 @@ class TestPrivateHelpers:
         # No priority breakdown should appear for below-threshold contacts
         assert "From priority contacts:" not in result
 
-    def test_unread_context_multiple_priority_contacts_sorted_by_count(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_multiple_priority_contacts_sorted_by_count(self, db, user_model_store, event_store):
         """Multiple priority contacts should appear sorted by message count (desc)."""
         now = datetime.now(timezone.utc)
 
@@ -1006,9 +993,7 @@ class TestPrivateHelpers:
         # No "other senders" line when all messages are from priority contacts
         assert "From other senders:" not in result
 
-    def test_unread_context_no_breakdown_without_relationships_profile(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_no_breakdown_without_relationships_profile(self, db, user_model_store, event_store):
         """Should degrade gracefully to count-only when no relationships profile exists."""
         now = datetime.now(timezone.utc)
 
@@ -1031,9 +1016,7 @@ class TestPrivateHelpers:
         # Without a relationships profile, no priority breakdown
         assert "From priority contacts:" not in result
 
-    def test_unread_context_single_message_grammar(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_single_message_grammar(self, db, user_model_store, event_store):
         """'1 message' should use singular grammar, not '1 messages'."""
         now = datetime.now(timezone.utc)
 
@@ -1066,9 +1049,7 @@ class TestPrivateHelpers:
         assert "1 message)" in result
         assert "1 messages)" not in result
 
-    def test_unread_context_subjects_shown_for_priority_sender(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_subjects_shown_for_priority_sender(self, db, user_model_store, event_store):
         """Subject lines should appear alongside count for priority senders.
 
         When a priority contact sends emails with subject lines, those subjects
@@ -1112,9 +1093,7 @@ class TestPrivateHelpers:
         # Priority contact line should use the per-line dash format
         assert "- alice@example.com (3 messages):" in result
 
-    def test_unread_context_subjects_capped_at_three(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_subjects_capped_at_three(self, db, user_model_store, event_store):
         """No more than 3 subjects should be shown per priority sender.
 
         Capping at 3 prevents the context window from being overwhelmed by
@@ -1167,9 +1146,7 @@ class TestPrivateHelpers:
         assert '"Email 1 — oldest"' not in result
         assert '"Email 2"' not in result
 
-    def test_unread_context_empty_subjects_excluded(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_empty_subjects_excluded(self, db, user_model_store, event_store):
         """Empty or whitespace-only subjects should not appear in output.
 
         Some email clients send messages with blank subjects.  These should
@@ -1226,9 +1203,7 @@ class TestPrivateHelpers:
         assert '""' not in result
         assert '"   "' not in result
 
-    def test_unread_context_no_subjects_if_field_missing(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_no_subjects_if_field_missing(self, db, user_model_store, event_store):
         """When emails have no subject field, count is shown without subjects section.
 
         Graceful fallback: if no subjects are available, the format degrades
@@ -1267,9 +1242,7 @@ class TestPrivateHelpers:
         # No colon+subjects section when there are no subjects
         assert "alice@example.com (1 message):" not in result
 
-    def test_unread_context_non_priority_subjects_not_shown(
-        self, db, user_model_store, event_store
-    ):
+    def test_unread_context_non_priority_subjects_not_shown(self, db, user_model_store, event_store):
         """Non-priority sender subjects must not appear in the output.
 
         Only priority senders (outbound_count >= 3) should have their subjects
@@ -1377,7 +1350,13 @@ class TestIntegration:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     datetime.now(timezone.utc).isoformat(),
-                    0.75, 0.30, 0.70, 0.60, 0.35, 0.80, "stable",
+                    0.75,
+                    0.30,
+                    0.70,
+                    0.60,
+                    0.35,
+                    0.80,
+                    "stable",
                 ),
             )
 
@@ -1448,8 +1427,7 @@ class TestRecentCompletionsContext:
     so the LLM can acknowledge wins and avoid treating completed work as pending.
     """
 
-    def _insert_task(self, conn, title: str, priority: str, domain: str,
-                     status: str, completed_at: str | None = None):
+    def _insert_task(self, conn, title: str, priority: str, domain: str, status: str, completed_at: str | None = None):
         """Helper: insert a task row into the state DB."""
         conn.execute(
             """INSERT INTO tasks (id, title, priority, status, domain, completed_at)
@@ -1468,8 +1446,7 @@ class TestRecentCompletionsContext:
         """Should exclude tasks completed more than 24 hours ago."""
         old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
         with db.get_connection("state") as conn:
-            self._insert_task(conn, "Old task", "normal", "work",
-                              "completed", completed_at=old_time)
+            self._insert_task(conn, "Old task", "normal", "work", "completed", completed_at=old_time)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1481,8 +1458,7 @@ class TestRecentCompletionsContext:
         """Should include tasks completed within the last 24 hours."""
         recent_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         with db.get_connection("state") as conn:
-            self._insert_task(conn, "Submit expense report", "high", "work",
-                              "completed", completed_at=recent_time)
+            self._insert_task(conn, "Submit expense report", "high", "work", "completed", completed_at=recent_time)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1508,8 +1484,7 @@ class TestRecentCompletionsContext:
         """Should display 'general' when a completed task has no domain."""
         recent_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         with db.get_connection("state") as conn:
-            self._insert_task(conn, "No domain task", "low", None,
-                              "completed", completed_at=recent_time)
+            self._insert_task(conn, "No domain task", "low", None, "completed", completed_at=recent_time)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1522,10 +1497,8 @@ class TestRecentCompletionsContext:
         t1 = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
         t2 = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         with db.get_connection("state") as conn:
-            self._insert_task(conn, "Older task", "normal", "work",
-                              "completed", completed_at=t1)
-            self._insert_task(conn, "Newer task", "high", "work",
-                              "completed", completed_at=t2)
+            self._insert_task(conn, "Older task", "normal", "work", "completed", completed_at=t1)
+            self._insert_task(conn, "Newer task", "high", "work", "completed", completed_at=t2)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1540,8 +1513,7 @@ class TestRecentCompletionsContext:
         recent_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         with db.get_connection("state") as conn:
             for i in range(15):
-                self._insert_task(conn, f"Task {i}", "normal", "work",
-                                  "completed", completed_at=recent_time)
+                self._insert_task(conn, f"Task {i}", "normal", "work", "completed", completed_at=recent_time)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1555,8 +1527,7 @@ class TestRecentCompletionsContext:
         """assemble_briefing_context() should include recent completions when present."""
         recent_time = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
         with db.get_connection("state") as conn:
-            self._insert_task(conn, "Shipped the feature", "high", "work",
-                              "completed", completed_at=recent_time)
+            self._insert_task(conn, "Shipped the feature", "high", "work", "completed", completed_at=recent_time)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1593,6 +1564,7 @@ class TestRecentEpisodesContext:
     ):
         """Helper: insert an episode row into the user_model DB."""
         import uuid as _uuid
+
         conn.execute(
             """INSERT INTO episodes
                (id, timestamp, event_id, interaction_type, content_summary,
@@ -1634,7 +1606,10 @@ class TestRecentEpisodesContext:
         recent_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "email_sent", "Replied to Alice about Q1 budget", recent_ts,
+                conn,
+                "email_sent",
+                "Replied to Alice about Q1 budget",
+                recent_ts,
                 contacts_involved=["alice@example.com"],
                 topics=["finance", "planning"],
                 active_domain="work",
@@ -1653,7 +1628,10 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "calendar_event", "Attended team standup", ts,
+                conn,
+                "calendar_event",
+                "Attended team standup",
+                ts,
                 active_domain="work",
             )
             conn.commit()
@@ -1668,7 +1646,9 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "email_received", "Email about the project",
+                conn,
+                "email_received",
+                "Email about the project",
                 ts,
                 contacts_involved=["bob@work.com", "carol@work.com", "dave@work.com"],
             )
@@ -1688,7 +1668,9 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "email_sent", "Sent update",
+                conn,
+                "email_sent",
+                "Sent update",
                 ts,
                 topics=["budget", "timeline", "risk", "stakeholders"],
             )
@@ -1742,9 +1724,7 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             for i in range(12):
-                self._insert_episode(
-                    conn, "email_received", f"Email {i} summary", ts
-                )
+                self._insert_episode(conn, "email_received", f"Email {i} summary", ts)
             conn.commit()
 
         assembler = ContextAssembler(db, user_model_store)
@@ -1759,7 +1739,10 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "email_received", "Email with no contacts", ts,
+                conn,
+                "email_received",
+                "Email with no contacts",
+                ts,
                 contacts_involved=[],  # Empty list
             )
             conn.commit()
@@ -1776,7 +1759,10 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "calendar_event", "Meeting with no topics", ts,
+                conn,
+                "calendar_event",
+                "Meeting with no topics",
+                ts,
                 topics=[],
             )
             conn.commit()
@@ -1792,7 +1778,10 @@ class TestRecentEpisodesContext:
         ts = datetime.now(timezone.utc).isoformat()
         with db.get_connection("user_model") as conn:
             self._insert_episode(
-                conn, "email_sent", "Sent weekly report to manager", ts,
+                conn,
+                "email_sent",
+                "Sent weekly report to manager",
+                ts,
                 active_domain="work",
             )
             conn.commit()
@@ -1838,9 +1827,7 @@ class TestRecentEpisodesContext:
 
         assert episodes_pos != -1, "Episodes section must be present"
         assert facts_pos != -1, "Semantic facts section must be present"
-        assert episodes_pos < facts_pos, (
-            "Episodes (Layer 1) should appear before semantic facts (Layer 2)"
-        )
+        assert episodes_pos < facts_pos, "Episodes (Layer 1) should appear before semantic facts (Layer 2)"
 
 
 # ===========================================================================
@@ -1858,9 +1845,16 @@ class TestPredictionsContext:
     """
 
     @staticmethod
-    def _insert_prediction(conn, prediction_type, description, confidence,
-                           was_surfaced=True, resolved_at=None,
-                           filter_reason=None, suggested_action=None):
+    def _insert_prediction(
+        conn,
+        prediction_type,
+        description,
+        confidence,
+        was_surfaced=True,
+        resolved_at=None,
+        filter_reason=None,
+        suggested_action=None,
+    ):
         """Insert a prediction row into user_model.db."""
         conn.execute(
             """INSERT INTO predictions
@@ -2018,16 +2012,14 @@ class TestInsightsContext:
     """
 
     @staticmethod
-    def _insert_insight(conn, insight_type, summary, confidence,
-                        category="", staleness_ttl_hours=168, feedback=None):
+    def _insert_insight(conn, insight_type, summary, confidence, category="", staleness_ttl_hours=168, feedback=None):
         """Insert an insight row into user_model.db."""
         conn.execute(
             """INSERT INTO insights
                (id, type, summary, confidence, category,
                 staleness_ttl_hours, feedback)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), insight_type, summary, confidence,
-             category, staleness_ttl_hours, feedback),
+            (str(uuid.uuid4()), insight_type, summary, confidence, category, staleness_ttl_hours, feedback),
         )
 
     def test_insights_context_empty_when_none(self, db, user_model_store):
@@ -2158,15 +2150,17 @@ class TestRoutinesContext:
 
     def test_routines_context_includes_high_consistency(self, db, user_model_store):
         """Routines with consistency_score >= 0.5 appear in the context."""
-        user_model_store.store_routine({
-            "name": "morning_email_review",
-            "trigger": "morning",
-            "steps": [{"action": "open inbox"}, {"action": "triage emails"}],
-            "typical_duration_minutes": 30.0,
-            "consistency_score": 0.85,
-            "times_observed": 25,
-            "variations": [],
-        })
+        user_model_store.store_routine(
+            {
+                "name": "morning_email_review",
+                "trigger": "morning",
+                "steps": [{"action": "open inbox"}, {"action": "triage emails"}],
+                "typical_duration_minutes": 30.0,
+                "consistency_score": 0.85,
+                "times_observed": 25,
+                "variations": [],
+            }
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler._get_routines_context()
@@ -2179,15 +2173,17 @@ class TestRoutinesContext:
 
     def test_routines_context_excludes_low_consistency(self, db, user_model_store):
         """Routines with consistency_score < 0.5 are excluded."""
-        user_model_store.store_routine({
-            "name": "sporadic_cleanup",
-            "trigger": "random",
-            "steps": [{"action": "clean desk"}],
-            "typical_duration_minutes": 10.0,
-            "consistency_score": 0.2,
-            "times_observed": 3,
-            "variations": [],
-        })
+        user_model_store.store_routine(
+            {
+                "name": "sporadic_cleanup",
+                "trigger": "random",
+                "steps": [{"action": "clean desk"}],
+                "typical_duration_minutes": 10.0,
+                "consistency_score": 0.2,
+                "times_observed": 3,
+                "variations": [],
+            }
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler._get_routines_context()
@@ -2196,15 +2192,17 @@ class TestRoutinesContext:
     def test_routines_context_capped_at_5(self, db, user_model_store):
         """At most 5 routines are included even when more qualify."""
         for i in range(8):
-            user_model_store.store_routine({
-                "name": f"routine_{i}",
-                "trigger": f"trigger_{i}",
-                "steps": [{"action": f"step_{i}"}],
-                "typical_duration_minutes": 15.0,
-                "consistency_score": 0.9 - (i * 0.05),
-                "times_observed": 20 - i,
-                "variations": [],
-            })
+            user_model_store.store_routine(
+                {
+                    "name": f"routine_{i}",
+                    "trigger": f"trigger_{i}",
+                    "steps": [{"action": f"step_{i}"}],
+                    "typical_duration_minutes": 15.0,
+                    "consistency_score": 0.9 - (i * 0.05),
+                    "times_observed": 20 - i,
+                    "variations": [],
+                }
+            )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler._get_routines_context()
@@ -2214,15 +2212,17 @@ class TestRoutinesContext:
 
     def test_routines_in_briefing_context(self, db, user_model_store):
         """Routines appear as a section in the full briefing context."""
-        user_model_store.store_routine({
-            "name": "evening_wind_down",
-            "trigger": "evening",
-            "steps": [{"action": "close laptop"}, {"action": "read book"}],
-            "typical_duration_minutes": 45.0,
-            "consistency_score": 0.70,
-            "times_observed": 18,
-            "variations": [],
-        })
+        user_model_store.store_routine(
+            {
+                "name": "evening_wind_down",
+                "trigger": "evening",
+                "steps": [{"action": "close laptop"}, {"action": "read book"}],
+                "typical_duration_minutes": 45.0,
+                "consistency_score": 0.70,
+                "times_observed": 18,
+                "variations": [],
+            }
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         briefing = assembler.assemble_briefing_context()
@@ -2319,13 +2319,22 @@ class TestSemanticFactsContextCategorization:
     def test_semantic_facts_excludes_noise_interest_tokens(self, db, user_model_store):
         """interest_* facts with short values (<=6 chars) are filtered as noise."""
         user_model_store.update_semantic_fact(
-            key="interest_here", category="interests", value="here", confidence=0.8,
+            key="interest_here",
+            category="interests",
+            value="here",
+            confidence=0.8,
         )
         user_model_store.update_semantic_fact(
-            key="interest_more", category="interests", value="more", confidence=0.8,
+            key="interest_more",
+            category="interests",
+            value="more",
+            confidence=0.8,
         )
         user_model_store.update_semantic_fact(
-            key="interest_free", category="interests", value="free", confidence=0.8,
+            key="interest_free",
+            category="interests",
+            value="free",
+            confidence=0.8,
         )
 
         assembler = ContextAssembler(db, user_model_store)
@@ -2395,16 +2404,14 @@ class TestMoodContextLabels:
     """
 
     @staticmethod
-    def _insert_mood(conn, energy=0.5, stress=0.3, valence=0.5,
-                     social=0.5, confidence=0.8, trend="stable"):
+    def _insert_mood(conn, energy=0.5, stress=0.3, valence=0.5, social=0.5, confidence=0.8, trend="stable"):
         """Insert a mood snapshot for testing."""
         conn.execute(
             """INSERT INTO mood_history
                (timestamp, energy_level, stress_level, emotional_valence,
                 social_battery, cognitive_load, confidence, trend)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (datetime.now(timezone.utc).isoformat(), energy, stress, valence,
-             social, 0.3, confidence, trend),
+            (datetime.now(timezone.utc).isoformat(), energy, stress, valence, social, 0.3, confidence, trend),
         )
 
     def test_mood_returns_empty_when_no_data(self, db, user_model_store):
@@ -2500,8 +2507,7 @@ class TestDraftContextConversationHistory:
     """Tests for Layer 5 (conversation history) and per-contact style in draft context."""
 
     @staticmethod
-    def _insert_episode(conn, content_summary, contacts, topics=None,
-                        interaction_type="email_sent", timestamp=None):
+    def _insert_episode(conn, content_summary, contacts, topics=None, interaction_type="email_sent", timestamp=None):
         """Insert an episode for draft context testing."""
         if timestamp is None:
             timestamp = datetime.now(timezone.utc).isoformat()
@@ -2561,19 +2567,22 @@ class TestDraftContextConversationHistory:
 
     def test_draft_per_contact_style_preferred_over_global(self, db, user_model_store):
         """Per-contact linguistic averages take priority over global when samples >= 3."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {
-                "formality": 0.50,
-                "question_rate": 0.05,
-            },
-            "per_contact_averages": {
-                "boss@work.com": {
-                    "formality": 0.85,
-                    "question_rate": 0.20,
-                    "samples_count": 10,
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {
+                    "formality": 0.50,
+                    "question_rate": 0.05,
+                },
+                "per_contact_averages": {
+                    "boss@work.com": {
+                        "formality": 0.85,
+                        "question_rate": 0.20,
+                        "samples_count": 10,
+                    },
                 },
             },
-        })
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler.assemble_draft_context(
@@ -2586,17 +2595,20 @@ class TestDraftContextConversationHistory:
 
     def test_draft_falls_back_to_global_style(self, db, user_model_store):
         """When per-contact data has < 3 samples, global averages are used."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {
-                "formality": 0.50,
-            },
-            "per_contact_averages": {
-                "new_contact@work.com": {
-                    "formality": 0.90,
-                    "samples_count": 1,
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {
+                    "formality": 0.50,
+                },
+                "per_contact_averages": {
+                    "new_contact@work.com": {
+                        "formality": 0.90,
+                        "samples_count": 1,
+                    },
                 },
             },
-        })
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler.assemble_draft_context(
@@ -2609,17 +2621,20 @@ class TestDraftContextConversationHistory:
 
     def test_draft_formality_delta_note(self, db, user_model_store):
         """When per-contact formality differs by >0.15, a note is added."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {
-                "formality": 0.40,
-            },
-            "per_contact_averages": {
-                "formal_contact@work.com": {
-                    "formality": 0.80,
-                    "samples_count": 5,
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {
+                    "formality": 0.40,
+                },
+                "per_contact_averages": {
+                    "formal_contact@work.com": {
+                        "formality": 0.80,
+                        "samples_count": 5,
+                    },
                 },
             },
-        })
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler.assemble_draft_context(
@@ -2631,16 +2646,19 @@ class TestDraftContextConversationHistory:
 
     def test_draft_includes_inbound_contact_style(self, db, user_model_store):
         """The contact's inbound writing style is included in draft context."""
-        user_model_store.update_signal_profile("linguistic_inbound", {
-            "per_contact_averages": {
-                "casual@friend.com": {
-                    "formality": 0.20,
-                    "question_rate": 0.30,
-                    "emoji_rate": 0.05,
-                    "avg_sentence_length": 6.0,
+        user_model_store.update_signal_profile(
+            "linguistic_inbound",
+            {
+                "per_contact_averages": {
+                    "casual@friend.com": {
+                        "formality": 0.20,
+                        "question_rate": 0.30,
+                        "emoji_rate": 0.05,
+                        "avg_sentence_length": 6.0,
+                    },
                 },
             },
-        })
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler.assemble_draft_context(
@@ -2714,6 +2732,7 @@ class TestGracefulDegradation:
 
         mock_ums = MagicMock(spec=_UMS)
         mock_ums.get_communication_template.return_value = None
+
         # Relationships and linguistic return None (no data, but no error)
         # Inbound profile raises — but this is inside a try/except
         def _side_effect(profile_type):
@@ -2731,4 +2750,3 @@ class TestGracefulDegradation:
         )
         # Should still contain the incoming message despite the inbound error
         assert "Hello, how are you?" in result
-

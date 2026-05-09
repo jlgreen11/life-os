@@ -33,6 +33,7 @@ from services.prediction_engine.engine import PredictionEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_resolved_prediction(db, prediction_type: str, was_accurate: bool) -> None:
     """Insert a single resolved, surfaced prediction of a given type into the DB."""
     now = datetime.now(timezone.utc).isoformat()
@@ -88,9 +89,7 @@ def test_penalty_floor_applied_at_boundary_below_20_percent(db, user_model_store
         _insert_resolved_prediction(db, "reminder", was_accurate=False)
 
     multiplier = engine._get_accuracy_multiplier("reminder")
-    assert multiplier == 0.3, (
-        f"Expected 0.3 for 10% accuracy over 10 samples, got {multiplier}"
-    )
+    assert multiplier == 0.3, f"Expected 0.3 for 10% accuracy over 10 samples, got {multiplier}"
 
 
 def test_penalty_floor_requires_10_or_more_samples(db, user_model_store):
@@ -108,12 +107,8 @@ def test_penalty_floor_requires_10_or_more_samples(db, user_model_store):
 
     multiplier = engine._get_accuracy_multiplier("reminder")
     # 11% accuracy → 0.5 + 0.111 * 0.6 ≈ 0.567 (normal scale, no floor applied)
-    assert multiplier > 0.3, (
-        f"Expected normal scaling (>0.3) for <10 samples, got {multiplier}"
-    )
-    assert multiplier < 1.0, (
-        f"Expected multiplier < 1.0 for low accuracy, got {multiplier}"
-    )
+    assert multiplier > 0.3, f"Expected normal scaling (>0.3) for <10 samples, got {multiplier}"
+    assert multiplier < 1.0, f"Expected multiplier < 1.0 for low accuracy, got {multiplier}"
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +132,7 @@ def test_recovery_above_20_percent_resumes_normal_scaling(db, user_model_store):
 
     multiplier = engine._get_accuracy_multiplier("opportunity")
     # 30% accuracy → 0.5 + 0.3 * 0.6 = 0.68
-    assert abs(multiplier - 0.68) < 0.01, (
-        f"Expected ~0.68 for 30% accuracy after recovery, got {multiplier}"
-    )
+    assert abs(multiplier - 0.68) < 0.01, f"Expected ~0.68 for 30% accuracy after recovery, got {multiplier}"
 
 
 def test_accuracy_exactly_20_percent_uses_normal_scaling(db, user_model_store):
@@ -158,9 +151,7 @@ def test_accuracy_exactly_20_percent_uses_normal_scaling(db, user_model_store):
 
     multiplier = engine._get_accuracy_multiplier("opportunity")
     # 20% accuracy → 0.5 + 0.2 * 0.6 = 0.62
-    assert abs(multiplier - 0.62) < 0.01, (
-        f"Expected ~0.62 for exactly 20% accuracy, got {multiplier}"
-    )
+    assert abs(multiplier - 0.62) < 0.01, f"Expected ~0.62 for exactly 20% accuracy, got {multiplier}"
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +159,7 @@ def test_accuracy_exactly_20_percent_uses_normal_scaling(db, user_model_store):
 # ---------------------------------------------------------------------------
 
 
-def test_penalised_prediction_still_surfaces_if_high_enough_base_confidence(
-    db, user_model_store
-):
+def test_penalised_prediction_still_surfaces_if_high_enough_base_confidence(db, user_model_store):
     """A prediction with 0.45 base confidence × 0.3 floor = 0.135 (below gate, filtered).
 
     A prediction with 0.8 base confidence × 0.3 floor = 0.24 (still below 0.3 gate).

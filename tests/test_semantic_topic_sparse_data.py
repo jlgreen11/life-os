@@ -33,8 +33,8 @@ class TestTopicSparseDataFallback:
         """
         topic_data = {
             "topic_counts": {
-                "python": 50,   # 50% → well above 8% expertise threshold
-                "cooking": 5,   # 5% → above 3% interest threshold
+                "python": 50,  # 50% → well above 8% expertise threshold
+                "cooking": 5,  # 5% → above 3% interest threshold
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -104,7 +104,7 @@ class TestTopicSparseDataFallback:
         """
         topic_data = {
             "topic_counts": {
-                "python": 50,       # 50% → expertise via standard path
+                "python": 50,  # 50% → expertise via standard path
                 "birdwatching": 2,  # Below standard thresholds, would be fallback candidate
             }
         }

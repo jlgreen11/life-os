@@ -36,6 +36,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 # update_semantic_fact guard behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateSemanticFactUserCorrectedGuard:
     """Unit tests for the is_user_corrected guard in update_semantic_fact."""
 
@@ -55,8 +56,7 @@ class TestUpdateSemanticFactUserCorrectedGuard:
         )
         with db.get_connection("user_model") as conn:
             conn.execute(
-                "UPDATE semantic_facts SET is_user_corrected = 1, confidence = 0.30, value = ? "
-                "WHERE key = ?",
+                "UPDATE semantic_facts SET is_user_corrected = 1, confidence = 0.30, value = ? WHERE key = ?",
                 (json.dumps("formal"), "communication_style_formality"),
             )
 
@@ -64,15 +64,14 @@ class TestUpdateSemanticFactUserCorrectedGuard:
         user_model_store.update_semantic_fact(
             key="communication_style_formality",
             category="implicit_preference",
-            value="casual",      # The old (wrong) value
-            confidence=0.70,     # A higher confidence the inference would produce
+            value="casual",  # The old (wrong) value
+            confidence=0.70,  # A higher confidence the inference would produce
         )
 
         # Assert: the fact is exactly as the user left it
         with db.get_connection("user_model") as conn:
             row = conn.execute(
-                "SELECT value, confidence, is_user_corrected, times_confirmed "
-                "FROM semantic_facts WHERE key = ?",
+                "SELECT value, confidence, is_user_corrected, times_confirmed FROM semantic_facts WHERE key = ?",
                 ("communication_style_formality",),
             ).fetchone()
 
@@ -80,9 +79,7 @@ class TestUpdateSemanticFactUserCorrectedGuard:
         assert row["confidence"] == 0.30, "User-corrected confidence must not be bumped"
         assert row["is_user_corrected"] == 1, "Correction flag must stay set"
         # times_confirmed must NOT have been incremented (the update was skipped)
-        assert row["times_confirmed"] == 1, (
-            "times_confirmed must not increase when the update is skipped"
-        )
+        assert row["times_confirmed"] == 1, "times_confirmed must not increase when the update is skipped"
 
     def test_update_creates_new_uncorrected_fact_normally(self, user_model_store: UserModelStore, db: DatabaseManager):
         """update_semantic_fact inserts new facts (no is_user_corrected row) as before."""
@@ -95,8 +92,7 @@ class TestUpdateSemanticFactUserCorrectedGuard:
 
         with db.get_connection("user_model") as conn:
             row = conn.execute(
-                "SELECT value, confidence, is_user_corrected, times_confirmed "
-                "FROM semantic_facts WHERE key = ?",
+                "SELECT value, confidence, is_user_corrected, times_confirmed FROM semantic_facts WHERE key = ?",
                 ("new_inferred_fact",),
             ).fetchone()
 
@@ -165,12 +161,8 @@ class TestUpdateSemanticFactUserCorrectedGuard:
         user_model_store.update_semantic_fact("fact_normal", "test", "updated_value", 0.60)
 
         with db.get_connection("user_model") as conn:
-            corrected = conn.execute(
-                "SELECT value FROM semantic_facts WHERE key = ?", ("fact_corrected",)
-            ).fetchone()
-            normal = conn.execute(
-                "SELECT value FROM semantic_facts WHERE key = ?", ("fact_normal",)
-            ).fetchone()
+            corrected = conn.execute("SELECT value FROM semantic_facts WHERE key = ?", ("fact_corrected",)).fetchone()
+            normal = conn.execute("SELECT value FROM semantic_facts WHERE key = ?", ("fact_normal",)).fetchone()
 
         # Corrected fact locked — user's value preserved
         assert json.loads(corrected["value"]) == "user_value"
@@ -207,6 +199,7 @@ class TestUpdateSemanticFactUserCorrectedGuard:
 # ---------------------------------------------------------------------------
 # End-to-end: SemanticFactInferrer does not overwrite corrected facts
 # ---------------------------------------------------------------------------
+
 
 class TestSemanticFactInferrerProtection:
     """Integration-style tests: run_all_inference() respects user corrections."""
@@ -247,9 +240,7 @@ class TestSemanticFactInferrerProtection:
         }
         user_model_store.update_signal_profile("linguistic", data)
 
-    def test_inferrer_does_not_overwrite_corrected_fact(
-        self, user_model_store: UserModelStore, db: DatabaseManager
-    ):
+    def test_inferrer_does_not_overwrite_corrected_fact(self, user_model_store: UserModelStore, db: DatabaseManager):
         """SemanticFactInferrer.run_all_inference() leaves corrected facts intact.
 
         Scenario:
@@ -269,8 +260,7 @@ class TestSemanticFactInferrerProtection:
         # Confirm initial inference happened
         with db.get_connection("user_model") as conn:
             row = conn.execute(
-                "SELECT value, confidence, is_user_corrected FROM semantic_facts "
-                "WHERE key = ?",
+                "SELECT value, confidence, is_user_corrected FROM semantic_facts WHERE key = ?",
                 ("communication_style_formality",),
             ).fetchone()
         assert row is not None, "Inferrer must have created the fact"
@@ -280,9 +270,7 @@ class TestSemanticFactInferrerProtection:
         # Step 2: Simulate user correction (as PATCH endpoint does)
         with db.get_connection("user_model") as conn:
             conn.execute(
-                "UPDATE semantic_facts "
-                "SET is_user_corrected = 1, value = ?, confidence = ? "
-                "WHERE key = ?",
+                "UPDATE semantic_facts SET is_user_corrected = 1, value = ?, confidence = ? WHERE key = ?",
                 (json.dumps("formal"), 0.30, "communication_style_formality"),
             )
 
@@ -292,20 +280,15 @@ class TestSemanticFactInferrerProtection:
         # Step 4: Correction must be intact
         with db.get_connection("user_model") as conn:
             row = conn.execute(
-                "SELECT value, confidence, is_user_corrected FROM semantic_facts "
-                "WHERE key = ?",
+                "SELECT value, confidence, is_user_corrected FROM semantic_facts WHERE key = ?",
                 ("communication_style_formality",),
             ).fetchone()
 
-        assert json.loads(row["value"]) == "formal", (
-            "Inferrer must not overwrite user-corrected fact value"
-        )
+        assert json.loads(row["value"]) == "formal", "Inferrer must not overwrite user-corrected fact value"
         assert row["confidence"] == pytest.approx(0.30, abs=0.001), (
             "Inferrer must not restore confidence of user-corrected fact"
         )
-        assert row["is_user_corrected"] == 1, (
-            "is_user_corrected flag must remain set after second inference run"
-        )
+        assert row["is_user_corrected"] == 1, "is_user_corrected flag must remain set after second inference run"
 
     def test_run_all_inference_multiple_cycles_respects_correction(
         self, user_model_store: UserModelStore, db: DatabaseManager
@@ -342,9 +325,7 @@ class TestSemanticFactInferrerProtection:
         assert json.loads(row["value"]) == "formal"
         assert row["is_user_corrected"] == 1
 
-    def test_non_corrected_facts_still_updated_by_inferrer(
-        self, user_model_store: UserModelStore, db: DatabaseManager
-    ):
+    def test_non_corrected_facts_still_updated_by_inferrer(self, user_model_store: UserModelStore, db: DatabaseManager):
         """Verifies the guard does not accidentally block normal inference.
 
         A fact with is_user_corrected = 0 must still be updated (confidence

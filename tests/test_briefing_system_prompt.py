@@ -67,10 +67,12 @@ async def test_prompt_contains_mood_tone_calibration(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     assert "mood" in prompt.lower(), "Prompt must reference mood signals for tone"
-    assert "stress" in prompt.lower() or "valence" in prompt.lower(), \
+    assert "stress" in prompt.lower() or "valence" in prompt.lower(), (
         "Prompt must mention stress/valence to guide tone adjustment"
-    assert "warm" in prompt.lower() or "encouraging" in prompt.lower(), \
+    )
+    assert "warm" in prompt.lower() or "encouraging" in prompt.lower(), (
         "Prompt must prescribe a warm/encouraging tone for negative mood"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -89,10 +91,12 @@ async def test_prompt_instructs_completions_acknowledgement(db, user_model_store
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "completed" in prompt.lower() or "recent wins" in prompt.lower(), \
+    assert "completed" in prompt.lower() or "recent wins" in prompt.lower(), (
         "Prompt must reference recently completed tasks section"
-    assert "acknowledgement" in prompt.lower() or "acknowledge" in prompt.lower() or "nice work" in prompt.lower(), \
+    )
+    assert "acknowledgement" in prompt.lower() or "acknowledge" in prompt.lower() or "nice work" in prompt.lower(), (
         "Prompt must instruct LLM to acknowledge wins"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,10 +115,12 @@ async def test_prompt_instructs_named_priority_sender_surfacing(db, user_model_s
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "priority sender" in prompt.lower() or "unread" in prompt.lower(), \
+    assert "priority sender" in prompt.lower() or "unread" in prompt.lower(), (
         "Prompt must reference unread/priority sender context section"
-    assert "name" in prompt.lower() or "subject" in prompt.lower(), \
+    )
+    assert "name" in prompt.lower() or "subject" in prompt.lower(), (
         "Prompt must instruct LLM to surface senders by name and subject"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +139,12 @@ async def test_prompt_instructs_relationship_nudges_from_predictions(db, user_mo
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "prediction" in prompt.lower() or "relationship" in prompt.lower(), \
+    assert "prediction" in prompt.lower() or "relationship" in prompt.lower(), (
         "Prompt must reference predictions section for relationship nudges"
-    assert "opportunity" in prompt.lower() or "reminder" in prompt.lower() or "maintenance" in prompt.lower(), \
+    )
+    assert "opportunity" in prompt.lower() or "reminder" in prompt.lower() or "maintenance" in prompt.lower(), (
         "Prompt must list the relevant prediction types to surface"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +163,10 @@ async def test_prompt_instructs_behavioral_pattern_surfacing(db, user_model_stor
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "insight" in prompt.lower() or "routine" in prompt.lower(), \
+    assert "insight" in prompt.lower() or "routine" in prompt.lower(), (
         "Prompt must reference insights/routines context sections"
-    assert "pattern" in prompt.lower() or "behavioral" in prompt.lower(), \
-        "Prompt must mention behavioral patterns"
+    )
+    assert "pattern" in prompt.lower() or "behavioral" in prompt.lower(), "Prompt must mention behavioral patterns"
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +185,9 @@ async def test_prompt_instructs_semantic_facts_and_episode_use(db, user_model_st
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "semantic" in prompt.lower() or "memory" in prompt.lower(), \
-        "Prompt must reference semantic memory facts"
-    assert "episode" in prompt.lower(), \
-        "Prompt must reference recent episodes for concrete narrative"
-    assert "personali" in prompt.lower(), \
-        "Prompt must use the word personali(ze/zation)"
+    assert "semantic" in prompt.lower() or "memory" in prompt.lower(), "Prompt must reference semantic memory facts"
+    assert "episode" in prompt.lower(), "Prompt must reference recent episodes for concrete narrative"
+    assert "personali" in prompt.lower(), "Prompt must use the word personali(ze/zation)"
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +207,12 @@ async def test_prompt_contains_anti_hallucination_constraint(db, user_model_stor
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "never invent" in prompt_lower or "do not invent" in prompt_lower or \
-           "ground every" in prompt_lower or "never hallucinate" in prompt_lower, \
-        "Prompt must explicitly prohibit inventing information"
+    assert (
+        "never invent" in prompt_lower
+        or "do not invent" in prompt_lower
+        or "ground every" in prompt_lower
+        or "never hallucinate" in prompt_lower
+    ), "Prompt must explicitly prohibit inventing information"
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +231,10 @@ async def test_prompt_contains_verbosity_constraint(db, user_model_store):
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "minimal" in prompt.lower(), \
-        "Prompt must reference minimal verbosity preference"
-    assert "word" in prompt.lower() or "≤" in prompt or "<=" in prompt, \
+    assert "minimal" in prompt.lower(), "Prompt must reference minimal verbosity preference"
+    assert "word" in prompt.lower() or "≤" in prompt or "<=" in prompt, (
         "Prompt must give a word-count cap for minimal mode"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -245,10 +253,10 @@ async def test_prompt_instructs_prose_output_no_headers(db, user_model_store):
             await engine.generate_briefing()
 
     prompt = mock_local.call_args[0][0]
-    assert "prose" in prompt.lower(), \
-        "Prompt must instruct prose output"
-    assert "header" in prompt.lower() or "label" in prompt.lower(), \
+    assert "prose" in prompt.lower(), "Prompt must instruct prose output"
+    assert "header" in prompt.lower() or "label" in prompt.lower(), (
         "Prompt must explicitly forbid section headers/labels in output"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +296,7 @@ async def test_generate_briefing_passes_assembled_context_as_user_message(db, us
 
     call_args = mock_local.call_args[0]
     # Second positional argument is the user message (context)
-    assert call_args[1] == assembled, \
-        "The assembled context must be passed verbatim as the LLM user message"
+    assert call_args[1] == assembled, "The assembled context must be passed verbatim as the LLM user message"
 
 
 @pytest.mark.asyncio

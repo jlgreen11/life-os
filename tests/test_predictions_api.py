@@ -163,11 +163,21 @@ def test_list_predictions_response_fields(client, mock_life_os):
     p = resp.json()["predictions"][0]
 
     required_fields = [
-        "id", "prediction_type", "description", "confidence",
-        "confidence_gate", "time_horizon", "suggested_action",
-        "supporting_signals", "was_surfaced", "user_response",
-        "was_accurate", "filter_reason", "resolution_reason",
-        "created_at", "resolved_at",
+        "id",
+        "prediction_type",
+        "description",
+        "confidence",
+        "confidence_gate",
+        "time_horizon",
+        "suggested_action",
+        "supporting_signals",
+        "was_surfaced",
+        "user_response",
+        "was_accurate",
+        "filter_reason",
+        "resolution_reason",
+        "created_at",
+        "resolved_at",
     ]
     for field in required_fields:
         assert field in p, f"Missing field: {field}"
@@ -331,9 +341,7 @@ def test_limit_clamped_at_200(client, mock_life_os):
 
 def test_filters_reflected_in_response(client, mock_life_os):
     """The response 'filters' key echoes back the applied filter values."""
-    resp = client.get(
-        "/api/predictions?prediction_type=opportunity&min_confidence=0.4&include_resolved=true"
-    )
+    resp = client.get("/api/predictions?prediction_type=opportunity&min_confidence=0.4&include_resolved=true")
     assert resp.status_code == 200
     filters = resp.json()["filters"]
     assert filters["prediction_type"] == "opportunity"
@@ -397,9 +405,7 @@ def test_feedback_with_user_response(client, mock_life_os):
     """user_response label is persisted when provided."""
     pred = _store_prediction(mock_life_os.db)
 
-    resp = client.post(
-        f"/api/predictions/{pred['id']}/feedback?was_accurate=true&user_response=acted_on"
-    )
+    resp = client.post(f"/api/predictions/{pred['id']}/feedback?was_accurate=true&user_response=acted_on")
     assert resp.status_code == 200
 
     with mock_life_os.db.get_connection("user_model") as conn:

@@ -64,8 +64,7 @@ def _write_state_key(db, key: str, value: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with db.get_connection("user_model") as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO prediction_engine_state (key, value, updated_at) "
-            "VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO prediction_engine_state (key, value, updated_at) VALUES (?, ?, ?)",
             (key, value, now),
         )
 
@@ -191,8 +190,7 @@ async def test_last_time_based_run_not_persisted_when_skipped(prediction_engine,
 
     assert result == []
     assert _read_state_key(db, "last_time_based_run") is None, (
-        "last_time_based_run must NOT be persisted when generate_predictions() "
-        "skips (neither trigger was active)"
+        "last_time_based_run must NOT be persisted when generate_predictions() skips (neither trigger was active)"
     )
 
 
@@ -214,9 +212,7 @@ async def test_last_successful_generation_not_written_when_zero_stored(predictio
 
     # Make sure last_successful_generation is not already in DB
     with db.get_connection("user_model") as conn:
-        conn.execute(
-            "DELETE FROM prediction_engine_state WHERE key = 'last_successful_generation'"
-        )
+        conn.execute("DELETE FROM prediction_engine_state WHERE key = 'last_successful_generation'")
 
     # With an empty DB, all _check_* methods return [] → stored_count = 0
     await pe.generate_predictions({})
@@ -294,9 +290,7 @@ async def test_stale_recovery_does_not_trigger_when_recent_success(prediction_en
 
     # Pipeline should be skipped (no stale recovery, no new events, time not due)
     assert result == []
-    assert len(calendar_check_called) == 0, (
-        "Stale recovery must NOT fire when last_successful_generation is <2h old"
-    )
+    assert len(calendar_check_called) == 0, "Stale recovery must NOT fire when last_successful_generation is <2h old"
 
 
 # ---------------------------------------------------------------------------

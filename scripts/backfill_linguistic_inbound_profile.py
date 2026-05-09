@@ -207,7 +207,7 @@ def backfill_linguistic_inbound_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_linguistic_inbound] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_linguistic_inbound] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_linguistic_inbound] Events processed: {events_processed}")
     print(f"[backfill_linguistic_inbound] Signals extracted: {signals_extracted}")
     print(
@@ -221,14 +221,14 @@ def backfill_linguistic_inbound_profile(
     )
 
     if dry_run:
-        print(f"[backfill_linguistic_inbound] DRY RUN — no changes written to database")
+        print("[backfill_linguistic_inbound] DRY RUN — no changes written to database")
 
     # Show per-contact stats for verification.
     if final_profile and not dry_run:
         data = final_profile["data"]
         per_contact_avgs = data.get("per_contact_averages", {})
         if per_contact_avgs:
-            print(f"\n[backfill_linguistic_inbound] ===== CONTACT STYLE SUMMARY =====")
+            print("\n[backfill_linguistic_inbound] ===== CONTACT STYLE SUMMARY =====")
             print(f"  Contacts with style profiles: {len(per_contact_avgs)}")
             for contact, avgs in sorted(per_contact_avgs.items())[:10]:
                 formality = avgs.get("formality", "?")

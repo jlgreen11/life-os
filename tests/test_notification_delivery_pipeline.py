@@ -27,6 +27,7 @@ from models.core import EventType
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def lifeos_config():
     """Minimal config dict for LifeOS in test mode."""
@@ -97,6 +98,7 @@ def _make_event(event_type: str = "email.received", **payload_overrides) -> dict
 # Test 1: Notify action creates a notification in the database
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_notify_action_creates_notification(lifeos, db):
     """A rule with a notify action should create a notification in state.db.
@@ -139,6 +141,7 @@ async def test_notify_action_creates_notification(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 2: Suppressed event skips notification creation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_suppressed_event_skips_notification(lifeos, db):
@@ -193,6 +196,7 @@ async def test_suppressed_event_skips_notification(lifeos, db):
 # Test 3: Rule evaluation triggers notification for matching event
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_rule_evaluation_triggers_notification_for_matching_event(lifeos, db):
     """Create a rule that matches email.received events with a specific subject,
@@ -240,6 +244,7 @@ async def test_rule_evaluation_triggers_notification_for_matching_event(lifeos, 
 # Test 4: Notification retrievable via API after creation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_notification_retrievable_via_api_after_creation(lifeos, db):
     """After creating a notification via the pipeline, GET /api/notifications
@@ -276,10 +281,7 @@ async def test_notification_retrievable_via_api_after_creation(lifeos, db):
     assert "notifications" in data
 
     # Find the notification for our event
-    matching = [
-        n for n in data["notifications"]
-        if n.get("source_event_id") == event["id"]
-    ]
+    matching = [n for n in data["notifications"] if n.get("source_event_id") == event["id"]]
     assert len(matching) >= 1, (
         f"Notification for event {event['id']} should be retrievable via "
         f"GET /api/notifications. Got {len(data['notifications'])} notifications total."
@@ -293,6 +295,7 @@ async def test_notification_retrievable_via_api_after_creation(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 5: Multiple rules create multiple notifications
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_multiple_rules_create_multiple_notifications(lifeos, db):
@@ -333,9 +336,7 @@ async def test_multiple_rules_create_multiple_notifications(lifeos, db):
             (event["id"],),
         ).fetchall()
 
-    assert len(notifs) == 2, (
-        f"Expected 2 notifications from 2 matching rules, got {len(notifs)}"
-    )
+    assert len(notifs) == 2, f"Expected 2 notifications from 2 matching rules, got {len(notifs)}"
 
     # Verify different priorities (confirming they came from different rules)
     priorities = {dict(n)["priority"] for n in notifs}
@@ -346,6 +347,7 @@ async def test_multiple_rules_create_multiple_notifications(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 6: Notify action infers domain from event type
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_notify_action_infers_domain_from_event_type(lifeos, db):
@@ -380,14 +382,14 @@ async def test_notify_action_infers_domain_from_event_type(lifeos, db):
     assert len(notifs) >= 1, "Notification should be created"
     notif = dict(notifs[0])
     assert notif["domain"] == "email", (
-        f"Domain should be inferred as 'email' from event type 'email.received', "
-        f"got '{notif['domain']}'"
+        f"Domain should be inferred as 'email' from event type 'email.received', got '{notif['domain']}'"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 7: Notification content built from event payload
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_notification_content_built_from_event_payload(lifeos, db):
@@ -420,20 +422,17 @@ async def test_notification_content_built_from_event_payload(lifeos, db):
     notif = dict(notifs[0])
 
     # Title should come from the email subject
-    assert "Q1 Budget Review" in notif["title"], (
-        f"Title should contain the email subject, got '{notif['title']}'"
-    )
+    assert "Q1 Budget Review" in notif["title"], f"Title should contain the email subject, got '{notif['title']}'"
 
     # Body should include the sender (for email events, _build_notification_content
     # prepends "From: <address>")
-    assert "boss@company.com" in notif["body"], (
-        f"Body should include the sender address, got '{notif['body']}'"
-    )
+    assert "boss@company.com" in notif["body"], f"Body should include the sender address, got '{notif['body']}'"
 
 
 # ---------------------------------------------------------------------------
 # Test 8: Non-matching rule does not create notification
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_non_matching_rule_does_not_create_notification(lifeos, db):
@@ -471,6 +470,7 @@ async def test_non_matching_rule_does_not_create_notification(lifeos, db):
 # Test 9: Calendar event domain inferred correctly
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_calendar_event_domain_inferred_correctly(lifeos, db):
     """Verify domain inference works for non-email event types (e.g., calendar)."""
@@ -505,14 +505,14 @@ async def test_calendar_event_domain_inferred_correctly(lifeos, db):
     assert len(notifs) >= 1, "Notification should be created for calendar conflict"
     notif = dict(notifs[0])
     assert notif["domain"] == "calendar", (
-        f"Domain should be 'calendar' for calendar.conflict.detected, "
-        f"got '{notif['domain']}'"
+        f"Domain should be 'calendar' for calendar.conflict.detected, got '{notif['domain']}'"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 10: Explicit metadata domain takes precedence over inference
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_explicit_metadata_domain_takes_precedence(lifeos, db):

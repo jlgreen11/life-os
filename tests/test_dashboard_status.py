@@ -26,9 +26,7 @@ def mock_life_os():
     life_os.db = Mock()
     mock_conn = Mock()
     mock_conn.execute = Mock()
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
-    )
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
     life_os.db.get_database_health = Mock(
         return_value={
             "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
@@ -46,9 +44,14 @@ def mock_life_os():
     # Mock event store
     life_os.event_store = Mock()
     life_os.event_store.get_event_count = Mock(return_value=100)
-    life_os.event_store.get_event_flow_stats = Mock(return_value={
-        "sources": {}, "stale_sources": [], "total_24h": 0, "events_per_hour": 0.0,
-    })
+    life_os.event_store.get_event_flow_stats = Mock(
+        return_value={
+            "sources": {},
+            "stale_sources": [],
+            "total_24h": 0,
+            "events_per_hour": 0.0,
+        }
+    )
 
     # Mock vector store
     life_os.vector_store = Mock()
@@ -116,9 +119,7 @@ def test_health_mixed_healthy_and_failing_connectors(client, mock_life_os):
     should have status='error'."""
     healthy = Mock()
     healthy.CONNECTOR_ID = "caldav"
-    healthy.health_check = AsyncMock(
-        return_value={"connector": "caldav", "status": "ok", "details": "synced"}
-    )
+    healthy.health_check = AsyncMock(return_value={"connector": "caldav", "status": "ok", "details": "synced"})
 
     failing = Mock()
     failing.CONNECTOR_ID = "google"

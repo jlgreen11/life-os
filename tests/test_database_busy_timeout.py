@@ -63,15 +63,11 @@ class TestBusyTimeout:
 
         # Neither thread should have hit a "database is locked" error
         for err in errors:
-            assert "database is locked" not in str(err), (
-                f"Concurrent write failed with: {err}"
-            )
+            assert "database is locked" not in str(err), f"Concurrent write failed with: {err}"
 
         # Both rows should be present
         with db.get_connection("state") as conn:
-            cursor = conn.execute(
-                "SELECT key FROM kv_store WHERE key LIKE 'busy_test_%' ORDER BY key"
-            )
+            cursor = conn.execute("SELECT key FROM kv_store WHERE key LIKE 'busy_test_%' ORDER BY key")
             rows = [r["key"] for r in cursor.fetchall()]
             assert "busy_test_thread_1" in rows
             assert "busy_test_thread_2" in rows
@@ -116,6 +112,4 @@ class TestCheckpointWal:
             # After checkpoint(TRUNCATE), the WAL file should either not exist
             # or be empty (zero length).
             if wal_path.exists():
-                assert wal_path.stat().st_size == 0, (
-                    "WAL file should be truncated after initialize_all()"
-                )
+                assert wal_path.stat().st_size == 0, "WAL file should be truncated after initialize_all()"

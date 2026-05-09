@@ -103,10 +103,12 @@ def mock_browser_engine():
 def mock_credential_vault():
     """Mock CredentialVault for testing authentication."""
     vault = Mock()
-    vault.get_credential = Mock(return_value={
-        "username": "test@gmail.com",
-        "password": "test_password",
-    })
+    vault.get_credential = Mock(
+        return_value={
+            "username": "test@gmail.com",
+            "password": "test_password",
+        }
+    )
     vault.get_totp = Mock(return_value="123456")
     return vault
 
@@ -261,9 +263,7 @@ async def test_browser_sync_extracts_new_videos(connector):
     assert count == 2
 
     # Should navigate to subscriptions feed
-    connector.navigate_with_rate_limit.assert_called_once_with(
-        page, "https://www.youtube.com/feed/subscriptions"
-    )
+    connector.navigate_with_rate_limit.assert_called_once_with(page, "https://www.youtube.com/feed/subscriptions")
 
     # Should wait for page load
     assert human.wait_human.call_count >= 1
@@ -293,8 +293,22 @@ async def test_browser_sync_extracts_new_videos(connector):
 async def test_browser_sync_deduplicates_seen_videos(connector):
     """Verify browser_sync skips videos already in sync cursor."""
     videos = [
-        {"video_id": "seen123", "title": "Old Video", "channel": "Test", "url": "https://youtube.com/watch?v=seen123", "thumbnail": "", "meta": ""},
-        {"video_id": "new456", "title": "New Video", "channel": "Test", "url": "https://youtube.com/watch?v=new456", "thumbnail": "", "meta": ""},
+        {
+            "video_id": "seen123",
+            "title": "Old Video",
+            "channel": "Test",
+            "url": "https://youtube.com/watch?v=seen123",
+            "thumbnail": "",
+            "meta": "",
+        },
+        {
+            "video_id": "new456",
+            "title": "New Video",
+            "channel": "Test",
+            "url": "https://youtube.com/watch?v=new456",
+            "thumbnail": "",
+            "meta": "",
+        },
     ]
     page = MockPage(videos=videos)
     human = AsyncMock()
@@ -356,7 +370,14 @@ async def test_browser_sync_skips_videos_without_id(connector):
     """Verify browser_sync filters out videos missing video_id."""
     videos = [
         {"video_id": "", "title": "No ID", "channel": "Test", "url": "", "thumbnail": "", "meta": ""},
-        {"video_id": "valid123", "title": "Valid", "channel": "Test", "url": "https://youtube.com/watch?v=valid123", "thumbnail": "", "meta": ""},
+        {
+            "video_id": "valid123",
+            "title": "Valid",
+            "channel": "Test",
+            "url": "https://youtube.com/watch?v=valid123",
+            "thumbnail": "",
+            "meta": "",
+        },
     ]
     page = MockPage(videos=videos)
     human = AsyncMock()
@@ -414,8 +435,22 @@ async def test_browser_sync_handles_shorts_url_format(connector):
 async def test_sync_cursor_persists_seen_video_ids(connector):
     """Verify sync cursor stores seen video IDs as JSON."""
     videos = [
-        {"video_id": "abc", "title": "A", "channel": "C", "url": "https://youtube.com/watch?v=abc", "thumbnail": "", "meta": ""},
-        {"video_id": "def", "title": "B", "channel": "C", "url": "https://youtube.com/watch?v=def", "thumbnail": "", "meta": ""},
+        {
+            "video_id": "abc",
+            "title": "A",
+            "channel": "C",
+            "url": "https://youtube.com/watch?v=abc",
+            "thumbnail": "",
+            "meta": "",
+        },
+        {
+            "video_id": "def",
+            "title": "B",
+            "channel": "C",
+            "url": "https://youtube.com/watch?v=def",
+            "thumbnail": "",
+            "meta": "",
+        },
     ]
     page = MockPage(videos=videos)
     human = AsyncMock()
@@ -444,7 +479,14 @@ async def test_sync_cursor_caps_at_500_videos(connector):
 
     # Add 10 new videos
     videos = [
-        {"video_id": f"new{i}", "title": f"New {i}", "channel": "C", "url": f"https://youtube.com/watch?v=new{i}", "thumbnail": "", "meta": ""}
+        {
+            "video_id": f"new{i}",
+            "title": f"New {i}",
+            "channel": "C",
+            "url": f"https://youtube.com/watch?v=new{i}",
+            "thumbnail": "",
+            "meta": "",
+        }
         for i in range(10)
     ]
     page = MockPage(videos=videos)
@@ -475,7 +517,14 @@ async def test_sync_cursor_handles_corrupted_json(connector):
     connector.set_sync_cursor("not valid json {{{")
 
     videos = [
-        {"video_id": "abc", "title": "Test", "channel": "C", "url": "https://youtube.com/watch?v=abc", "thumbnail": "", "meta": ""},
+        {
+            "video_id": "abc",
+            "title": "Test",
+            "channel": "C",
+            "url": "https://youtube.com/watch?v=abc",
+            "thumbnail": "",
+            "meta": "",
+        },
     ]
     page = MockPage(videos=videos)
     human = AsyncMock()
@@ -534,14 +583,10 @@ async def test_execute_add_to_watch_later(connector):
     # Mock navigate_with_rate_limit
     connector.navigate_with_rate_limit = AsyncMock()
 
-    result = await connector.execute("add_to_watch_later", {
-        "url": "https://www.youtube.com/watch?v=abc123"
-    })
+    result = await connector.execute("add_to_watch_later", {"url": "https://www.youtube.com/watch?v=abc123"})
 
     # Should navigate to the video page
-    connector.navigate_with_rate_limit.assert_called_once_with(
-        page, "https://www.youtube.com/watch?v=abc123"
-    )
+    connector.navigate_with_rate_limit.assert_called_once_with(page, "https://www.youtube.com/watch?v=abc123")
 
     # Should wait for page load
     assert human.wait_human.call_count >= 1
@@ -580,9 +625,7 @@ async def test_execute_add_to_watch_later_click_failure(connector):
 
     connector.navigate_with_rate_limit = AsyncMock()
 
-    result = await connector.execute("add_to_watch_later", {
-        "url": "https://www.youtube.com/watch?v=abc123"
-    })
+    result = await connector.execute("add_to_watch_later", {"url": "https://www.youtube.com/watch?v=abc123"})
 
     assert result["status"] == "error"
     assert "Could not find Watch Later button" in result["details"]
@@ -662,7 +705,7 @@ async def test_browser_sync_scrolls_to_load_videos(connector):
     # Each scroll should be downward with 800px distance
     for call in human.scroll.call_args_list:
         assert call[0][1] == "down"  # direction
-        assert call[0][2] == 800      # distance
+        assert call[0][2] == 800  # distance
 
 
 # =============================================================================
@@ -739,7 +782,7 @@ async def test_browser_sync_handles_empty_metadata(connector):
             "channel": "Test",
             "url": "https://youtube.com/watch?v=abc123",
             "thumbnail": "",  # Empty thumbnail
-            "meta": "",       # Empty metadata
+            "meta": "",  # Empty metadata
         },
     ]
     page = MockPage(videos=videos)
@@ -769,9 +812,30 @@ async def test_full_sync_flow_with_deduplication(connector):
     """Integration test: full sync with cursor persistence and deduplication."""
     # First sync: 3 new videos
     videos_sync1 = [
-        {"video_id": "v1", "title": "Video 1", "channel": "C1", "url": "https://youtube.com/watch?v=v1", "thumbnail": "", "meta": ""},
-        {"video_id": "v2", "title": "Video 2", "channel": "C2", "url": "https://youtube.com/watch?v=v2", "thumbnail": "", "meta": ""},
-        {"video_id": "v3", "title": "Video 3", "channel": "C3", "url": "https://youtube.com/watch?v=v3", "thumbnail": "", "meta": ""},
+        {
+            "video_id": "v1",
+            "title": "Video 1",
+            "channel": "C1",
+            "url": "https://youtube.com/watch?v=v1",
+            "thumbnail": "",
+            "meta": "",
+        },
+        {
+            "video_id": "v2",
+            "title": "Video 2",
+            "channel": "C2",
+            "url": "https://youtube.com/watch?v=v2",
+            "thumbnail": "",
+            "meta": "",
+        },
+        {
+            "video_id": "v3",
+            "title": "Video 3",
+            "channel": "C3",
+            "url": "https://youtube.com/watch?v=v3",
+            "thumbnail": "",
+            "meta": "",
+        },
     ]
     page = MockPage(videos=videos_sync1)
     human = AsyncMock()
@@ -787,9 +851,30 @@ async def test_full_sync_flow_with_deduplication(connector):
 
     # Second sync: 2 old, 1 new
     videos_sync2 = [
-        {"video_id": "v2", "title": "Video 2", "channel": "C2", "url": "https://youtube.com/watch?v=v2", "thumbnail": "", "meta": ""},
-        {"video_id": "v3", "title": "Video 3", "channel": "C3", "url": "https://youtube.com/watch?v=v3", "thumbnail": "", "meta": ""},
-        {"video_id": "v4", "title": "Video 4", "channel": "C4", "url": "https://youtube.com/watch?v=v4", "thumbnail": "", "meta": ""},
+        {
+            "video_id": "v2",
+            "title": "Video 2",
+            "channel": "C2",
+            "url": "https://youtube.com/watch?v=v2",
+            "thumbnail": "",
+            "meta": "",
+        },
+        {
+            "video_id": "v3",
+            "title": "Video 3",
+            "channel": "C3",
+            "url": "https://youtube.com/watch?v=v3",
+            "thumbnail": "",
+            "meta": "",
+        },
+        {
+            "video_id": "v4",
+            "title": "Video 4",
+            "channel": "C4",
+            "url": "https://youtube.com/watch?v=v4",
+            "thumbnail": "",
+            "meta": "",
+        },
     ]
     page.videos = videos_sync2
     connector.publish_event.reset_mock()

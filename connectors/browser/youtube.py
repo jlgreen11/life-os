@@ -40,9 +40,9 @@ class YouTubeConnector(BrowserBaseConnector):
     DISPLAY_NAME = "YouTube"
     SITE_ID = "google"  # Uses Google account credentials (shared with other Google services)
     LOGIN_URL = "https://accounts.google.com/ServiceLogin?service=youtube"
-    REQUIRES_2FA = True           # Google accounts almost always need 2FA
-    SYNC_INTERVAL_SECONDS = 900   # 15-minute polling interval
-    MIN_REQUEST_INTERVAL = 3.0    # 3 seconds between page loads
+    REQUIRES_2FA = True  # Google accounts almost always need 2FA
+    SYNC_INTERVAL_SECONDS = 900  # 15-minute polling interval
+    MIN_REQUEST_INTERVAL = 3.0  # 3 seconds between page loads
 
     def get_login_selectors(self) -> dict[str, str]:
         """Google's multi-step login flow: email first, then password, then TOTP."""
@@ -61,8 +61,7 @@ class YouTubeConnector(BrowserBaseConnector):
         except Exception:
             return False
 
-    async def browser_sync(self, page: Any, human: HumanEmulator,
-                           interactor: PageInteractor) -> int:
+    async def browser_sync(self, page: Any, human: HumanEmulator, interactor: PageInteractor) -> int:
         """Scrape subscription feed for new videos.
 
         Navigates to the subscriptions page, scrolls to trigger lazy loading
@@ -120,6 +119,7 @@ class YouTubeConnector(BrowserBaseConnector):
         if cursor:
             try:
                 import json
+
                 seen_ids = set(json.loads(cursor))
             except Exception:
                 pass
@@ -141,7 +141,8 @@ class YouTubeConnector(BrowserBaseConnector):
             }
 
             await self.publish_event(
-                "content.youtube.new_video", payload,
+                "content.youtube.new_video",
+                payload,
                 priority="low",
                 metadata={"domain": "media", "channel": video.get("channel", "")},
             )
@@ -153,6 +154,7 @@ class YouTubeConnector(BrowserBaseConnector):
         if new_video_ids:
             all_seen = list(seen_ids | set(new_video_ids))[-500:]
             import json
+
             self.set_sync_cursor(json.dumps(all_seen))
 
         return count

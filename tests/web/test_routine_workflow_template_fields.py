@@ -170,8 +170,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -228,18 +233,20 @@ def client(mock_life_os):
 
 def test_routines_api_returns_consistency_score_key(mock_life_os, client):
     """GET /api/user-model/routines returns 'consistency_score', not 'consistency'."""
-    mock_life_os.user_model_store.get_routines = Mock(return_value=[
-        {
-            "name": "Morning coffee",
-            "trigger": "weekday_morning",
-            "consistency_score": 0.85,
-            "times_observed": 22,
-            "typical_duration_minutes": 15,
-            "steps": [],
-            "variations": [],
-            "updated_at": "2026-01-01T00:00:00Z",
-        },
-    ])
+    mock_life_os.user_model_store.get_routines = Mock(
+        return_value=[
+            {
+                "name": "Morning coffee",
+                "trigger": "weekday_morning",
+                "consistency_score": 0.85,
+                "times_observed": 22,
+                "typical_duration_minutes": 15,
+                "steps": [],
+                "variations": [],
+                "updated_at": "2026-01-01T00:00:00Z",
+            },
+        ]
+    )
     response = client.get("/api/user-model/routines")
     assert response.status_code == 200
     data = response.json()
@@ -253,24 +260,24 @@ def test_routines_api_returns_consistency_score_key(mock_life_os, client):
 
 def test_routines_api_returns_times_observed_key(mock_life_os, client):
     """GET /api/user-model/routines returns 'times_observed', not 'observation_count'."""
-    mock_life_os.user_model_store.get_routines = Mock(return_value=[
-        {
-            "name": "Evening review",
-            "trigger": "weekday_evening",
-            "consistency_score": 0.7,
-            "times_observed": 15,
-            "typical_duration_minutes": 20,
-            "steps": [],
-            "variations": [],
-            "updated_at": "2026-01-01T00:00:00Z",
-        },
-    ])
+    mock_life_os.user_model_store.get_routines = Mock(
+        return_value=[
+            {
+                "name": "Evening review",
+                "trigger": "weekday_evening",
+                "consistency_score": 0.7,
+                "times_observed": 15,
+                "typical_duration_minutes": 20,
+                "steps": [],
+                "variations": [],
+                "updated_at": "2026-01-01T00:00:00Z",
+            },
+        ]
+    )
     response = client.get("/api/user-model/routines")
     assert response.status_code == 200
     data = response.json()
     routine = data["routines"][0]
     assert "times_observed" in routine, "API must return 'times_observed' key"
-    assert "observation_count" not in routine, (
-        "API returns 'observation_count' instead of 'times_observed'"
-    )
+    assert "observation_count" not in routine, "API returns 'observation_count' instead of 'times_observed'"
     assert routine["times_observed"] == 15

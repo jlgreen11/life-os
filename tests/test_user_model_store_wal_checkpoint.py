@@ -95,9 +95,7 @@ class TestSignalProfileWALCheckpoint:
 
     def test_checkpoint_failure_does_not_crash_write(self, store):
         """A checkpoint exception must NOT propagate out of update_signal_profile."""
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")):
             # Drive to the 50th write, which triggers checkpoint
             for i in range(50):
                 # Should never raise, even when checkpoint raises
@@ -111,17 +109,14 @@ class TestSignalProfileWALCheckpoint:
         """A checkpoint failure must log a WARNING without re-raising."""
         import logging
 
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")):
             with caplog.at_level(logging.WARNING, logger="storage.user_model_store"):
                 for i in range(50):
                     store.update_signal_profile("cadence", {"interval": i})
 
         # At least one warning about the checkpoint failure
         assert any(
-            "WAL checkpoint" in record.message and record.levelno == logging.WARNING
-            for record in caplog.records
+            "WAL checkpoint" in record.message and record.levelno == logging.WARNING for record in caplog.records
         )
 
 
@@ -148,9 +143,7 @@ class TestStoreCommunicationTemplateWALCheckpoint:
 
     def test_checkpoint_failure_does_not_crash_store(self, store):
         """A checkpoint exception must NOT propagate out of store_communication_template."""
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=OSError("read-only filesystem")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=OSError("read-only filesystem")):
             # Should not raise
             store.store_communication_template(_make_template("tpl-safe"))
 
@@ -163,15 +156,12 @@ class TestStoreCommunicationTemplateWALCheckpoint:
         """A checkpoint failure during store logs a WARNING."""
         import logging
 
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=OSError("read-only filesystem")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=OSError("read-only filesystem")):
             with caplog.at_level(logging.WARNING, logger="storage.user_model_store"):
                 store.store_communication_template(_make_template("tpl-warn"))
 
         assert any(
-            "WAL checkpoint" in record.message and record.levelno == logging.WARNING
-            for record in caplog.records
+            "WAL checkpoint" in record.message and record.levelno == logging.WARNING for record in caplog.records
         )
 
     def test_template_write_count_increments(self, store):
@@ -196,18 +186,14 @@ class TestUpdateCommunicationTemplateWALCheckpoint:
         store.store_communication_template(_make_template("tpl-upd-001"))
 
         with patch.object(store.db, "checkpoint_wal") as mock_ckpt:
-            result = store.update_communication_template(
-                "tpl-upd-001", {"formality": 0.9}
-            )
+            result = store.update_communication_template("tpl-upd-001", {"formality": 0.9})
             assert result is not None
             mock_ckpt.assert_called_once_with("user_model")
 
     def test_no_checkpoint_when_template_not_found(self, store):
         """checkpoint_wal is NOT called when the template ID does not exist."""
         with patch.object(store.db, "checkpoint_wal") as mock_ckpt:
-            result = store.update_communication_template(
-                "nonexistent-id", {"formality": 0.9}
-            )
+            result = store.update_communication_template("nonexistent-id", {"formality": 0.9})
             assert result is None
             mock_ckpt.assert_not_called()
 
@@ -217,9 +203,7 @@ class TestUpdateCommunicationTemplateWALCheckpoint:
 
         with patch.object(store.db, "checkpoint_wal") as mock_ckpt:
             # "id" is not an allowed field, so no SQL UPDATE is issued
-            result = store.update_communication_template(
-                "tpl-noop", {"id": "something-else"}
-            )
+            result = store.update_communication_template("tpl-noop", {"id": "something-else"})
             # Returns existing template without issuing an UPDATE
             assert result is not None
             mock_ckpt.assert_not_called()
@@ -230,21 +214,15 @@ class TestUpdateCommunicationTemplateWALCheckpoint:
 
         with patch.object(store.db, "checkpoint_wal") as mock_ckpt:
             for formality in [0.1, 0.2, 0.3]:
-                store.update_communication_template(
-                    "tpl-multi", {"formality": formality}
-                )
+                store.update_communication_template("tpl-multi", {"formality": formality})
             assert mock_ckpt.call_count == 3
 
     def test_checkpoint_failure_does_not_crash_update(self, store):
         """A checkpoint exception must NOT propagate out of update_communication_template."""
         store.store_communication_template(_make_template("tpl-crash"))
 
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=RuntimeError("WAL locked")
-        ):
-            result = store.update_communication_template(
-                "tpl-crash", {"formality": 0.7}
-            )
+        with patch.object(store.db, "checkpoint_wal", side_effect=RuntimeError("WAL locked")):
+            result = store.update_communication_template("tpl-crash", {"formality": 0.7})
             # Update should still succeed and return the updated template
             assert result is not None
             assert abs(result["formality"] - 0.7) < 1e-9
@@ -255,15 +233,12 @@ class TestUpdateCommunicationTemplateWALCheckpoint:
 
         store.store_communication_template(_make_template("tpl-log"))
 
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=RuntimeError("WAL locked")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=RuntimeError("WAL locked")):
             with caplog.at_level(logging.WARNING, logger="storage.user_model_store"):
                 store.update_communication_template("tpl-log", {"formality": 0.6})
 
         assert any(
-            "WAL checkpoint" in record.message and record.levelno == logging.WARNING
-            for record in caplog.records
+            "WAL checkpoint" in record.message and record.levelno == logging.WARNING for record in caplog.records
         )
 
     def test_template_write_count_increments_on_update(self, store):

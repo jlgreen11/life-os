@@ -119,9 +119,7 @@ class TestGetSuppressedPredictionKeys:
 
     def test_ignores_non_not_relevant_responses(self, db, prediction_engine):
         """Predictions with other user_response values are not treated as suppressions."""
-        _store_resolved_prediction(
-            db, "opportunity", "carol@example.com", user_response="acted_on"
-        )
+        _store_resolved_prediction(db, "opportunity", "carol@example.com", user_response="acted_on")
 
         keys = prediction_engine._get_suppressed_prediction_keys()
         assert keys == set()
@@ -129,9 +127,7 @@ class TestGetSuppressedPredictionKeys:
     def test_expired_suppression_not_returned(self, db, prediction_engine):
         """Suppressions older than 90 days are no longer returned."""
         old_date = datetime.now(timezone.utc) - timedelta(days=91)
-        _store_resolved_prediction(
-            db, "opportunity", "expired@example.com", resolved_at=old_date
-        )
+        _store_resolved_prediction(db, "opportunity", "expired@example.com", resolved_at=old_date)
 
         keys = prediction_engine._get_suppressed_prediction_keys()
         assert ("opportunity", "expired@example.com") not in keys
@@ -139,9 +135,7 @@ class TestGetSuppressedPredictionKeys:
     def test_recent_suppression_within_window(self, db, prediction_engine):
         """Suppressions within the 90-day window are returned."""
         recent_date = datetime.now(timezone.utc) - timedelta(days=30)
-        _store_resolved_prediction(
-            db, "opportunity", "recent@example.com", resolved_at=recent_date
-        )
+        _store_resolved_prediction(db, "opportunity", "recent@example.com", resolved_at=recent_date)
 
         keys = prediction_engine._get_suppressed_prediction_keys()
         assert ("opportunity", "recent@example.com") in keys
@@ -260,9 +254,7 @@ class TestSuppressionInGeneratePredictions:
 
         # Store a suppression from 91 days ago
         old_date = datetime.now(timezone.utc) - timedelta(days=91)
-        _store_resolved_prediction(
-            db, "opportunity", "alice@example.com", resolved_at=old_date
-        )
+        _store_resolved_prediction(db, "opportunity", "alice@example.com", resolved_at=old_date)
 
         # The suppression should have expired
         keys = engine._get_suppressed_prediction_keys()

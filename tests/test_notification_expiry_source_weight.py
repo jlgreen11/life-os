@@ -24,8 +24,9 @@ def _make_notification_manager(db):
     return NotificationManager(db=db, event_bus=bus, config={})
 
 
-def _insert_notification(db, *, notification_id=None, status="pending", hours_ago=72,
-                         source_event_id=None, domain=None):
+def _insert_notification(
+    db, *, notification_id=None, status="pending", hours_ago=72, source_event_id=None, domain=None
+):
     """Insert a notification with specific age, status, and source metadata.
 
     Args:
@@ -37,16 +38,13 @@ def _insert_notification(db, *, notification_id=None, status="pending", hours_ag
         domain: Optional domain classification (email, messaging, etc.).
     """
     nid = notification_id or str(uuid.uuid4())
-    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime(
-        "%Y-%m-%dT%H:%M:%S.000Z"
-    )
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications (id, title, body, priority, status, created_at,
                                           source_event_id, domain)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (nid, f"Test notification {nid[:8]}", "Test body", "normal", status,
-             created_at, source_event_id, domain),
+            (nid, f"Test notification {nid[:8]}", "Test body", "normal", status, created_at, source_event_id, domain),
         )
     return nid
 
@@ -94,6 +92,7 @@ def life_os_stub(db, source_weight_manager):
 # -------------------------------------------------------------------
 # Test 1: Expired notification with source_event_id updates source weight
 # -------------------------------------------------------------------
+
 
 def test_expiry_with_source_event_records_dismissal(db, source_weight_manager):
     """Expiring a notification linked to an email event should record a dismissal
@@ -145,6 +144,7 @@ def test_expiry_with_source_event_records_dismissal(db, source_weight_manager):
 # Test 2: Domain fallback when no source_event_id
 # -------------------------------------------------------------------
 
+
 def test_expiry_domain_fallback_records_dismissal(db, source_weight_manager):
     """Expiring a notification with domain='email' but no source_event_id
     should fall back to domain-based classification."""
@@ -187,6 +187,7 @@ def test_expiry_domain_fallback_records_dismissal(db, source_weight_manager):
 # -------------------------------------------------------------------
 # Test 3: Unmapped domain (e.g. 'prediction') produces no update
 # -------------------------------------------------------------------
+
 
 def test_expiry_unmapped_domain_no_source_weight_update(db, source_weight_manager):
     """Expiring a notification with domain='prediction' (no mapping) should
@@ -236,6 +237,7 @@ def test_expiry_unmapped_domain_no_source_weight_update(db, source_weight_manage
 # Test 4: Expiry loop doesn't crash without source_weight_manager
 # -------------------------------------------------------------------
 
+
 def test_expiry_loop_without_source_weight_manager(db):
     """The expiry loop should work even if source_weight_manager is not present
     (fail-open design)."""
@@ -256,6 +258,7 @@ def test_expiry_loop_without_source_weight_manager(db):
 # Test 5: Integration — full expiry loop logic with real managers
 # -------------------------------------------------------------------
 
+
 def test_expiry_source_weight_integration(db, source_weight_manager):
     """End-to-end: expire multiple notifications with mixed sources and verify
     correct source weight updates."""
@@ -263,16 +266,13 @@ def test_expiry_source_weight_integration(db, source_weight_manager):
 
     # Notification 1: email event → should update email.work
     _insert_event(db, "evt-int-1", "email.received", payload={"from": "team@corp.com"})
-    _insert_notification(db, notification_id="n1", source_event_id="evt-int-1",
-                         domain="email", hours_ago=72)
+    _insert_notification(db, notification_id="n1", source_event_id="evt-int-1", domain="email", hours_ago=72)
 
     # Notification 2: messaging domain, no event → should update messaging.direct
-    _insert_notification(db, notification_id="n2", domain="messaging",
-                         source_event_id=None, hours_ago=72)
+    _insert_notification(db, notification_id="n2", domain="messaging", source_event_id=None, hours_ago=72)
 
     # Notification 3: prediction domain → should NOT update anything
-    _insert_notification(db, notification_id="n3", domain="prediction",
-                         source_event_id=None, hours_ago=72)
+    _insert_notification(db, notification_id="n3", domain="prediction", source_event_id=None, hours_ago=72)
 
     before_email = _get_weight_row(db, "email.work")["dismissals"]
     before_messaging = _get_weight_row(db, "messaging.direct")["dismissals"]

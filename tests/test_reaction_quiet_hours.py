@@ -27,6 +27,7 @@ from storage.user_model_store import UserModelStore
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_prediction(prediction_type: str = "reminder", confidence: float = 0.7) -> Prediction:
     """Build a minimal Prediction for testing."""
     return Prediction(
@@ -68,28 +69,23 @@ def _monkeypatch_now(monkeypatch, hour: int, minute: int = 0, weekday_name: str 
 # Tests for _is_quiet_hours() helper
 # ---------------------------------------------------------------------------
 
+
 class TestIsQuietHours:
     """Unit tests for the _is_quiet_hours() method in isolation."""
 
-    def test_no_quiet_hours_configured_returns_false(
-        self, prediction_engine: PredictionEngine
-    ):
+    def test_no_quiet_hours_configured_returns_false(self, prediction_engine: PredictionEngine):
         """When no quiet hours are configured, _is_quiet_hours() returns False (fail-open)."""
         now = datetime(2026, 2, 16, 23, 0, 0, tzinfo=timezone.utc)
         assert prediction_engine._is_quiet_hours(now) is False
 
-    def test_same_day_range_inside_returns_true(
-        self, prediction_engine: PredictionEngine, db: DatabaseManager
-    ):
+    def test_same_day_range_inside_returns_true(self, prediction_engine: PredictionEngine, db: DatabaseManager):
         """A time inside a same-day quiet range should return True."""
         _store_quiet_hours(db, [{"start": "09:00", "end": "11:00", "days": ["monday"]}])
         # Monday at 10:00 — inside range
         now = datetime(2026, 2, 16, 10, 0, 0, tzinfo=timezone.utc)  # 2026-02-16 is Monday
         assert prediction_engine._is_quiet_hours(now) is True
 
-    def test_same_day_range_outside_returns_false(
-        self, prediction_engine: PredictionEngine, db: DatabaseManager
-    ):
+    def test_same_day_range_outside_returns_false(self, prediction_engine: PredictionEngine, db: DatabaseManager):
         """A time outside a same-day quiet range should return False."""
         _store_quiet_hours(db, [{"start": "09:00", "end": "11:00", "days": ["monday"]}])
         now = datetime(2026, 2, 16, 12, 0, 0, tzinfo=timezone.utc)  # 12:00, outside 09-11
@@ -119,17 +115,13 @@ class TestIsQuietHours:
         now = datetime(2026, 2, 16, 14, 0, 0, tzinfo=timezone.utc)
         assert prediction_engine._is_quiet_hours(now) is False
 
-    def test_wrong_day_of_week_returns_false(
-        self, prediction_engine: PredictionEngine, db: DatabaseManager
-    ):
+    def test_wrong_day_of_week_returns_false(self, prediction_engine: PredictionEngine, db: DatabaseManager):
         """Quiet hours configured for Saturday only should not fire on Monday."""
         _store_quiet_hours(db, [{"start": "22:00", "end": "07:00", "days": ["saturday"]}])
         now = datetime(2026, 2, 16, 23, 0, 0, tzinfo=timezone.utc)  # Monday
         assert prediction_engine._is_quiet_hours(now) is False
 
-    def test_malformed_data_returns_false(
-        self, prediction_engine: PredictionEngine, db: DatabaseManager
-    ):
+    def test_malformed_data_returns_false(self, prediction_engine: PredictionEngine, db: DatabaseManager):
         """Malformed quiet_hours JSON should fail open (return False)."""
         with db.get_connection("preferences") as conn:
             conn.execute(
@@ -139,14 +131,15 @@ class TestIsQuietHours:
         now = datetime(2026, 2, 16, 23, 0, 0, tzinfo=timezone.utc)
         assert prediction_engine._is_quiet_hours(now) is False
 
-    def test_multiple_ranges_second_matches(
-        self, prediction_engine: PredictionEngine, db: DatabaseManager
-    ):
+    def test_multiple_ranges_second_matches(self, prediction_engine: PredictionEngine, db: DatabaseManager):
         """When multiple ranges are configured, any match returns True."""
-        _store_quiet_hours(db, [
-            {"start": "22:00", "end": "07:00", "days": ["saturday", "sunday"]},
-            {"start": "12:00", "end": "13:00", "days": ["monday"]},  # lunchtime quiet
-        ])
+        _store_quiet_hours(
+            db,
+            [
+                {"start": "22:00", "end": "07:00", "days": ["saturday", "sunday"]},
+                {"start": "12:00", "end": "13:00", "days": ["monday"]},  # lunchtime quiet
+            ],
+        )
         now = datetime(2026, 2, 16, 12, 30, 0, tzinfo=timezone.utc)  # Monday at 12:30
         assert prediction_engine._is_quiet_hours(now) is True
 
@@ -154,6 +147,7 @@ class TestIsQuietHours:
 # ---------------------------------------------------------------------------
 # Tests for predict_reaction() — configured quiet hours integration
 # ---------------------------------------------------------------------------
+
 
 class TestPredictReactionConfiguredQuietHours:
     """Verify predict_reaction() uses configured quiet hours to penalize predictions."""
@@ -226,8 +220,11 @@ class TestPredictReactionConfiguredQuietHours:
         _monkeypatch_now(monkeypatch, hour=23)
 
         prediction = _make_prediction("reminder", confidence=0.7)
-        reaction = await prediction_engine.predict_react(prediction, {}) if False else \
-                   await prediction_engine.predict_reaction(prediction, {})
+        reaction = (
+            await prediction_engine.predict_react(prediction, {})
+            if False
+            else await prediction_engine.predict_reaction(prediction, {})
+        )
 
         # Without config OR low-activity data, quiet_hours penalty should not fire
         assert "quiet_hours=False" in reaction.reasoning
@@ -236,6 +233,7 @@ class TestPredictReactionConfiguredQuietHours:
 # ---------------------------------------------------------------------------
 # Tests for predict_reaction() — low-activity cadence fallback
 # ---------------------------------------------------------------------------
+
 
 class TestPredictReactionLowActivityFallback:
     """Verify the cadence profile low-activity fallback works when no quiet hours are configured."""
@@ -256,7 +254,7 @@ class TestPredictReactionLowActivityFallback:
                     "10": 100,  # peak
                     "11": 80,
                     "14": 60,
-                    "23": 1,    # < 5% of peak → low activity
+                    "23": 1,  # < 5% of peak → low activity
                 }
             },
         )
@@ -282,7 +280,7 @@ class TestPredictReactionLowActivityFallback:
             {
                 "hourly_activity": {
                     "10": 100,
-                    "14": 60,   # 60% of peak — not low activity
+                    "14": 60,  # 60% of peak — not low activity
                     "23": 1,
                 }
             },
@@ -346,6 +344,7 @@ class TestPredictReactionLowActivityFallback:
 # ---------------------------------------------------------------------------
 # Reasoning string format regression test
 # ---------------------------------------------------------------------------
+
 
 class TestPredictReactionReasoningFormat:
     """Ensure reasoning string contains all expected fields for observability."""

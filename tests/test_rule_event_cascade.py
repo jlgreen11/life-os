@@ -29,6 +29,7 @@ from models.core import EventType
 # Fixtures (mirrors test_master_event_handler_pipeline.py)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def lifeos_config():
     """Minimal config dict for LifeOS in test mode."""
@@ -93,6 +94,7 @@ def _make_event(event_type: str, **payload_overrides) -> dict:
 # Test 1: system.rule.triggered events skip rules evaluation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_system_rule_triggered_skips_rules_evaluation(lifeos, db):
     """A system.rule.triggered event must NOT be re-evaluated by the rules engine.
@@ -131,6 +133,7 @@ async def test_system_rule_triggered_skips_rules_evaluation(lifeos, db):
 # Test 2: system.connector.* events skip signal extraction
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_system_connector_event_skips_signal_extraction(lifeos, db):
     """A system.connector.sync_complete event must NOT run through signal extraction.
@@ -167,6 +170,7 @@ async def test_system_connector_event_skips_signal_extraction(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 3: Real events still processed through all stages
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_real_events_still_processed(lifeos, db):
@@ -252,6 +256,7 @@ async def test_real_events_still_processed(lifeos, db):
 # Test 4: System events are still stored in events.db
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_system_events_still_stored(lifeos, db):
     """System events must still be persisted in events.db (stage 1).
@@ -268,9 +273,7 @@ async def test_system_events_still_stored(lifeos, db):
     await lifeos.master_event_handler(event)
 
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
 
     assert row is not None, "System event must be stored in events.db"
     assert dict(row)["type"] == EventType.RULE_TRIGGERED.value
@@ -279,6 +282,7 @@ async def test_system_events_still_stored(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 5: usermodel.* events are stored but skip stages 2-6
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_usermodel_events_skip_pipeline_stages(lifeos, db):
@@ -329,9 +333,7 @@ async def test_usermodel_events_skip_pipeline_stages(lifeos, db):
 
     # But they should still be stored in events.db (stage 1)
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "usermodel.* events should still be stored in events.db"
 
     # Restore originals

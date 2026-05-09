@@ -115,9 +115,7 @@ def mock_credential_vault():
     vault.list_sites = MagicMock(return_value=["reddit.com", "youtube.com"])
     vault.load_proton_pass_export = MagicMock()
     vault.load_manual_vault = MagicMock()
-    vault.get_credential = MagicMock(
-        return_value={"username": "testuser", "password": "testpass"}
-    )
+    vault.get_credential = MagicMock(return_value={"username": "testuser", "password": "testpass"})
     return vault
 
 
@@ -199,11 +197,12 @@ async def test_start_initializes_engine_and_vault(
     """start() initializes BrowserEngine and CredentialVault."""
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
     ):
         await orch.start()
 
@@ -219,11 +218,12 @@ async def test_start_loads_proton_pass_export(
     """start() loads Proton Pass export when configured."""
     orch = BrowserOrchestrator(event_bus, db, browser_config_with_proton)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
     ):
         await orch.start()
 
@@ -244,11 +244,12 @@ async def test_start_loads_manual_vault(
 
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
     ):
         await orch.start()
 
@@ -260,20 +261,18 @@ async def test_start_creates_whatsapp_connector(
     event_bus, db, browser_config, mock_browser_engine, mock_credential_vault
 ):
     """start() creates WhatsAppConnector when configured."""
-    browser_config["browser"]["connectors"] = {
-        "whatsapp": {"enabled": True, "sync_interval": 300}
-    }
+    browser_config["browser"]["connectors"] = {"whatsapp": {"enabled": True, "sync_interval": 300}}
 
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
-    ), patch(
-        "connectors.browser.whatsapp.WhatsAppConnector"
-    ) as mock_whatsapp:
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
+        patch("connectors.browser.whatsapp.WhatsAppConnector") as mock_whatsapp,
+    ):
         mock_whatsapp_instance = AsyncMock()
         mock_whatsapp.return_value = mock_whatsapp_instance
 
@@ -288,18 +287,18 @@ async def test_start_creates_youtube_connector(
     event_bus, db, browser_config, mock_browser_engine, mock_credential_vault
 ):
     """start() creates YouTubeConnector when configured."""
-    browser_config["browser"]["connectors"] = {
-        "youtube": {"enabled": True, "sync_interval": 600}
-    }
+    browser_config["browser"]["connectors"] = {"youtube": {"enabled": True, "sync_interval": 600}}
 
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
-    ), patch("connectors.browser.youtube.YouTubeConnector") as mock_youtube:
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
+        patch("connectors.browser.youtube.YouTubeConnector") as mock_youtube,
+    ):
         mock_youtube_instance = AsyncMock()
         mock_youtube.return_value = mock_youtube_instance
 
@@ -314,18 +313,18 @@ async def test_start_creates_reddit_connector(
     event_bus, db, browser_config, mock_browser_engine, mock_credential_vault
 ):
     """start() creates RedditConnector when configured."""
-    browser_config["browser"]["connectors"] = {
-        "reddit": {"enabled": True, "sync_interval": 300}
-    }
+    browser_config["browser"]["connectors"] = {"reddit": {"enabled": True, "sync_interval": 300}}
 
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
-    ), patch("connectors.browser.reddit.RedditConnector") as mock_reddit:
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
+        patch("connectors.browser.reddit.RedditConnector") as mock_reddit,
+    ):
         mock_reddit_instance = AsyncMock()
         mock_reddit.return_value = mock_reddit_instance
 
@@ -353,14 +352,14 @@ async def test_start_creates_generic_connectors(
 
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
-    ), patch(
-        "connectors.browser.orchestrator.create_browser_connectors"
-    ) as mock_factory:
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
+        patch("connectors.browser.orchestrator.create_browser_connectors") as mock_factory,
+    ):
         mock_generic = AsyncMock()
         mock_factory.return_value = [mock_generic]
 
@@ -383,16 +382,16 @@ async def test_start_creates_multiple_connectors(
 
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
-    with patch(
-        "connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine
-    ), patch(
-        "connectors.browser.orchestrator.CredentialVault",
-        return_value=mock_credential_vault,
-    ), patch("connectors.browser.whatsapp.WhatsAppConnector") as mock_wa, patch(
-        "connectors.browser.youtube.YouTubeConnector"
-    ) as mock_yt, patch(
-        "connectors.browser.reddit.RedditConnector"
-    ) as mock_reddit:
+    with (
+        patch("connectors.browser.orchestrator.BrowserEngine", return_value=mock_browser_engine),
+        patch(
+            "connectors.browser.orchestrator.CredentialVault",
+            return_value=mock_credential_vault,
+        ),
+        patch("connectors.browser.whatsapp.WhatsAppConnector") as mock_wa,
+        patch("connectors.browser.youtube.YouTubeConnector") as mock_yt,
+        patch("connectors.browser.reddit.RedditConnector") as mock_reddit,
+    ):
         mock_wa.return_value = AsyncMock()
         mock_yt.return_value = AsyncMock()
         mock_reddit.return_value = AsyncMock()
@@ -435,9 +434,7 @@ async def test_start_connectors_when_disabled(event_bus, db, disabled_browser_co
 
 
 @pytest.mark.asyncio
-async def test_start_connectors_handles_failures_gracefully(
-    event_bus, db, browser_config
-):
+async def test_start_connectors_handles_failures_gracefully(event_bus, db, browser_config):
     """start_connectors() continues if one connector fails to start."""
     orch = BrowserOrchestrator(event_bus, db, browser_config)
 
@@ -834,9 +831,7 @@ def test_is_enabled_property(event_bus, db, browser_config):
     orch = BrowserOrchestrator(event_bus, db, browser_config)
     assert orch.is_enabled is True
 
-    orch_disabled = BrowserOrchestrator(
-        event_bus, db, {"browser": {"enabled": False}}
-    )
+    orch_disabled = BrowserOrchestrator(event_bus, db, {"browser": {"enabled": False}})
     assert orch_disabled.is_enabled is False
 
 

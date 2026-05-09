@@ -55,14 +55,16 @@ async def test_calendar_conflicts_diagnostic_only_all_day_events(db, user_model_
                     "caldav",
                     now.isoformat(),
                     Priority.NORMAL,
-                    json.dumps({
-                        "event_id": f"cal-{i}",
-                        "title": f"All-day event {i}",
-                        "start_time": event_date,
-                        "end_time": event_date,
-                        "is_all_day": True,
-                        "attendees": [],
-                    }),
+                    json.dumps(
+                        {
+                            "event_id": f"cal-{i}",
+                            "title": f"All-day event {i}",
+                            "start_time": event_date,
+                            "end_time": event_date,
+                            "is_all_day": True,
+                            "attendees": [],
+                        }
+                    ),
                 ),
             )
             conn.commit()
@@ -142,9 +144,7 @@ async def test_relationship_maintenance_diagnostic_with_contacts(db, user_model_
                 "interaction_count": 10,
                 "outbound_count": 5,
                 "last_interaction": (now - timedelta(days=5)).isoformat(),
-                "interaction_timestamps": [
-                    (now - timedelta(days=i)).isoformat() for i in range(10)
-                ],
+                "interaction_timestamps": [(now - timedelta(days=i)).isoformat() for i in range(10)],
             },
             "noreply@marketing.com": {
                 "interaction_count": 2,
@@ -195,14 +195,16 @@ async def test_preparation_needs_diagnostic_with_events(db, user_model_store, ca
                 "caldav",
                 now.isoformat(),
                 Priority.NORMAL,
-                json.dumps({
-                    "event_id": "cal-1",
-                    "title": "Flight to SFO",
-                    "start_time": event_time,
-                    "end_time": (now + timedelta(hours=26)).isoformat(),
-                    "is_all_day": False,
-                    "attendees": [],
-                }),
+                json.dumps(
+                    {
+                        "event_id": "cal-1",
+                        "title": "Flight to SFO",
+                        "start_time": event_time,
+                        "end_time": (now + timedelta(hours=26)).isoformat(),
+                        "is_all_day": False,
+                        "attendees": [],
+                    }
+                ),
             ),
         )
         conn.commit()
@@ -249,10 +251,12 @@ async def test_spending_patterns_diagnostic_with_transactions(db, user_model_sto
                     "finance",
                     (now - timedelta(days=i)).isoformat(),
                     Priority.NORMAL,
-                    json.dumps({
-                        "amount": 50.0,
-                        "category": "groceries" if i < 5 else "utilities",
-                    }),
+                    json.dumps(
+                        {
+                            "amount": 50.0,
+                            "category": "groceries" if i < 5 else "utilities",
+                        }
+                    ),
                 ),
             )
             conn.commit()

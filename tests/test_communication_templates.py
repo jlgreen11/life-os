@@ -34,8 +34,7 @@ def test_template_extraction_basic(db, user_model_store):
     # Verify template was created
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
-            "SELECT * FROM communication_templates WHERE contact_id = ?",
-            ("alice@example.com",)
+            "SELECT * FROM communication_templates WHERE contact_id = ?", ("alice@example.com",)
         ).fetchall()
 
     assert len(templates) == 1
@@ -75,8 +74,7 @@ def test_template_formality_detection(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         formal_template = conn.execute(
-            "SELECT formality FROM communication_templates WHERE contact_id = ?",
-            ("prof@university.edu",)
+            "SELECT formality FROM communication_templates WHERE contact_id = ?", ("prof@university.edu",)
         ).fetchone()
 
     # Formal message should have high formality score
@@ -99,8 +97,7 @@ def test_template_formality_detection(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         casual_template = conn.execute(
-            "SELECT formality FROM communication_templates WHERE contact_id = ?",
-            ("buddy@example.com",)
+            "SELECT formality FROM communication_templates WHERE contact_id = ?", ("buddy@example.com",)
         ).fetchone()
 
     # Casual message should have low formality score
@@ -136,8 +133,7 @@ def test_template_greeting_extraction(db, user_model_store):
 
         with db.get_connection("user_model") as conn:
             template = conn.execute(
-                "SELECT greeting FROM communication_templates WHERE contact_id = ?",
-                (f"contact{i}@example.com",)
+                "SELECT greeting FROM communication_templates WHERE contact_id = ?", (f"contact{i}@example.com",)
             ).fetchone()
 
         assert template["greeting"] == expected_greeting
@@ -172,8 +168,7 @@ def test_template_closing_extraction(db, user_model_store):
 
         with db.get_connection("user_model") as conn:
             template = conn.execute(
-                "SELECT closing FROM communication_templates WHERE contact_id = ?",
-                (f"contact{i}@example.com",)
+                "SELECT closing FROM communication_templates WHERE contact_id = ?", (f"contact{i}@example.com",)
             ).fetchone()
 
         assert template["closing"] == expected_closing
@@ -200,8 +195,7 @@ def test_template_emoji_detection(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?",
-            ("friend@example.com",)
+            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?", ("friend@example.com",)
         ).fetchone()
 
     assert template["uses_emoji"] == 1  # True stored as 1
@@ -223,8 +217,7 @@ def test_template_emoji_detection(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?",
-            ("work@example.com",)
+            "SELECT uses_emoji FROM communication_templates WHERE contact_id = ?", ("work@example.com",)
         ).fetchone()
 
     assert template["uses_emoji"] == 0  # False stored as 0
@@ -253,8 +246,7 @@ def test_template_incremental_update(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         template1 = conn.execute(
-            "SELECT samples_analyzed, typical_length FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT samples_analyzed, typical_length FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
     assert template1["samples_analyzed"] == 1
@@ -286,8 +278,7 @@ def test_template_incremental_update(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         template2 = conn.execute(
-            "SELECT samples_analyzed, typical_length FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT samples_analyzed, typical_length FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
     assert template2["samples_analyzed"] == 2
@@ -313,7 +304,7 @@ def test_template_common_phrases(db, user_model_store):
             "id": f"evt-{i:03d}",
             "type": EventType.EMAIL_SENT.value,
             "source": "email",
-            "timestamp": f"2026-02-15T{10+i:02d}:00:00Z",
+            "timestamp": f"2026-02-15T{10 + i:02d}:00:00Z",
             "payload": {
                 "to_addresses": [contact],
                 "channel": "email",
@@ -324,8 +315,7 @@ def test_template_common_phrases(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT common_phrases FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT common_phrases FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
     common_phrases = json.loads(template["common_phrases"])
@@ -373,8 +363,7 @@ def test_template_per_channel(db, user_model_store):
     # Should have two separate templates
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
-            "SELECT channel, formality, greeting FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT channel, formality, greeting FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchall()
 
     assert len(templates) == 2
@@ -411,8 +400,7 @@ def test_template_skips_short_messages(db, user_model_store):
     # Should not have created a template
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
-            "SELECT * FROM communication_templates WHERE contact_id = ?",
-            ("alice@example.com",)
+            "SELECT * FROM communication_templates WHERE contact_id = ?", ("alice@example.com",)
         ).fetchall()
 
     assert len(templates) == 0
@@ -441,7 +429,7 @@ def test_template_no_extraction_for_inbound(db, user_model_store):
     with db.get_connection("user_model") as conn:
         templates = conn.execute(
             "SELECT * FROM communication_templates WHERE contact_id = ? AND context = ?",
-            ("sender@example.com", "contact_to_user")
+            ("sender@example.com", "contact_to_user"),
         ).fetchall()
 
     # Verify inbound template was created
@@ -463,7 +451,7 @@ def test_template_example_message_ids(db, user_model_store):
             "id": f"evt-{i:03d}",
             "type": EventType.EMAIL_SENT.value,
             "source": "email",
-            "timestamp": f"2026-02-15T{10+(i//10):02d}:{(i*4)%60:02d}:00Z",
+            "timestamp": f"2026-02-15T{10 + (i // 10):02d}:{(i * 4) % 60:02d}:00Z",
             "payload": {
                 "to_addresses": [contact],
                 "channel": "email",
@@ -474,8 +462,7 @@ def test_template_example_message_ids(db, user_model_store):
 
     with db.get_connection("user_model") as conn:
         template = conn.execute(
-            "SELECT example_message_ids FROM communication_templates WHERE contact_id = ?",
-            (contact,)
+            "SELECT example_message_ids FROM communication_templates WHERE contact_id = ?", (contact,)
         ).fetchone()
 
     example_ids = json.loads(template["example_message_ids"])

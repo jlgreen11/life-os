@@ -42,8 +42,13 @@ def _insert_events(db, events: list[dict]) -> None:
             )
 
 
-def _email_received(event_id: str, from_addr: str, timestamp: str, subject: str = "Project Update",
-                    body: str = "We are working on the Python machine learning pipeline.") -> dict:
+def _email_received(
+    event_id: str,
+    from_addr: str,
+    timestamp: str,
+    subject: str = "Project Update",
+    body: str = "We are working on the Python machine learning pipeline.",
+) -> dict:
     """Build a minimal email.received event dict for testing."""
     return {
         "id": event_id,
@@ -61,8 +66,13 @@ def _email_received(event_id: str, from_addr: str, timestamp: str, subject: str 
     }
 
 
-def _email_sent(event_id: str, to_addr: str, timestamp: str, subject: str = "Re: Project",
-                body: str = "The Python code is ready for review.") -> dict:
+def _email_sent(
+    event_id: str,
+    to_addr: str,
+    timestamp: str,
+    subject: str = "Re: Project",
+    body: str = "The Python code is ready for review.",
+) -> dict:
     """Build a minimal email.sent event dict for testing."""
     return {
         "id": event_id,
@@ -112,16 +122,25 @@ def test_backfill_topic_creates_profile_from_received_emails(db, user_model_stor
     """
     events = [
         _email_received(
-            "evt-1", "alice@example.com", "2026-02-01T10:00:00Z",
-            subject="Python API design", body="We should design the Python REST API carefully.",
+            "evt-1",
+            "alice@example.com",
+            "2026-02-01T10:00:00Z",
+            subject="Python API design",
+            body="We should design the Python REST API carefully.",
         ),
         _email_received(
-            "evt-2", "alice@example.com", "2026-02-08T10:00:00Z",
-            subject="Machine learning update", body="The machine learning model is performing well.",
+            "evt-2",
+            "alice@example.com",
+            "2026-02-08T10:00:00Z",
+            subject="Machine learning update",
+            body="The machine learning model is performing well.",
         ),
         _email_received(
-            "evt-3", "bob@example.com", "2026-02-05T14:00:00Z",
-            subject="Python review", body="Please review the Python implementation.",
+            "evt-3",
+            "bob@example.com",
+            "2026-02-05T14:00:00Z",
+            subject="Python review",
+            body="Please review the Python implementation.",
         ),
     ]
     _insert_events(db, events)
@@ -150,12 +169,18 @@ def test_backfill_topic_processes_sent_emails(db, user_model_store):
     """
     events = [
         _email_sent(
-            "evt-sent-1", "bob@example.com", "2026-02-01T11:00:00Z",
-            subject="Python implementation", body="I have completed the Python feature implementation.",
+            "evt-sent-1",
+            "bob@example.com",
+            "2026-02-01T11:00:00Z",
+            subject="Python implementation",
+            body="I have completed the Python feature implementation.",
         ),
         _email_sent(
-            "evt-sent-2", "carol@example.com", "2026-02-02T15:00:00Z",
-            subject="API documentation", body="Here is the updated API documentation for review.",
+            "evt-sent-2",
+            "carol@example.com",
+            "2026-02-02T15:00:00Z",
+            subject="API documentation",
+            body="Here is the updated API documentation for review.",
         ),
     ]
     _insert_events(db, events)
@@ -180,8 +205,11 @@ def test_backfill_topic_filters_marketing_senders(db, user_model_store):
     events = [
         # Genuine email — should be processed
         _email_received(
-            "evt-real", "alice@example.com", "2026-02-01T10:00:00Z",
-            subject="Python project", body="Working on the Python data pipeline.",
+            "evt-real",
+            "alice@example.com",
+            "2026-02-01T10:00:00Z",
+            subject="Python project",
+            body="Working on the Python data pipeline.",
         ),
         # Marketing emails — should be filtered
         _marketing_email("evt-mkt-1", "2026-02-02T09:00:00Z"),
@@ -215,7 +243,9 @@ def test_backfill_topic_dry_run_no_writes(db, user_model_store):
     """
     events = [
         _email_received(
-            "evt-1", "alice@example.com", "2026-02-01T10:00:00Z",
+            "evt-1",
+            "alice@example.com",
+            "2026-02-01T10:00:00Z",
             body="Python machine learning project discussion.",
         ),
     ]
@@ -256,8 +286,9 @@ def test_backfill_topic_limit_parameter(db, user_model_store):
     without reprocessing all historical data.
     """
     events = [
-        _email_received(f"evt-{i}", "alice@example.com", f"2026-02-{i+1:02d}T10:00:00Z",
-                        body=f"Python project update number {i}.")
+        _email_received(
+            f"evt-{i}", "alice@example.com", f"2026-02-{i + 1:02d}T10:00:00Z", body=f"Python project update number {i}."
+        )
         for i in range(5)
     ]
     _insert_events(db, events)

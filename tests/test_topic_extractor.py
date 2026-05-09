@@ -27,6 +27,7 @@ class TestTopicExtractor:
     def extractor(self, db, event_store):
         """Create a TopicExtractor instance with test database."""
         from storage.user_model_store import UserModelStore
+
         ums = UserModelStore(db)
         return TopicExtractor(db, ums)
 
@@ -67,8 +68,8 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "We need to discuss the quarterly revenue projections for enterprise sales. "
-                        "The dashboard analytics show strong growth in subscription renewals.",
-            }
+                "The dashboard analytics show strong growth in subscription renewals.",
+            },
         }
 
         signals = extractor.extract(event)
@@ -91,7 +92,7 @@ class TestTopicExtractor:
             "payload": {
                 "subject": "Machine Learning Conference Invitation",
                 "body": "Join us for a workshop on neural networks and deep learning algorithms.",
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -112,7 +113,7 @@ class TestTopicExtractor:
             "payload": {
                 "subject": "Docker container orchestration with Kubernetes",
                 "body": "",
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -130,8 +131,8 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "I think that we should have a meeting about the project timeline "
-                        "because there are some issues with the current schedule.",
-            }
+                "because there are some issues with the current schedule.",
+            },
         }
 
         signals = extractor.extract(event)
@@ -154,9 +155,9 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "Python programming with Python frameworks. Python developers use Python libraries. "
-                        "Python syntax makes Python code readable. Python applications require Python testing. "
-                        "Java code differs from Python code fundamentally.",
-            }
+                "Python syntax makes Python code readable. Python applications require Python testing. "
+                "Java code differs from Python code fundamentally.",
+            },
         }
 
         signals = extractor.extract(event)
@@ -175,7 +176,7 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "ok",  # Too short
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -189,7 +190,7 @@ class TestTopicExtractor:
             "payload": {
                 "body": "",
                 "subject": "",
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -202,7 +203,7 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body_plain": "Database optimization techniques for PostgreSQL performance tuning.",
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -219,7 +220,7 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "Let's discuss the architectural patterns for microservices deployment strategies.",
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -237,7 +238,7 @@ class TestTopicExtractor:
             "timestamp": "2026-02-15T12:00:00Z",
             "payload": {
                 "body": "Machine learning models require extensive training datasets for accurate predictions.",
-            }
+            },
         }
 
         extractor.extract(event)
@@ -270,7 +271,7 @@ class TestTopicExtractor:
             "timestamp": "2026-02-15T10:00:00Z",
             "payload": {
                 "body": "Docker containerization simplifies application deployment across environments.",
-            }
+            },
         }
 
         event2 = {
@@ -278,7 +279,7 @@ class TestTopicExtractor:
             "timestamp": "2026-02-15T11:00:00Z",
             "payload": {
                 "body": "Kubernetes orchestration handles Docker container scaling automatically.",
-            }
+            },
         }
 
         extractor.extract(event1)
@@ -306,7 +307,7 @@ class TestTopicExtractor:
                 "timestamp": f"2026-02-15T{i % 24:02d}:{i % 60:02d}:00Z",
                 "payload": {
                     "body": f"Message number {i} about technology topics and software development.",
-                }
+                },
             }
             extractor.extract(event)
 
@@ -332,7 +333,7 @@ class TestTopicExtractor:
                 "timestamp": f"2026-02-15T{i % 24:02d}:{i % 60:02d}:00Z",
                 "payload": {
                     "body": f"Message {i} discusses blockchain technology and distributed systems.",
-                }
+                },
             }
             extractor.extract(event)
 
@@ -386,7 +387,7 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "Meeting at 3pm in room B123. Call 555-1234 for details. Total cost: $500.",
-            }
+            },
         }
 
         signals = extractor.extract(event)
@@ -407,7 +408,7 @@ class TestTopicExtractor:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "body": "Python Programming language. PYTHON frameworks. python development. PyThOn libraries.",
-            }
+            },
         }
 
         signals = extractor.extract(event)

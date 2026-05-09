@@ -58,18 +58,22 @@ class BrowserBaseConnector(BaseConnector):
     """
 
     # Subclasses override these
-    SITE_ID: str = ""       # Used as the key for session storage and credential lookup
-    LOGIN_URL: str = ""     # Where to navigate for browser-based login
+    SITE_ID: str = ""  # Used as the key for session storage and credential lookup
+    LOGIN_URL: str = ""  # Where to navigate for browser-based login
     REQUIRES_2FA: bool = False  # Whether the site needs a TOTP code after password
 
     # Rate limiting — keeps browser requests respectful
     MIN_REQUEST_INTERVAL: float = 2.0  # Seconds between page loads
-    MAX_PAGES_PER_SYNC: int = 20       # Safety cap on pages visited per sync cycle
+    MAX_PAGES_PER_SYNC: int = 20  # Safety cap on pages visited per sync cycle
 
-    def __init__(self, event_bus: EventBus, db: DatabaseManager,
-                 config: dict[str, Any],
-                 browser_engine: Optional[BrowserEngine] = None,
-                 credential_vault: Optional[CredentialVault] = None):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        db: DatabaseManager,
+        config: dict[str, Any],
+        browser_engine: Optional[BrowserEngine] = None,
+        credential_vault: Optional[CredentialVault] = None,
+    ):
         super().__init__(event_bus, db, config)
 
         # Accept shared instances from the orchestrator, or create standalone
@@ -82,13 +86,11 @@ class BrowserBaseConnector(BaseConnector):
         )
         # Human emulator and page interactor provide realistic mouse/keyboard
         # behavior so browser automation is not flagged as a bot.
-        self._human = HumanEmulator(
-            speed_factor=config.get("human_speed_factor", 1.0)
-        )
+        self._human = HumanEmulator(speed_factor=config.get("human_speed_factor", 1.0))
         self._interactor = PageInteractor(self._human)
 
         self._context = None  # Browser context (persistent per site)
-        self._page = None     # Active page
+        self._page = None  # Active page
 
         # API-to-browser failover: start in API mode and switch to browser
         # after _api_failure_threshold consecutive API errors.
@@ -218,7 +220,8 @@ class BrowserBaseConnector(BaseConnector):
 
             # Perform login
             await self._interactor.login(
-                self._page, creds,
+                self._page,
+                creds,
                 username_selector=selectors.get("username", "input[type='email']"),
                 password_selector=selectors.get("password", "input[type='password']"),
                 submit_selector=selectors.get("submit", "button[type='submit']"),
@@ -314,16 +317,15 @@ class BrowserBaseConnector(BaseConnector):
         """API-based sync. Override if the service has an API."""
         raise NotImplementedError("No API available — using browser mode")
 
-    async def browser_sync(self, page: Any, human: HumanEmulator,
-                           interactor: PageInteractor) -> int:
+    async def browser_sync(self, page: Any, human: HumanEmulator, interactor: PageInteractor) -> int:
         """
         Browser-based sync. Subclasses implement this to scrape data.
-        
+
         Args:
             page: The logged-in Playwright page
             human: Human emulator for realistic interactions
             interactor: High-level page interaction helpers
-            
+
         Returns:
             Number of events extracted
         """

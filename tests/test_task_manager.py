@@ -720,7 +720,7 @@ def test_row_to_dict_deserializes_json_fields(db):
                 "title": "Test",
                 "tags": '["tag1", "tag2"]',
                 "related_contacts": '["contact-1"]',
-                "related_events": '[]',
+                "related_events": "[]",
                 "description": "Normal field",
             }
 

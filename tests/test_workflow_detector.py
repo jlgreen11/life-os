@@ -34,25 +34,39 @@ class TestWorkflowDetection:
             for i in range(5):
                 # Email received
                 event_time = base_time + timedelta(days=i)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"sender": sender, "subject": f"Task {i}"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"sender": sender, "subject": f"Task {i}"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 # Email sent (response) ~1 hour later
                 response_time = event_time + timedelta(hours=1)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-                    json.dumps({"to": sender, "subject": f"Re: Task {i}"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        response_time.isoformat(),
+                        3,
+                        json.dumps({"to": sender, "subject": f"Re: Task {i}"}),
+                        json.dumps({}),
+                    ),
+                )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -79,36 +93,57 @@ class TestWorkflowDetection:
                 create_time = base_time + timedelta(days=i * 2)
 
                 # Task created
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "task.created", "task_manager", create_time.isoformat(), 3,
-                    json.dumps({"task_id": task_id, "title": f"Task {i}"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "task.created",
+                        "task_manager",
+                        create_time.isoformat(),
+                        3,
+                        json.dumps({"task_id": task_id, "title": f"Task {i}"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 # Browser session (research)
                 research_time = create_time + timedelta(minutes=30)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "browser.session.started", "browser", research_time.isoformat(), 2,
-                    json.dumps({"url": "https://example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "browser.session.started",
+                        "browser",
+                        research_time.isoformat(),
+                        2,
+                        json.dumps({"url": "https://example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 # Task completed
                 complete_time = create_time + timedelta(hours=2)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "task.completed", "task_manager", complete_time.isoformat(), 3,
-                    json.dumps({"task_id": task_id}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "task.completed",
+                        "task_manager",
+                        complete_time.isoformat(),
+                        3,
+                        json.dumps({"task_id": task_id}),
+                        json.dumps({}),
+                    ),
+                )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -131,25 +166,39 @@ class TestWorkflowDetection:
                 event_time = base_time + timedelta(days=i * 3)
 
                 # Calendar event created
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "calendar.event.created", "caldav", event_time.isoformat(), 3,
-                    json.dumps({"title": f"Meeting {i}"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "calendar.event.created",
+                        "caldav",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"title": f"Meeting {i}"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 # Email sent (follow-up) after event
                 followup_time = event_time + timedelta(hours=2)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", followup_time.isoformat(), 3,
-                    json.dumps({"subject": f"Follow-up on Meeting {i}"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        followup_time.isoformat(),
+                        3,
+                        json.dumps({"subject": f"Follow-up on Meeting {i}"}),
+                        json.dumps({}),
+                    ),
+                )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -171,24 +220,38 @@ class TestWorkflowDetection:
         with db.get_connection("events") as conn:
             for i in range(2):
                 event_time = base_time + timedelta(days=i)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"sender": "rare_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"sender": "rare_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 response_time = event_time + timedelta(hours=1)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-                    json.dumps({"to": "rare_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        response_time.isoformat(),
+                        3,
+                        json.dumps({"to": "rare_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -207,26 +270,40 @@ class TestWorkflowDetection:
                 task_id = str(uuid4())
                 create_time = base_time + timedelta(days=i)
 
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "task.created", "task_manager", create_time.isoformat(), 3,
-                    json.dumps({"task_id": task_id, "title": f"Low completion task {i}"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "task.created",
+                        "task_manager",
+                        create_time.isoformat(),
+                        3,
+                        json.dumps({"task_id": task_id, "title": f"Low completion task {i}"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 # Only complete first 2 tasks
                 if i < 2:
                     complete_time = create_time + timedelta(hours=1)
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        str(uuid4()), "task.completed", "task_manager", complete_time.isoformat(), 3,
-                        json.dumps({"task_id": task_id}),
-                        json.dumps({})
-                    ))
+                    """,
+                        (
+                            str(uuid4()),
+                            "task.completed",
+                            "task_manager",
+                            complete_time.isoformat(),
+                            3,
+                            json.dumps({"task_id": task_id}),
+                            json.dumps({}),
+                        ),
+                    )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -443,33 +520,39 @@ class TestWorkflowDetectionStrategies:
             episode_time = base_time + timedelta(days=day_offset)
 
             # Episode 1: Read email
-            user_model_store.store_episode({
-                "id": str(uuid4()),
-                "timestamp": episode_time.isoformat(),
-                "event_id": str(uuid4()),
-                "interaction_type": "read_email",
-                "content_summary": "Read email from client",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid4()),
+                    "timestamp": episode_time.isoformat(),
+                    "event_id": str(uuid4()),
+                    "interaction_type": "read_email",
+                    "content_summary": "Read email from client",
+                }
+            )
 
             # Episode 2: Research (1 hour later)
             research_time = episode_time + timedelta(hours=1)
-            user_model_store.store_episode({
-                "id": str(uuid4()),
-                "timestamp": research_time.isoformat(),
-                "event_id": str(uuid4()),
-                "interaction_type": "web_research",
-                "content_summary": "Researched solution",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid4()),
+                    "timestamp": research_time.isoformat(),
+                    "event_id": str(uuid4()),
+                    "interaction_type": "web_research",
+                    "content_summary": "Researched solution",
+                }
+            )
 
             # Episode 3: Write response (2 hours after start)
             response_time = episode_time + timedelta(hours=2)
-            user_model_store.store_episode({
-                "id": str(uuid4()),
-                "timestamp": response_time.isoformat(),
-                "event_id": str(uuid4()),
-                "interaction_type": "write_email",
-                "content_summary": "Drafted response",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid4()),
+                    "timestamp": response_time.isoformat(),
+                    "event_id": str(uuid4()),
+                    "interaction_type": "write_email",
+                    "content_summary": "Drafted response",
+                }
+            )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -497,25 +580,39 @@ class TestWorkflowDetectionStrategies:
                 event_time = base_time + timedelta(days=i)
 
                 # Email received
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"sender": "delayed_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"sender": "delayed_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 # Response sent 13 hours later (exceeds max_step_gap_hours of 12)
                 response_time = event_time + timedelta(hours=13)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-                    json.dumps({"to": "delayed_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        response_time.isoformat(),
+                        3,
+                        json.dumps({"to": "delayed_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -555,36 +652,57 @@ class TestWorkflowEdgeCases:
             # Old events (outside lookback window)
             for i in range(3):
                 event_time = old_time + timedelta(days=i)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"sender": "old_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"sender": "old_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
             # Recent events (within lookback window)
             for i in range(5):
                 event_time = recent_time + timedelta(days=i)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"sender": "recent_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"sender": "recent_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
                 response_time = event_time + timedelta(hours=1)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-                    json.dumps({"to": "recent_sender@example.com"}),
-                    json.dumps({})
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        response_time.isoformat(),
+                        3,
+                        json.dumps({"to": "recent_sender@example.com"}),
+                        json.dumps({}),
+                    ),
+                )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 

@@ -49,11 +49,15 @@ class TestExtendedGapDetection:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        receive_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        receive_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -64,11 +68,15 @@ class TestExtendedGapDetection:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        response_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        response_time.isoformat(),
+                        3,
                         json.dumps({"to": sender}),
                         json.dumps({}),
-                        None, sender,
+                        None,
+                        sender,
                     ),
                 )
 
@@ -101,11 +109,15 @@ class TestExtendedGapDetection:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        receive_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        receive_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -116,20 +128,22 @@ class TestExtendedGapDetection:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.sent", "gmail",
-                        response_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.sent",
+                        "gmail",
+                        response_time.isoformat(),
+                        3,
                         json.dumps({"to": sender}),
                         json.dumps({}),
-                        None, sender,
+                        None,
+                        sender,
                     ),
                 )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
         sender_workflows = [w for w in workflows if sender in w["name"]]
-        assert len(sender_workflows) == 0, (
-            "Should NOT detect workflow with 13h gap (exceeds 12h window)"
-        )
+        assert len(sender_workflows) == 0, "Should NOT detect workflow with 13h gap (exceeds 12h window)"
 
 
 class TestMinCompletionsTwo:
@@ -157,11 +171,15 @@ class TestMinCompletionsTwo:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        receive_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        receive_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -173,11 +191,15 @@ class TestMinCompletionsTwo:
                                       email_from, email_to)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "email.sent", "gmail",
-                    response_time_1.isoformat(), 3,
+                    str(uuid4()),
+                    "email.sent",
+                    "gmail",
+                    response_time_1.isoformat(),
+                    3,
                     json.dumps({"to": sender}),
                     json.dumps({}),
-                    None, sender,
+                    None,
+                    sender,
                 ),
             )
 
@@ -189,11 +211,15 @@ class TestMinCompletionsTwo:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        receive_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        receive_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -204,11 +230,15 @@ class TestMinCompletionsTwo:
                                       email_from, email_to)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "email.sent", "gmail",
-                    response_time_2.isoformat(), 3,
+                    str(uuid4()),
+                    "email.sent",
+                    "gmail",
+                    response_time_2.isoformat(),
+                    3,
                     json.dumps({"to": sender}),
                     json.dumps({}),
-                    None, sender,
+                    None,
+                    sender,
                 ),
             )
 
@@ -233,11 +263,15 @@ class TestMinCompletionsTwo:
                                           email_from, email_to)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid4()), "email.received", "gmail",
-                        receive_time.isoformat(), 3,
+                        str(uuid4()),
+                        "email.received",
+                        "gmail",
+                        receive_time.isoformat(),
+                        3,
                         json.dumps({"from_address": sender}),
                         json.dumps({}),
-                        sender, None,
+                        sender,
+                        None,
                     ),
                 )
 
@@ -247,20 +281,22 @@ class TestMinCompletionsTwo:
                                       email_from, email_to)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "email.sent", "gmail",
-                    (base_time + timedelta(hours=1)).isoformat(), 3,
+                    str(uuid4()),
+                    "email.sent",
+                    "gmail",
+                    (base_time + timedelta(hours=1)).isoformat(),
+                    3,
                     json.dumps({"to": sender}),
                     json.dumps({}),
-                    None, sender,
+                    None,
+                    sender,
                 ),
             )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
         sender_workflows = [w for w in workflows if sender in w["name"]]
-        assert len(sender_workflows) == 0, (
-            "Should NOT detect workflow with only 1 completion (< min_completions=2)"
-        )
+        assert len(sender_workflows) == 0, "Should NOT detect workflow with only 1 completion (< min_completions=2)"
 
 
 class TestDiagnosticsThresholds:
@@ -276,15 +312,11 @@ class TestDiagnosticsThresholds:
         assert thresholds["max_step_gap_hours"] == 12, (
             f"max_step_gap_hours should be 12, got {thresholds['max_step_gap_hours']}"
         )
-        assert thresholds["min_completions"] == 2, (
-            f"min_completions should be 2, got {thresholds['min_completions']}"
-        )
+        assert thresholds["min_completions"] == 2, f"min_completions should be 2, got {thresholds['min_completions']}"
         assert thresholds["min_occurrences"] == 3, (
             f"min_occurrences should remain 3, got {thresholds['min_occurrences']}"
         )
-        assert thresholds["min_steps"] == 2, (
-            f"min_steps should remain 2, got {thresholds['min_steps']}"
-        )
+        assert thresholds["min_steps"] == 2, f"min_steps should remain 2, got {thresholds['min_steps']}"
 
     def test_diagnostics_has_status_fields(self, detector):
         """Verify diagnostics returns all expected sections."""

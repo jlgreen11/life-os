@@ -121,11 +121,7 @@ class TestCadenceEarlyThreshold:
 
     def test_cadence_inference_at_25_samples(self, user_model_store):
         """Cadence inference processes at 25 samples (was skipped at old threshold of 50)."""
-        profile_data = {
-            "hourly_activity": {
-                str(h): 100 if 9 <= h <= 17 else 0 for h in range(24)
-            }
-        }
+        profile_data = {"hourly_activity": {str(h): 100 if 9 <= h <= 17 else 0 for h in range(24)}}
         user_model_store.update_signal_profile("cadence", profile_data)
         _set_samples(user_model_store, "cadence", 25)
 
@@ -136,9 +132,7 @@ class TestCadenceEarlyThreshold:
 
     def test_cadence_skips_below_new_threshold(self, user_model_store):
         """Cadence inference still skips at 20 samples (below new threshold of 25)."""
-        profile_data = {
-            "hourly_activity": {str(h): 10 for h in range(24)}
-        }
+        profile_data = {"hourly_activity": {str(h): 10 for h in range(24)}}
         user_model_store.update_signal_profile("cadence", profile_data)
         _set_samples(user_model_store, "cadence", 20)
 
@@ -191,10 +185,7 @@ class TestMoodEarlyThreshold:
 
     def test_mood_inference_at_3_samples(self, user_model_store):
         """Mood inference processes at 3 samples (was skipped at old threshold of 5)."""
-        recent_signals = [
-            {"signal_type": "positive_language", "value": 0.8}
-            for _ in range(10)
-        ]
+        recent_signals = [{"signal_type": "positive_language", "value": 0.8} for _ in range(10)]
         profile_data = {"recent_signals": recent_signals}
         user_model_store.update_signal_profile("mood_signals", profile_data)
         _set_samples(user_model_store, "mood_signals", 3)
@@ -313,11 +304,7 @@ class TestEarlyConfidenceScaling:
 
     def test_cadence_early_inference_has_lower_confidence(self, user_model_store):
         """Cadence facts at 25 samples have lower confidence than at 50 samples."""
-        profile_data = {
-            "hourly_activity": {
-                str(h): 100 if 9 <= h <= 17 else 0 for h in range(24)
-            }
-        }
+        profile_data = {"hourly_activity": {str(h): 100 if 9 <= h <= 17 else 0 for h in range(24)}}
 
         # First: inference at 50 samples (above old threshold)
         user_model_store.update_signal_profile("cadence", profile_data)

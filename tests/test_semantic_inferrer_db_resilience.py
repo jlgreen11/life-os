@@ -26,6 +26,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _set_samples(ums, profile_type, count):
     """Helper to manually set samples_count for a profile."""
     with ums.db.get_connection("user_model") as conn:
@@ -37,37 +38,44 @@ def _set_samples(ums, profile_type, count):
 
 def _setup_linguistic_profile(ums):
     """Seed the linguistic profile with valid data that will produce facts."""
-    ums.update_signal_profile("linguistic", {
-        "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
-    })
+    ums.update_signal_profile(
+        "linguistic",
+        {
+            "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
+        },
+    )
     _set_samples(ums, "linguistic", 25)
 
 
 def _setup_relationship_profile(ums):
     """Seed the relationship profile with valid data."""
-    ums.update_signal_profile("relationships", {
-        "contacts": {
-            "alice@example.com": {
-                "interaction_count": 10,
-                "avg_response_time_seconds": 1800,
-                "outbound_count": 5,
-            },
-            "bob@example.com": {
-                "interaction_count": 1,
-                "outbound_count": 1,
-            },
-            "carol@example.com": {
-                "interaction_count": 1,
-                "outbound_count": 1,
-            },
-        }
-    })
+    ums.update_signal_profile(
+        "relationships",
+        {
+            "contacts": {
+                "alice@example.com": {
+                    "interaction_count": 10,
+                    "avg_response_time_seconds": 1800,
+                    "outbound_count": 5,
+                },
+                "bob@example.com": {
+                    "interaction_count": 1,
+                    "outbound_count": 1,
+                },
+                "carol@example.com": {
+                    "interaction_count": 1,
+                    "outbound_count": 1,
+                },
+            }
+        },
+    )
     _set_samples(ums, "relationships", 15)
 
 
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
+
 
 class TestSemanticInferrerDbResilience:
     """Verify SemanticFactInferrer handles DB corruption gracefully.
@@ -147,9 +155,7 @@ class TestSemanticInferrerDbResilience:
 
         # Verify the log message includes a profile name for diagnosis
         error_messages = " ".join(r.message for r in error_records)
-        assert "failed" in error_messages.lower(), (
-            f"Expected 'failed' in error log messages, got: {error_messages}"
-        )
+        assert "failed" in error_messages.lower(), f"Expected 'failed' in error log messages, got: {error_messages}"
 
     def test_intermittent_corruption_first_call_fails_subsequent_succeed(self, user_model_store):
         """Simulate intermittent corruption: first get_signal_profile() call
@@ -240,9 +246,7 @@ class TestSemanticInferrerDbResilience:
         assert len(summary_lines) == 1, f"Expected exactly 1 summary line, got {len(summary_lines)}"
 
         # The summary should mention mood as errored
-        assert "mood (error)" in summary_lines[0], (
-            f"Expected 'mood (error)' in summary, got: {summary_lines[0]}"
-        )
+        assert "mood (error)" in summary_lines[0], f"Expected 'mood (error)' in summary, got: {summary_lines[0]}"
 
     def test_partial_success_facts_preserved_after_corruption(self, user_model_store):
         """Facts from successfully processed profiles must be preserved even

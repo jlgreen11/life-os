@@ -191,7 +191,7 @@ def test_strip_ssn():
 
     assert "123-45-6789" not in stripped
     # May be matched as PHONE due to pattern overlap
-    assert ("[PHONE_1]" in stripped or "[ACCT_1]" in stripped)
+    assert "[PHONE_1]" in stripped or "[ACCT_1]" in stripped
 
 
 def test_strip_multiple_ssns():
@@ -227,7 +227,7 @@ def test_strip_credit_card_spaces():
 
     assert "4532 1234 5678 9010" not in stripped
     # May be PHONE or ACCT depending on pattern matching order
-    assert ("[PHONE_" in stripped or "[ACCT_" in stripped)
+    assert "[PHONE_" in stripped or "[ACCT_" in stripped
 
 
 def test_strip_credit_card_dashes():
@@ -242,7 +242,7 @@ def test_strip_credit_card_dashes():
 
     assert "4532-1234-5678-9010" not in stripped
     # May be PHONE or ACCT depending on pattern matching order
-    assert ("[PHONE_" in stripped or "[ACCT_" in stripped)
+    assert "[PHONE_" in stripped or "[ACCT_" in stripped
 
 
 def test_strip_credit_card_no_separators():
@@ -257,7 +257,7 @@ def test_strip_credit_card_no_separators():
 
     assert "4532123456789010" not in stripped
     # May be PHONE or ACCT depending on pattern matching order
-    assert ("[PHONE_" in stripped or "[ACCT_" in stripped)
+    assert "[PHONE_" in stripped or "[ACCT_" in stripped
 
 
 def test_strip_credit_card_and_ssn_sequential():

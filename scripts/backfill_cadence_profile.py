@@ -238,12 +238,11 @@ def backfill_cadence_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_cadence] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_cadence] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_cadence] Events processed: {events_processed}")
     print(f"[backfill_cadence] Signals extracted: {signals_extracted}")
     print(
-        f"[backfill_cadence] Profile samples: {initial_samples} → {final_samples} "
-        f"(+{final_samples - initial_samples})"
+        f"[backfill_cadence] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})"
     )
     print(f"[backfill_cadence] Contacts tracked: {contacts_tracked}")
     print(f"[backfill_cadence] Errors: {errors}")
@@ -253,14 +252,14 @@ def backfill_cadence_profile(
     )
 
     if dry_run:
-        print(f"[backfill_cadence] DRY RUN — no changes written to database")
+        print("[backfill_cadence] DRY RUN — no changes written to database")
 
     # Show activity summary for verification.
     if final_profile and not dry_run:
         hourly = final_profile["data"].get("hourly_activity", {})
         if hourly:
             top_hours = sorted(hourly.items(), key=lambda kv: kv[1], reverse=True)[:5]
-            print(f"\n[backfill_cadence] ===== TOP 5 ACTIVE HOURS =====")
+            print("\n[backfill_cadence] ===== TOP 5 ACTIVE HOURS =====")
             for hour, count in top_hours:
                 print(f"  Hour {hour}: {count} events")
 

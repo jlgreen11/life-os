@@ -95,10 +95,14 @@ def test_config_folders_from_config(connector):
 
 def test_config_folders_default(event_bus, db):
     """Test connector defaults to INBOX when folders not in config."""
-    conn = ProtonMailConnector(event_bus, db, {
-        "username": "u@proton.me",
-        "password": "pass",
-    })
+    conn = ProtonMailConnector(
+        event_bus,
+        db,
+        {
+            "username": "u@proton.me",
+            "password": "pass",
+        },
+    )
     assert conn._folders == ["INBOX"]
 
 
@@ -136,7 +140,9 @@ async def test_authenticate_success(connector, mock_imap):
 @pytest.mark.asyncio
 async def test_authenticate_imap_connection_failure(connector):
     """Test authentication failure when IMAP connection fails."""
-    with patch("connectors.proton_mail.connector.imaplib.IMAP4", side_effect=ConnectionRefusedError("Bridge not running")):
+    with patch(
+        "connectors.proton_mail.connector.imaplib.IMAP4", side_effect=ConnectionRefusedError("Bridge not running")
+    ):
         result = await connector.authenticate()
 
     assert result is False
@@ -177,10 +183,14 @@ async def test_authenticate_uses_config_host_port(connector, mock_imap):
 @pytest.mark.asyncio
 async def test_authenticate_default_host_port(event_bus, db):
     """Test IMAP4 uses default host/port when not in config."""
-    conn = ProtonMailConnector(event_bus, db, {
-        "username": "u@proton.me",
-        "password": "pass",
-    })
+    conn = ProtonMailConnector(
+        event_bus,
+        db,
+        {
+            "username": "u@proton.me",
+            "password": "pass",
+        },
+    )
     mock_imap = MagicMock()
 
     with patch("connectors.proton_mail.connector.imaplib.IMAP4", return_value=mock_imap) as mock_cls:
@@ -232,7 +242,7 @@ async def test_sync_incremental_uses_cursor(connector, mock_imap, event_bus, db)
     with db.get_connection("state") as conn:
         conn.execute(
             "INSERT INTO connector_state (connector_id, status, sync_cursor, updated_at) VALUES (?, ?, ?, ?)",
-            ("proton_mail", "active", "10-Feb-2026", "2026-02-10T00:00:00+00:00")
+            ("proton_mail", "active", "10-Feb-2026", "2026-02-10T00:00:00+00:00"),
         )
     # Simulate 5 new messages since cursor
     mock_imap.search.return_value = ("OK", [b"101 102 103 104 105"])
@@ -257,7 +267,7 @@ async def test_sync_updates_cursor_to_today(connector, mock_imap, db):
     with db.get_connection("state") as conn:
         conn.execute(
             "INSERT INTO connector_state (connector_id, status, updated_at) VALUES (?, ?, ?)",
-            ("proton_mail", "active", "2026-02-10T00:00:00+00:00")
+            ("proton_mail", "active", "2026-02-10T00:00:00+00:00"),
         )
     mock_imap.search.return_value = ("OK", [b"1"])
     mock_imap.fetch.return_value = ("OK", [[None, _minimal_rfc822_email()]])
@@ -310,6 +320,7 @@ async def test_sync_handles_folder_errors_gracefully(connector, mock_imap, event
     """Test sync continues to next folder when one folder fails."""
     connector._imap = mock_imap
     connector._folders = ["INBOX", "InvalidFolder", "Sent"]
+
     # INBOX succeeds, InvalidFolder raises error, Sent succeeds
     def select_side_effect(folder, readonly=True):
         if folder == "InvalidFolder":
@@ -1135,11 +1146,14 @@ async def test_execute_send_email_smtp_failure(connector):
         mock_smtp.send_message.side_effect = smtplib.SMTPException("Relay access denied")
 
         with pytest.raises(smtplib.SMTPException, match="Relay access denied"):
-            await connector.execute("send_email", {
-                "to": ["alice@example.com"],
-                "subject": "Fail",
-                "body": "This should fail",
-            })
+            await connector.execute(
+                "send_email",
+                {
+                    "to": ["alice@example.com"],
+                    "subject": "Fail",
+                    "body": "This should fail",
+                },
+            )
 
 
 @pytest.mark.asyncio
@@ -1149,11 +1163,14 @@ async def test_execute_send_uses_smtp_config(connector):
         mock_smtp = MagicMock()
         mock_smtp_class.return_value.__enter__.return_value = mock_smtp
 
-        await connector.execute("send_email", {
-            "to": ["alice@example.com"],
-            "subject": "Config test",
-            "body": "test",
-        })
+        await connector.execute(
+            "send_email",
+            {
+                "to": ["alice@example.com"],
+                "subject": "Config test",
+                "body": "test",
+            },
+        )
 
     mock_smtp_class.assert_called_once_with("127.0.0.1", 1025)
 

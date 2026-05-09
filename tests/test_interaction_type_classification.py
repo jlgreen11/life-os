@@ -46,16 +46,14 @@ class TestEmailClassification:
     def test_email_received_classified_as_email_received(self, lifeos):
         """Inbound emails should map to 'email_received' for inbox-checking routine detection."""
         interaction_type = lifeos._classify_interaction_type(
-            "email.received",
-            {"from_address": "sender@example.com", "subject": "Test"}
+            "email.received", {"from_address": "sender@example.com", "subject": "Test"}
         )
         assert interaction_type == "email_received"
 
     def test_email_sent_classified_as_email_sent(self, lifeos):
         """Outbound emails should map to 'email_sent' for correspondence routine detection."""
         interaction_type = lifeos._classify_interaction_type(
-            "email.sent",
-            {"to_addresses": ["recipient@example.com"], "subject": "Reply"}
+            "email.sent", {"to_addresses": ["recipient@example.com"], "subject": "Reply"}
         )
         assert interaction_type == "email_sent"
 
@@ -72,16 +70,14 @@ class TestMessagingClassification:
     def test_message_received_classified_as_message_received(self, lifeos):
         """Inbound messages should map to 'message_received'."""
         interaction_type = lifeos._classify_interaction_type(
-            "message.received",
-            {"from_address": "+15551234567", "body_plain": "Hello"}
+            "message.received", {"from_address": "+15551234567", "body_plain": "Hello"}
         )
         assert interaction_type == "message_received"
 
     def test_message_sent_classified_as_message_sent(self, lifeos):
         """Outbound messages should map to 'message_sent'."""
         interaction_type = lifeos._classify_interaction_type(
-            "message.sent",
-            {"to_addresses": ["+15551234567"], "body_plain": "Hi"}
+            "message.sent", {"to_addresses": ["+15551234567"], "body_plain": "Hi"}
         )
         assert interaction_type == "message_sent"
 
@@ -98,17 +94,13 @@ class TestCallClassification:
     def test_call_received_classified_as_call_answered(self, lifeos):
         """Received/answered calls should map to 'call_answered'."""
         interaction_type = lifeos._classify_interaction_type(
-            "call.received",
-            {"from_address": "+15551234567", "duration": 120}
+            "call.received", {"from_address": "+15551234567", "duration": 120}
         )
         assert interaction_type == "call_answered"
 
     def test_call_missed_classified_as_call_missed(self, lifeos):
         """Missed calls should map to 'call_missed'."""
-        interaction_type = lifeos._classify_interaction_type(
-            "call.missed",
-            {"from_address": "+15551234567"}
-        )
+        interaction_type = lifeos._classify_interaction_type("call.missed", {"from_address": "+15551234567"})
         assert interaction_type == "call_missed"
 
     def test_answered_and_missed_calls_are_distinct(self, lifeos):
@@ -125,50 +117,33 @@ class TestCalendarClassification:
         """Calendar events with participants should map to 'meeting_scheduled'."""
         interaction_type = lifeos._classify_interaction_type(
             "calendar.event.created",
-            {
-                "title": "Team Standup",
-                "participants": ["alice@example.com", "bob@example.com"]
-            }
+            {"title": "Team Standup", "participants": ["alice@example.com", "bob@example.com"]},
         )
         assert interaction_type == "meeting_scheduled"
 
     def test_calendar_event_with_attendees_classified_as_meeting_scheduled(self, lifeos):
         """Calendar events with attendees field should also map to 'meeting_scheduled'."""
         interaction_type = lifeos._classify_interaction_type(
-            "calendar.event.created",
-            {
-                "title": "Client Call",
-                "attendees": ["client@external.com"]
-            }
+            "calendar.event.created", {"title": "Client Call", "attendees": ["client@external.com"]}
         )
         assert interaction_type == "meeting_scheduled"
 
     def test_calendar_event_without_participants_classified_as_calendar_blocked(self, lifeos):
         """Solo calendar events should map to 'calendar_blocked' for time-blocking routines."""
         interaction_type = lifeos._classify_interaction_type(
-            "calendar.event.created",
-            {"title": "Deep Work", "participants": None}
+            "calendar.event.created", {"title": "Deep Work", "participants": None}
         )
         assert interaction_type == "calendar_blocked"
 
     def test_calendar_updated_classified_as_calendar_reviewed(self, lifeos):
         """Calendar updates should map to 'calendar_reviewed' for planning routines."""
-        interaction_type = lifeos._classify_interaction_type(
-            "calendar.event.updated",
-            {"title": "Updated Meeting"}
-        )
+        interaction_type = lifeos._classify_interaction_type("calendar.event.updated", {"title": "Updated Meeting"})
         assert interaction_type == "calendar_reviewed"
 
     def test_calendar_types_are_granular(self, lifeos):
         """Calendar events should have 3+ distinct types for routine detection."""
-        meeting = lifeos._classify_interaction_type(
-            "calendar.event.created",
-            {"participants": ["someone@example.com"]}
-        )
-        block = lifeos._classify_interaction_type(
-            "calendar.event.created",
-            {"participants": None}
-        )
+        meeting = lifeos._classify_interaction_type("calendar.event.created", {"participants": ["someone@example.com"]})
+        block = lifeos._classify_interaction_type("calendar.event.created", {"participants": None})
         review = lifeos._classify_interaction_type("calendar.event.updated", {})
 
         assert len({meeting, block, review}) == 3
@@ -180,29 +155,21 @@ class TestFinancialClassification:
     def test_negative_transaction_classified_as_spending(self, lifeos):
         """Negative transactions (debits) should map to 'spending'."""
         interaction_type = lifeos._classify_interaction_type(
-            "finance.transaction.new",
-            {"amount": -45.23, "merchant": "Whole Foods"}
+            "finance.transaction.new", {"amount": -45.23, "merchant": "Whole Foods"}
         )
         assert interaction_type == "spending"
 
     def test_positive_transaction_classified_as_income(self, lifeos):
         """Positive transactions (credits) should map to 'income'."""
         interaction_type = lifeos._classify_interaction_type(
-            "finance.transaction.new",
-            {"amount": 2500.00, "merchant": "Employer"}
+            "finance.transaction.new", {"amount": 2500.00, "merchant": "Employer"}
         )
         assert interaction_type == "income"
 
     def test_spending_and_income_are_distinct(self, lifeos):
         """Spending and income should have different types for financial habit detection."""
-        spending = lifeos._classify_interaction_type(
-            "finance.transaction.new",
-            {"amount": -100}
-        )
-        income = lifeos._classify_interaction_type(
-            "finance.transaction.new",
-            {"amount": 100}
-        )
+        spending = lifeos._classify_interaction_type("finance.transaction.new", {"amount": -100})
+        income = lifeos._classify_interaction_type("finance.transaction.new", {"amount": 100})
         assert spending != income
 
 
@@ -211,18 +178,12 @@ class TestTaskClassification:
 
     def test_task_created_classified_as_task_created(self, lifeos):
         """Task creation should map to 'task_created' for work planning routine detection."""
-        interaction_type = lifeos._classify_interaction_type(
-            "task.created",
-            {"title": "Implement feature X"}
-        )
+        interaction_type = lifeos._classify_interaction_type("task.created", {"title": "Implement feature X"})
         assert interaction_type == "task_created"
 
     def test_task_completed_classified_as_task_completed(self, lifeos):
         """Task completion should map to 'task_completed' for execution pattern detection."""
-        interaction_type = lifeos._classify_interaction_type(
-            "task.completed",
-            {"title": "Implement feature X"}
-        )
+        interaction_type = lifeos._classify_interaction_type("task.completed", {"title": "Implement feature X"})
         assert interaction_type == "task_completed"
 
     def test_task_creation_and_completion_are_distinct(self, lifeos):
@@ -237,26 +198,17 @@ class TestLocationClassification:
 
     def test_location_arrived_classified_as_location_arrived(self, lifeos):
         """Location arrivals should map to 'location_arrived' for context entry routines."""
-        interaction_type = lifeos._classify_interaction_type(
-            "location.arrived",
-            {"location": "Home"}
-        )
+        interaction_type = lifeos._classify_interaction_type("location.arrived", {"location": "Home"})
         assert interaction_type == "location_arrived"
 
     def test_location_departed_classified_as_location_departed(self, lifeos):
         """Location departures should map to 'location_departed' for context exit routines."""
-        interaction_type = lifeos._classify_interaction_type(
-            "location.departed",
-            {"location": "Office"}
-        )
+        interaction_type = lifeos._classify_interaction_type("location.departed", {"location": "Office"})
         assert interaction_type == "location_departed"
 
     def test_location_changed_classified_as_location_changed(self, lifeos):
         """Generic location changes should map to 'location_changed'."""
-        interaction_type = lifeos._classify_interaction_type(
-            "location.changed",
-            {"location": "Gym"}
-        )
+        interaction_type = lifeos._classify_interaction_type("location.changed", {"location": "Gym"})
         assert interaction_type == "location_changed"
 
     def test_location_types_are_granular(self, lifeos):
@@ -273,18 +225,12 @@ class TestContextClassification:
 
     def test_context_location_classified_as_context_location(self, lifeos):
         """Context location events should map to 'context_location'."""
-        interaction_type = lifeos._classify_interaction_type(
-            "context.location",
-            {"location": "37.7749,-122.4194"}
-        )
+        interaction_type = lifeos._classify_interaction_type("context.location", {"location": "37.7749,-122.4194"})
         assert interaction_type == "context_location"
 
     def test_context_activity_classified_as_context_activity(self, lifeos):
         """Context activity events should map to 'context_activity'."""
-        interaction_type = lifeos._classify_interaction_type(
-            "context.activity",
-            {"activity": "walking"}
-        )
+        interaction_type = lifeos._classify_interaction_type("context.activity", {"activity": "walking"})
         assert interaction_type == "context_activity"
 
 
@@ -293,10 +239,7 @@ class TestUserCommandClassification:
 
     def test_user_command_classified_as_user_command(self, lifeos):
         """User commands should map to 'user_command' for explicit interaction patterns."""
-        interaction_type = lifeos._classify_interaction_type(
-            "system.user.command",
-            {"command": "show tasks"}
-        )
+        interaction_type = lifeos._classify_interaction_type("system.user.command", {"command": "show tasks"})
         assert interaction_type == "user_command"
 
 
@@ -305,18 +248,12 @@ class TestFallbackClassification:
 
     def test_unknown_event_type_extracts_suffix(self, lifeos):
         """Unknown event types should extract the suffix after the last dot."""
-        interaction_type = lifeos._classify_interaction_type(
-            "system.rule.triggered",
-            {}
-        )
+        interaction_type = lifeos._classify_interaction_type("system.rule.triggered", {})
         assert interaction_type == "triggered"
 
     def test_unknown_event_without_dot_returns_other(self, lifeos):
         """Unknown event types without dots should return 'other'."""
-        interaction_type = lifeos._classify_interaction_type(
-            "unknowneventtype",
-            {}
-        )
+        interaction_type = lifeos._classify_interaction_type("unknowneventtype", {})
         assert interaction_type == "other"
 
 
@@ -374,10 +311,7 @@ class TestRoutineDetectorDataQuality:
     def test_email_inbox_check_routine_detectable(self, lifeos):
         """Morning inbox checking should be detectable as a routine with granular types."""
         # Simulate 5 days of morning email checking
-        morning_emails = [
-            lifeos._classify_interaction_type("email.received", {})
-            for _ in range(5)
-        ]
+        morning_emails = [lifeos._classify_interaction_type("email.received", {}) for _ in range(5)]
 
         # All should be the same type (email_received)
         assert len(set(morning_emails)) == 1
@@ -397,13 +331,9 @@ class TestRoutineDetectorDataQuality:
     def test_meeting_vs_calendar_blocking_distinguishable(self, lifeos):
         """Meeting attendance vs time-blocking should be distinguishable patterns."""
         meeting_type = lifeos._classify_interaction_type(
-            "calendar.event.created",
-            {"participants": ["team@example.com"]}
+            "calendar.event.created", {"participants": ["team@example.com"]}
         )
-        blocking_type = lifeos._classify_interaction_type(
-            "calendar.event.created",
-            {}
-        )
+        blocking_type = lifeos._classify_interaction_type("calendar.event.created", {})
 
         # Must be different types to detect different calendar usage patterns
         assert meeting_type != blocking_type

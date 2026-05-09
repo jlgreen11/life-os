@@ -74,9 +74,7 @@ def _capture_draft_prompt(db, user_model_store, *, use_cloud: bool = False) -> s
         captured["prompt"] = system_prompt
         return "Hi there!"
 
-    with patch.object(
-        engine.context, "assemble_draft_context", return_value="<stub context>"
-    ):
+    with patch.object(engine.context, "assemble_draft_context", return_value="<stub context>"):
         if use_cloud:
             with patch.object(engine, "_query_cloud", side_effect=_capture_cloud):
                 with patch.object(engine.pii_shield, "strip", return_value=("<stripped>", {})):
@@ -170,9 +168,7 @@ async def test_prompt_mentions_per_contact_style(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     lower = prompt.lower()
-    assert "per-contact" in lower or "contact" in lower, (
-        "Prompt must reference per-contact outbound style data"
-    )
+    assert "per-contact" in lower or "contact" in lower, "Prompt must reference per-contact outbound style data"
     assert "global" in lower, "Prompt must mention global style as the fallback"
 
 
@@ -188,12 +184,8 @@ async def test_prompt_guides_hedge_rate_and_question_rate(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     lower = prompt.lower()
-    assert "question_rate" in lower or "question rate" in lower, (
-        "Prompt must guide use of question_rate metric"
-    )
-    assert "hedge" in lower, (
-        "Prompt must guide use of hedge_rate metric to soften statements"
-    )
+    assert "question_rate" in lower or "question rate" in lower, "Prompt must guide use of question_rate metric"
+    assert "hedge" in lower, "Prompt must guide use of hedge_rate metric to soften statements"
 
 
 # ---------------------------------------------------------------------------
@@ -235,16 +227,11 @@ async def test_prompt_instructs_natural_history_reference(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     lower = prompt.lower()
-    assert "history" in lower or "conversation" in lower, (
-        "Prompt must reference the conversation history context layer"
-    )
+    assert "history" in lower or "conversation" in lower, "Prompt must reference the conversation history context layer"
     # Must say something like "when it fits naturally" / "skip if" / "don't force"
-    assert (
-        "natural" in lower
-        or "sparingly" in lower
-        or "skip" in lower
-        or "force" in lower
-    ), "Prompt must guide LLM to use history naturally and not force references"
+    assert "natural" in lower or "sparingly" in lower or "skip" in lower or "force" in lower, (
+        "Prompt must guide LLM to use history naturally and not force references"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +320,7 @@ async def test_prompt_instructs_direct_answer_first(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     lower = prompt.lower()
-    assert "question" in lower and "direct" in lower, (
-        "Prompt must instruct direct answer to questions first"
-    )
+    assert "question" in lower and "direct" in lower, "Prompt must instruct direct answer to questions first"
 
 
 # ---------------------------------------------------------------------------
@@ -377,12 +362,8 @@ async def test_draft_reply_passes_prompt_to_local_model(db, user_model_store):
     assert mock_local.call_count == 1, "_query_local must be called exactly once"
     prompt_arg = mock_local.call_args[0][0]
     # The prompt must be the synthesis guide (substantial, not just 5 lines).
-    assert len(prompt_arg) > 300, (
-        "Enhanced system prompt must be substantial (>300 chars); got a stub"
-    )
-    assert "PRIORITY 1" in prompt_arg, (
-        "Enhanced prompt must contain PRIORITY 1 section marker"
-    )
+    assert len(prompt_arg) > 300, "Enhanced system prompt must be substantial (>300 chars); got a stub"
+    assert "PRIORITY 1" in prompt_arg, "Enhanced prompt must contain PRIORITY 1 section marker"
 
 
 @pytest.mark.asyncio
@@ -419,9 +400,5 @@ async def test_draft_reply_passes_prompt_to_cloud_model(db, user_model_store):
 
     assert mock_cloud.call_count == 1, "_query_cloud must be called exactly once"
     prompt_arg = mock_cloud.call_args[0][0]
-    assert len(prompt_arg) > 300, (
-        "Enhanced system prompt must be passed to cloud model (>300 chars)"
-    )
-    assert "PRIORITY 1" in prompt_arg, (
-        "Enhanced prompt must contain PRIORITY 1 section marker when using cloud"
-    )
+    assert len(prompt_arg) > 300, "Enhanced system prompt must be passed to cloud model (>300 chars)"
+    assert "PRIORITY 1" in prompt_arg, "Enhanced prompt must contain PRIORITY 1 section marker when using cloud"

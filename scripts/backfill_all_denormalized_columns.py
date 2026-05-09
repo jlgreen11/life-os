@@ -152,8 +152,8 @@ def backfill_denormalized_columns(db_path: str = "data/events.db"):
 
         logger.info(f"Email events: {total}")
         if total > 0:
-            logger.info(f"  with email_from: {has_from} ({100*has_from/total:.1f}%)")
-            logger.info(f"  with email_to: {has_to} ({100*has_to/total:.1f}%)")
+            logger.info(f"  with email_from: {has_from} ({100 * has_from / total:.1f}%)")
+            logger.info(f"  with email_to: {has_to} ({100 * has_to / total:.1f}%)")
         else:
             logger.info("  No email events found")
 

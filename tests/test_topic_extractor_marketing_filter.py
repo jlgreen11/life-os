@@ -25,6 +25,7 @@ from services.signal_extractor.topic import TopicExtractor
 # Fixture: TopicExtractor instance with a minimal in-memory UMS stub
 # ---------------------------------------------------------------------------
 
+
 class _MinimalUMS:
     """Minimal stub that satisfies TopicExtractor's UMS calls during tests.
 
@@ -56,15 +57,19 @@ def topic_extractor():
 # Marketing email events — should return []
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("from_addr", [
-    "noreply@amazon.com",
-    "no-reply@newsletter.example.com",
-    "marketing@promo.company.com",
-    "deals@shop.retailer.com",
-    "notifications@accounts.google.com",
-    "customerservice@example-store.com",
-    "newsletter@mail.company.com",
-])
+
+@pytest.mark.parametrize(
+    "from_addr",
+    [
+        "noreply@amazon.com",
+        "no-reply@newsletter.example.com",
+        "marketing@promo.company.com",
+        "deals@shop.retailer.com",
+        "notifications@accounts.google.com",
+        "customerservice@example-store.com",
+        "newsletter@mail.company.com",
+    ],
+)
 def test_marketing_inbound_email_skipped(topic_extractor, from_addr):
     """Marketing inbound emails must not produce any topic signals."""
     event = {
@@ -81,9 +86,7 @@ def test_marketing_inbound_email_skipped(topic_extractor, from_addr):
         },
     }
     result = topic_extractor.extract(event)
-    assert result == [], (
-        f"Marketing email from {from_addr!r} should return [] but got {result}"
-    )
+    assert result == [], f"Marketing email from {from_addr!r} should return [] but got {result}"
 
 
 def test_noreply_newsletter_skipped(topic_extractor):
@@ -104,6 +107,7 @@ def test_noreply_newsletter_skipped(topic_extractor):
 # ---------------------------------------------------------------------------
 # Genuine human emails — should be processed
 # ---------------------------------------------------------------------------
+
 
 def test_genuine_inbound_email_processed(topic_extractor):
     """Inbound email from a real human sender must produce topic signals."""
@@ -153,6 +157,7 @@ def test_genuine_inbound_email_no_from_processed(topic_extractor):
 # Outbound emails — always processed (users never send automated mail)
 # ---------------------------------------------------------------------------
 
+
 def test_outbound_email_always_processed(topic_extractor):
     """Outbound email must be processed regardless of content (users never send spam)."""
     event = {
@@ -177,6 +182,7 @@ def test_outbound_email_always_processed(topic_extractor):
 # Direct messages — always processed
 # ---------------------------------------------------------------------------
 
+
 def test_message_received_always_processed(topic_extractor):
     """Inbound direct messages must always be processed (no automated Signal/iMessage)."""
     event = {
@@ -184,10 +190,7 @@ def test_message_received_always_processed(topic_extractor):
         "timestamp": "2026-02-28T10:00:00Z",
         "payload": {
             "from": "+15551234567",
-            "body": (
-                "Python conference next week. Want to pair program "
-                "on the machine learning project Saturday?"
-            ),
+            "body": ("Python conference next week. Want to pair program on the machine learning project Saturday?"),
         },
     }
     result = topic_extractor.extract(event)
@@ -212,6 +215,7 @@ def test_message_sent_always_processed(topic_extractor):
 # User commands — always processed
 # ---------------------------------------------------------------------------
 
+
 def test_user_command_always_processed(topic_extractor):
     """User voice/text commands must always be processed for topic extraction."""
     event = {
@@ -228,6 +232,7 @@ def test_user_command_always_processed(topic_extractor):
 # ---------------------------------------------------------------------------
 # Content quality: marketing words should NOT appear in topics from genuine emails
 # ---------------------------------------------------------------------------
+
 
 def test_genuine_email_does_not_produce_marketing_topics(topic_extractor):
     """Topics extracted from genuine emails must not contain common marketing words."""
@@ -249,26 +254,25 @@ def test_genuine_email_does_not_produce_marketing_topics(topic_extractor):
     assert len(result) == 1
     topics = set(result[0]["topics"])
     noise_found = topics & MARKETING_NOISE
-    assert not noise_found, (
-        f"Genuine email topics should not contain marketing words, but found: {noise_found}"
-    )
+    assert not noise_found, f"Genuine email topics should not contain marketing words, but found: {noise_found}"
 
 
 # ---------------------------------------------------------------------------
 # can_process: verify the event type gating
 # ---------------------------------------------------------------------------
 
+
 def test_can_process_accepts_correct_event_types(topic_extractor):
     """can_process should accept all communication event types."""
     accepted = [
-        "email.received", "email.sent",
-        "message.received", "message.sent",
+        "email.received",
+        "email.sent",
+        "message.received",
+        "message.sent",
         "system.user.command",
     ]
     for event_type in accepted:
-        assert topic_extractor.can_process({"type": event_type}), (
-            f"can_process should return True for {event_type!r}"
-        )
+        assert topic_extractor.can_process({"type": event_type}), f"can_process should return True for {event_type!r}"
 
 
 def test_can_process_rejects_non_communication_events(topic_extractor):

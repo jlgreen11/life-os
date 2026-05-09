@@ -465,11 +465,7 @@ class TestSparseActiveDaysConsistency:
         # With cold-start scaling (6 active days < 7 → threshold = 0.3), this
         # pattern IS now detected as a provisional routine with cold_start=True
         # and scaled-down confidence (0.5 * 0.7 = 0.35).
-        sporadic_routines = [
-            r for r in routines
-            for s in r["steps"]
-            if s["action"] == "sporadic_check"
-        ]
+        sporadic_routines = [r for r in routines for s in r["steps"] if s["action"] == "sporadic_check"]
         assert len(sporadic_routines) >= 1, (
             "With cold-start threshold (0.3 for < 7 active days), "
             "consistency=0.5 should be detected as a provisional routine"

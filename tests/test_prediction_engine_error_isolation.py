@@ -44,14 +44,16 @@ def _insert_event(event_store, event_type="email.received", hours_ago=6, **paylo
         "message_id": f"msg-{uuid.uuid4().hex[:8]}",
         **payload_extra,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": event_type,
-        "source": "test",
-        "timestamp": (now - timedelta(hours=hours_ago)).isoformat(),
-        "payload": payload,
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "source": "test",
+            "timestamp": (now - timedelta(hours=hours_ago)).isoformat(),
+            "payload": payload,
+            "metadata": {},
+        }
+    )
 
 
 # -------------------------------------------------------------------------
@@ -67,34 +69,39 @@ async def test_calendar_check_succeeds_when_followup_fails(db, event_store, user
     now = datetime.now(timezone.utc)
 
     # Insert overlapping calendar events to trigger a calendar conflict prediction
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Meeting A",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
-        "payload": {
-            "title": "Meeting B",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Meeting A",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
+            "payload": {
+                "title": "Meeting B",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Make _check_follow_up_needs raise a DatabaseError (simulates corrupted DB)
     with patch.object(
-        engine, "_check_follow_up_needs",
+        engine,
+        "_check_follow_up_needs",
         new_callable=AsyncMock,
         side_effect=sqlite3.DatabaseError("database disk image is malformed"),
     ):
@@ -125,7 +132,8 @@ async def test_all_checks_run_independently(db, event_store, user_model_store):
 
     # Make _check_routine_deviations crash
     with patch.object(
-        engine, "_check_routine_deviations",
+        engine,
+        "_check_routine_deviations",
         new_callable=AsyncMock,
         side_effect=sqlite3.DatabaseError("database disk image is malformed"),
     ):
@@ -148,29 +156,30 @@ async def test_all_checks_run_independently(db, event_store, user_model_store):
     call_tracker = {}
 
     async def track_calendar(ctx):
-        call_tracker['calendar_conflicts'] = True
+        call_tracker["calendar_conflicts"] = True
         return await original_calendar(ctx)
 
     async def track_relationship(ctx):
-        call_tracker['relationship_maintenance'] = True
+        call_tracker["relationship_maintenance"] = True
         return await original_relationship(ctx)
 
     async def track_prep(ctx):
-        call_tracker['preparation_needs'] = True
+        call_tracker["preparation_needs"] = True
         return await original_prep(ctx)
 
     async def track_followup(ctx):
-        call_tracker['follow_up_needs'] = True
+        call_tracker["follow_up_needs"] = True
         return await original_followup(ctx)
 
     async def track_spending(ctx):
-        call_tracker['spending_patterns'] = True
+        call_tracker["spending_patterns"] = True
         return await original_spending(ctx)
 
     with (
         patch.object(engine2, "_check_calendar_conflicts", side_effect=track_calendar),
         patch.object(
-            engine2, "_check_routine_deviations",
+            engine2,
+            "_check_routine_deviations",
             new_callable=AsyncMock,
             side_effect=RuntimeError("simulated crash"),
         ),
@@ -182,11 +191,11 @@ async def test_all_checks_run_independently(db, event_store, user_model_store):
         await engine2.generate_predictions({})
 
     # All methods except the crashing one should have been called
-    assert 'calendar_conflicts' in call_tracker, "calendar_conflicts should have run"
-    assert 'relationship_maintenance' in call_tracker, "relationship_maintenance should have run"
-    assert 'preparation_needs' in call_tracker, "preparation_needs should have run"
-    assert 'follow_up_needs' in call_tracker, "follow_up_needs should have run"
-    assert 'spending_patterns' in call_tracker, "spending_patterns should have run"
+    assert "calendar_conflicts" in call_tracker, "calendar_conflicts should have run"
+    assert "relationship_maintenance" in call_tracker, "relationship_maintenance should have run"
+    assert "preparation_needs" in call_tracker, "preparation_needs should have run"
+    assert "follow_up_needs" in call_tracker, "follow_up_needs should have run"
+    assert "spending_patterns" in call_tracker, "spending_patterns should have run"
 
 
 # -------------------------------------------------------------------------
@@ -202,34 +211,39 @@ async def test_store_prediction_failure_doesnt_crash(db, event_store, user_model
     now = datetime.now(timezone.utc)
 
     # Insert overlapping calendar events to produce at least one prediction
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Meeting X",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
-        "payload": {
-            "title": "Meeting Y",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Meeting X",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
+            "payload": {
+                "title": "Meeting Y",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Make store_prediction raise (simulates user_model.db write failure)
     with patch.object(
-        user_model_store, "store_prediction",
+        user_model_store,
+        "store_prediction",
         side_effect=sqlite3.DatabaseError("database disk image is malformed"),
     ):
         # Should not raise — predictions are still returned even if storage fails
@@ -255,7 +269,8 @@ async def test_generation_stats_records_errors(db, event_store, user_model_store
     logged_messages = []
     with (
         patch.object(
-            engine, "_check_relationship_maintenance",
+            engine,
+            "_check_relationship_maintenance",
             new_callable=AsyncMock,
             side_effect=sqlite3.DatabaseError("database disk image is malformed"),
         ),
@@ -277,13 +292,11 @@ async def test_generation_stats_records_errors(db, event_store, user_model_store
             break
 
     assert stats_log is not None, "generation_stats should have been logged"
-    assert isinstance(stats_log['relationship_maintenance'], str), (
+    assert isinstance(stats_log["relationship_maintenance"], str), (
         "Failed check should record error string, not a count"
     )
-    assert "error:" in stats_log['relationship_maintenance'], (
-        "Error entry should start with 'error:'"
-    )
-    assert "database disk image is malformed" in stats_log['relationship_maintenance']
+    assert "error:" in stats_log["relationship_maintenance"], "Error entry should start with 'error:'"
+    assert "database disk image is malformed" in stats_log["relationship_maintenance"]
 
 
 # -------------------------------------------------------------------------
@@ -299,39 +312,41 @@ async def test_healthy_path_unchanged(db, event_store, user_model_store):
     now = datetime.now(timezone.utc)
 
     # Insert overlapping calendar events for a reliable prediction
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Standup",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
-        "payload": {
-            "title": "1:1",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Standup",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
+            "payload": {
+                "title": "1:1",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Capture generation_stats via logger
     logged_stats = []
     with patch("services.prediction_engine.engine.logger") as mock_logger:
         mock_logger.error = MagicMock()
         mock_logger.debug = MagicMock()
-        mock_logger.info = MagicMock(
-            side_effect=lambda msg, *args: logged_stats.append((msg, args))
-        )
+        mock_logger.info = MagicMock(side_effect=lambda msg, *args: logged_stats.append((msg, args)))
 
         predictions = await engine.generate_predictions({})
 
@@ -345,12 +360,16 @@ async def test_healthy_path_unchanged(db, event_store, user_model_store):
     assert stats is not None, "generation_stats should be logged"
 
     # All stats entries should be integers (counts), not error strings
-    for key in ['calendar_conflicts', 'routine_deviations', 'relationship_maintenance',
-                'preparation_needs', 'follow_up_needs', 'spending_patterns']:
+    for key in [
+        "calendar_conflicts",
+        "routine_deviations",
+        "relationship_maintenance",
+        "preparation_needs",
+        "follow_up_needs",
+        "spending_patterns",
+    ]:
         val = stats[key]
-        assert isinstance(val, int), (
-            f"In healthy path, {key} should be an int count, got {type(val).__name__}: {val}"
-        )
+        assert isinstance(val, int), f"In healthy path, {key} should be an int count, got {type(val).__name__}: {val}"
 
     # logger.error should NOT have been called for any _check method
     mock_logger.error.assert_not_called()

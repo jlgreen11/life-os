@@ -24,6 +24,7 @@ from models.core import EventType
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def lifeos_config():
     """Minimal config dict for LifeOS in test mode."""
@@ -86,6 +87,7 @@ def _make_event(event_type: str = "email.received", **payload_overrides) -> dict
 # Test 1: Broadcast on new event
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_broadcast_on_new_event(lifeos):
     """Processing an email event should trigger a broadcast with type='event'."""
@@ -98,10 +100,7 @@ async def test_broadcast_on_new_event(lifeos):
 
     # The first broadcast call should be the 'event' broadcast fired
     # right after stage 1 (event storage).
-    event_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "event"
-    ]
+    event_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "event"]
     assert len(event_calls) >= 1, "broadcast with type='event' should be called"
     msg = event_calls[0][0][0]
     assert msg["event_type"] == "email.received"
@@ -111,6 +110,7 @@ async def test_broadcast_on_new_event(lifeos):
 # ---------------------------------------------------------------------------
 # Test 2: No broadcast for system events
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_broadcast_on_system_event(lifeos):
@@ -136,23 +136,18 @@ async def test_broadcast_on_system_event(lifeos):
         await lifeos.master_event_handler(event)
 
     # System events get the 'event' broadcast (fires before guard)
-    event_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "event"
-    ]
+    event_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "event"]
     assert len(event_calls) >= 1, "System events still get an 'event' broadcast"
 
     # But they should NOT get a 'mood_update' broadcast (guard skips stages 2-6)
-    mood_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "mood_update"
-    ]
+    mood_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "mood_update"]
     assert len(mood_calls) == 0, "System events should NOT trigger a mood_update broadcast"
 
 
 # ---------------------------------------------------------------------------
 # Test 3: Broadcast on notification action
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_broadcast_on_notification_action(lifeos):
@@ -165,10 +160,7 @@ async def test_broadcast_on_notification_action(lifeos):
         patched.broadcast = mock_broadcast
         await lifeos._execute_rule_action(action, event)
 
-    notif_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "notification"
-    ]
+    notif_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "notification"]
     assert len(notif_calls) == 1, "broadcast with type='notification' should be called"
     msg = notif_calls[0][0][0]
     assert "title" in msg
@@ -178,6 +170,7 @@ async def test_broadcast_on_notification_action(lifeos):
 # ---------------------------------------------------------------------------
 # Test 4: Suppressed event does NOT broadcast notification
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_broadcast_suppressed_notification(lifeos):
@@ -191,16 +184,14 @@ async def test_broadcast_suppressed_notification(lifeos):
         patched.broadcast = mock_broadcast
         await lifeos._execute_rule_action(action, event)
 
-    notif_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "notification"
-    ]
+    notif_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "notification"]
     assert len(notif_calls) == 0, "Suppressed events should NOT broadcast a notification"
 
 
 # ---------------------------------------------------------------------------
 # Test 5: Broadcast failure does not crash the pipeline
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_broadcast_failure_does_not_crash_pipeline(lifeos, db):
@@ -215,22 +206,19 @@ async def test_broadcast_failure_does_not_crash_pipeline(lifeos, db):
 
     # Stage 1: event should still be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "Event should be stored despite broadcast failure"
 
     # Stage 6: episode should still be created
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) >= 1, "Episode should be created despite broadcast failure"
 
 
 # ---------------------------------------------------------------------------
 # Test 6: Mood update broadcast for content-bearing events
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_mood_update_broadcast_for_email(lifeos):
@@ -242,16 +230,14 @@ async def test_mood_update_broadcast_for_email(lifeos):
         patched.broadcast = mock_broadcast
         await lifeos.master_event_handler(event)
 
-    mood_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "mood_update"
-    ]
+    mood_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "mood_update"]
     assert len(mood_calls) >= 1, "email events should trigger a mood_update broadcast"
 
 
 # ---------------------------------------------------------------------------
 # Test 7: No mood update broadcast for non-content events
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_no_mood_update_for_non_content_event(lifeos):
@@ -263,8 +249,5 @@ async def test_no_mood_update_for_non_content_event(lifeos):
         patched.broadcast = mock_broadcast
         await lifeos.master_event_handler(event)
 
-    mood_calls = [
-        c for c in mock_broadcast.call_args_list
-        if c[0][0].get("type") == "mood_update"
-    ]
+    mood_calls = [c for c in mock_broadcast.call_args_list if c[0][0].get("type") == "mood_update"]
     assert len(mood_calls) == 0, "calendar events should NOT trigger a mood_update broadcast"

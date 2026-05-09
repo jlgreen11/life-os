@@ -102,9 +102,7 @@ class TestFallbackTriggersOnEmptyEpisodes:
 
         assert len(workflows) >= 1
         names = [w["name"] for w in workflows]
-        assert any(sender in name for name in names), (
-            f"Expected workflow named after '{sender}', got: {names}"
-        )
+        assert any(sender in name for name in names), f"Expected workflow named after '{sender}', got: {names}"
 
     def test_fallback_workflow_schema_keys_present(self, detector, db):
         """Fallback workflows contain all required schema keys."""
@@ -124,12 +122,15 @@ class TestFallbackTriggersOnEmptyEpisodes:
 
         wf = next(w for w in workflows if sender in w["name"])
         required_keys = {
-            "name", "trigger_conditions", "steps",
-            "typical_duration_minutes", "tools_used", "success_rate", "times_observed",
+            "name",
+            "trigger_conditions",
+            "steps",
+            "typical_duration_minutes",
+            "tools_used",
+            "success_rate",
+            "times_observed",
         }
-        assert required_keys.issubset(wf.keys()), (
-            f"Missing keys: {required_keys - wf.keys()}"
-        )
+        assert required_keys.issubset(wf.keys()), f"Missing keys: {required_keys - wf.keys()}"
         assert "email" in wf["tools_used"]
         assert len(wf["steps"]) >= 2  # min_steps = 2
         assert wf["success_rate"] == 1.0
@@ -177,9 +178,7 @@ class TestMinOccurrencesEnforcement:
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         matching = [w for w in workflows if sparse_sender in w["name"]]
-        assert len(matching) == 0, (
-            f"Expected 0 workflows for sparse sender, got {len(matching)}"
-        )
+        assert len(matching) == 0, f"Expected 0 workflows for sparse sender, got {len(matching)}"
 
     def test_sender_with_three_sessions_accepted(self, detector, db):
         """Sender with exactly 3 multi-email sessions (== min_occurrences) is accepted."""
@@ -197,9 +196,7 @@ class TestMinOccurrencesEnforcement:
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         matching = [w for w in workflows if exact_sender in w["name"]]
-        assert len(matching) == 1, (
-            f"Expected 1 workflow for exactly-3-session sender, got {len(matching)}"
-        )
+        assert len(matching) == 1, f"Expected 1 workflow for exactly-3-session sender, got {len(matching)}"
 
 
 # ===========================================================================
@@ -226,9 +223,7 @@ class TestMinStepsEnforcement:
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         matching = [w for w in workflows if single_sender in w["name"]]
-        assert len(matching) == 0, (
-            f"Single-email sessions should not produce a workflow, got {len(matching)}"
-        )
+        assert len(matching) == 0, f"Single-email sessions should not produce a workflow, got {len(matching)}"
 
     def test_mixed_session_depths_only_multistep_count(self, detector, db):
         """Only sessions with >= min_steps emails count toward the threshold.
@@ -254,9 +249,7 @@ class TestMinStepsEnforcement:
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         matching = [w for w in workflows if mixed_sender in w["name"]]
-        assert len(matching) == 1, (
-            f"Expected 1 workflow (3 qualifying sessions), got {len(matching)}"
-        )
+        assert len(matching) == 1, f"Expected 1 workflow (3 qualifying sessions), got {len(matching)}"
 
 
 # ===========================================================================
@@ -287,10 +280,7 @@ class TestDetectWorkflowsEndToEnd:
         workflows = detector.detect_workflows(lookback_days=30)
 
         # At least one email thread workflow should be detected from fallback.
-        thread_workflows = [
-            w for w in workflows
-            if "Email thread from" in w.get("name", "")
-        ]
+        thread_workflows = [w for w in workflows if "Email thread from" in w.get("name", "")]
         assert len(thread_workflows) >= 1, (
             f"Expected >= 1 email thread workflow from fallback, got {len(thread_workflows)}\n"
             f"All workflows: {[w['name'] for w in workflows]}"

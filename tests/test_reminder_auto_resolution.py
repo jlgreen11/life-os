@@ -53,11 +53,13 @@ async def test_extract_email_from_unreplied_message_description(db):
             (
                 "event-001",
                 "email.sent",
-                json.dumps({
-                    "to": contact_email,
-                    "subject": "Re: Project update",
-                    "body": "Thanks for the update!",
-                }),
+                json.dumps(
+                    {
+                        "to": contact_email,
+                        "subject": "Re: Project update",
+                        "body": "Thanks for the update!",
+                    }
+                ),
                 "proton_mail",
                 (created_at + timedelta(hours=5)).isoformat(),
                 "normal",
@@ -119,10 +121,12 @@ async def test_email_extraction_with_special_characters(db):
             (
                 "event-002",
                 "email.sent",
-                json.dumps({
-                    "to": contact_email,
-                    "subject": "Re: Urgent: Review needed",
-                }),
+                json.dumps(
+                    {
+                        "to": contact_email,
+                        "subject": "Re: Urgent: Review needed",
+                    }
+                ),
                 "proton_mail",
                 (created_at + timedelta(hours=3)).isoformat(),
                 "normal",
@@ -264,10 +268,12 @@ async def test_case_insensitive_email_matching(db):
             (
                 "event-005",
                 "email.sent",
-                json.dumps({
-                    "to": "david@example.com",  # All lowercase
-                    "subject": "Re: Feedback request",
-                }),
+                json.dumps(
+                    {
+                        "to": "david@example.com",  # All lowercase
+                        "subject": "Re: Feedback request",
+                    }
+                ),
                 "proton_mail",
                 (created_at + timedelta(hours=6)).isoformat(),
                 "normal",
@@ -314,10 +320,12 @@ async def test_partial_email_match_in_to_field(db):
             (
                 "event-006",
                 "email.sent",
-                json.dumps({
-                    "to": f"team@example.com, {contact_email}, boss@example.com",
-                    "subject": "Re: Team sync",
-                }),
+                json.dumps(
+                    {
+                        "to": f"team@example.com, {contact_email}, boss@example.com",
+                        "subject": "Re: Team sync",
+                    }
+                ),
                 "proton_mail",
                 (created_at + timedelta(hours=4)).isoformat(),
                 "normal",
@@ -364,10 +372,12 @@ async def test_message_sent_event_also_counts_as_reply(db):
             (
                 "event-007",
                 "message.sent",
-                json.dumps({
-                    "to": contact_email,
-                    "text": "Free on Saturday!",
-                }),
+                json.dumps(
+                    {
+                        "to": contact_email,
+                        "text": "Free on Saturday!",
+                    }
+                ),
                 "signal",
                 (created_at + timedelta(hours=8)).isoformat(),
                 "normal",
@@ -516,10 +526,12 @@ async def test_future_name_based_pattern_compatibility(db):
                 "Follow up with Alice about the project deadline",  # Name-based format
                 0.80,
                 "DEFAULT",
-                json.dumps({
-                    "contact_email": "alice@company.com",
-                    "contact_name": "Alice",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "alice@company.com",
+                        "contact_name": "Alice",
+                    }
+                ),
                 created_at.isoformat(),
                 1,
             ),
@@ -533,10 +545,12 @@ async def test_future_name_based_pattern_compatibility(db):
             (
                 "event-009",
                 "email.sent",
-                json.dumps({
-                    "to": "alice@company.com",
-                    "subject": "Re: Project deadline",
-                }),
+                json.dumps(
+                    {
+                        "to": "alice@company.com",
+                        "subject": "Re: Project deadline",
+                    }
+                ),
                 "proton_mail",
                 (created_at + timedelta(hours=6)).isoformat(),
                 "normal",
@@ -557,11 +571,11 @@ async def test_batch_resolution_of_multiple_predictions(db):
 
     # Create 5 predictions at different ages
     predictions = [
-        ("pred-batch-1", "alice@test.com", 60, True),    # 60h old, no reply → inaccurate
-        ("pred-batch-2", "bob@test.com", 50, True),      # 50h old, no reply → inaccurate
-        ("pred-batch-3", "carol@test.com", 15, True),    # 15h old, has reply → accurate
-        ("pred-batch-4", "david@test.com", 10, True),    # 10h old, has reply → accurate
-        ("pred-batch-5", "emma@test.com", 5, False),     # 5h old, no reply → still pending
+        ("pred-batch-1", "alice@test.com", 60, True),  # 60h old, no reply → inaccurate
+        ("pred-batch-2", "bob@test.com", 50, True),  # 50h old, no reply → inaccurate
+        ("pred-batch-3", "carol@test.com", 15, True),  # 15h old, has reply → accurate
+        ("pred-batch-4", "david@test.com", 10, True),  # 10h old, has reply → accurate
+        ("pred-batch-5", "emma@test.com", 5, False),  # 5h old, no reply → still pending
     ]
 
     with db.get_connection("user_model") as conn:

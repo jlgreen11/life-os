@@ -43,6 +43,7 @@ from services.prediction_engine.engine import PredictionEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_contact_prediction(
     db,
     contact_email: str,
@@ -60,12 +61,14 @@ def _insert_contact_prediction(
         prediction_type: Prediction type (default 'opportunity').
     """
     now = datetime.now(timezone.utc).isoformat()
-    supporting_signals = json.dumps({
-        "contact_email": contact_email,
-        "contact_name": contact_email.split("@")[0],
-        "days_since_last_contact": 30,
-        "avg_contact_gap_days": 20.0,
-    })
+    supporting_signals = json.dumps(
+        {
+            "contact_email": contact_email,
+            "contact_name": contact_email.split("@")[0],
+            "days_since_last_contact": 30,
+            "avg_contact_gap_days": 20.0,
+        }
+    )
     with db.get_connection("user_model") as conn:
         conn.execute(
             """INSERT INTO predictions
@@ -91,6 +94,7 @@ def _insert_contact_prediction(
 # Cold-start tests
 # ---------------------------------------------------------------------------
 
+
 def test_cold_start_one_sample_returns_1(db, user_model_store):
     """A contact with only 1 resolved prediction gets multiplier=1.0.
 
@@ -101,9 +105,7 @@ def test_cold_start_one_sample_returns_1(db, user_model_store):
     _insert_contact_prediction(db, "alice@example.com", was_accurate=True)
 
     multiplier = engine._get_contact_accuracy_multiplier("alice@example.com")
-    assert multiplier == 1.0, (
-        "Expected 1.0 for cold-start (1 sample) — not enough data to adjust."
-    )
+    assert multiplier == 1.0, "Expected 1.0 for cold-start (1 sample) — not enough data to adjust."
 
 
 def test_cold_start_two_samples_returns_1(db, user_model_store):
@@ -113,9 +115,7 @@ def test_cold_start_two_samples_returns_1(db, user_model_store):
     _insert_contact_prediction(db, "bob@example.com", was_accurate=False)
 
     multiplier = engine._get_contact_accuracy_multiplier("bob@example.com")
-    assert multiplier == 1.0, (
-        "Expected 1.0 for cold-start (2 samples) — minimum 3 required."
-    )
+    assert multiplier == 1.0, "Expected 1.0 for cold-start (2 samples) — minimum 3 required."
 
 
 def test_no_samples_returns_1(db, user_model_store):
@@ -129,6 +129,7 @@ def test_no_samples_returns_1(db, user_model_store):
 # Low accuracy (suppression floor)
 # ---------------------------------------------------------------------------
 
+
 def test_zero_accuracy_returns_05_floor(db, user_model_store):
     """A contact the user never acts on should get the 0.5 suppression floor.
 
@@ -140,9 +141,7 @@ def test_zero_accuracy_returns_05_floor(db, user_model_store):
         _insert_contact_prediction(db, "dormant@example.com", was_accurate=False)
 
     multiplier = engine._get_contact_accuracy_multiplier("dormant@example.com")
-    assert multiplier == 0.5, (
-        f"Expected 0.5 floor for 0% accuracy over 4 samples, got {multiplier}."
-    )
+    assert multiplier == 0.5, f"Expected 0.5 floor for 0% accuracy over 4 samples, got {multiplier}."
 
 
 def test_below_20_accuracy_returns_05_floor(db, user_model_store):
@@ -154,14 +153,13 @@ def test_below_20_accuracy_returns_05_floor(db, user_model_store):
         _insert_contact_prediction(db, "rarely@example.com", was_accurate=False)
 
     multiplier = engine._get_contact_accuracy_multiplier("rarely@example.com")
-    assert multiplier == 0.5, (
-        f"Expected 0.5 floor for 12.5% accuracy (below 20% threshold), got {multiplier}."
-    )
+    assert multiplier == 0.5, f"Expected 0.5 floor for 12.5% accuracy (below 20% threshold), got {multiplier}."
 
 
 # ---------------------------------------------------------------------------
 # Scaled accuracy
 # ---------------------------------------------------------------------------
+
 
 def test_50_percent_accuracy_returns_085(db, user_model_store):
     """50% contact accuracy → multiplier = 0.5 + 0.5 * 0.7 = 0.85."""
@@ -172,9 +170,7 @@ def test_50_percent_accuracy_returns_085(db, user_model_store):
         _insert_contact_prediction(db, "moderate@example.com", was_accurate=False)
 
     multiplier = engine._get_contact_accuracy_multiplier("moderate@example.com")
-    assert abs(multiplier - 0.85) < 0.001, (
-        f"Expected 0.85 for 50% accuracy, got {multiplier}."
-    )
+    assert abs(multiplier - 0.85) < 0.001, f"Expected 0.85 for 50% accuracy, got {multiplier}."
 
 
 def test_100_percent_accuracy_returns_12_cap(db, user_model_store):
@@ -188,9 +184,7 @@ def test_100_percent_accuracy_returns_12_cap(db, user_model_store):
         _insert_contact_prediction(db, "reliable@example.com", was_accurate=True)
 
     multiplier = engine._get_contact_accuracy_multiplier("reliable@example.com")
-    assert multiplier == 1.2, (
-        f"Expected 1.2 cap for 100% accuracy, got {multiplier}."
-    )
+    assert multiplier == 1.2, f"Expected 1.2 cap for 100% accuracy, got {multiplier}."
 
 
 def test_80_percent_accuracy_scales_correctly(db, user_model_store):
@@ -201,14 +195,13 @@ def test_80_percent_accuracy_scales_correctly(db, user_model_store):
     _insert_contact_prediction(db, "active@example.com", was_accurate=False)
 
     multiplier = engine._get_contact_accuracy_multiplier("active@example.com")
-    assert abs(multiplier - 1.06) < 0.001, (
-        f"Expected 1.06 for 80% accuracy (4/5), got {multiplier}."
-    )
+    assert abs(multiplier - 1.06) < 0.001, f"Expected 1.06 for 80% accuracy (4/5), got {multiplier}."
 
 
 # ---------------------------------------------------------------------------
 # Automated-sender fast-path exclusion
 # ---------------------------------------------------------------------------
+
 
 def test_fast_path_resolutions_excluded_from_contact_multiplier(db, user_model_store):
     """Automated-sender fast-path resolutions must not count in per-contact multiplier.
@@ -223,13 +216,17 @@ def test_fast_path_resolutions_excluded_from_contact_multiplier(db, user_model_s
     # 5 fast-path (excluded) resolutions — all inaccurate
     for _ in range(5):
         _insert_contact_prediction(
-            db, "formerly_auto@example.com", was_accurate=False,
+            db,
+            "formerly_auto@example.com",
+            was_accurate=False,
             resolution_reason="automated_sender_fast_path",
         )
     # 3 real-behavior resolutions (minimum threshold) — all accurate
     for _ in range(3):
         _insert_contact_prediction(
-            db, "formerly_auto@example.com", was_accurate=True,
+            db,
+            "formerly_auto@example.com",
+            was_accurate=True,
         )
 
     # With fast-path excluded: 3 accurate / 3 total = 100% → 1.2 cap
@@ -246,7 +243,9 @@ def test_fast_path_excluded_below_threshold(db, user_model_store):
     engine = PredictionEngine(db, user_model_store)
     for _ in range(10):
         _insert_contact_prediction(
-            db, "spammy@example.com", was_accurate=False,
+            db,
+            "spammy@example.com",
+            was_accurate=False,
             resolution_reason="automated_sender_fast_path",
         )
     _insert_contact_prediction(db, "spammy@example.com", was_accurate=True)
@@ -254,14 +253,13 @@ def test_fast_path_excluded_below_threshold(db, user_model_store):
 
     # 2 real samples → below threshold of 3 → cold start
     multiplier = engine._get_contact_accuracy_multiplier("spammy@example.com")
-    assert multiplier == 1.0, (
-        f"Expected 1.0 cold-start (2 real samples after exclusion), got {multiplier}."
-    )
+    assert multiplier == 1.0, f"Expected 1.0 cold-start (2 real samples after exclusion), got {multiplier}."
 
 
 # ---------------------------------------------------------------------------
 # Contact isolation — different contacts don't interfere
 # ---------------------------------------------------------------------------
+
 
 def test_per_contact_isolation(db, user_model_store):
     """Each contact's accuracy is tracked independently.
@@ -289,6 +287,7 @@ def test_per_contact_isolation(db, user_model_store):
 # Case insensitivity
 # ---------------------------------------------------------------------------
 
+
 def test_contact_email_matching_is_case_insensitive(db, user_model_store):
     """Contact email matching must be case-insensitive.
 
@@ -302,14 +301,13 @@ def test_contact_email_matching_is_case_insensitive(db, user_model_store):
 
     # Query with lowercase should find them
     multiplier = engine._get_contact_accuracy_multiplier("alice@example.com")
-    assert multiplier == 1.2, (
-        f"Expected 1.2 cap for 100% accuracy (case-insensitive), got {multiplier}."
-    )
+    assert multiplier == 1.2, f"Expected 1.2 cap for 100% accuracy (case-insensitive), got {multiplier}."
 
 
 # ---------------------------------------------------------------------------
 # Integration: contact multiplier applied in main loop
 # ---------------------------------------------------------------------------
+
 
 def test_opportunity_predictions_get_contact_multiplier_in_loop(db, user_model_store):
     """Contact multiplier is applied on top of type multiplier in prediction loop.
@@ -338,16 +336,10 @@ def test_opportunity_predictions_get_contact_multiplier_in_loop(db, user_model_s
 
     # Global: 9 accurate / 9 total = 100% → 1.1
     # Contact: 5 accurate / 5 total = 100% → 1.2 cap
-    assert abs(type_mult - 1.1) < 0.001, (
-        f"Expected type multiplier 1.1 for 100% accuracy, got {type_mult}."
-    )
-    assert contact_mult == 1.2, (
-        f"Expected contact multiplier 1.2 cap for 100% accuracy, got {contact_mult}."
-    )
+    assert abs(type_mult - 1.1) < 0.001, f"Expected type multiplier 1.1 for 100% accuracy, got {type_mult}."
+    assert contact_mult == 1.2, f"Expected contact multiplier 1.2 cap for 100% accuracy, got {contact_mult}."
     combined = type_mult * contact_mult
-    assert abs(combined - 1.32) < 0.01, (
-        f"Expected combined multiplier ~1.32, got {combined:.3f}."
-    )
+    assert abs(combined - 1.32) < 0.01, f"Expected combined multiplier ~1.32, got {combined:.3f}."
 
 
 def test_non_opportunity_predictions_unaffected_by_contact_multiplier(db, user_model_store):
@@ -362,7 +354,9 @@ def test_non_opportunity_predictions_unaffected_by_contact_multiplier(db, user_m
     # Seed contact with 0% accuracy (would apply 0.5 floor if wrongly applied)
     for _ in range(5):
         _insert_contact_prediction(
-            db, "bad@example.com", was_accurate=False,
+            db,
+            "bad@example.com",
+            was_accurate=False,
             prediction_type="opportunity",
         )
 
@@ -390,6 +384,4 @@ def test_non_opportunity_predictions_unaffected_by_contact_multiplier(db, user_m
         "Contact has 0% accuracy in opportunity history — contact_mult should be 0.5."
     )
     # Crucially: reminder type multiplier is unaffected by contact's opportunity history
-    assert reminder_mult > 1.0, (
-        f"Reminder type mult should be > 1.0 for 100% reminder accuracy, got {reminder_mult}."
-    )
+    assert reminder_mult > 1.0, f"Reminder type mult should be > 1.0 for 100% reminder accuracy, got {reminder_mult}."

@@ -25,8 +25,7 @@ from services.ai_engine.context import ContextAssembler
 # ---------------------------------------------------------------------------
 
 
-def _seed_outbound_profile(user_model_store, averages: dict, common_greetings=None,
-                           common_closings=None):
+def _seed_outbound_profile(user_model_store, averages: dict, common_greetings=None, common_closings=None):
     """Seed the ``linguistic`` (outbound) signal profile."""
     data = {"averages": averages}
     if common_greetings is not None:
@@ -64,10 +63,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_question_rate_included_when_above_threshold(self, db, user_model_store):
         """question_rate > 0.05 should appear in the style line."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.5,
-            "question_rate": 0.30,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "question_rate": 0.30,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("bob@example.com", "email", "Hi")
@@ -76,10 +78,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_question_rate_omitted_when_below_threshold(self, db, user_model_store):
         """question_rate <= 0.05 (noise-floor) should be omitted to keep context clean."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.5,
-            "question_rate": 0.02,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "question_rate": 0.02,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("carol@example.com", "email", "Hi")
@@ -88,10 +93,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_hedge_rate_included_when_above_threshold(self, db, user_model_store):
         """hedge_rate > 0.05 should appear in the style line."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.5,
-            "hedge_rate": 0.20,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "hedge_rate": 0.20,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("dave@example.com", "email", "Hi")
@@ -100,10 +108,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_hedge_rate_omitted_when_zero(self, db, user_model_store):
         """Zero hedge_rate should not appear (noise suppression)."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.5,
-            "hedge_rate": 0.0,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "hedge_rate": 0.0,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("eve@example.com", "email", "Hi")
@@ -112,10 +123,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_emoji_rate_included_when_above_threshold(self, db, user_model_store):
         """emoji_rate > 0.01 should appear in the style line."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.3,
-            "emoji_rate": 0.05,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.3,
+                "emoji_rate": 0.05,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("frank@example.com", "email", "Hi")
@@ -124,10 +138,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_emoji_rate_omitted_when_below_threshold(self, db, user_model_store):
         """emoji_rate <= 0.01 is noise and should be omitted."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.5,
-            "emoji_rate": 0.005,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "emoji_rate": 0.005,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("grace@example.com", "email", "Hi")
@@ -136,10 +153,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_vocabulary_diversity_included(self, db, user_model_store):
         """unique_word_ratio > 0 should appear as vocabulary_diversity."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.6,
-            "unique_word_ratio": 0.72,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.6,
+                "unique_word_ratio": 0.72,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("heidi@example.com", "email", "Hi")
@@ -148,10 +168,13 @@ class TestDraftContextLinguisticAverages:
 
     def test_avg_sentence_length_included(self, db, user_model_store):
         """avg_sentence_length > 0 should appear in the style line."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.5,
-            "avg_sentence_length": 14.5,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "avg_sentence_length": 14.5,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("ivan@example.com", "email", "Hi")
@@ -160,21 +183,22 @@ class TestDraftContextLinguisticAverages:
 
     def test_all_metrics_together(self, db, user_model_store):
         """When all metrics are above threshold, they all appear in the style line."""
-        _seed_outbound_profile(user_model_store, {
-            "formality": 0.65,
-            "question_rate": 0.15,
-            "hedge_rate": 0.10,
-            "emoji_rate": 0.03,
-            "unique_word_ratio": 0.68,
-            "avg_sentence_length": 12.0,
-        })
+        _seed_outbound_profile(
+            user_model_store,
+            {
+                "formality": 0.65,
+                "question_rate": 0.15,
+                "hedge_rate": 0.10,
+                "emoji_rate": 0.03,
+                "unique_word_ratio": 0.68,
+                "avg_sentence_length": 12.0,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("julia@example.com", "email", "Hey")
 
-        style_line = next(
-            line for line in ctx.splitlines() if "User's general style:" in line
-        )
+        style_line = next(line for line in ctx.splitlines() if "User's general style:" in line)
         assert "formality=" in style_line
         assert "question_rate=" in style_line
         assert "hedge_rate=" in style_line
@@ -281,9 +305,7 @@ class TestDraftContextInboundStyle:
         )
 
         assembler = ContextAssembler(db, user_model_store)
-        ctx = assembler.assemble_draft_context(
-            "paula@example.com", "email", "What's up?"
-        )
+        ctx = assembler.assemble_draft_context("paula@example.com", "email", "What's up?")
 
         assert "Contact's writing style (paula@example.com):" in ctx
         assert "formality=0.30" in ctx
@@ -297,14 +319,9 @@ class TestDraftContextInboundStyle:
         )
 
         assembler = ContextAssembler(db, user_model_store)
-        ctx = assembler.assemble_draft_context(
-            "quinn@example.com", "email", "Can you help?"
-        )
+        ctx = assembler.assemble_draft_context("quinn@example.com", "email", "Can you help?")
 
-        contact_line = next(
-            line for line in ctx.splitlines()
-            if "Contact's writing style" in line
-        )
+        contact_line = next(line for line in ctx.splitlines() if "Contact's writing style" in line)
         assert "question_rate=0.40" in contact_line
 
     def test_inbound_hedge_rate_included_above_threshold(self, db, user_model_store):
@@ -318,10 +335,7 @@ class TestDraftContextInboundStyle:
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("ruby@example.com", "email", "Hmm")
 
-        contact_line = next(
-            line for line in ctx.splitlines()
-            if "Contact's writing style" in line
-        )
+        contact_line = next(line for line in ctx.splitlines() if "Contact's writing style" in line)
         assert "hedge_rate=0.25" in contact_line
 
     def test_inbound_emoji_rate_included_above_threshold(self, db, user_model_store):
@@ -335,10 +349,7 @@ class TestDraftContextInboundStyle:
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("sam@example.com", "email", "😊")
 
-        contact_line = next(
-            line for line in ctx.splitlines()
-            if "Contact's writing style" in line
-        )
+        contact_line = next(line for line in ctx.splitlines() if "Contact's writing style" in line)
         assert "emoji_rate=0.060" in contact_line
 
     def test_inbound_avg_sentence_length_included(self, db, user_model_store):
@@ -352,10 +363,7 @@ class TestDraftContextInboundStyle:
         assembler = ContextAssembler(db, user_model_store)
         ctx = assembler.assemble_draft_context("tara@example.com", "email", "Hi")
 
-        contact_line = next(
-            line for line in ctx.splitlines()
-            if "Contact's writing style" in line
-        )
+        contact_line = next(line for line in ctx.splitlines() if "Contact's writing style" in line)
         assert "avg_sentence_length=20w" in contact_line
 
     def test_inbound_style_absent_for_unknown_contact(self, db, user_model_store):
@@ -368,9 +376,7 @@ class TestDraftContextInboundStyle:
         )
 
         assembler = ContextAssembler(db, user_model_store)
-        ctx = assembler.assemble_draft_context(
-            "victor@example.com", "email", "Hello"
-        )
+        ctx = assembler.assemble_draft_context("victor@example.com", "email", "Hello")
 
         assert "Contact's writing style (victor@example.com):" not in ctx
 
@@ -426,9 +432,7 @@ class TestDraftContextStructure:
         )
 
         assembler = ContextAssembler(db, user_model_store)
-        ctx = assembler.assemble_draft_context(
-            "zara@example.com", "email", "Let me know."
-        )
+        ctx = assembler.assemble_draft_context("zara@example.com", "email", "Let me know.")
 
         lines = ctx.splitlines()
         # The actual message text should be in the last two lines
@@ -437,19 +441,13 @@ class TestDraftContextStructure:
     def test_outbound_style_before_inbound_style(self, db, user_model_store):
         """User's outbound style section must precede the contact's inbound style."""
         _seed_outbound_profile(user_model_store, {"formality": 0.7})
-        _seed_inbound_profile(
-            user_model_store, "alpha@example.com", {"formality": 0.3}
-        )
+        _seed_inbound_profile(user_model_store, "alpha@example.com", {"formality": 0.3})
 
         assembler = ContextAssembler(db, user_model_store)
-        ctx = assembler.assemble_draft_context(
-            "alpha@example.com", "email", "Hello"
-        )
+        ctx = assembler.assemble_draft_context("alpha@example.com", "email", "Hello")
 
         outbound_pos = ctx.find("User's general style:")
         inbound_pos = ctx.find("Contact's writing style")
         assert outbound_pos != -1
         assert inbound_pos != -1
-        assert outbound_pos < inbound_pos, (
-            "Outbound style should appear before inbound style in context"
-        )
+        assert outbound_pos < inbound_pos, "Outbound style should appear before inbound style in context"

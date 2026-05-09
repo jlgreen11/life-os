@@ -78,11 +78,7 @@ def create_web_app(life_os) -> FastAPI:
         ]
     else:
         # Filter out empty strings and non-string values
-        allowed_origins = [
-            origin.strip()
-            for origin in allowed_origins
-            if isinstance(origin, str) and origin.strip()
-        ]
+        allowed_origins = [origin.strip() for origin in allowed_origins if isinstance(origin, str) and origin.strip()]
 
         # If the list is now empty after filtering, fall back to secure defaults
         if not allowed_origins:

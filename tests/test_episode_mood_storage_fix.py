@@ -55,10 +55,7 @@ def test_episode_with_full_mood_stores_correctly(db):
 
     # Verify the episode was stored correctly
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT inferred_mood, energy_level FROM episodes WHERE id = ?",
-            (episode_id,)
-        )
+        cursor = conn.execute("SELECT inferred_mood, energy_level FROM episodes WHERE id = ?", (episode_id,))
         row = cursor.fetchone()
         assert row is not None, "Episode should be stored"
 
@@ -102,10 +99,7 @@ def test_episode_with_none_mood_stores_empty_dict(db):
 
     # Verify the episode stored {} not "null"
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT inferred_mood, energy_level FROM episodes WHERE id = ?",
-            (episode_id,)
-        )
+        cursor = conn.execute("SELECT inferred_mood, energy_level FROM episodes WHERE id = ?", (episode_id,))
         row = cursor.fetchone()
         assert row is not None, "Episode should be stored"
 
@@ -133,10 +127,7 @@ def test_episode_without_mood_key_stores_empty_dict(db):
 
     # Verify the episode stored {} not "null"
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT inferred_mood FROM episodes WHERE id = ?",
-            (episode_id,)
-        )
+        cursor = conn.execute("SELECT inferred_mood FROM episodes WHERE id = ?", (episode_id,))
         row = cursor.fetchone()
         assert row is not None, "Episode should be stored"
 
@@ -166,10 +157,7 @@ def test_episode_with_partial_mood_stores_correctly(db):
 
     # Verify partial mood is preserved exactly
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT inferred_mood FROM episodes WHERE id = ?",
-            (episode_id,)
-        )
+        cursor = conn.execute("SELECT inferred_mood FROM episodes WHERE id = ?", (episode_id,))
         row = cursor.fetchone()
         assert row is not None, "Episode should be stored"
 
@@ -215,10 +203,7 @@ def test_episode_update_overwrites_mood(db):
 
     # Verify the mood was updated
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT inferred_mood, energy_level FROM episodes WHERE id = ?",
-            (episode_id,)
-        )
+        cursor = conn.execute("SELECT inferred_mood, energy_level FROM episodes WHERE id = ?", (episode_id,))
         row = cursor.fetchone()
         assert row is not None, "Episode should exist"
 
@@ -238,7 +223,7 @@ def test_json_roundtrip_for_all_mood_states(db):
 
     test_cases = [
         (None, {}),  # None serializes as empty dict
-        ({}, {}),    # Empty dict stays empty dict
+        ({}, {}),  # Empty dict stays empty dict
         ({"energy_level": 0.5}, {"energy_level": 0.5}),  # Partial mood
         (
             {
@@ -268,15 +253,13 @@ def test_json_roundtrip_for_all_mood_states(db):
         ums.store_episode(episode)
 
         with db.get_connection("user_model") as conn:
-            cursor = conn.execute(
-                "SELECT inferred_mood FROM episodes WHERE id = ?",
-                (episode_id,)
-            )
+            cursor = conn.execute("SELECT inferred_mood FROM episodes WHERE id = ?", (episode_id,))
             row = cursor.fetchone()
             stored_mood = json.loads(row[0])
 
-            assert stored_mood == expected_output, \
+            assert stored_mood == expected_output, (
                 f"Input {input_mood} should roundtrip to {expected_output}, got {stored_mood}"
+            )
 
 
 def test_contacts_topics_entities_none_handling(db):
@@ -290,8 +273,8 @@ def test_contacts_topics_entities_none_handling(db):
         "event_id": "test-lists-none",
         "inferred_mood": None,
         "contacts_involved": None,  # Should become []
-        "topics": None,             # Should become []
-        "entities": None,           # Should become []
+        "topics": None,  # Should become []
+        "entities": None,  # Should become []
         "interaction_type": "test",
         "content_summary": "Testing None lists",
     }
@@ -299,10 +282,7 @@ def test_contacts_topics_entities_none_handling(db):
     ums.store_episode(episode)
 
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT contacts_involved, topics, entities FROM episodes WHERE id = ?",
-            (episode_id,)
-        )
+        cursor = conn.execute("SELECT contacts_involved, topics, entities FROM episodes WHERE id = ?", (episode_id,))
         row = cursor.fetchone()
 
         assert json.loads(row[0]) == [], "None contacts should become []"

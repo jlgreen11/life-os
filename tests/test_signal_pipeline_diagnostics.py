@@ -70,8 +70,15 @@ def test_diagnostics_health_partial_with_some_profiles(db, ums, pipeline):
 def test_diagnostics_health_ok_with_all_profiles(db, ums, pipeline):
     """Health should be 'ok' when all 9 profiles exist with healthy data."""
     expected = [
-        "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-        "relationships", "topics", "temporal", "spatial", "decision",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "topics",
+        "temporal",
+        "spatial",
+        "decision",
     ]
     for pt in expected:
         _populate_healthy_profile(db, ums, pt)

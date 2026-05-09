@@ -42,6 +42,7 @@ from storage.user_model_store import UserModelStore
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def life_os_mock(db, event_store, user_model_store):
     """Minimal LifeOS mock with a real InsightEngine wired to the temp DB.
@@ -78,14 +79,23 @@ def life_os_mock(db, event_store, user_model_store):
 def client(life_os_mock):
     """TestClient bound to the full FastAPI app with the mock LifeOS."""
     from web.app import create_web_app
+
     app = create_web_app(life_os_mock)
     return TestClient(app)
 
 
-def _insert_insight(db, *, type_: str, summary: str, confidence: float,
-                    category: str, entity: str | None = None,
-                    feedback: str | None = None, staleness_ttl_hours: int = 168,
-                    created_offset_hours: int = 0) -> str:
+def _insert_insight(
+    db,
+    *,
+    type_: str,
+    summary: str,
+    confidence: float,
+    category: str,
+    entity: str | None = None,
+    feedback: str | None = None,
+    staleness_ttl_hours: int = 168,
+    created_offset_hours: int = 0,
+) -> str:
     """Insert a synthetic insight row into the user_model insights table.
 
     Args:
@@ -105,9 +115,7 @@ def _insert_insight(db, *, type_: str, summary: str, confidence: float,
     """
     insight_id = str(uuid.uuid4())
     dedup_key = str(uuid.uuid4())[:16]
-    created_at = (
-        datetime.now(timezone.utc) - timedelta(hours=created_offset_hours)
-    ).isoformat()
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=created_offset_hours)).isoformat()
     evidence = json.dumps(["test_evidence"])
     with db.get_connection("user_model") as conn:
         conn.execute(
@@ -115,8 +123,19 @@ def _insert_insight(db, *, type_: str, summary: str, confidence: float,
                (id, type, summary, confidence, evidence, category, entity,
                 feedback, staleness_ttl_hours, dedup_key, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (insight_id, type_, summary, confidence, evidence, category,
-             entity, feedback, staleness_ttl_hours, dedup_key, created_at),
+            (
+                insight_id,
+                type_,
+                summary,
+                confidence,
+                evidence,
+                category,
+                entity,
+                feedback,
+                staleness_ttl_hours,
+                dedup_key,
+                created_at,
+            ),
         )
     return insight_id
 
@@ -124,6 +143,7 @@ def _insert_insight(db, *, type_: str, summary: str, confidence: float,
 # ---------------------------------------------------------------------------
 # Basic contract tests
 # ---------------------------------------------------------------------------
+
 
 def test_endpoint_returns_200_with_required_keys(client):
     """GET /api/insights/summary returns 200 with 'insights' and 'generated_at' keys."""
@@ -156,6 +176,7 @@ def test_empty_db_returns_empty_insights_list(client):
 # DB read tests — verify stored insights are returned
 # ---------------------------------------------------------------------------
 
+
 def test_stored_insight_is_returned(client, life_os_mock):
     """Insights stored in the DB (by generate_insights or directly) are returned."""
     _insert_insight(
@@ -178,11 +199,15 @@ def test_stored_insight_is_returned(client, life_os_mock):
 
 def test_multiple_stored_insights_all_returned(client, life_os_mock):
     """All non-expired, non-negative stored insights are returned."""
-    _insert_insight(life_os_mock.db, type_="behavioral_pattern",
-                    summary="Place A", confidence=0.8, category="place")
-    _insert_insight(life_os_mock.db, type_="relationship_intelligence",
-                    summary="Contact B overdue", confidence=0.6, category="contact_gap",
-                    entity="contact@example.com")
+    _insert_insight(life_os_mock.db, type_="behavioral_pattern", summary="Place A", confidence=0.8, category="place")
+    _insert_insight(
+        life_os_mock.db,
+        type_="relationship_intelligence",
+        summary="Contact B overdue",
+        confidence=0.6,
+        category="contact_gap",
+        entity="contact@example.com",
+    )
 
     response = client.get("/api/insights/summary")
     assert response.status_code == 200
@@ -194,6 +219,7 @@ def test_multiple_stored_insights_all_returned(client, life_os_mock):
 # ---------------------------------------------------------------------------
 # Filtering tests — negative feedback and expired insights
 # ---------------------------------------------------------------------------
+
 
 def test_negative_feedback_insight_excluded(client, life_os_mock):
     """Insights marked with feedback='negative' must not appear in the response."""
@@ -226,12 +252,8 @@ def test_negative_feedback_insight_excluded(client, life_os_mock):
 
     insights = response.json()["insights"]
     summaries = [i["summary"] for i in insights]
-    assert "Dismissed insight" not in summaries, (
-        "Insight with negative feedback should be excluded"
-    )
-    assert "Active insight" in summaries, (
-        "Non-negative insight should still appear"
-    )
+    assert "Dismissed insight" not in summaries, "Insight with negative feedback should be excluded"
+    assert "Active insight" in summaries, "Non-negative insight should still appear"
 
 
 def test_expired_insight_excluded(client, life_os_mock):
@@ -254,7 +276,7 @@ def test_expired_insight_excluded(client, life_os_mock):
         confidence=0.75,
         category="contact_gap",
         entity="fresh@example.com",
-        staleness_ttl_hours=168,   # 7 days TTL, just created → fresh
+        staleness_ttl_hours=168,  # 7 days TTL, just created → fresh
         created_offset_hours=0,
     )
 
@@ -263,17 +285,14 @@ def test_expired_insight_excluded(client, life_os_mock):
 
     insights = response.json()["insights"]
     summaries = [i["summary"] for i in insights]
-    assert "Expired insight" not in summaries, (
-        "Insight past its staleness TTL should be excluded"
-    )
-    assert "Fresh insight" in summaries, (
-        "Fresh insight within TTL should appear"
-    )
+    assert "Expired insight" not in summaries, "Insight past its staleness TTL should be excluded"
+    assert "Fresh insight" in summaries, "Fresh insight within TTL should appear"
 
 
 # ---------------------------------------------------------------------------
 # Failure-tolerance tests
 # ---------------------------------------------------------------------------
+
 
 def test_endpoint_returns_200_when_generate_insights_raises(client, life_os_mock):
     """If generate_insights() raises, the endpoint still returns 200.
@@ -326,6 +345,7 @@ def test_stored_insights_returned_even_when_generate_insights_fails(client, life
 # Response structure tests
 # ---------------------------------------------------------------------------
 
+
 def test_evidence_field_deserialized_from_json_string(client, life_os_mock):
     """The evidence field stored as a JSON string must be returned as a list."""
     _insert_insight(
@@ -341,9 +361,7 @@ def test_evidence_field_deserialized_from_json_string(client, life_os_mock):
     assert response.status_code == 200
 
     insights = response.json()["insights"]
-    target = next(
-        (i for i in insights if i.get("entity") == "TestPlace"), None
-    )
+    target = next((i for i in insights if i.get("entity") == "TestPlace"), None)
     assert target is not None
     # The raw DB value is '["test_evidence"]' — must be parsed to a list
     assert isinstance(target["evidence"], list), (
@@ -366,9 +384,7 @@ def test_insights_include_required_fields(client, life_os_mock):
     assert response.status_code == 200
 
     insights = response.json()["insights"]
-    target = next(
-        (i for i in insights if i.get("entity") == "FieldCheckEntity"), None
-    )
+    target = next((i for i in insights if i.get("entity") == "FieldCheckEntity"), None)
     assert target is not None
     for field in ("id", "type", "summary", "confidence", "category"):
         assert field in target, f"Required field '{field}' missing from insight dict"

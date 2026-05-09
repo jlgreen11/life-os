@@ -76,8 +76,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -167,9 +172,7 @@ def test_dashboard_feed_sections_failed_empty_on_success(client):
 
 def test_dashboard_feed_reports_failed_tasks_section(mock_life_os, client):
     """When the task manager raises, 'tasks' appears in sections_failed."""
-    mock_life_os.task_manager.get_pending_tasks = Mock(
-        side_effect=RuntimeError("Tasks DB corrupted")
-    )
+    mock_life_os.task_manager.get_pending_tasks = Mock(side_effect=RuntimeError("Tasks DB corrupted"))
     resp = client.get("/api/dashboard/feed?topic=tasks")
     assert resp.status_code == 200
     data = resp.json()
@@ -184,9 +187,7 @@ def test_dashboard_feed_reports_failed_tasks_section(mock_life_os, client):
 
 def test_dashboard_feed_reports_failed_notifications_section(mock_life_os, client):
     """When notification_manager.get_pending raises, 'notifications' appears in sections_failed."""
-    mock_life_os.notification_manager.get_pending = Mock(
-        side_effect=RuntimeError("Notification DB unavailable")
-    )
+    mock_life_os.notification_manager.get_pending = Mock(side_effect=RuntimeError("Notification DB unavailable"))
     resp = client.get("/api/dashboard/feed?topic=inbox")
     assert resp.status_code == 200
     data = resp.json()
@@ -197,9 +198,7 @@ def test_dashboard_feed_reports_failed_notifications_section(mock_life_os, clien
 
 def test_dashboard_feed_reports_failed_calendar_section(mock_life_os, client):
     """When the calendar DB query raises, 'calendar' appears in sections_failed."""
-    mock_life_os.db.get_connection = Mock(
-        side_effect=RuntimeError("Calendar DB error")
-    )
+    mock_life_os.db.get_connection = Mock(side_effect=RuntimeError("Calendar DB error"))
     resp = client.get("/api/dashboard/feed?topic=calendar")
     assert resp.status_code == 200
     data = resp.json()
@@ -211,14 +210,18 @@ def test_dashboard_feed_reports_failed_calendar_section(mock_life_os, client):
 def test_dashboard_feed_still_returns_other_sections_on_failure(mock_life_os, client):
     """When one section fails, other sections still load and return items."""
     # Make tasks fail
-    mock_life_os.task_manager.get_pending_tasks = Mock(
-        side_effect=RuntimeError("Tasks DB error")
-    )
+    mock_life_os.task_manager.get_pending_tasks = Mock(side_effect=RuntimeError("Tasks DB error"))
     # Make notifications succeed with real data
     mock_life_os.notification_manager.get_pending = Mock(
         return_value=[
-            {"id": "n1", "domain": "email", "title": "Test Email", "body": "Hello",
-             "priority": "normal", "created_at": "2026-01-01T00:00:00Z"},
+            {
+                "id": "n1",
+                "domain": "email",
+                "title": "Test Email",
+                "body": "Hello",
+                "priority": "normal",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
         ]
     )
 
@@ -239,12 +242,8 @@ def test_dashboard_feed_still_returns_other_sections_on_failure(mock_life_os, cl
 
 def test_dashboard_feed_multiple_sections_can_fail(mock_life_os, client):
     """Multiple sections can fail independently and all appear in sections_failed."""
-    mock_life_os.notification_manager.get_pending = Mock(
-        side_effect=RuntimeError("Notification error")
-    )
-    mock_life_os.task_manager.get_pending_tasks = Mock(
-        side_effect=RuntimeError("Task error")
-    )
+    mock_life_os.notification_manager.get_pending = Mock(side_effect=RuntimeError("Notification error"))
+    mock_life_os.task_manager.get_pending_tasks = Mock(side_effect=RuntimeError("Task error"))
 
     resp = client.get("/api/dashboard/feed?topic=inbox")
     assert resp.status_code == 200
@@ -265,14 +264,16 @@ async def test_dashboard_feed_action_item_failure_tracked(db):
     """When action-item enrichment fails, 'action_items' appears in sections_failed."""
     # Insert a real email event so that the enrichment block is triggered
     event_id = str(uuid.uuid4())
-    payload = json.dumps({
-        "from_address": "sender@example.com",
-        "from_name": "Sender",
-        "subject": "Test Email",
-        "body": "Test body",
-        "snippet": "Test snippet",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
+    payload = json.dumps(
+        {
+            "from_address": "sender@example.com",
+            "from_name": "Sender",
+            "subject": "Test Email",
+            "body": "Test body",
+            "snippet": "Test snippet",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     with db.get_connection("events") as conn:
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)

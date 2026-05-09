@@ -58,10 +58,14 @@ class GenericBrowserConnector(BrowserBaseConnector):
     Provide CSS selectors and it extracts structured data from any site.
     """
 
-    def __init__(self, event_bus: EventBus, db: DatabaseManager,
-                 config: dict[str, Any],
-                 browser_engine: Optional[BrowserEngine] = None,
-                 credential_vault: Optional[CredentialVault] = None):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        db: DatabaseManager,
+        config: dict[str, Any],
+        browser_engine: Optional[BrowserEngine] = None,
+        credential_vault: Optional[CredentialVault] = None,
+    ):
         # Override class-level constants from config BEFORE calling super(),
         # because BaseConnector.__init__ reads CONNECTOR_ID for subscriptions.
         self.CONNECTOR_ID = config.get("site_id", "generic")
@@ -74,10 +78,10 @@ class GenericBrowserConnector(BrowserBaseConnector):
 
         # All extraction behaviour is driven by these config values —
         # no custom code needed per site.
-        self._feed_url = config.get("feed_url", "")         # Page to scrape
-        self._selectors = config.get("selectors", {})        # CSS selectors for data extraction
+        self._feed_url = config.get("feed_url", "")  # Page to scrape
+        self._selectors = config.get("selectors", {})  # CSS selectors for data extraction
         self._event_type = config.get("event_type", "content.feed.new_item")
-        self._max_items = config.get("max_items", 30)        # Cap to prevent runaway scraping
+        self._max_items = config.get("max_items", 30)  # Cap to prevent runaway scraping
         self._custom_login_selectors = config.get("login_selectors", {})
         self._requires_login = bool(config.get("login_url"))  # Skip login flow for public sites
 
@@ -95,8 +99,7 @@ class GenericBrowserConnector(BrowserBaseConnector):
             return True
         return await super().authenticate()
 
-    async def browser_sync(self, page: Any, human: HumanEmulator,
-                           interactor: PageInteractor) -> int:
+    async def browser_sync(self, page: Any, human: HumanEmulator, interactor: PageInteractor) -> int:
         """Extract items from the configured feed URL using CSS selectors."""
         count = 0
 
@@ -122,7 +125,7 @@ class GenericBrowserConnector(BrowserBaseConnector):
         seen_hashes = self._get_seen_hashes()
         new_items = []
 
-        for item in items[:self._max_items]:
+        for item in items[: self._max_items]:
             # Generate a stable hash for deduplication
             # SECURITY: md5 used only for content deduplication, not security
             item_hash = hashlib.md5(  # noqa: S324
@@ -142,7 +145,8 @@ class GenericBrowserConnector(BrowserBaseConnector):
             }
 
             await self.publish_event(
-                self._event_type, payload,
+                self._event_type,
+                payload,
                 priority="low",
                 metadata={"domain": "media", "source": self.SITE_ID},
             )
@@ -155,8 +159,7 @@ class GenericBrowserConnector(BrowserBaseConnector):
 
         return count
 
-    def _build_extraction_js(self, item_selector: str,
-                              field_selectors: dict[str, str]) -> str:
+    def _build_extraction_js(self, item_selector: str, field_selectors: dict[str, str]) -> str:
         """Build JavaScript extraction code from CSS selectors.
 
         Generates a self-contained JS function that iterates over DOM elements
@@ -172,14 +175,14 @@ class GenericBrowserConnector(BrowserBaseConnector):
                     f'"{field_name}": (function() {{ '
                     f'const el = item.querySelector("{css_part}"); '
                     f'return el ? el.getAttribute("{attr}") || "" : ""; '
-                    f'}})()'
+                    f"}})()"
                 )
             else:
                 field_extractors.append(
                     f'"{field_name}": (function() {{ '
                     f'const el = item.querySelector("{selector}"); '
                     f'return el ? el.textContent?.trim() || "" : ""; '
-                    f'}})()'
+                    f"}})()"
                 )
 
         fields_js = ",\n                        ".join(field_extractors)
@@ -235,8 +238,11 @@ class GenericBrowserConnector(BrowserBaseConnector):
 # Factory: Create connectors from YAML config
 # ===========================================================================
 
+
 def create_browser_connectors(
-    event_bus: EventBus, db: DatabaseManager, configs: list[dict],
+    event_bus: EventBus,
+    db: DatabaseManager,
+    configs: list[dict],
     browser_engine: Optional[BrowserEngine] = None,
     credential_vault: Optional[CredentialVault] = None,
 ) -> list[GenericBrowserConnector]:
@@ -261,7 +267,11 @@ def create_browser_connectors(
     connectors = []
     for config in configs:
         connector = GenericBrowserConnector(
-            event_bus, db, config, browser_engine, credential_vault,
+            event_bus,
+            db,
+            config,
+            browser_engine,
+            credential_vault,
         )
         connectors.append(connector)
     return connectors

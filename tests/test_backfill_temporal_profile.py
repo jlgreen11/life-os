@@ -211,7 +211,7 @@ def test_backfill_temporal_profile_builds_hourly_activity_patterns(db, user_mode
 
     assert activity_by_hour["14"] == 3  # 2pm had 3 events
     assert activity_by_hour["15"] == 2  # 3pm had 2 events
-    assert activity_by_hour["9"] == 1   # 9am had 1 event
+    assert activity_by_hour["9"] == 1  # 9am had 1 event
 
 
 def test_backfill_temporal_profile_builds_daily_activity_patterns(db, user_model_store):
@@ -535,7 +535,7 @@ def test_backfill_temporal_profile_respects_limit(db, user_model_store):
             "id": f"evt-{i}",
             "type": EventType.EMAIL_SENT.value,
             "source": "gmail",
-            "timestamp": f"2026-02-10T{10+i:02d}:00:00Z",
+            "timestamp": f"2026-02-10T{10 + i:02d}:00:00Z",
             "priority": "normal",
             "payload": {},
             "metadata": {},
@@ -695,39 +695,45 @@ def test_backfill_inbound_events_dominate_count(db, user_model_store):
 
     # 2 outbound emails
     for i in range(2):
-        events.append({
-            "id": f"evt-sent-{i}",
-            "type": EventType.EMAIL_SENT.value,
-            "source": "gmail",
-            "timestamp": f"2026-02-10T{10+i:02d}:00:00Z",
-            "priority": "normal",
-            "payload": {},
-            "metadata": {},
-        })
+        events.append(
+            {
+                "id": f"evt-sent-{i}",
+                "type": EventType.EMAIL_SENT.value,
+                "source": "gmail",
+                "timestamp": f"2026-02-10T{10 + i:02d}:00:00Z",
+                "priority": "normal",
+                "payload": {},
+                "metadata": {},
+            }
+        )
 
     # 20 inbound emails (simulating the 99%+ ratio seen in production)
     for i in range(20):
-        events.append({
-            "id": f"evt-recv-{i}",
-            "type": EventType.EMAIL_RECEIVED.value,
-            "source": "gmail",
-            "timestamp": f"2026-02-{10 + i // 24:02d}T{i % 24:02d}:30:00Z",
-            "priority": "normal",
-            "payload": {},
-            "metadata": {},
-        })
+        events.append(
+            {
+                "id": f"evt-recv-{i}",
+                "type": EventType.EMAIL_RECEIVED.value,
+                "source": "gmail",
+                "timestamp": f"2026-02-{10 + i // 24:02d}T{i % 24:02d}:30:00Z",
+                "priority": "normal",
+                "payload": {},
+                "metadata": {},
+            }
+        )
 
     # 5 inbound messages
     for i in range(5):
-        events.append({
-            "id": f"evt-msg-recv-{i}",
-            "type": EventType.MESSAGE_RECEIVED.value,
-            "source": "imessage",
-            "timestamp": f"2026-02-10T{14+i:02d}:15:00Z",
-            "priority": "normal",
-            "payload": {},
-            "metadata": {},
-        })
+        events.append(
+            {
+                "id": f"evt-msg-recv-{i}",
+                "type": EventType.MESSAGE_RECEIVED.value,
+                "source": "imessage",
+                "timestamp": f"2026-02-10T{14 + i:02d}:15:00Z",
+                "priority": "normal",
+                "payload": {},
+                "metadata": {},
+            }
+        )
 
     # Insert events
     with db.get_connection("events") as conn:

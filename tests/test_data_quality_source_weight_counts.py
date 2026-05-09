@@ -30,6 +30,7 @@ detect_anomalies = _mod.detect_anomalies
 # Helper: create all minimal databases needed for a full analyze() run
 # ---------------------------------------------------------------------------
 
+
 def _create_events_db(tmp_path, event_count=0):
     """Create events.db, optionally seeding event rows."""
     conn = sqlite3.connect(str(tmp_path / "events.db"))
@@ -136,7 +137,7 @@ def _create_preferences_db(tmp_path, source_weights=None, feedback_rows=None):
             created_at TEXT
         )
     """)
-    for sw in (source_weights or []):
+    for sw in source_weights or []:
         conn.execute(
             """INSERT INTO source_weights
                (source_key, user_weight, ai_drift, ai_updated_at,
@@ -152,7 +153,7 @@ def _create_preferences_db(tmp_path, source_weights=None, feedback_rows=None):
                 sw.get("dismissals", 0),
             ),
         )
-    for action_type, feedback_type in (feedback_rows or []):
+    for action_type, feedback_type in feedback_rows or []:
         conn.execute(
             "INSERT INTO feedback_log (action_type, feedback_type) VALUES (?, ?)",
             (action_type, feedback_type),
@@ -332,10 +333,7 @@ class TestNoAnomalyWhenLearningActive:
         report = analyze(str(tmp_path))
         anomalies = report["anomalies"]
 
-        sw_anomalies = [
-            a for a in anomalies
-            if a["category"] in ("source_weight_learning", "source_weight_feedback")
-        ]
+        sw_anomalies = [a for a in anomalies if a["category"] in ("source_weight_learning", "source_weight_feedback")]
         assert len(sw_anomalies) == 0
 
 

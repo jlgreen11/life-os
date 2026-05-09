@@ -21,7 +21,7 @@ IMPACT:
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add parent directory to import Life OS modules
@@ -45,34 +45,74 @@ def is_marketing_or_noreply(from_addr: str) -> bool:
 
     # No-reply and automated system senders
     noreply_patterns = (
-        "no-reply@", "noreply@", "do-not-reply@", "donotreply@",
-        "mailer-daemon@", "postmaster@", "daemon@", "auto-reply@",
-        "autoreply@", "automated@",
+        "no-reply@",
+        "noreply@",
+        "do-not-reply@",
+        "donotreply@",
+        "mailer-daemon@",
+        "postmaster@",
+        "daemon@",
+        "auto-reply@",
+        "autoreply@",
+        "automated@",
     )
     if any(pattern in addr_lower for pattern in noreply_patterns):
         return True
 
     # Common bulk sender local-parts (the part before @)
     bulk_localpart_patterns = (
-        "newsletter@", "notifications@", "updates@", "digest@",
-        "mailer@", "bulk@", "promo@", "marketing@",
-        "reply@", "email@", "news@", "offers@", "deals@",
-        "hello@", "info@", "support@", "help@",
-        "service@", "discover@", "alert@", "alerts@", "notification@",
-        "orders@", "order@", "receipts@", "receipt@",
-        "auto-confirm@", "autoconfirm@", "confirmation@",
-        "shipment-tracking@", "shipping@", "delivery@",
-        "accountservice@", "account-service@",
-        "communications@", "development@", "fundraising@",
-        "rewards@", "loyalty@",
+        "newsletter@",
+        "notifications@",
+        "updates@",
+        "digest@",
+        "mailer@",
+        "bulk@",
+        "promo@",
+        "marketing@",
+        "reply@",
+        "email@",
+        "news@",
+        "offers@",
+        "deals@",
+        "hello@",
+        "info@",
+        "support@",
+        "help@",
+        "service@",
+        "discover@",
+        "alert@",
+        "alerts@",
+        "notification@",
+        "orders@",
+        "order@",
+        "receipts@",
+        "receipt@",
+        "auto-confirm@",
+        "autoconfirm@",
+        "confirmation@",
+        "shipment-tracking@",
+        "shipping@",
+        "delivery@",
+        "accountservice@",
+        "account-service@",
+        "communications@",
+        "development@",
+        "fundraising@",
+        "rewards@",
+        "loyalty@",
     )
     if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
         return True
 
     # Embedded notification patterns (middle of local-part)
     embedded_notification_patterns = (
-        "-notification", "-notifications", "-alert", "-alerts",
-        "-update", "-updates", "-digest",
+        "-notification",
+        "-notifications",
+        "-alert",
+        "-alerts",
+        "-update",
+        "-updates",
+        "-digest",
     )
     local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
     if any(pattern in local_part for pattern in embedded_notification_patterns):
@@ -80,10 +120,20 @@ def is_marketing_or_noreply(from_addr: str) -> bool:
 
     # Marketing domain patterns (the part after @)
     marketing_domain_patterns = (
-        "@news-", "@email.", "@reply.", "@mailing.",
-        "@newsletters.", "@promo.", "@marketing.",
-        "@em.", "@mg.", "@mail.",
-        "@engage.", "@iluv.", "@e.", "@e2.",
+        "@news-",
+        "@email.",
+        "@reply.",
+        "@mailing.",
+        "@newsletters.",
+        "@promo.",
+        "@marketing.",
+        "@em.",
+        "@mg.",
+        "@mail.",
+        "@engage.",
+        "@iluv.",
+        "@e.",
+        "@e2.",
         "@comms.",  # Critical addition: callofduty@comms.activision.com pattern
     )
     if any(pattern in addr_lower for pattern in marketing_domain_patterns):
@@ -92,9 +142,14 @@ def is_marketing_or_noreply(from_addr: str) -> bool:
     # Marketing service provider subdomains
     domain = addr_lower.split("@")[1] if "@" in addr_lower else ""
     marketing_service_patterns = (
-        ".e2ma.net", ".sendgrid.net", ".mailchimp.com",
-        ".constantcontact.com", ".hubspot.com", ".marketo.com",
-        ".pardot.com", ".eloqua.com",
+        ".e2ma.net",
+        ".sendgrid.net",
+        ".mailchimp.com",
+        ".constantcontact.com",
+        ".hubspot.com",
+        ".marketo.com",
+        ".pardot.com",
+        ".eloqua.com",
     )
     if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
         return True
@@ -145,7 +200,7 @@ def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False, verbo
     total_contacts = len(contacts)
 
     if verbose:
-        print(f"Current profile state:")
+        print("Current profile state:")
         print(f"  Total contacts: {total_contacts}")
         print(f"  Samples count: {row['samples_count']}")
         print(f"  Last updated: {row['updated_at']}")
@@ -162,13 +217,13 @@ def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False, verbo
             human_contacts.append(addr)
 
     if verbose:
-        print(f"Analysis:")
+        print("Analysis:")
         print(f"  Marketing/automated contacts: {len(marketing_contacts)}")
         print(f"  Human contacts: {len(human_contacts)}")
         print()
 
         if len(marketing_contacts) > 0:
-            print(f"Sample marketing contacts to remove (showing first 10):")
+            print("Sample marketing contacts to remove (showing first 10):")
             for addr in marketing_contacts[:10]:
                 count = contacts[addr].get("interaction_count", 0)
                 print(f"  - {addr} ({count} interactions)")
@@ -200,7 +255,7 @@ def clean_relationship_profile(db: DatabaseManager, dry_run: bool = False, verbo
                SET data = ?,
                    updated_at = ?
                WHERE profile_type = 'relationships'""",
-            (cleaned_json, datetime.now(timezone.utc).isoformat()),
+            (cleaned_json, datetime.now(UTC).isoformat()),
         )
 
     if verbose:
@@ -220,9 +275,7 @@ def main():
     """Run the cleanup script."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Clean marketing contacts from relationships signal profile"
-    )
+    parser = argparse.ArgumentParser(description="Clean marketing contacts from relationships signal profile")
     parser.add_argument(
         "--dry-run",
         action="store_true",

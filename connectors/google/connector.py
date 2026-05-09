@@ -56,7 +56,6 @@ CONTACT_SYNC_INTERVAL = 3600  # 1 hour
 
 
 class GoogleConnector(BaseConnector):
-
     CONNECTOR_ID = "google"
     DISPLAY_NAME = "Google (Gmail, Calendar, Contacts)"
     SYNC_INTERVAL_SECONDS = 30
@@ -243,9 +242,7 @@ class GoogleConnector(BaseConnector):
                 "Token expired but no refresh_token present — "
                 "re-authenticate via /admin connector panel to get a new refresh token"
             )
-            raise ValueError(
-                "Token expired with no refresh_token — re-authenticate via /admin connector panel"
-            )
+            raise ValueError("Token expired with no refresh_token — re-authenticate via /admin connector panel")
 
         return None
 
@@ -311,9 +308,12 @@ class GoogleConnector(BaseConnector):
 
             for i, msg_stub in enumerate(messages):
                 try:
-                    msg = self._gmail_service.users().messages().get(
-                        userId="me", id=msg_stub["id"], format="full"
-                    ).execute()
+                    msg = (
+                        self._gmail_service.users()
+                        .messages()
+                        .get(userId="me", id=msg_stub["id"], format="full")
+                        .execute()
+                    )
                     event_count = await self._process_gmail_message(msg)
                     count += event_count
 
@@ -353,6 +353,7 @@ class GoogleConnector(BaseConnector):
         # Parse date
         try:
             from email.utils import mktime_tz, parsedate_tz
+
             date_tuple = parsedate_tz(date_str)
             if date_tuple:
                 timestamp = mktime_tz(date_tuple)
@@ -418,9 +419,14 @@ class GoogleConnector(BaseConnector):
         await self._publish_with_retry(event_type, payload, priority=priority, metadata=metadata)
         return 1
 
-    async def _publish_with_retry(self, event_type: str, payload: dict,
-                                   priority: str = "normal", metadata: dict | None = None,
-                                   max_retries: int = 3):
+    async def _publish_with_retry(
+        self,
+        event_type: str,
+        payload: dict,
+        priority: str = "normal",
+        metadata: dict | None = None,
+        max_retries: int = 3,
+    ):
         """Publish event with retry on NATS timeout."""
         for attempt in range(max_retries):
             try:
@@ -489,6 +495,7 @@ class GoogleConnector(BaseConnector):
     def _parse_email_address(raw: str) -> str:
         """Extract email address from 'Name <email>' format."""
         from email.utils import parseaddr
+
         _, addr = parseaddr(raw)
         return addr
 
@@ -496,6 +503,7 @@ class GoogleConnector(BaseConnector):
     def _parse_email_header(raw: str) -> tuple[str, str]:
         """Return (display_name, email_address) from an RFC 2822 header."""
         from email.utils import parseaddr
+
         name, addr = parseaddr(raw)
         return name, addr
 
@@ -505,6 +513,7 @@ class GoogleConnector(BaseConnector):
         if not raw:
             return []
         from email.utils import getaddresses
+
         addrs = getaddresses([raw])
         return [addr for _, addr in addrs if addr]
 
@@ -514,6 +523,7 @@ class GoogleConnector(BaseConnector):
         if not raw:
             return {}
         from email.utils import getaddresses
+
         return {addr: name for name, addr in getaddresses([raw]) if name and addr}
 
     # ------------------------------------------------------------------
@@ -543,13 +553,17 @@ class GoogleConnector(BaseConnector):
 
         for cal_id in cal_ids:
             try:
-                events_result = self._calendar_service.events().list(
-                    calendarId=cal_id,
-                    timeMin=time_min,
-                    timeMax=time_max,
-                    singleEvents=True,
-                    orderBy="startTime",
-                ).execute()
+                events_result = (
+                    self._calendar_service.events()
+                    .list(
+                        calendarId=cal_id,
+                        timeMin=time_min,
+                        timeMax=time_max,
+                        singleEvents=True,
+                        orderBy="startTime",
+                    )
+                    .execute()
+                )
 
                 for event in events_result.get("items", []):
                     try:
@@ -725,11 +739,13 @@ class GoogleConnector(BaseConnector):
                         (id, name, emails, phones, channels, domains, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, '["personal"]', ?, ?)""",
                     (
-                        contact_id, name,
+                        contact_id,
+                        name,
                         json.dumps(emails),
                         json.dumps(phones),
                         json.dumps({"google": emails[0] if emails else name}),
-                        now, now,
+                        now,
+                        now,
                     ),
                 )
 
@@ -813,12 +829,9 @@ class GoogleConnector(BaseConnector):
             msg.attach(MIMEText(params["body_html"], "html"))
 
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-        result = self._gmail_service.users().messages().send(
-            userId="me", body={"raw": raw}
-        ).execute()
+        result = self._gmail_service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
-        return {"status": "sent", "to": params["to"], "subject": params["subject"],
-                "message_id": result.get("id")}
+        return {"status": "sent", "to": params["to"], "subject": params["subject"], "message_id": result.get("id")}
 
     async def _reply_email(self, params: dict[str, Any]) -> dict[str, Any]:
         """Reply to an existing email with proper threading."""
@@ -848,12 +861,9 @@ class GoogleConnector(BaseConnector):
         if params.get("thread_id"):
             send_body["threadId"] = params["thread_id"]
 
-        result = self._gmail_service.users().messages().send(
-            userId="me", body=send_body
-        ).execute()
+        result = self._gmail_service.users().messages().send(userId="me", body=send_body).execute()
 
-        return {"status": "sent", "to": params["to"],
-                "subject": msg["Subject"], "message_id": result.get("id")}
+        return {"status": "sent", "to": params["to"], "subject": msg["Subject"], "message_id": result.get("id")}
 
     async def _create_event(self, params: dict[str, Any]) -> dict[str, Any]:
         """Create a Google Calendar event."""
@@ -888,11 +898,13 @@ class GoogleConnector(BaseConnector):
         cal_id = params.get("calendar_id", "primary")
 
         try:
-            result = self._calendar_service.events().insert(
-                calendarId=cal_id, body=event_body
-            ).execute()
-            return {"status": "created", "title": params["title"],
-                    "event_id": result.get("id"), "link": result.get("htmlLink")}
+            result = self._calendar_service.events().insert(calendarId=cal_id, body=event_body).execute()
+            return {
+                "status": "created",
+                "title": params["title"],
+                "event_id": result.get("id"),
+                "link": result.get("htmlLink"),
+            }
         except Exception as e:
             return {"status": "error", "details": str(e)}
 
@@ -1047,8 +1059,7 @@ class GoogleConnector(BaseConnector):
         if not auth_diagnosis["credentials_file_exists"]:
             auth_diagnosis["root_cause"] = "missing_credentials"
             auth_diagnosis["action"] = (
-                f"Download OAuth credentials from Google Cloud Console and "
-                f"save to {self._credentials_file}"
+                f"Download OAuth credentials from Google Cloud Console and save to {self._credentials_file}"
             )
             return auth_diagnosis
 
@@ -1056,8 +1067,7 @@ class GoogleConnector(BaseConnector):
         if not auth_diagnosis["token_file_exists"]:
             auth_diagnosis["root_cause"] = "oauth_not_completed"
             auth_diagnosis["action"] = (
-                "Complete initial OAuth setup: "
-                "visit /api/admin/connectors/google/auth in your browser"
+                "Complete initial OAuth setup: visit /api/admin/connectors/google/auth in your browser"
             )
             return auth_diagnosis
 
@@ -1072,15 +1082,11 @@ class GoogleConnector(BaseConnector):
 
             if creds.expired and not creds.refresh_token:
                 auth_diagnosis["root_cause"] = "no_refresh_token"
-                auth_diagnosis["action"] = (
-                    "Re-authenticate: visit /api/admin/connectors/google/auth"
-                )
+                auth_diagnosis["action"] = "Re-authenticate: visit /api/admin/connectors/google/auth"
             elif creds.expired:
                 # Refresh token is present — automatic refresh will fix this on next sync.
                 auth_diagnosis["root_cause"] = "token_expired_refresh_available"
-                auth_diagnosis["action"] = (
-                    "Token refresh should happen automatically on next sync cycle"
-                )
+                auth_diagnosis["action"] = "Token refresh should happen automatically on next sync cycle"
             # If neither condition applies, the token is valid — no root_cause needed.
 
         except Exception as e:
@@ -1123,12 +1129,10 @@ class GoogleConnector(BaseConnector):
         """
         hints = {
             "scope_revoked": (
-                "Re-authenticate via /admin connector panel — "
-                "the current token may have been revoked or scopes changed"
+                "Re-authenticate via /admin connector panel — the current token may have been revoked or scopes changed"
             ),
             "token_expired": (
-                "Re-authenticate via /admin connector panel — "
-                "the access token has expired and could not be refreshed"
+                "Re-authenticate via /admin connector panel — the access token has expired and could not be refreshed"
             ),
             "network_error": (
                 "Check network connectivity — "

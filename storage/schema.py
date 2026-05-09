@@ -294,8 +294,7 @@ CREATE TABLE feedback_events (
 """
 
 CREATE_FEEDBACK_EVENTS_ACTION_TYPE_INDEX_SQL = (
-    "CREATE INDEX idx_feedback_events_action_type "
-    "ON feedback_events(action_id, feedback_type)"
+    "CREATE INDEX idx_feedback_events_action_type ON feedback_events(action_id, feedback_type)"
 )
 CREATE_FEEDBACK_EVENTS_TS_INDEX_SQL = "CREATE INDEX idx_feedback_events_ts ON feedback_events(ts)"
 

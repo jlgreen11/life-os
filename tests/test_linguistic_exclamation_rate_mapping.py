@@ -58,8 +58,7 @@ def test_exclamation_rate_mapped_to_profile(extractor, user_model_store):
 
     # exclamation_rate must exist as a top-level key (not just inside averages)
     assert "exclamation_rate" in data, (
-        "exclamation_rate should be a top-level key in profile data, "
-        "mapped from averages['exclamation_rate']"
+        "exclamation_rate should be a top-level key in profile data, mapped from averages['exclamation_rate']"
     )
     # It should also still be in averages (the source of the mapping)
     assert "exclamation_rate" in data["averages"]
@@ -87,9 +86,7 @@ def test_exclamation_rate_nonzero_for_emphatic_text(extractor, user_model_store)
     profile = user_model_store.get_signal_profile("linguistic")
     data = profile["data"]
 
-    assert data["exclamation_rate"] > 0, (
-        "exclamation_rate should be positive for messages with heavy exclamation usage"
-    )
+    assert data["exclamation_rate"] > 0, "exclamation_rate should be positive for messages with heavy exclamation usage"
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +111,7 @@ def test_exclamation_rate_zero_for_calm_text(extractor, user_model_store):
     profile = user_model_store.get_signal_profile("linguistic")
     data = profile["data"]
 
-    assert data["exclamation_rate"] == 0.0, (
-        "exclamation_rate should be 0.0 for messages without exclamation marks"
-    )
+    assert data["exclamation_rate"] == 0.0, "exclamation_rate should be 0.0 for messages without exclamation marks"
 
 
 # ---------------------------------------------------------------------------
@@ -153,13 +148,8 @@ def test_all_rate_fields_mapped(extractor, user_model_store):
         "exclamation_rate",
     ]
     for field in expected_fields:
-        assert field in data, (
-            f"'{field}' should be a top-level key in profile data, "
-            f"mapped from averages"
-        )
-        assert isinstance(data[field], float), (
-            f"'{field}' should be a float, got {type(data[field])}"
-        )
+        assert field in data, f"'{field}' should be a top-level key in profile data, mapped from averages"
+        assert isinstance(data[field], float), f"'{field}' should be a float, got {type(data[field])}"
 
 
 # ---------------------------------------------------------------------------
@@ -189,15 +179,9 @@ def test_per_contact_exclamation_rate_computed(extractor, user_model_store):
     profile = user_model_store.get_signal_profile("linguistic")
     per_contact_avgs = profile["data"].get("per_contact_averages", {})
 
-    assert contact in per_contact_avgs, (
-        f"Contact '{contact}' should have per-contact averages after 5 messages"
-    )
-    assert "exclamation_rate" in per_contact_avgs[contact], (
-        "per_contact_averages should include exclamation_rate"
-    )
-    assert per_contact_avgs[contact]["exclamation_rate"] >= 0, (
-        "exclamation_rate should be non-negative"
-    )
+    assert contact in per_contact_avgs, f"Contact '{contact}' should have per-contact averages after 5 messages"
+    assert "exclamation_rate" in per_contact_avgs[contact], "per_contact_averages should include exclamation_rate"
+    assert per_contact_avgs[contact]["exclamation_rate"] >= 0, "exclamation_rate should be non-negative"
     # These messages all have exclamations, so rate should be positive
     assert per_contact_avgs[contact]["exclamation_rate"] > 0, (
         "exclamation_rate should be positive for emphatic messages"

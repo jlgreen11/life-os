@@ -107,9 +107,7 @@ def test_cleanup_dry_run_no_changes(db: DatabaseManager, user_model_store: UserM
 
     # Verify nothing was changed
     with db.get_connection("user_model") as conn:
-        resolved = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NOT NULL"
-        ).fetchone()[0]
+        resolved = conn.execute("SELECT COUNT(*) FROM predictions WHERE resolved_at IS NOT NULL").fetchone()[0]
         assert resolved == 0
 
 
@@ -171,9 +169,7 @@ def test_cleanup_respects_timeout(db: DatabaseManager, user_model_store: UserMod
     # Verify correct ones were resolved
     with db.get_connection("user_model") as conn:
         resolved_ids = [
-            row[0] for row in conn.execute(
-                "SELECT id FROM predictions WHERE resolved_at IS NOT NULL"
-            ).fetchall()
+            row[0] for row in conn.execute("SELECT id FROM predictions WHERE resolved_at IS NOT NULL").fetchall()
         ]
         assert len(resolved_ids) == 4
         assert all(pid.startswith(("very-old", "old")) for pid in resolved_ids)
@@ -193,8 +189,7 @@ def test_cleanup_sets_correct_metadata(db: DatabaseManager, user_model_store: Us
     # Verify metadata
     with db.get_connection("user_model") as conn:
         row = conn.execute(
-            "SELECT was_accurate, user_response, resolved_at FROM predictions WHERE id = ?",
-            ("test-pred",)
+            "SELECT was_accurate, user_response, resolved_at FROM predictions WHERE id = ?", ("test-pred",)
         ).fetchone()
 
         assert row["was_accurate"] is None  # Never tested
@@ -224,7 +219,7 @@ def test_cleanup_handles_already_resolved(db: DatabaseManager, user_model_store:
                was_accurate = 1,
                user_response = 'confirmed'
                WHERE id = ?""",
-            (now.isoformat(), "pred-0")
+            (now.isoformat(), "pred-0"),
         )
 
     # Run cleanup
@@ -235,10 +230,7 @@ def test_cleanup_handles_already_resolved(db: DatabaseManager, user_model_store:
 
     # Verify the manually resolved one kept its metadata
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT user_response, was_accurate FROM predictions WHERE id = ?",
-            ("pred-0",)
-        ).fetchone()
+        row = conn.execute("SELECT user_response, was_accurate FROM predictions WHERE id = ?", ("pred-0",)).fetchone()
 
         assert row["user_response"] == "confirmed"  # Preserved
         assert row["was_accurate"] == 1  # Preserved
@@ -259,6 +251,7 @@ def test_cleanup_massive_backlog_performance(db: DatabaseManager, user_model_sto
 
     # Run cleanup and verify it completes quickly
     import time
+
     start = time.time()
     count = cleanup_backlog(db, timeout_hours=1, dry_run=False)
     elapsed = time.time() - start
@@ -268,7 +261,5 @@ def test_cleanup_massive_backlog_performance(db: DatabaseManager, user_model_sto
 
     # Verify all were resolved
     with db.get_connection("user_model") as conn:
-        resolved = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NOT NULL"
-        ).fetchone()[0]
+        resolved = conn.execute("SELECT COUNT(*) FROM predictions WHERE resolved_at IS NOT NULL").fetchone()[0]
         assert resolved == 1000

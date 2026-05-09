@@ -15,9 +15,17 @@ from services.insight_engine.engine import InsightEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_connector_state(db, connector_id: str, *, status: str = "ok",
-                            enabled: int = 1, last_sync: str | None = None,
-                            error_count: int = 0, last_error: str | None = None):
+
+def _insert_connector_state(
+    db,
+    connector_id: str,
+    *,
+    status: str = "ok",
+    enabled: int = 1,
+    last_sync: str | None = None,
+    error_count: int = 0,
+    last_error: str | None = None,
+):
     """Insert a row into the connector_state table in state.db."""
     with db.get_connection("state") as conn:
         conn.execute(
@@ -40,12 +48,14 @@ def _insert_connector_state(db, connector_id: str, *, status: str = "ok",
 # Test 1: Error-state connector produces a high-severity actionable_alert
 # ===========================================================================
 
+
 def test_error_connector_produces_alert(db, user_model_store):
     """A connector with status='error' should generate an actionable_alert insight."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "google",
+        db,
+        "google",
         status="error",
         last_sync="2026-02-20T10:00:00+00:00",
         error_count=5,
@@ -72,13 +82,15 @@ def test_error_connector_produces_alert(db, user_model_store):
 # Test 2: Stalled connector (last_sync > 48h) produces medium-severity alert
 # ===========================================================================
 
+
 def test_stalled_connector_produces_alert(db, user_model_store):
     """A connector with last_sync > 48h but status != 'error' should produce a medium insight."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
 
     stale_sync = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
     _insert_connector_state(
-        db, "proton_mail",
+        db,
+        "proton_mail",
         status="ok",
         last_sync=stale_sync,
         error_count=0,
@@ -101,13 +113,15 @@ def test_stalled_connector_produces_alert(db, user_model_store):
 # Test 3: Healthy connector produces no insight
 # ===========================================================================
 
+
 def test_healthy_connector_no_insight(db, user_model_store):
     """A connector with status='ok' and recent last_sync should produce no insights."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
 
     recent_sync = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     _insert_connector_state(
-        db, "signal",
+        db,
+        "signal",
         status="ok",
         last_sync=recent_sync,
         error_count=0,
@@ -121,13 +135,15 @@ def test_healthy_connector_no_insight(db, user_model_store):
 # Test 4: Multiple failing connectors produce separate insights
 # ===========================================================================
 
+
 def test_multiple_failing_connectors(db, user_model_store):
     """Each failing connector should produce its own insight."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
 
     # One in error state
     _insert_connector_state(
-        db, "google",
+        db,
+        "google",
         status="error",
         last_sync="2026-02-20T10:00:00+00:00",
         error_count=10,
@@ -137,7 +153,8 @@ def test_multiple_failing_connectors(db, user_model_store):
     # One stalled
     stale_sync = (datetime.now(timezone.utc) - timedelta(hours=96)).isoformat()
     _insert_connector_state(
-        db, "caldav",
+        db,
+        "caldav",
         status="ok",
         last_sync=stale_sync,
     )
@@ -145,7 +162,8 @@ def test_multiple_failing_connectors(db, user_model_store):
     # One healthy (should not produce insight)
     recent_sync = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     _insert_connector_state(
-        db, "imessage",
+        db,
+        "imessage",
         status="ok",
         last_sync=recent_sync,
     )
@@ -165,6 +183,7 @@ def test_multiple_failing_connectors(db, user_model_store):
 # Test 5: DB error returns empty list (fail-open)
 # ===========================================================================
 
+
 def test_db_error_returns_empty(db, user_model_store):
     """If the connector_state query fails, the correlator should return [] (fail-open)."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
@@ -174,8 +193,10 @@ def test_db_error_returns_empty(db, user_model_store):
 
     class _FakeCtx:
         """Context manager that raises on __enter__."""
+
         def __enter__(self):
             raise RuntimeError("Simulated DB failure")
+
         def __exit__(self, *args):
             pass
 
@@ -197,12 +218,14 @@ def test_db_error_returns_empty(db, user_model_store):
 # Test 6: Disabled connectors are excluded
 # ===========================================================================
 
+
 def test_disabled_connector_excluded(db, user_model_store):
     """Connectors with enabled=0 should not produce insights even if in error state."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "finance",
+        db,
+        "finance",
         status="error",
         enabled=0,
         error_count=5,
@@ -217,12 +240,14 @@ def test_disabled_connector_excluded(db, user_model_store):
 # Test 7: Connector with null last_sync in error state
 # ===========================================================================
 
+
 def test_error_connector_null_last_sync(db, user_model_store):
     """Error connector with no last_sync should say 'never' in the summary."""
     engine = InsightEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "google",
+        db,
+        "google",
         status="error",
         last_sync=None,
         error_count=3,

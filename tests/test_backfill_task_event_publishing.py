@@ -69,14 +69,16 @@ class TestBackfillTaskEventPublishing:
         # out to Ollama. The real test subject is the backfill pipeline itself,
         # not LLM quality — so a deterministic mock is the correct approach.
         mock_ai_engine = MagicMock(spec=AIEngine)
-        mock_ai_engine.extract_action_items = AsyncMock(return_value=[
-            {
-                "title": "Prepare Q4 financial report",
-                "due_hint": "Friday",
-                "priority": "high",
-                "is_completed": False,
-            }
-        ])
+        mock_ai_engine.extract_action_items = AsyncMock(
+            return_value=[
+                {
+                    "title": "Prepare Q4 financial report",
+                    "due_hint": "Friday",
+                    "priority": "high",
+                    "is_completed": False,
+                }
+            ]
+        )
 
         # Create task manager without event bus (simulating backfill scenario)
         task_manager = TaskManager(db, event_bus=None, ai_engine=mock_ai_engine)
@@ -103,24 +105,18 @@ class TestBackfillTaskEventPublishing:
 
         # Count events before backfill
         with db.get_connection("events") as conn:
-            events_before = conn.execute(
-                "SELECT COUNT(*) as count FROM events WHERE type = 'task.created'"
-            ).fetchone()["count"]
+            events_before = conn.execute("SELECT COUNT(*) as count FROM events WHERE type = 'task.created'").fetchone()[
+                "count"
+            ]
 
         # Run backfill on this single event
-        stats = await backfill_tasks(
-            db=db,
-            task_manager=task_manager,
-            limit=1,
-            dry_run=False,
-            batch_size=1
-        )
+        stats = await backfill_tasks(db=db, task_manager=task_manager, limit=1, dry_run=False, batch_size=1)
 
         # Count events after backfill
         with db.get_connection("events") as conn:
-            events_after = conn.execute(
-                "SELECT COUNT(*) as count FROM events WHERE type = 'task.created'"
-            ).fetchone()["count"]
+            events_after = conn.execute("SELECT COUNT(*) as count FROM events WHERE type = 'task.created'").fetchone()[
+                "count"
+            ]
 
         # Verify task.created events were published
         assert events_after > events_before, "Backfill should publish task.created events"
@@ -163,10 +159,7 @@ class TestBackfillTaskEventPublishing:
         }
 
         vector_db_path = str(tmpdir.join("vectors"))
-        vector_store = VectorStore(
-            db_path=vector_db_path,
-            model_name=config["vector_store"]["model"]
-        )
+        vector_store = VectorStore(db_path=vector_db_path, model_name=config["vector_store"]["model"])
 
         ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
         task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
@@ -193,10 +186,7 @@ class TestBackfillTaskEventPublishing:
 
         for event_data in test_events:
             test_event = create_test_event(
-                event_type=event_data["type"],
-                payload=event_data["payload"],
-                source="test",
-                priority="normal"
+                event_type=event_data["type"], payload=event_data["payload"], source="test", priority="normal"
             )
             event_store.store_event(test_event)
 
@@ -205,27 +195,21 @@ class TestBackfillTaskEventPublishing:
             tasks_before = conn.execute("SELECT COUNT(*) as count FROM tasks").fetchone()["count"]
 
         with db.get_connection("events") as conn:
-            events_before = conn.execute(
-                "SELECT COUNT(*) as count FROM events WHERE type = 'task.created'"
-            ).fetchone()["count"]
+            events_before = conn.execute("SELECT COUNT(*) as count FROM events WHERE type = 'task.created'").fetchone()[
+                "count"
+            ]
 
         # Run backfill
-        await backfill_tasks(
-            db=db,
-            task_manager=task_manager,
-            limit=2,
-            dry_run=False,
-            batch_size=2
-        )
+        await backfill_tasks(db=db, task_manager=task_manager, limit=2, dry_run=False, batch_size=2)
 
         # Count tasks and events after backfill
         with db.get_connection("state") as conn:
             tasks_after = conn.execute("SELECT COUNT(*) as count FROM tasks").fetchone()["count"]
 
         with db.get_connection("events") as conn:
-            events_after = conn.execute(
-                "SELECT COUNT(*) as count FROM events WHERE type = 'task.created'"
-            ).fetchone()["count"]
+            events_after = conn.execute("SELECT COUNT(*) as count FROM events WHERE type = 'task.created'").fetchone()[
+                "count"
+            ]
 
         # Calculate deltas
         tasks_created = tasks_after - tasks_before
@@ -261,10 +245,7 @@ class TestBackfillTaskEventPublishing:
         }
 
         vector_db_path = str(tmpdir.join("vectors"))
-        vector_store = VectorStore(
-            db_path=vector_db_path,
-            model_name=config["vector_store"]["model"]
-        )
+        vector_store = VectorStore(db_path=vector_db_path, model_name=config["vector_store"]["model"])
 
         ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
         task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
@@ -278,19 +259,13 @@ class TestBackfillTaskEventPublishing:
                 "body": "Please complete the security audit by next week.",
             },
             source="test",
-            priority="normal"
+            priority="normal",
         )
 
         event_store.store_event(test_event)
 
         # Run backfill
-        await backfill_tasks(
-            db=db,
-            task_manager=task_manager,
-            limit=1,
-            dry_run=False,
-            batch_size=1
-        )
+        await backfill_tasks(db=db, task_manager=task_manager, limit=1, dry_run=False, batch_size=1)
 
         # Verify event source is "task_manager_backfill"
         with db.get_connection("events") as conn:
@@ -329,10 +304,7 @@ class TestBackfillTaskEventPublishing:
         }
 
         vector_db_path = str(tmpdir.join("vectors"))
-        vector_store = VectorStore(
-            db_path=vector_db_path,
-            model_name=config["vector_store"]["model"]
-        )
+        vector_store = VectorStore(db_path=vector_db_path, model_name=config["vector_store"]["model"])
 
         ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
         task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
@@ -346,31 +318,25 @@ class TestBackfillTaskEventPublishing:
                 "body": "This is a test email with an action item.",
             },
             source="test",
-            priority="normal"
+            priority="normal",
         )
 
         event_store.store_event(test_event)
 
         # Count events before dry-run
         with db.get_connection("events") as conn:
-            events_before = conn.execute(
-                "SELECT COUNT(*) as count FROM events WHERE type = 'task.created'"
-            ).fetchone()["count"]
+            events_before = conn.execute("SELECT COUNT(*) as count FROM events WHERE type = 'task.created'").fetchone()[
+                "count"
+            ]
 
         # Run backfill in dry-run mode
-        await backfill_tasks(
-            db=db,
-            task_manager=task_manager,
-            limit=1,
-            dry_run=True,
-            batch_size=1
-        )
+        await backfill_tasks(db=db, task_manager=task_manager, limit=1, dry_run=True, batch_size=1)
 
         # Count events after dry-run
         with db.get_connection("events") as conn:
-            events_after = conn.execute(
-                "SELECT COUNT(*) as count FROM events WHERE type = 'task.created'"
-            ).fetchone()["count"]
+            events_after = conn.execute("SELECT COUNT(*) as count FROM events WHERE type = 'task.created'").fetchone()[
+                "count"
+            ]
 
         # Verify no events were published in dry-run mode
         assert events_after == events_before, "Dry-run should not publish events"
@@ -396,10 +362,7 @@ class TestBackfillTaskEventPublishing:
         }
 
         vector_db_path = str(tmpdir.join("vectors"))
-        vector_store = VectorStore(
-            db_path=vector_db_path,
-            model_name=config["vector_store"]["model"]
-        )
+        vector_store = VectorStore(db_path=vector_db_path, model_name=config["vector_store"]["model"])
 
         ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
         task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
@@ -415,19 +378,13 @@ class TestBackfillTaskEventPublishing:
                 "message_id": "<test-rich@proton.ch>",
             },
             source="proton_mail",
-            priority="high"
+            priority="high",
         )
 
         event_store.store_event(test_event)
 
         # Run backfill
-        await backfill_tasks(
-            db=db,
-            task_manager=task_manager,
-            limit=1,
-            dry_run=False,
-            batch_size=1
-        )
+        await backfill_tasks(db=db, task_manager=task_manager, limit=1, dry_run=False, batch_size=1)
 
         # Fetch the task.created event
         with db.get_connection("events") as conn:
@@ -475,10 +432,7 @@ class TestBackfillTaskEventPublishing:
         }
 
         vector_db_path = str(tmpdir.join("vectors"))
-        vector_store = VectorStore(
-            db_path=vector_db_path,
-            model_name=config["vector_store"]["model"]
-        )
+        vector_store = VectorStore(db_path=vector_db_path, model_name=config["vector_store"]["model"])
 
         ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
         task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
@@ -495,19 +449,13 @@ class TestBackfillTaskEventPublishing:
                     "body": f"Please complete task number {i} by end of week.",
                 },
                 source="proton_mail",
-                priority="normal"
+                priority="normal",
             )
 
             event_store.store_event(email_event)
 
         # Run backfill
-        await backfill_tasks(
-            db=db,
-            task_manager=task_manager,
-            limit=3,
-            dry_run=False,
-            batch_size=3
-        )
+        await backfill_tasks(db=db, task_manager=task_manager, limit=3, dry_run=False, batch_size=3)
 
         # Verify that task.created events exist for workflow detection
         with db.get_connection("events") as conn:
@@ -533,6 +481,4 @@ class TestBackfillTaskEventPublishing:
         if len(workflow_patterns) > 0:
             assert workflow_patterns[0]["first_event"] == "email.received"
             assert workflow_patterns[0]["second_event"] == "task.created"
-            assert workflow_patterns[0]["occurrence_count"] > 0, (
-                "Should detect email → task workflow pattern"
-            )
+            assert workflow_patterns[0]["occurrence_count"] > 0, "Should detect email → task workflow pattern"

@@ -185,12 +185,14 @@ class ConflictDetector:
                 if is_all_day:
                     continue
 
-                parsed.append({
-                    "id": row["id"],
-                    "start_dt": start_dt,
-                    "end_dt": end_dt,
-                    "summary": payload.get("summary") or payload.get("title", "(no title)"),
-                })
+                parsed.append(
+                    {
+                        "id": row["id"],
+                        "start_dt": start_dt,
+                        "end_dt": end_dt,
+                        "summary": payload.get("summary") or payload.get("title", "(no title)"),
+                    }
+                )
             except Exception:
                 logger.debug("conflict_detector: skipping unparseable event %s", row["id"])
                 continue
@@ -210,13 +212,15 @@ class ConflictDetector:
                     overlap_end = min(a["end_dt"], b["end_dt"])
                     overlap_minutes = (overlap_end - overlap_start).total_seconds() / 60
 
-                    conflicts.append({
-                        "event_a_id": a["id"],
-                        "event_b_id": b["id"],
-                        "overlap_minutes": round(overlap_minutes, 1),
-                        "event_a_summary": a["summary"],
-                        "event_b_summary": b["summary"],
-                    })
+                    conflicts.append(
+                        {
+                            "event_a_id": a["id"],
+                            "event_b_id": b["id"],
+                            "overlap_minutes": round(overlap_minutes, 1),
+                            "event_a_summary": a["summary"],
+                            "event_b_summary": b["summary"],
+                        }
+                    )
 
         logger.info(
             "conflict_detector: checked %d timed events, found %d conflicts",

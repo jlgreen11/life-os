@@ -46,9 +46,7 @@ class TestConflictCSS:
 
     def test_conflict_badge_class(self):
         """The `.conflict-badge` CSS class must exist for the overlap indicator chip."""
-        assert ".conflict-badge" in TEMPLATE, (
-            "CSS must contain .conflict-badge class for the overlap warning chip"
-        )
+        assert ".conflict-badge" in TEMPLATE, "CSS must contain .conflict-badge class for the overlap warning chip"
 
     def test_calendar_conflict_dot_class(self):
         """The `.calendar-conflict-dot` CSS class must exist for month-grid day indicators."""
@@ -63,9 +61,7 @@ class TestConflictCSS:
         assert idx >= 0
         # Read the next ~200 chars to check for red color
         block = TEMPLATE[idx : idx + 300]
-        assert "#e74c3c" in block, (
-            "conflict-badge CSS should use the red accent color #e74c3c"
-        )
+        assert "#e74c3c" in block, "conflict-badge CSS should use the red accent color #e74c3c"
 
     def test_conflict_event_has_red_border(self):
         """The .calendar-event.conflict class should have a red left border."""
@@ -87,9 +83,7 @@ class TestDetectDayConflictsFunction:
 
     def test_function_exists(self):
         """The detectDayConflicts function must be defined in the template."""
-        assert "function detectDayConflicts" in TEMPLATE, (
-            "Template must define a detectDayConflicts() function"
-        )
+        assert "function detectDayConflicts" in TEMPLATE, "Template must define a detectDayConflicts() function"
 
     def test_function_returns_set(self):
         """detectDayConflicts must create and return a Set of conflicting indices."""
@@ -108,12 +102,8 @@ class TestDetectDayConflictsFunction:
             pos += 1
         func_body = TEMPLATE[func_idx : pos + 1]
 
-        assert "new Set()" in func_body, (
-            "detectDayConflicts must create a Set to track conflicting indices"
-        )
-        assert "return conflicting" in func_body, (
-            "detectDayConflicts must return the conflicting Set"
-        )
+        assert "new Set()" in func_body, "detectDayConflicts must create a Set to track conflicting indices"
+        assert "return conflicting" in func_body, "detectDayConflicts must return the conflicting Set"
 
     def test_function_skips_all_day_events(self):
         """detectDayConflicts must skip all-day events from conflict detection."""
@@ -131,9 +121,7 @@ class TestDetectDayConflictsFunction:
             pos += 1
         func_body = TEMPLATE[func_idx : pos + 1]
 
-        assert "is_all_day" in func_body, (
-            "detectDayConflicts must check is_all_day to skip all-day events"
-        )
+        assert "is_all_day" in func_body, "detectDayConflicts must check is_all_day to skip all-day events"
 
     def test_function_uses_overlap_logic(self):
         """detectDayConflicts must implement the standard overlap check: A.start < B.end AND B.start < A.end."""
@@ -190,9 +178,7 @@ class TestRenderDayDetailConflicts:
     def test_adds_conflict_class_to_detail_card(self):
         """renderDayDetail must conditionally add the 'conflict' class to detail cards."""
         body = self._get_render_day_detail_body()
-        assert "conflict" in body, (
-            "renderDayDetail must add a 'conflict' class to calendar-detail-card elements"
-        )
+        assert "conflict" in body, "renderDayDetail must add a 'conflict' class to calendar-detail-card elements"
 
     def test_adds_conflict_badge(self):
         """renderDayDetail must add a conflict-badge span for overlapping events."""
@@ -204,9 +190,7 @@ class TestRenderDayDetailConflicts:
     def test_overlap_label_text(self):
         """The conflict badge should display 'Overlap' text."""
         body = self._get_render_day_detail_body()
-        assert "Overlap" in body, (
-            "renderDayDetail must show 'Overlap' text in the conflict badge"
-        )
+        assert "Overlap" in body, "renderDayDetail must show 'Overlap' text in the conflict badge"
 
 
 # ---------------------------------------------------------------------------
@@ -236,16 +220,12 @@ class TestRenderCalendarEventsConflicts:
     def test_uses_detect_day_conflicts(self):
         """renderCalendarEvents must use detectDayConflicts for month grid conflict detection."""
         body = self._get_render_calendar_events_body()
-        assert "detectDayConflicts" in body, (
-            "renderCalendarEvents must call detectDayConflicts"
-        )
+        assert "detectDayConflicts" in body, "renderCalendarEvents must call detectDayConflicts"
 
     def test_adds_conflict_class_to_event_pills(self):
         """renderCalendarEvents must conditionally add the 'conflict' CSS class to event pills."""
         body = self._get_render_calendar_events_body()
-        assert "conflict" in body, (
-            "renderCalendarEvents must add a 'conflict' class to conflicting event pills"
-        )
+        assert "conflict" in body, "renderCalendarEvents must add a 'conflict' class to conflicting event pills"
 
     def test_adds_conflict_dot_to_day_cells(self):
         """renderCalendarEvents must add a conflict dot indicator to day cells with overlaps."""

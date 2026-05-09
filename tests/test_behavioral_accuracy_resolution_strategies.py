@@ -28,20 +28,50 @@ from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTrack
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_prediction(db, *, pred_id=None, prediction_type="reminder",
-                       description="Test prediction", confidence=0.70,
-                       confidence_gate="DEFAULT", suggested_action="Do something",
-                       supporting_signals=None, was_surfaced=1, created_at=None,
-                       was_accurate=None, resolved_at=None, user_response=None):
+
+def _insert_prediction(
+    db,
+    *,
+    pred_id=None,
+    prediction_type="reminder",
+    description="Test prediction",
+    confidence=0.70,
+    confidence_gate="DEFAULT",
+    suggested_action="Do something",
+    supporting_signals=None,
+    was_surfaced=1,
+    created_at=None,
+    was_accurate=None,
+    resolved_at=None,
+    user_response=None,
+):
     """Insert a prediction row into the user_model database."""
     pred_id = pred_id or str(uuid.uuid4())
     created_at = created_at or datetime.now(timezone.utc).isoformat()
     signals_json = json.dumps(supporting_signals) if supporting_signals is not None else "{}"
 
-    cols = ("id", "prediction_type", "description", "confidence", "confidence_gate",
-            "suggested_action", "supporting_signals", "was_surfaced", "created_at")
-    vals = (pred_id, prediction_type, description, confidence, confidence_gate,
-            suggested_action, signals_json, was_surfaced, created_at)
+    cols = (
+        "id",
+        "prediction_type",
+        "description",
+        "confidence",
+        "confidence_gate",
+        "suggested_action",
+        "supporting_signals",
+        "was_surfaced",
+        "created_at",
+    )
+    vals = (
+        pred_id,
+        prediction_type,
+        description,
+        confidence,
+        confidence_gate,
+        suggested_action,
+        signals_json,
+        was_surfaced,
+        created_at,
+    )
 
     if was_accurate is not None or resolved_at is not None or user_response is not None:
         cols = cols + ("was_accurate", "resolved_at", "user_response")
@@ -70,14 +100,13 @@ def _insert_event(db, *, event_type="message.sent", source="test", timestamp=Non
 def _get_prediction(db, pred_id):
     """Fetch a single prediction row by ID."""
     with db.get_connection("user_model") as conn:
-        return conn.execute(
-            "SELECT * FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        return conn.execute("SELECT * FROM predictions WHERE id = ?", (pred_id,)).fetchone()
 
 
 # ===========================================================================
 # 1. Reminder resolution strategy
 # ===========================================================================
+
 
 class TestReminderResolution:
     """Tests for _infer_reminder_accuracy."""
@@ -200,6 +229,7 @@ class TestReminderResolution:
 # 2. Conflict resolution strategy
 # ===========================================================================
 
+
 class TestConflictResolution:
     """Tests for _infer_conflict_accuracy."""
 
@@ -313,6 +343,7 @@ class TestConflictResolution:
 # ===========================================================================
 # 3. Need resolution strategy (preparation needs)
 # ===========================================================================
+
 
 class TestNeedResolution:
     """Tests for _infer_need_accuracy (preparation needs)."""
@@ -454,6 +485,7 @@ class TestNeedResolution:
 # 4. Opportunity resolution strategy (relationship maintenance)
 # ===========================================================================
 
+
 class TestOpportunityResolution:
     """Tests for _infer_opportunity_accuracy (relationship maintenance)."""
 
@@ -585,6 +617,7 @@ class TestOpportunityResolution:
 # 5. Risk resolution strategy (spending patterns)
 # ===========================================================================
 
+
 class TestRiskResolution:
     """Tests for _infer_risk_accuracy (spending pattern alerts).
 
@@ -695,6 +728,7 @@ class TestRiskResolution:
 # ===========================================================================
 # 6. Routine deviation resolution strategy
 # ===========================================================================
+
 
 class TestRoutineDeviationResolution:
     """Tests for _infer_routine_deviation_accuracy."""
@@ -854,6 +888,7 @@ class TestRoutineDeviationResolution:
 # ===========================================================================
 # Cross-cutting edge cases
 # ===========================================================================
+
 
 class TestCrossCuttingEdgeCases:
     """Tests for behavior that spans all resolution strategies."""

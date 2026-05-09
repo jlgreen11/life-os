@@ -41,8 +41,9 @@ async def test_routine_detection_60_second_warmup(db, event_bus, event_store, us
         return []
 
     with patch("asyncio.sleep", side_effect=mock_sleep):
-        app = LifeOS(config=config, db=db, event_bus=event_bus,
-                     event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Patch the detector's detect_routines method
         original_detect = app.routine_detector.detect_routines
@@ -91,8 +92,9 @@ async def test_routine_detection_12_hour_interval(db, event_bus, event_store, us
         return  # Allow 12h sleep to complete (fast in test)
 
     with patch("asyncio.sleep", side_effect=mock_sleep):
-        app = LifeOS(config=config, db=db, event_bus=event_bus,
-                     event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         # Patch detector to count invocations and return 3 stable routines so
         # the loop takes the 12-hour sleep path (requires 3+ routines detected).
@@ -149,8 +151,9 @@ async def test_routine_detection_handles_errors_gracefully(db, event_bus, event_
             raise asyncio.CancelledError()
 
     with patch("asyncio.sleep", side_effect=mock_sleep):
-        app = LifeOS(config=config, db=db, event_bus=event_bus,
-                     event_store=event_store, user_model_store=user_model_store)
+        app = LifeOS(
+            config=config, db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store
+        )
 
         def failing_detect(lookback_days=30):
             detection_attempts[0] += 1

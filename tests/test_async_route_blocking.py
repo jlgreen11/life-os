@@ -49,9 +49,7 @@ def mock_life_os():
     life_os.event_bus.publish = AsyncMock()
     life_os.connectors = []
     life_os.db = Mock()
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=Mock()), __exit__=Mock())
-    )
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=Mock()), __exit__=Mock()))
     life_os.db.get_database_health = Mock(return_value={})
     life_os.ai_engine = Mock()
     life_os.ai_engine.generate_briefing = AsyncMock(return_value="")

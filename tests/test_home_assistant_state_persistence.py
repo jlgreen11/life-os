@@ -69,9 +69,7 @@ async def test_sync_persists_states_to_db(event_bus, db, ha_config, mock_httpx_c
     connector = HomeAssistantConnector(event_bus, db, ha_config)
     connector._watched = ["person.jay"]
 
-    mock_httpx_client.get = AsyncMock(
-        return_value=_make_state_response("person.jay", "home")
-    )
+    mock_httpx_client.get = AsyncMock(return_value=_make_state_response("person.jay", "home"))
 
     with patch("httpx.AsyncClient", return_value=mock_httpx_client):
         count = await connector.sync()
@@ -98,9 +96,7 @@ async def test_sync_does_not_persist_when_no_changes(event_bus, db, ha_config, m
     # Pre-populate cache so state appears unchanged
     connector._last_states["person.jay"] = "home"
 
-    mock_httpx_client.get = AsyncMock(
-        return_value=_make_state_response("person.jay", "home")
-    )
+    mock_httpx_client.get = AsyncMock(return_value=_make_state_response("person.jay", "home"))
 
     with patch("httpx.AsyncClient", return_value=mock_httpx_client):
         count = await connector.sync()
@@ -147,9 +143,7 @@ async def test_persisted_states_loaded_on_init(event_bus, db, ha_config):
 
 
 @pytest.mark.asyncio
-async def test_restart_no_false_events_for_unchanged_entities(
-    event_bus, db, ha_config, mock_httpx_client
-):
+async def test_restart_no_false_events_for_unchanged_entities(event_bus, db, ha_config, mock_httpx_client):
     """After a restart with persisted state, unchanged entities produce zero events."""
     # Simulate prior run: persist states to DB
     prior_states = {
@@ -190,9 +184,7 @@ async def test_restart_no_false_events_for_unchanged_entities(
 
 
 @pytest.mark.asyncio
-async def test_restart_publishes_genuine_state_changes(
-    event_bus, db, ha_config, mock_httpx_client
-):
+async def test_restart_publishes_genuine_state_changes(event_bus, db, ha_config, mock_httpx_client):
     """After a restart, entities that genuinely changed state still produce events."""
     # Persist prior state
     prior_states = {
@@ -281,9 +273,7 @@ async def test_first_run_no_persisted_state(event_bus, db, ha_config, mock_httpx
 
 
 @pytest.mark.asyncio
-async def test_full_round_trip_persist_and_reload(
-    event_bus, db, ha_config, mock_httpx_client
-):
+async def test_full_round_trip_persist_and_reload(event_bus, db, ha_config, mock_httpx_client):
     """End-to-end: sync persists states, new connector loads them, no false events."""
     # --- First "run": connector syncs and persists states ---
     connector1 = HomeAssistantConnector(event_bus, db, ha_config)
@@ -340,16 +330,12 @@ async def test_persist_updates_existing_row(event_bus, db, ha_config, mock_httpx
     connector._watched = ["light.living_room"]
 
     # First sync: light turns on
-    mock_httpx_client.get = AsyncMock(
-        return_value=_make_state_response("light.living_room", "on")
-    )
+    mock_httpx_client.get = AsyncMock(return_value=_make_state_response("light.living_room", "on"))
     with patch("httpx.AsyncClient", return_value=mock_httpx_client):
         await connector.sync()
 
     # Second sync: light turns off
-    mock_httpx_client.get = AsyncMock(
-        return_value=_make_state_response("light.living_room", "off")
-    )
+    mock_httpx_client.get = AsyncMock(return_value=_make_state_response("light.living_room", "off"))
     with patch("httpx.AsyncClient", return_value=mock_httpx_client):
         await connector.sync()
 

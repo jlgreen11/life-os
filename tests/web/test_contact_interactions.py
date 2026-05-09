@@ -37,6 +37,7 @@ def _make_event_row(event_id, event_type, timestamp, payload_dict):
     # Make dict(row) work by implementing __iter__ over key-value pairs
     def _iter():
         return iter(data.items())
+
     row.__iter__ = _iter
 
     # Support attribute-style access too
@@ -70,6 +71,7 @@ def _make_contact_row(contact_id, name, emails, relationship="friend", is_priori
 
     def _iter():
         return iter(data.items())
+
     row.__iter__ = _iter
     row.get = lambda key, default=None: data.get(key, default)
     return row
@@ -118,8 +120,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -289,11 +296,15 @@ def test_returns_interactions(mock_life_os, client):
     """Interactions list contains correctly shaped objects."""
     event_rows = [
         _make_event_row(
-            "evt-1", "email.received", "2026-03-01T14:30:00Z",
+            "evt-1",
+            "email.received",
+            "2026-03-01T14:30:00Z",
             {"from_address": "alice@example.com", "subject": "Re: Project update", "body": "Here is the update."},
         ),
         _make_event_row(
-            "evt-2", "email.sent", "2026-02-28T10:00:00Z",
+            "evt-2",
+            "email.sent",
+            "2026-02-28T10:00:00Z",
             {"to_addresses": ["alice@example.com"], "subject": "Project update", "body": "Please send update."},
         ),
     ]
@@ -321,10 +332,12 @@ def test_returns_interactions(mock_life_os, client):
 def test_interaction_channel_detection(mock_life_os, client):
     """Channel field is correctly derived from event type."""
     event_rows = [
-        _make_event_row("e1", "imessage.received", "2026-03-01T12:00:00Z",
-                        {"sender": "alice@example.com", "text": "Hello"}),
-        _make_event_row("e2", "message.sent", "2026-03-01T11:00:00Z",
-                        {"sender": "alice@example.com", "body": "Hi there"}),
+        _make_event_row(
+            "e1", "imessage.received", "2026-03-01T12:00:00Z", {"sender": "alice@example.com", "text": "Hello"}
+        ),
+        _make_event_row(
+            "e2", "message.sent", "2026-03-01T11:00:00Z", {"sender": "alice@example.com", "body": "Hi there"}
+        ),
     ]
     _setup_db_responses(mock_life_os, event_rows=event_rows, total_count=2)
 
@@ -339,8 +352,9 @@ def test_snippet_truncation(mock_life_os, client):
     """Body content longer than 100 chars is truncated with ellipsis."""
     long_body = "A" * 150
     event_rows = [
-        _make_event_row("e1", "email.received", "2026-03-01T12:00:00Z",
-                        {"from_address": "alice@example.com", "body": long_body}),
+        _make_event_row(
+            "e1", "email.received", "2026-03-01T12:00:00Z", {"from_address": "alice@example.com", "body": long_body}
+        ),
     ]
     _setup_db_responses(mock_life_os, event_rows=event_rows, total_count=1)
 
@@ -359,8 +373,12 @@ def test_snippet_truncation(mock_life_os, client):
 def test_default_limit_is_five(mock_life_os, client):
     """Default limit parameter is 5."""
     event_rows = [
-        _make_event_row(f"e{i}", "email.received", f"2026-03-0{i}T12:00:00Z",
-                        {"from_address": "alice@example.com", "body": f"Message {i}"})
+        _make_event_row(
+            f"e{i}",
+            "email.received",
+            f"2026-03-0{i}T12:00:00Z",
+            {"from_address": "alice@example.com", "body": f"Message {i}"},
+        )
         for i in range(5)
     ]
     _setup_db_responses(mock_life_os, event_rows=event_rows, total_count=10)
@@ -375,8 +393,12 @@ def test_default_limit_is_five(mock_life_os, client):
 def test_limit_parameter_respected(mock_life_os, client):
     """Custom limit parameter controls the number of returned interactions."""
     event_rows = [
-        _make_event_row(f"e{i}", "email.received", f"2026-03-0{i}T12:00:00Z",
-                        {"from_address": "alice@example.com", "body": f"Msg {i}"})
+        _make_event_row(
+            f"e{i}",
+            "email.received",
+            f"2026-03-0{i}T12:00:00Z",
+            {"from_address": "alice@example.com", "body": f"Msg {i}"},
+        )
         for i in range(2)
     ]
     _setup_db_responses(mock_life_os, event_rows=event_rows, total_count=2)

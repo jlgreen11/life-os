@@ -39,6 +39,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from core.moment.state import validate_transition
 from core.moment.types import (
@@ -191,7 +192,7 @@ class MomentRepository:
             ).fetchone()
             if existing is not None:
                 self._conn.execute("COMMIT")
-                return existing["id"]
+                return str(existing["id"])
 
             ctx_raw = moment.context_trigger.expression if moment.context_trigger else None
             self._conn.execute(
@@ -406,7 +407,7 @@ class MomentRepository:
     def update_action_params(
         self,
         moment_id: str,
-        params: dict,
+        params: dict[str, Any],
     ) -> Moment:
         """Replace ``proposed_action.params`` in place; keep the state.
 

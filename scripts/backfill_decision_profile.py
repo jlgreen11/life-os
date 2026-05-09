@@ -174,9 +174,11 @@ def backfill_decision_profile(
             # Progress reporting every batch
             elapsed = time.time() - start_time
             rate = events_processed / elapsed if elapsed > 0 else 0
-            print(f"[backfill_decision_profile] Progress: {events_processed} events, "
-                  f"{signals_extracted} signals, {errors} errors "
-                  f"({rate:.1f} events/sec)")
+            print(
+                f"[backfill_decision_profile] Progress: {events_processed} events, "
+                f"{signals_extracted} signals, {errors} errors "
+                f"({rate:.1f} events/sec)"
+            )
 
     # Get final profile state
     final_profile = ums.get_signal_profile("decision")
@@ -198,41 +200,45 @@ def backfill_decision_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_decision_profile] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_decision_profile] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_decision_profile] Events processed: {events_processed}")
     print(f"[backfill_decision_profile] Signals extracted: {signals_extracted}")
     print(f"[backfill_decision_profile]   - Decision speed samples: {decision_speed_samples}")
     print(f"[backfill_decision_profile]   - Delegation patterns: {delegation_samples}")
     print(f"[backfill_decision_profile]   - Commitment patterns: {commitment_samples}")
-    print(f"[backfill_decision_profile] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})")
+    print(
+        f"[backfill_decision_profile] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})"
+    )
     print(f"[backfill_decision_profile] Errors: {errors}")
-    print(f"[backfill_decision_profile] Elapsed: {elapsed_seconds:.1f}s ({events_processed/elapsed_seconds:.1f} events/sec)")
+    print(
+        f"[backfill_decision_profile] Elapsed: {elapsed_seconds:.1f}s ({events_processed / elapsed_seconds:.1f} events/sec)"
+    )
 
     if dry_run:
-        print(f"[backfill_decision_profile] DRY RUN - no changes were written to database")
+        print("[backfill_decision_profile] DRY RUN - no changes were written to database")
 
     # Show sample of the decision profile data for verification
     if final_profile and not dry_run:
         data = final_profile["data"]
-        print(f"\n[backfill_decision_profile] ===== DECISION PROFILE SUMMARY =====")
+        print("\n[backfill_decision_profile] ===== DECISION PROFILE SUMMARY =====")
 
         # Show decision speed by domain
         if data.get("decision_speed_by_domain"):
             speeds = data["decision_speed_by_domain"]
-            print(f"[backfill_decision_profile] Decision speed by domain (seconds):")
+            print("[backfill_decision_profile] Decision speed by domain (seconds):")
             for domain, avg_seconds in sorted(speeds.items()):
                 hours = avg_seconds / 3600
                 if hours < 1:
-                    print(f"  - {domain}: {avg_seconds/60:.1f} minutes")
+                    print(f"  - {domain}: {avg_seconds / 60:.1f} minutes")
                 elif hours < 24:
                     print(f"  - {domain}: {hours:.1f} hours")
                 else:
-                    print(f"  - {domain}: {hours/24:.1f} days")
+                    print(f"  - {domain}: {hours / 24:.1f} days")
 
         # Show risk tolerance by domain
         if data.get("risk_tolerance_by_domain"):
             risk = data["risk_tolerance_by_domain"]
-            print(f"[backfill_decision_profile] Risk tolerance by domain (0=cautious, 1=spontaneous):")
+            print("[backfill_decision_profile] Risk tolerance by domain (0=cautious, 1=spontaneous):")
             for domain, score in sorted(risk.items(), key=lambda x: x[1], reverse=True):
                 print(f"  - {domain}: {score:.2f}")
 
@@ -251,9 +257,7 @@ def backfill_decision_profile(
 
 def main():
     """CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Backfill decision profile from historical events"
-    )
+    parser = argparse.ArgumentParser(description="Backfill decision profile from historical events")
     parser.add_argument(
         "--data-dir",
         default="data",
@@ -294,6 +298,7 @@ def main():
     except Exception as e:
         print(f"[backfill_decision_profile] FATAL ERROR: {e}", file=sys.stderr)
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

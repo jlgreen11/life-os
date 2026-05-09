@@ -312,10 +312,10 @@ class TestSurfacingDiagnosticsAfterRun:
             await prediction_engine.generate_predictions({})
 
         diag = prediction_engine._surfacing_diagnostics
-        assert diag["score_distribution"]["below_neg0.1"] == 1   # -0.20
+        assert diag["score_distribution"]["below_neg0.1"] == 1  # -0.20
         assert diag["score_distribution"]["neg0.1_to_0.2"] == 1  # 0.10
-        assert diag["score_distribution"]["0.2_to_0.5"] == 1     # 0.30
-        assert diag["score_distribution"]["above_0.5"] == 1      # 0.60
+        assert diag["score_distribution"]["0.2_to_0.5"] == 1  # 0.30
+        assert diag["score_distribution"]["above_0.5"] == 1  # 0.60
 
     async def test_penalty_frequency_tracking(self, prediction_engine):
         """Penalty frequency counters track each penalty type."""

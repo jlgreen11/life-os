@@ -111,8 +111,9 @@ async def test_domain_inference_from_various_event_types():
     for event_type, expected_domain in test_cases:
         # Test the static helper directly
         inferred_domain = LifeOS._infer_domain_from_event_type(None, event_type)
-        assert inferred_domain == expected_domain, \
+        assert inferred_domain == expected_domain, (
             f"Event type '{event_type}' should infer domain '{expected_domain}', got '{inferred_domain}'"
+        )
 
 
 @pytest.mark.asyncio

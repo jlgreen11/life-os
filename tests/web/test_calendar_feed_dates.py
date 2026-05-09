@@ -79,8 +79,13 @@ def _make_mock_life_os(calendar_rows: list[dict]):
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable",
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -152,13 +157,16 @@ class TestAllDayEventsInFeed:
         """An all-day event 3 days from now should appear in the calendar feed."""
         future_date = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
         rows = [
-            _make_calendar_row("evt-allday", {
-                "event_id": "allday-1",
-                "title": "Team Offsite",
-                "start_time": future_date,
-                "end_time": future_date,
-                "is_all_day": True,
-            }),
+            _make_calendar_row(
+                "evt-allday",
+                {
+                    "event_id": "allday-1",
+                    "title": "Team Offsite",
+                    "start_time": future_date,
+                    "end_time": future_date,
+                    "is_all_day": True,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -174,13 +182,16 @@ class TestAllDayEventsInFeed:
         """An all-day event for tomorrow should appear."""
         tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
         rows = [
-            _make_calendar_row("evt-tomorrow", {
-                "event_id": "allday-tomorrow",
-                "title": "Birthday",
-                "start_time": tomorrow,
-                "end_time": tomorrow,
-                "is_all_day": True,
-            }),
+            _make_calendar_row(
+                "evt-tomorrow",
+                {
+                    "event_id": "allday-tomorrow",
+                    "title": "Birthday",
+                    "start_time": tomorrow,
+                    "end_time": tomorrow,
+                    "is_all_day": True,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -198,12 +209,15 @@ class TestFullDatetimeEventsInFeed:
         """An event 2 days from now with full ISO datetime should appear."""
         future_dt = (datetime.now(timezone.utc) + timedelta(days=2, hours=3)).isoformat()
         rows = [
-            _make_calendar_row("evt-dt", {
-                "event_id": "dt-1",
-                "title": "Team Meeting",
-                "start_time": future_dt,
-                "end_time": (datetime.now(timezone.utc) + timedelta(days=2, hours=4)).isoformat(),
-            }),
+            _make_calendar_row(
+                "evt-dt",
+                {
+                    "event_id": "dt-1",
+                    "title": "Team Meeting",
+                    "start_time": future_dt,
+                    "end_time": (datetime.now(timezone.utc) + timedelta(days=2, hours=4)).isoformat(),
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -215,15 +229,18 @@ class TestFullDatetimeEventsInFeed:
 
     def test_event_with_z_suffix_appears(self):
         """An event with 'Z' timezone suffix should be parsed correctly."""
-        future_dt = (datetime.now(timezone.utc) + timedelta(days=1, hours=5))
+        future_dt = datetime.now(timezone.utc) + timedelta(days=1, hours=5)
         start_str = future_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         rows = [
-            _make_calendar_row("evt-z", {
-                "event_id": "z-1",
-                "title": "Sync Call",
-                "start_time": start_str,
-                "end_time": (future_dt + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }),
+            _make_calendar_row(
+                "evt-z",
+                {
+                    "event_id": "z-1",
+                    "title": "Sync Call",
+                    "start_time": start_str,
+                    "end_time": (future_dt + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -235,15 +252,18 @@ class TestFullDatetimeEventsInFeed:
 
     def test_event_with_naive_datetime_appears(self):
         """An event with a naive datetime (no tz) should be treated as UTC."""
-        future_dt = (datetime.now(timezone.utc) + timedelta(days=2))
+        future_dt = datetime.now(timezone.utc) + timedelta(days=2)
         start_str = future_dt.strftime("%Y-%m-%dT%H:%M:%S")
         rows = [
-            _make_calendar_row("evt-naive", {
-                "event_id": "naive-1",
-                "title": "Standup",
-                "start_time": start_str,
-                "end_time": (future_dt + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S"),
-            }),
+            _make_calendar_row(
+                "evt-naive",
+                {
+                    "event_id": "naive-1",
+                    "title": "Standup",
+                    "start_time": start_str,
+                    "end_time": (future_dt + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S"),
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -261,12 +281,15 @@ class TestPastEventsExcluded:
         """An event from yesterday should NOT appear."""
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = [
-            _make_calendar_row("evt-past", {
-                "event_id": "past-1",
-                "title": "Old Meeting",
-                "start_time": yesterday,
-                "end_time": yesterday,
-            }),
+            _make_calendar_row(
+                "evt-past",
+                {
+                    "event_id": "past-1",
+                    "title": "Old Meeting",
+                    "start_time": yesterday,
+                    "end_time": yesterday,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -279,13 +302,16 @@ class TestPastEventsExcluded:
         """An all-day event from yesterday (date-only) should NOT appear."""
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
         rows = [
-            _make_calendar_row("evt-past-allday", {
-                "event_id": "past-allday-1",
-                "title": "Past Holiday",
-                "start_time": yesterday,
-                "end_time": yesterday,
-                "is_all_day": True,
-            }),
+            _make_calendar_row(
+                "evt-past-allday",
+                {
+                    "event_id": "past-allday-1",
+                    "title": "Past Holiday",
+                    "start_time": yesterday,
+                    "end_time": yesterday,
+                    "is_all_day": True,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -302,12 +328,15 @@ class TestFarFutureEventsExcluded:
         """An event 10 days from now should NOT appear."""
         far_future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
         rows = [
-            _make_calendar_row("evt-far", {
-                "event_id": "far-1",
-                "title": "Future Conference",
-                "start_time": far_future,
-                "end_time": far_future,
-            }),
+            _make_calendar_row(
+                "evt-far",
+                {
+                    "event_id": "far-1",
+                    "title": "Future Conference",
+                    "start_time": far_future,
+                    "end_time": far_future,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -320,13 +349,16 @@ class TestFarFutureEventsExcluded:
         """An all-day event 10 days out (date-only) should NOT appear."""
         far_date = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%Y-%m-%d")
         rows = [
-            _make_calendar_row("evt-far-allday", {
-                "event_id": "far-allday-1",
-                "title": "Future Holiday",
-                "start_time": far_date,
-                "end_time": far_date,
-                "is_all_day": True,
-            }),
+            _make_calendar_row(
+                "evt-far-allday",
+                {
+                    "event_id": "far-allday-1",
+                    "title": "Future Holiday",
+                    "start_time": far_date,
+                    "end_time": far_date,
+                    "is_all_day": True,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))
@@ -344,35 +376,47 @@ class TestMixedEventFiltering:
         now = datetime.now(timezone.utc)
         rows = [
             # Should appear: all-day event in 2 days
-            _make_calendar_row("evt-1", {
-                "event_id": "allday-ok",
-                "title": "Team Offsite",
-                "start_time": (now + timedelta(days=2)).strftime("%Y-%m-%d"),
-                "end_time": (now + timedelta(days=2)).strftime("%Y-%m-%d"),
-                "is_all_day": True,
-            }),
+            _make_calendar_row(
+                "evt-1",
+                {
+                    "event_id": "allday-ok",
+                    "title": "Team Offsite",
+                    "start_time": (now + timedelta(days=2)).strftime("%Y-%m-%d"),
+                    "end_time": (now + timedelta(days=2)).strftime("%Y-%m-%d"),
+                    "is_all_day": True,
+                },
+            ),
             # Should appear: datetime event in 5 days
-            _make_calendar_row("evt-2", {
-                "event_id": "dt-ok",
-                "title": "Weekly Sync",
-                "start_time": (now + timedelta(days=5, hours=2)).isoformat(),
-                "end_time": (now + timedelta(days=5, hours=3)).isoformat(),
-            }),
+            _make_calendar_row(
+                "evt-2",
+                {
+                    "event_id": "dt-ok",
+                    "title": "Weekly Sync",
+                    "start_time": (now + timedelta(days=5, hours=2)).isoformat(),
+                    "end_time": (now + timedelta(days=5, hours=3)).isoformat(),
+                },
+            ),
             # Should NOT appear: past datetime event
-            _make_calendar_row("evt-3", {
-                "event_id": "dt-past",
-                "title": "Past Standup",
-                "start_time": (now - timedelta(days=2)).isoformat(),
-                "end_time": (now - timedelta(days=2, hours=-1)).isoformat(),
-            }),
+            _make_calendar_row(
+                "evt-3",
+                {
+                    "event_id": "dt-past",
+                    "title": "Past Standup",
+                    "start_time": (now - timedelta(days=2)).isoformat(),
+                    "end_time": (now - timedelta(days=2, hours=-1)).isoformat(),
+                },
+            ),
             # Should NOT appear: far-future all-day event
-            _make_calendar_row("evt-4", {
-                "event_id": "allday-far",
-                "title": "Far Away Event",
-                "start_time": (now + timedelta(days=14)).strftime("%Y-%m-%d"),
-                "end_time": (now + timedelta(days=14)).strftime("%Y-%m-%d"),
-                "is_all_day": True,
-            }),
+            _make_calendar_row(
+                "evt-4",
+                {
+                    "event_id": "allday-far",
+                    "title": "Far Away Event",
+                    "start_time": (now + timedelta(days=14)).strftime("%Y-%m-%d"),
+                    "end_time": (now + timedelta(days=14)).strftime("%Y-%m-%d"),
+                    "is_all_day": True,
+                },
+            ),
         ]
         life_os = _make_mock_life_os(rows)
         client = TestClient(create_web_app(life_os))

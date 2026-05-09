@@ -20,6 +20,7 @@ from services.rules_engine.engine import RulesEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine(db, event_bus=None, throttle_seconds=300):
     """Create a RulesEngine with a configurable throttle interval."""
     return RulesEngine(
@@ -40,6 +41,7 @@ def _mock_event_bus():
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_first_trigger_publishes_telemetry(db):
     """The first trigger for a rule should always publish a telemetry event."""
@@ -58,13 +60,8 @@ async def test_first_trigger_publishes_telemetry(db):
 
     # The bus should have received system.rule.triggered (plus the
     # system.rule.created from add_rule — filter for triggered only).
-    triggered_calls = [
-        c for c in bus.publish.call_args_list
-        if c.args[0] == "system.rule.triggered"
-    ]
-    assert len(triggered_calls) == 1, (
-        f"Expected exactly 1 system.rule.triggered publish, got {len(triggered_calls)}"
-    )
+    triggered_calls = [c for c in bus.publish.call_args_list if c.args[0] == "system.rule.triggered"]
+    assert len(triggered_calls) == 1, f"Expected exactly 1 system.rule.triggered publish, got {len(triggered_calls)}"
 
 
 @pytest.mark.asyncio
@@ -88,13 +85,8 @@ async def test_second_trigger_within_window_is_throttled(db):
     event["id"] = "evt-2"
     await engine.evaluate(event)
 
-    triggered_calls = [
-        c for c in bus.publish.call_args_list
-        if c.args[0] == "system.rule.triggered"
-    ]
-    assert len(triggered_calls) == 1, (
-        f"Expected 1 publish (second should be throttled), got {len(triggered_calls)}"
-    )
+    triggered_calls = [c for c in bus.publish.call_args_list if c.args[0] == "system.rule.triggered"]
+    assert len(triggered_calls) == 1, f"Expected 1 publish (second should be throttled), got {len(triggered_calls)}"
 
 
 @pytest.mark.asyncio
@@ -127,13 +119,8 @@ async def test_trigger_after_throttle_window_publishes(db):
     with patch("time.monotonic", return_value=1301.0):
         await engine.evaluate(event)
 
-    triggered_calls = [
-        c for c in bus.publish.call_args_list
-        if c.args[0] == "system.rule.triggered"
-    ]
-    assert len(triggered_calls) == 2, (
-        f"Expected 2 publishes (first + after window), got {len(triggered_calls)}"
-    )
+    triggered_calls = [c for c in bus.publish.call_args_list if c.args[0] == "system.rule.triggered"]
+    assert len(triggered_calls) == 2, f"Expected 2 publishes (first + after window), got {len(triggered_calls)}"
 
 
 @pytest.mark.asyncio
@@ -160,13 +147,8 @@ async def test_different_rules_have_independent_throttles(db):
 
     # Both rules fired on the same event — each should get its own
     # first-trigger publish (2 triggered events total).
-    triggered_calls = [
-        c for c in bus.publish.call_args_list
-        if c.args[0] == "system.rule.triggered"
-    ]
-    assert len(triggered_calls) == 2, (
-        f"Expected 2 publishes (one per rule), got {len(triggered_calls)}"
-    )
+    triggered_calls = [c for c in bus.publish.call_args_list if c.args[0] == "system.rule.triggered"]
+    assert len(triggered_calls) == 2, f"Expected 2 publishes (one per rule), got {len(triggered_calls)}"
 
 
 @pytest.mark.asyncio
@@ -187,13 +169,8 @@ async def test_throttle_zero_disables_throttling(db):
         event = {"id": f"evt-{i}", "type": "test.event", "payload": {}}
         await engine.evaluate(event)
 
-    triggered_calls = [
-        c for c in bus.publish.call_args_list
-        if c.args[0] == "system.rule.triggered"
-    ]
-    assert len(triggered_calls) == 3, (
-        f"Expected 3 publishes (throttle disabled), got {len(triggered_calls)}"
-    )
+    triggered_calls = [c for c in bus.publish.call_args_list if c.args[0] == "system.rule.triggered"]
+    assert len(triggered_calls) == 3, f"Expected 3 publishes (throttle disabled), got {len(triggered_calls)}"
 
 
 @pytest.mark.asyncio
@@ -223,9 +200,7 @@ async def test_db_trigger_record_updated_even_when_throttled(db):
         ).fetchone()
 
     assert row is not None
-    assert row["times_triggered"] == 3, (
-        f"Expected 3 DB trigger records, got {row['times_triggered']}"
-    )
+    assert row["times_triggered"] == 3, f"Expected 3 DB trigger records, got {row['times_triggered']}"
     assert row["last_triggered"] is not None
 
 
@@ -264,10 +239,5 @@ async def test_other_telemetry_events_not_throttled(db):
         actions=[{"type": "tag", "value": "y"}],
     )
 
-    created_calls = [
-        c for c in bus.publish.call_args_list
-        if c.args[0] == "system.rule.created"
-    ]
-    assert len(created_calls) == 2, (
-        f"Expected 2 system.rule.created events (not throttled), got {len(created_calls)}"
-    )
+    created_calls = [c for c in bus.publish.call_args_list if c.args[0] == "system.rule.created"]
+    assert len(created_calls) == 2, f"Expected 2 system.rule.created events (not throttled), got {len(created_calls)}"

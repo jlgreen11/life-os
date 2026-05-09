@@ -16,10 +16,10 @@ from __future__ import annotations
 import logging
 import shutil
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +302,7 @@ class DatabaseManager:
             with self.get_connection(db_name) as conn:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             backup_path = backup_dir / f"{db_name}_{timestamp}.db"
             shutil.copy2(str(db_path), str(backup_path))
 
@@ -346,13 +346,13 @@ class DatabaseManager:
                 return []
 
             backups = []
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             for path in backup_dir.glob(f"{db_name}_*.db"):
                 # Extract timestamp from filename: {db_name}_{YYYYMMDDTHHMMSS}.db
                 stem = path.stem  # e.g. "user_model_20260303T120000"
                 ts_str = stem[len(db_name) + 1 :]  # strip "{db_name}_" prefix
                 try:
-                    created = datetime.strptime(ts_str, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+                    created = datetime.strptime(ts_str, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
                 except ValueError:
                     logger.warning("list_backups: skipping file with unparseable timestamp: %s", path.name)
                     continue
@@ -559,7 +559,7 @@ class DatabaseManager:
             return False
 
         # --- Corrupt: back up the file and let init recreate it. ---
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         suffix = f".corrupt.{timestamp}"
 
         logger.warning(
@@ -632,7 +632,7 @@ class DatabaseManager:
             with self.get_connection(db_name) as conn:
                 for table in tables:
                     try:
-                        conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()  # noqa: S608
+                        conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
                     except Exception as exc:
                         err_msg = str(exc).lower()
                         if "no such table" in err_msg:
@@ -1243,8 +1243,7 @@ class DatabaseManager:
 
             self._user_model_verify_retries += 1
             logger.critical(
-                "user_model.db failed post-initialisation verification. "
-                "Attempting last-resort fresh start."
+                "user_model.db failed post-initialisation verification. Attempting last-resort fresh start."
             )
 
             # Remove the corrupt file and its WAL/SHM sidecars so the
@@ -1317,6 +1316,7 @@ class DatabaseManager:
             # - Templates regenerate automatically from new message events
             # - New format provides better relationship insights (separates in/out styles)
             import logging
+
             logger = logging.getLogger(__name__)
 
             orphaned_count = conn.execute(
@@ -1338,6 +1338,7 @@ class DatabaseManager:
             # Before this change, 99.9% of predictions were filtered but we had no
             # visibility into the reasons, making it impossible to improve the system.
             import logging
+
             logger = logging.getLogger(__name__)
 
             # Check if column already exists (migration may have been run partially)
@@ -1380,6 +1381,7 @@ class DatabaseManager:
             # all migrations will create the table with resolution_reason already in the
             # DDL — so no ALTER TABLE is needed.
             import logging
+
             logger = logging.getLogger(__name__)
 
             # Check if the predictions table exists before attempting ALTER TABLE
@@ -1415,6 +1417,7 @@ class DatabaseManager:
           (covers ~4 days at 2.7K emails/day, sufficient for workflow detection).
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if from_version == 0 and to_version >= 2:

@@ -20,9 +20,7 @@ def _insert_notification(db, *, notification_id=None, status="pending", hours_ag
         hours_ago: How many hours in the past to set created_at.
     """
     nid = notification_id or str(uuid.uuid4())
-    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime(
-        "%Y-%m-%dT%H:%M:%S.000Z"
-    )
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications (id, title, body, priority, status, created_at)
@@ -55,9 +53,7 @@ def test_expire_stale_notifications_clears_old_pending(db):
     # Verify status changed in the database
     with db.get_connection("state") as conn:
         for nid in old_ids:
-            row = conn.execute(
-                "SELECT status FROM notifications WHERE id = ?", (nid,)
-            ).fetchone()
+            row = conn.execute("SELECT status FROM notifications WHERE id = ?", (nid,)).fetchone()
             assert row["status"] == "expired"
 
 
@@ -74,9 +70,7 @@ def test_expire_preserves_recent_pending(db):
 
     # Verify status is still 'pending'
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (recent_id,)
-        ).fetchone()
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (recent_id,)).fetchone()
         assert row["status"] == "pending"
 
 
@@ -94,14 +88,10 @@ def test_expire_ignores_delivered_and_read(db):
 
     # Verify statuses unchanged
     with db.get_connection("state") as conn:
-        row_d = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (delivered_id,)
-        ).fetchone()
+        row_d = conn.execute("SELECT status FROM notifications WHERE id = ?", (delivered_id,)).fetchone()
         assert row_d["status"] == "delivered"
 
-        row_r = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (read_id,)
-        ).fetchone()
+        row_r = conn.execute("SELECT status FROM notifications WHERE id = ?", (read_id,)).fetchone()
         assert row_r["status"] == "read"
 
 

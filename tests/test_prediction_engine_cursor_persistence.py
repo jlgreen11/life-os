@@ -29,14 +29,16 @@ def test_has_new_events_updates_in_memory_only(db, event_store, user_model_store
     engine = PredictionEngine(db=db, ums=user_model_store)
 
     # Insert an event so there's a non-zero MAX(rowid)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "a@b.com", "subject": "hi", "message_id": "m1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "a@b.com", "subject": "hi", "message_id": "m1"},
+            "metadata": {},
+        }
+    )
 
     # _has_new_events should detect the new event and update in-memory cursor
     assert engine._has_new_events() is True
@@ -56,26 +58,30 @@ def test_cursor_advances_in_memory_on_subsequent_events(db, event_store, user_mo
     engine = PredictionEngine(db=db, ums=user_model_store)
 
     # First event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "a@b.com", "subject": "1", "message_id": "m1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "a@b.com", "subject": "1", "message_id": "m1"},
+            "metadata": {},
+        }
+    )
     engine._has_new_events()
     cursor_after_first = engine._last_event_cursor
 
     # Second event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "a@b.com", "subject": "2", "message_id": "m2"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "a@b.com", "subject": "2", "message_id": "m2"},
+            "metadata": {},
+        }
+    )
     engine._has_new_events()
     cursor_after_second = engine._last_event_cursor
 

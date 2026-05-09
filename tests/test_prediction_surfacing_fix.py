@@ -57,9 +57,7 @@ async def test_immediate_delivery_marks_prediction_surfaced(db, notification_man
 
     # Assert: Prediction is now marked as surfaced
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_surfaced"] == 1, "Prediction should be marked as surfaced when notification is delivered"
 
 
@@ -98,9 +96,7 @@ async def test_batched_delivery_marks_prediction_surfaced_on_digest(db, notifica
 
     # Assert: Prediction is NOT yet marked as surfaced (notification not delivered yet)
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_surfaced"] == 0, "Prediction should not be surfaced until batch is delivered"
 
     # Retrieve the digest (simulates actual delivery)
@@ -109,9 +105,7 @@ async def test_batched_delivery_marks_prediction_surfaced_on_digest(db, notifica
 
     # Assert: Prediction is NOW marked as surfaced (batch delivered)
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_surfaced"] == 1, "Prediction should be marked as surfaced when batch digest is retrieved"
 
 
@@ -157,16 +151,12 @@ async def test_suppressed_notification_does_not_mark_prediction_surfaced(db, not
 
     # Assert: Prediction is NOT marked as surfaced (critical fix)
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_surfaced"] == 0, "Prediction should NOT be surfaced when notification is suppressed"
 
     # Assert: Notification status is "suppressed" in the database
     with db.get_connection("state") as conn:
-        notif = conn.execute(
-            "SELECT status FROM notifications WHERE source_event_id = ?", (pred_id,)
-        ).fetchone()
+        notif = conn.execute("SELECT status FROM notifications WHERE source_event_id = ?", (pred_id,)).fetchone()
         assert notif["status"] == "suppressed", "Notification should be marked as suppressed"
 
 
@@ -209,9 +199,7 @@ async def test_auto_resolve_filtered_predictions_works_with_fix(db, notification
 
     # Assert: Prediction is not surfaced (suppressed)
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_surfaced, resolved_at FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_surfaced, resolved_at FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_surfaced"] == 0, "Prediction should not be surfaced"
         assert pred["resolved_at"] is None, "Prediction should not be resolved yet"
 
@@ -329,16 +317,12 @@ async def test_critical_priority_bypasses_quiet_hours_and_marks_surfaced(db, not
 
     # Assert: Prediction is marked as surfaced
     with db.get_connection("user_model") as conn:
-        pred = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        pred = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
         assert pred["was_surfaced"] == 1, "Critical prediction should be marked as surfaced"
 
     # Assert: Notification status is "delivered"
     with db.get_connection("state") as conn:
-        notif = conn.execute(
-            "SELECT status FROM notifications WHERE source_event_id = ?", (pred_id,)
-        ).fetchone()
+        notif = conn.execute("SELECT status FROM notifications WHERE source_event_id = ?", (pred_id,)).fetchone()
         assert notif["status"] == "delivered", "Critical notification should be delivered"
 
 
@@ -378,9 +362,7 @@ async def test_multiple_batched_predictions_all_marked_surfaced(db, notification
 
     # Assert: None are surfaced yet
     with db.get_connection("user_model") as conn:
-        surfaced_count = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()[0]
+        surfaced_count = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
         assert surfaced_count == 0, "No predictions should be surfaced before digest delivery"
 
     # Retrieve the digest
@@ -389,7 +371,5 @@ async def test_multiple_batched_predictions_all_marked_surfaced(db, notification
 
     # Assert: All predictions are now marked as surfaced
     with db.get_connection("user_model") as conn:
-        surfaced_count = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()[0]
+        surfaced_count = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
         assert surfaced_count == 3, "All 3 predictions should be marked as surfaced after digest delivery"

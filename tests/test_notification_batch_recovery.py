@@ -17,9 +17,9 @@ import pytest
 from services.notification_manager.manager import NotificationManager
 
 
-def _insert_batched_notification(db, notif_id=None, title="Test", body="Body",
-                                  priority="normal", domain=None,
-                                  source_event_id=None, action_url=None):
+def _insert_batched_notification(
+    db, notif_id=None, title="Test", body="Body", priority="normal", domain=None, source_event_id=None, action_url=None
+):
     """Insert a batched notification directly into the DB (bypassing the manager).
 
     Uses status='batched' to match how create_notification() stores batch-routed
@@ -66,9 +66,7 @@ async def test_batched_notifications_marked_delivered(db, event_bus):
     await mgr.get_digest()
 
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (id1,)
-        ).fetchone()
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (id1,)).fetchone()
     assert row["status"] == "delivered"
 
 
@@ -90,7 +88,9 @@ async def test_prediction_surfacing_for_batched_items(db, event_bus):
     """Prediction notifications delivered via get_digest() trigger _mark_prediction_surfaced."""
     pred_id = "pred-" + str(uuid.uuid4())
     notif_id = _insert_batched_notification(
-        db, title="Prediction alert", domain="prediction",
+        db,
+        title="Prediction alert",
+        domain="prediction",
         source_event_id=pred_id,
     )
 
@@ -112,9 +112,7 @@ async def test_prediction_surfacing_for_batched_items(db, event_bus):
 
     # Verify prediction was marked as surfaced
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (pred_id,)).fetchone()
     assert row is not None, "Prediction row should exist"
     assert row["was_surfaced"] == 1, "Prediction should be marked as surfaced"
 

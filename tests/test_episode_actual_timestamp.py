@@ -64,7 +64,7 @@ async def test_email_episodes_use_actual_date_not_sync_time(db: DatabaseManager,
         episode = {
             "id": str(uuid.uuid4()),
             "timestamp": actual_timestamp,
-            "event_id": f"evt-email-{i+1}",
+            "event_id": f"evt-email-{i + 1}",
             "interaction_type": "email_received",
             "content_summary": f"Email from {email['from_address']}",
             "content_full": "Test body",
@@ -134,7 +134,7 @@ async def test_calendar_episodes_use_event_start_time(db: DatabaseManager, user_
         episode = {
             "id": str(uuid.uuid4()),
             "timestamp": actual_timestamp,
-            "event_id": f"evt-cal-{i+1}",
+            "event_id": f"evt-cal-{i + 1}",
             "interaction_type": "calendar_blocked",
             "content_summary": f"Calendar event: {event['title']}",
             "content_full": event["title"],

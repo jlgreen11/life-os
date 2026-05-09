@@ -75,11 +75,13 @@ def _insert_routine_prediction(
                 "suggest",
                 "today",
                 f"Start {routine_name}",
-                json.dumps({
-                    "routine_name": routine_name,
-                    "consistency_score": consistency_score,
-                    "expected_actions": expected_actions,
-                }),
+                json.dumps(
+                    {
+                        "routine_name": routine_name,
+                        "consistency_score": consistency_score,
+                        "expected_actions": expected_actions,
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -89,11 +91,13 @@ def _insert_routine_prediction(
         "prediction_type": "routine_deviation",
         "description": f"You usually do your '{routine_name}' routine by now",
         "suggested_action": f"Start {routine_name}",
-        "supporting_signals": json.dumps({
-            "routine_name": routine_name,
-            "consistency_score": consistency_score,
-            "expected_actions": expected_actions,
-        }),
+        "supporting_signals": json.dumps(
+            {
+                "routine_name": routine_name,
+                "consistency_score": consistency_score,
+                "expected_actions": expected_actions,
+            }
+        ),
         "created_at": created_at.isoformat(),
     }
 
@@ -285,8 +289,7 @@ async def test_routine_deviation_ignores_events_before_prediction(db):
     )
 
     assert result is False, (
-        "Should be INACCURATE: only events before prediction window exist, "
-        "4h observation window has elapsed"
+        "Should be INACCURATE: only events before prediction window exist, 4h observation window has elapsed"
     )
 
 
@@ -312,11 +315,13 @@ async def test_routine_deviation_no_expected_actions_times_out(db):
                 "suggest",
                 "today",
                 "Start some_routine",
-                json.dumps({
-                    "routine_name": "some_routine",
-                    "consistency_score": 0.9,
-                    "expected_actions": [],  # empty — no event types to check
-                }),
+                json.dumps(
+                    {
+                        "routine_name": "some_routine",
+                        "consistency_score": 0.9,
+                        "expected_actions": [],  # empty — no event types to check
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -327,11 +332,13 @@ async def test_routine_deviation_no_expected_actions_times_out(db):
         "prediction_type": "routine_deviation",
         "description": "You usually do your 'some_routine' routine by now",
         "suggested_action": "Start some_routine",
-        "supporting_signals": json.dumps({
-            "routine_name": "some_routine",
-            "consistency_score": 0.9,
-            "expected_actions": [],
-        }),
+        "supporting_signals": json.dumps(
+            {
+                "routine_name": "some_routine",
+                "consistency_score": 0.9,
+                "expected_actions": [],
+            }
+        ),
         "created_at": created_at.isoformat(),
     }
 
@@ -357,11 +364,13 @@ async def test_routine_deviation_no_expected_actions_pending(db):
         "prediction_type": "routine_deviation",
         "description": "You usually do your 'some_routine' routine by now",
         "suggested_action": "Start some_routine",
-        "supporting_signals": json.dumps({
-            "routine_name": "some_routine",
-            "consistency_score": 0.9,
-            "expected_actions": [],
-        }),
+        "supporting_signals": json.dumps(
+            {
+                "routine_name": "some_routine",
+                "consistency_score": 0.9,
+                "expected_actions": [],
+            }
+        ),
         "created_at": created_at.isoformat(),
     }
 
@@ -409,9 +418,7 @@ async def test_run_inference_cycle_resolves_routine_deviation(db):
 
     # Should have resolved at least one prediction
     total_resolved = stats["marked_accurate"] + stats["marked_inaccurate"]
-    assert total_resolved >= 1, (
-        "run_inference_cycle should resolve at least one routine_deviation prediction"
-    )
+    assert total_resolved >= 1, "run_inference_cycle should resolve at least one routine_deviation prediction"
 
     # Verify the prediction was actually updated in the database
     with db.get_connection("user_model") as conn:
@@ -421,9 +428,7 @@ async def test_run_inference_cycle_resolves_routine_deviation(db):
         ).fetchone()
 
     assert row is not None, "Prediction should still exist"
-    assert row["was_accurate"] is not None, (
-        "was_accurate should be set after inference cycle"
-    )
+    assert row["was_accurate"] is not None, "was_accurate should be set after inference cycle"
 
 
 @pytest.mark.asyncio
@@ -450,6 +455,4 @@ async def test_routine_deviation_underscore_to_dot_mapping(db):
         datetime.fromisoformat(prediction["created_at"]),
     )
 
-    assert result is True, (
-        "Should correctly map 'email_sent' → 'email.sent' and find the event"
-    )
+    assert result is True, "Should correctly map 'email_sent' → 'email.sent' and find the event"

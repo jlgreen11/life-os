@@ -27,6 +27,7 @@ from web.template import HTML_TEMPLATE as TEMPLATE
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _extract_message_card_block() -> str:
     """Extract the JavaScript block that renders a 'message' channel card.
 
@@ -72,6 +73,7 @@ def _extract_draft_reply_function() -> str:
 # Message card structure tests
 # ---------------------------------------------------------------------------
 
+
 class TestMessageCardDraftReplyButton:
     """Verify that message cards include a Draft Reply button in their detail view."""
 
@@ -82,9 +84,7 @@ class TestMessageCardDraftReplyButton:
         matching the pattern used by email cards.
         """
         block = _extract_message_card_block()
-        assert "draftReply(" in block, (
-            "Message card must include a call to draftReply() in its action buttons"
-        )
+        assert "draftReply(" in block, "Message card must include a call to draftReply() in its action buttons"
 
     def test_message_card_draft_button_is_primary(self):
         """Draft Reply button on message cards must use btn-primary class.
@@ -94,15 +94,11 @@ class TestMessageCardDraftReplyButton:
         """
         block = _extract_message_card_block()
         # The Draft Reply button must have the btn-primary class
-        assert "btn-primary" in block, (
-            "Message card Draft Reply button must use btn-primary class"
-        )
+        assert "btn-primary" in block, "Message card Draft Reply button must use btn-primary class"
         # And that btn-primary button must call draftReply
         btn_primary_idx = block.find("btn-primary")
-        draft_reply_near = "draftReply(" in block[btn_primary_idx:btn_primary_idx + 200]
-        assert draft_reply_near, (
-            "btn-primary button must call draftReply() — it should be the Draft Reply button"
-        )
+        draft_reply_near = "draftReply(" in block[btn_primary_idx : btn_primary_idx + 200]
+        assert draft_reply_near, "btn-primary button must call draftReply() — it should be the Draft Reply button"
 
     def test_message_card_has_draft_placeholder_div(self):
         """Message card must render a <div id='draft-{id}'> placeholder.
@@ -113,8 +109,7 @@ class TestMessageCardDraftReplyButton:
         """
         block = _extract_message_card_block()
         assert "draft-' +" in block or "'draft-' + escAttr(id)" in block, (
-            "Message card must render a <div id='draft-{id}'> placeholder "
-            "for draftReply() to target"
+            "Message card must render a <div id='draft-{id}'> placeholder for draftReply() to target"
         )
 
     def test_message_card_draft_placeholder_before_actions(self):
@@ -139,14 +134,13 @@ class TestMessageCardDraftReplyButton:
         Adding Draft Reply must not remove the pre-existing Create Task button.
         """
         block = _extract_message_card_block()
-        assert "createTaskFrom(" in block, (
-            "Message card must still include the Create Task button"
-        )
+        assert "createTaskFrom(" in block, "Message card must still include the Create Task button"
 
 
 # ---------------------------------------------------------------------------
 # draftReply() function tests
 # ---------------------------------------------------------------------------
+
 
 class TestDraftReplyContactId:
     """Verify draftReply() passes contact_id to /api/draft."""
@@ -159,9 +153,7 @@ class TestDraftReplyContactId:
         so the generated draft mirrors how the user typically writes to that contact.
         """
         func_body = _extract_draft_reply_function()
-        assert "contact_id" in func_body, (
-            "draftReply() must pass contact_id in the POST body to /api/draft"
-        )
+        assert "contact_id" in func_body, "draftReply() must pass contact_id in the POST body to /api/draft"
 
     def test_draft_reply_contact_id_from_metadata_from_address(self):
         """draftReply() must derive contact_id from item.metadata.from_address.
@@ -197,14 +189,13 @@ class TestDraftReplyContactId:
         """
         func_body = _extract_draft_reply_function()
         # Should have null or || null pattern to handle missing sender
-        assert "null" in func_body, (
-            "draftReply() must fall back to null when contact_id is not available"
-        )
+        assert "null" in func_body, "draftReply() must fall back to null when contact_id is not available"
 
 
 # ---------------------------------------------------------------------------
 # Email card parity tests (regression: email cards must still work)
 # ---------------------------------------------------------------------------
+
 
 class TestEmailCardDraftReplyUnchanged:
     """Verify the email card draft reply behaviour is unaffected by the message card change."""
@@ -218,9 +209,7 @@ class TestEmailCardDraftReplyUnchanged:
         email_end = TEMPLATE.find("} else if (item.channel === 'message') {", email_start)
         email_block = TEMPLATE[email_start:email_end] if email_end > email_start else ""
 
-        assert "draftReply(" in email_block, (
-            "Email card must still include its Draft Reply button"
-        )
+        assert "draftReply(" in email_block, "Email card must still include its Draft Reply button"
 
     def test_email_card_still_has_draft_placeholder(self):
         """Email card must still render its #draft-{id} placeholder."""

@@ -22,7 +22,15 @@ from scripts.backfill_episodes_from_events import (
 )
 
 
-def _insert_event(db, event_id: str, event_type: str, payload: dict, timestamp: str = "2026-02-20T12:00:00Z", source: str = "test", metadata: dict | None = None):
+def _insert_event(
+    db,
+    event_id: str,
+    event_type: str,
+    payload: dict,
+    timestamp: str = "2026-02-20T12:00:00Z",
+    source: str = "test",
+    metadata: dict | None = None,
+):
     """Helper to insert an event into events.db for testing."""
     with db.get_connection("events") as conn:
         conn.execute(
@@ -71,23 +79,38 @@ class TestCreatesEpisodesFromEmailEvents:
         """Insert 3 email events, run backfill, verify 3 episodes created
         with correct interaction_type, contacts, and summary."""
         # Insert 3 email events
-        _insert_event(db, "evt-1", "email.received", {
-            "from_address": "alice@example.com",
-            "to_addresses": ["user@example.com"],
-            "subject": "Meeting tomorrow",
-            "body_plain": "Let's meet at 10am.",
-        })
-        _insert_event(db, "evt-2", "email.sent", {
-            "from_address": "user@example.com",
-            "to_addresses": ["bob@example.com", "carol@example.com"],
-            "subject": "Project update",
-            "body_plain": "Here's the latest status.",
-        })
-        _insert_event(db, "evt-3", "email.received", {
-            "from_address": "dave@example.com",
-            "to_addresses": ["user@example.com"],
-            "subject": "Invoice #123",
-        })
+        _insert_event(
+            db,
+            "evt-1",
+            "email.received",
+            {
+                "from_address": "alice@example.com",
+                "to_addresses": ["user@example.com"],
+                "subject": "Meeting tomorrow",
+                "body_plain": "Let's meet at 10am.",
+            },
+        )
+        _insert_event(
+            db,
+            "evt-2",
+            "email.sent",
+            {
+                "from_address": "user@example.com",
+                "to_addresses": ["bob@example.com", "carol@example.com"],
+                "subject": "Project update",
+                "body_plain": "Here's the latest status.",
+            },
+        )
+        _insert_event(
+            db,
+            "evt-3",
+            "email.received",
+            {
+                "from_address": "dave@example.com",
+                "to_addresses": ["user@example.com"],
+                "subject": "Invoice #123",
+            },
+        )
 
         # Run backfill
         stats = backfill_episodes(db)
@@ -125,16 +148,31 @@ class TestSkipsNonEpisodicEvents:
 
     def test_skips_non_episodic_events(self, db):
         """Insert system events that shouldn't create episodes, verify 0 episodes."""
-        _insert_event(db, "evt-sys-1", "system.connector.sync_complete", {
-            "connector": "google",
-            "events_synced": 100,
-        })
-        _insert_event(db, "evt-sys-2", "usermodel.signal_profile.updated", {
-            "profile_type": "linguistic",
-        })
-        _insert_event(db, "evt-sys-3", "system.rule.triggered", {
-            "rule_id": "auto-tag-work",
-        })
+        _insert_event(
+            db,
+            "evt-sys-1",
+            "system.connector.sync_complete",
+            {
+                "connector": "google",
+                "events_synced": 100,
+            },
+        )
+        _insert_event(
+            db,
+            "evt-sys-2",
+            "usermodel.signal_profile.updated",
+            {
+                "profile_type": "linguistic",
+            },
+        )
+        _insert_event(
+            db,
+            "evt-sys-3",
+            "system.rule.triggered",
+            {
+                "rule_id": "auto-tag-work",
+            },
+        )
 
         stats = backfill_episodes(db)
 
@@ -153,10 +191,15 @@ class TestIdempotentSkipExisting:
         event_id = "evt-already-has-episode"
 
         # Insert the event
-        _insert_event(db, event_id, "email.received", {
-            "from_address": "existing@example.com",
-            "subject": "Already processed",
-        })
+        _insert_event(
+            db,
+            event_id,
+            "email.received",
+            {
+                "from_address": "existing@example.com",
+                "subject": "Already processed",
+            },
+        )
 
         # Manually create an episode for this event (simulating prior processing)
         with db.get_connection("user_model") as conn:
@@ -198,14 +241,24 @@ class TestDryRunNoWrites:
     def test_dry_run_no_writes(self, db):
         """Run with dry_run=True, verify 0 episodes in DB but stats show
         what would be created."""
-        _insert_event(db, "evt-dry-1", "email.received", {
-            "from_address": "dry@example.com",
-            "subject": "Dry run test",
-        })
-        _insert_event(db, "evt-dry-2", "message.sent", {
-            "to_addresses": ["friend@example.com"],
-            "body_plain": "Hello!",
-        })
+        _insert_event(
+            db,
+            "evt-dry-1",
+            "email.received",
+            {
+                "from_address": "dry@example.com",
+                "subject": "Dry run test",
+            },
+        )
+        _insert_event(
+            db,
+            "evt-dry-2",
+            "message.sent",
+            {
+                "to_addresses": ["friend@example.com"],
+                "body_plain": "Hello!",
+            },
+        )
 
         stats = backfill_episodes(db, dry_run=True)
 
@@ -224,12 +277,17 @@ class TestContentFullStripsLargeBody:
         """Insert event with 100KB body, verify episode content_full is < 4000 chars."""
         large_body = "A" * 100_000  # 100KB body
 
-        _insert_event(db, "evt-large", "email.received", {
-            "from_address": "large@example.com",
-            "subject": "Big email",
-            "body": large_body,
-            "html_body": large_body,
-        })
+        _insert_event(
+            db,
+            "evt-large",
+            "email.received",
+            {
+                "from_address": "large@example.com",
+                "subject": "Big email",
+                "body": large_body,
+                "html_body": large_body,
+            },
+        )
 
         stats = backfill_episodes(db)
 
@@ -340,10 +398,13 @@ class TestClassifyInteractionType:
 
     def test_calendar_with_attendees(self):
         """Calendar event with attendees becomes meeting_scheduled."""
-        assert classify_interaction_type(
-            "calendar.event.created",
-            {"attendees": ["a@b.com"]},
-        ) == "meeting_scheduled"
+        assert (
+            classify_interaction_type(
+                "calendar.event.created",
+                {"attendees": ["a@b.com"]},
+            )
+            == "meeting_scheduled"
+        )
 
     def test_calendar_without_attendees(self):
         """Calendar event without attendees becomes calendar_blocked."""
@@ -360,33 +421,45 @@ class TestGenerateEpisodeSummary:
     """Unit tests for generate_episode_summary."""
 
     def test_email_received_summary(self):
-        summary = generate_episode_summary("email.received", {
-            "from_address": "alice@test.com",
-            "subject": "Hello",
-        })
+        summary = generate_episode_summary(
+            "email.received",
+            {
+                "from_address": "alice@test.com",
+                "subject": "Hello",
+            },
+        )
         assert "Email from alice@test.com" in summary
         assert "Hello" in summary
 
     def test_task_completed_summary(self):
-        summary = generate_episode_summary("task.completed", {
-            "title": "Fix the bug",
-        })
+        summary = generate_episode_summary(
+            "task.completed",
+            {
+                "title": "Fix the bug",
+            },
+        )
         assert "Task completed: Fix the bug" in summary
 
     def test_transaction_summary(self):
-        summary = generate_episode_summary("finance.transaction.new", {
-            "amount": 45.23,
-            "merchant": "Whole Foods",
-        })
+        summary = generate_episode_summary(
+            "finance.transaction.new",
+            {
+                "amount": 45.23,
+                "merchant": "Whole Foods",
+            },
+        )
         assert "Transaction" in summary
         assert "Whole Foods" in summary
 
     def test_summary_truncated_to_200(self):
         """Summaries should never exceed 200 characters."""
-        summary = generate_episode_summary("email.received", {
-            "from_address": "x" * 100 + "@example.com",
-            "subject": "Y" * 200,
-        })
+        summary = generate_episode_summary(
+            "email.received",
+            {
+                "from_address": "x" * 100 + "@example.com",
+                "subject": "Y" * 200,
+            },
+        )
         assert len(summary) <= 200
 
 
@@ -395,22 +468,42 @@ class TestMixedEventTypes:
 
     def test_various_event_types_create_correct_episodes(self, db):
         """Test that different episodic event types all create correct episodes."""
-        _insert_event(db, "evt-msg-1", "message.received", {
-            "from_address": "+1234567890",
-            "body_plain": "Hey there!",
-        })
-        _insert_event(db, "evt-cal-1", "calendar.event.created", {
-            "title": "Team standup",
-            "start_time": "2026-02-21T09:00:00Z",
-            "attendees": ["team@company.com"],
-        })
-        _insert_event(db, "evt-fin-1", "finance.transaction.new", {
-            "amount": -42.50,
-            "merchant": "Coffee Shop",
-        })
-        _insert_event(db, "evt-task-1", "task.completed", {
-            "title": "Review PR #42",
-        })
+        _insert_event(
+            db,
+            "evt-msg-1",
+            "message.received",
+            {
+                "from_address": "+1234567890",
+                "body_plain": "Hey there!",
+            },
+        )
+        _insert_event(
+            db,
+            "evt-cal-1",
+            "calendar.event.created",
+            {
+                "title": "Team standup",
+                "start_time": "2026-02-21T09:00:00Z",
+                "attendees": ["team@company.com"],
+            },
+        )
+        _insert_event(
+            db,
+            "evt-fin-1",
+            "finance.transaction.new",
+            {
+                "amount": -42.50,
+                "merchant": "Coffee Shop",
+            },
+        )
+        _insert_event(
+            db,
+            "evt-task-1",
+            "task.completed",
+            {
+                "title": "Review PR #42",
+            },
+        )
 
         stats = backfill_episodes(db)
 
@@ -438,10 +531,15 @@ class TestBatchProcessing:
         """Insert more events than batch_size and verify all get processed."""
         # Create 7 events with batch_size=3
         for i in range(7):
-            _insert_event(db, f"evt-batch-{i}", "email.received", {
-                "from_address": f"batch{i}@example.com",
-                "subject": f"Batch email {i}",
-            })
+            _insert_event(
+                db,
+                f"evt-batch-{i}",
+                "email.received",
+                {
+                    "from_address": f"batch{i}@example.com",
+                    "subject": f"Batch email {i}",
+                },
+            )
 
         stats = backfill_episodes(db, batch_size=3)
 
@@ -471,10 +569,15 @@ class TestPostWriteVerification:
         lost data (e.g. constraint collision or WAL corruption).
         """
         for i in range(5):
-            _insert_event(db, f"evt-verify-{i}", "email.received", {
-                "from_address": f"verify{i}@example.com",
-                "subject": f"Verify email {i}",
-            })
+            _insert_event(
+                db,
+                f"evt-verify-{i}",
+                "email.received",
+                {
+                    "from_address": f"verify{i}@example.com",
+                    "subject": f"Verify email {i}",
+                },
+            )
 
         stats = backfill_episodes(db)
 
@@ -486,9 +589,14 @@ class TestPostWriteVerification:
     def test_episodes_verified_matches_actual_db_count(self, db):
         """episodes_verified should equal the actual row count in the database."""
         for i in range(4):
-            _insert_event(db, f"evt-dbcount-{i}", "task.created", {
-                "title": f"Task {i}",
-            })
+            _insert_event(
+                db,
+                f"evt-dbcount-{i}",
+                "task.created",
+                {
+                    "title": f"Task {i}",
+                },
+            )
 
         stats = backfill_episodes(db)
 
@@ -498,10 +606,15 @@ class TestPostWriteVerification:
     def test_episodes_verified_zero_in_dry_run(self, db):
         """In dry-run mode, nothing is written so episodes_verified must be 0."""
         for i in range(3):
-            _insert_event(db, f"evt-dry-verify-{i}", "message.received", {
-                "from_address": f"+1{i:010d}",
-                "body_plain": f"Message {i}",
-            })
+            _insert_event(
+                db,
+                f"evt-dry-verify-{i}",
+                "message.received",
+                {
+                    "from_address": f"+1{i:010d}",
+                    "body_plain": f"Message {i}",
+                },
+            )
 
         stats = backfill_episodes(db, dry_run=True)
 
@@ -514,10 +627,15 @@ class TestPostWriteVerification:
         """Verification must aggregate correctly across multiple batch commits."""
         # 11 events with batch_size=4 → batches of 4, 4, 3
         for i in range(11):
-            _insert_event(db, f"evt-multibatch-{i}", "email.received", {
-                "from_address": f"multi{i}@example.com",
-                "subject": f"Multi-batch email {i}",
-            })
+            _insert_event(
+                db,
+                f"evt-multibatch-{i}",
+                "email.received",
+                {
+                    "from_address": f"multi{i}@example.com",
+                    "subject": f"Multi-batch email {i}",
+                },
+            )
 
         stats = backfill_episodes(db, batch_size=4)
 

@@ -32,6 +32,7 @@ from services.signal_extractor.relationship import (
 # Helper
 # ---------------------------------------------------------------------------
 
+
 def _insert_contact(db, name: str, email: str) -> str:
     """Insert a contact and its email identifier; return the contact_id."""
     contact_id = str(uuid.uuid4())
@@ -55,9 +56,7 @@ def _insert_contact(db, name: str, email: str) -> str:
 def _fetch_contact(db, contact_id: str) -> dict:
     """Return a single contact row as a dict."""
     with db.get_connection("entities") as conn:
-        row = conn.execute(
-            "SELECT * FROM contacts WHERE id = ?", (contact_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM contacts WHERE id = ?", (contact_id,)).fetchone()
     return dict(row) if row else {}
 
 

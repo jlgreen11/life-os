@@ -51,7 +51,7 @@ async def test_filtered_prediction_false_negative_reminder(db):
             (
                 "pred1",
                 "reminder",
-                "Unreplied message from alice@example.com: \"Can you review the doc?\" (72 hours ago)",
+                'Unreplied message from alice@example.com: "Can you review the doc?" (72 hours ago)',
                 0.55,
                 "OBSERVE",  # Filtered due to low confidence
                 "Reply to alice@example.com",
@@ -91,14 +91,14 @@ async def test_filtered_prediction_false_negative_reminder(db):
         assert pred["user_response"] == "filtered", "Should preserve 'filtered' provenance"
         assert pred["resolved_at"] is not None
         # resolved_at should be updated to now, not the original auto-resolve time
-        resolved_time = datetime.fromisoformat(pred["resolved_at"].replace('Z', '+00:00'))
+        resolved_time = datetime.fromisoformat(pred["resolved_at"].replace("Z", "+00:00"))
         assert (datetime.now(timezone.utc) - resolved_time).total_seconds() < 10
 
     # Verify stats
-    assert stats['marked_accurate'] == 1
-    assert stats['marked_inaccurate'] == 0
-    assert stats['filtered'] == 1
-    assert stats['surfaced'] == 0
+    assert stats["marked_accurate"] == 1
+    assert stats["marked_inaccurate"] == 0
+    assert stats["filtered"] == 1
+    assert stats["surfaced"] == 0
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_filtered_prediction_true_negative_reminder(db):
             (
                 "pred1",
                 "reminder",
-                "Unreplied message from bob@example.com: \"Want to grab lunch?\" (72 hours ago)",
+                'Unreplied message from bob@example.com: "Want to grab lunch?" (72 hours ago)',
                 0.45,
                 "OBSERVE",
                 "Reply to bob@example.com",
@@ -142,9 +142,9 @@ async def test_filtered_prediction_true_negative_reminder(db):
         assert pred["user_response"] == "filtered", "Should preserve 'filtered' provenance"
 
     # Verify stats
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 1
-    assert stats['filtered'] == 1
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 1
+    assert stats["filtered"] == 1
 
 
 @pytest.mark.asyncio
@@ -185,7 +185,7 @@ async def test_filtered_predictions_too_recent_not_processed(db):
         pred = conn.execute("SELECT * FROM predictions WHERE id = 'pred1'").fetchone()
         assert pred["was_accurate"] is None, "Too recent to infer behavior"
 
-    assert stats['filtered'] == 0
+    assert stats["filtered"] == 0
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_filtered_predictions_too_old_not_processed(db):
         pred = conn.execute("SELECT * FROM predictions WHERE id = 'pred1'").fetchone()
         assert pred["was_accurate"] is None, "Too old to be relevant"
 
-    assert stats['filtered'] == 0
+    assert stats["filtered"] == 0
 
 
 @pytest.mark.asyncio
@@ -262,7 +262,7 @@ async def test_filtered_predictions_already_resolved_skipped(db):
     stats = await tracker.run_inference_cycle()
 
     # Verify it was NOT processed (already has was_accurate)
-    assert stats['filtered'] == 0
+    assert stats["filtered"] == 0
 
 
 @pytest.mark.asyncio
@@ -350,10 +350,10 @@ async def test_surfaced_and_filtered_processed_in_same_cycle(db):
         assert filtered["user_response"] == "filtered", "Preserves filtered provenance"
 
     # Verify stats
-    assert stats['marked_accurate'] == 1  # Alice reply
-    assert stats['marked_inaccurate'] == 1  # Bob no reply
-    assert stats['surfaced'] == 1
-    assert stats['filtered'] == 1
+    assert stats["marked_accurate"] == 1  # Alice reply
+    assert stats["marked_inaccurate"] == 1  # Bob no reply
+    assert stats["surfaced"] == 1
+    assert stats["filtered"] == 1
 
 
 @pytest.mark.asyncio
@@ -411,8 +411,8 @@ async def test_filtered_prediction_partial_email_match(db):
         pred = conn.execute("SELECT * FROM predictions WHERE id = 'pred1'").fetchone()
         assert pred["was_accurate"] == 1, "Should match complex email addresses"
 
-    assert stats['marked_accurate'] == 1
-    assert stats['filtered'] == 1
+    assert stats["marked_accurate"] == 1
+    assert stats["filtered"] == 1
 
 
 @pytest.mark.asyncio
@@ -431,9 +431,18 @@ async def test_stats_breakdown_by_type(db):
                 created_at, resolved_at, was_accurate)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "s1", "reminder", "Unreplied message from a@example.com", 0.75, "SUGGEST",
-                "Reply to a@example.com", json.dumps({"contact_email": "a@example.com"}),
-                1, None, three_days_ago.isoformat(), None, None,
+                "s1",
+                "reminder",
+                "Unreplied message from a@example.com",
+                0.75,
+                "SUGGEST",
+                "Reply to a@example.com",
+                json.dumps({"contact_email": "a@example.com"}),
+                1,
+                None,
+                three_days_ago.isoformat(),
+                None,
+                None,
             ),
         )
         # Surfaced 2 (inaccurate)
@@ -444,9 +453,18 @@ async def test_stats_breakdown_by_type(db):
                 created_at, resolved_at, was_accurate)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "s2", "reminder", "Unreplied message from b@example.com", 0.70, "SUGGEST",
-                "Reply to b@example.com", json.dumps({"contact_email": "b@example.com"}),
-                1, None, three_days_ago.isoformat(), None, None,
+                "s2",
+                "reminder",
+                "Unreplied message from b@example.com",
+                0.70,
+                "SUGGEST",
+                "Reply to b@example.com",
+                json.dumps({"contact_email": "b@example.com"}),
+                1,
+                None,
+                three_days_ago.isoformat(),
+                None,
+                None,
             ),
         )
         # Filtered 1 (accurate - false negative)
@@ -457,9 +475,18 @@ async def test_stats_breakdown_by_type(db):
                 created_at, resolved_at, was_accurate)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "f1", "reminder", "Unreplied message from c@example.com", 0.40, "OBSERVE",
-                "Reply to c@example.com", json.dumps({"contact_email": "c@example.com"}),
-                0, "filtered", three_days_ago.isoformat(), three_days_ago.isoformat(), None,
+                "f1",
+                "reminder",
+                "Unreplied message from c@example.com",
+                0.40,
+                "OBSERVE",
+                "Reply to c@example.com",
+                json.dumps({"contact_email": "c@example.com"}),
+                0,
+                "filtered",
+                three_days_ago.isoformat(),
+                three_days_ago.isoformat(),
+                None,
             ),
         )
         # Filtered 2 (inaccurate - true negative)
@@ -470,9 +497,18 @@ async def test_stats_breakdown_by_type(db):
                 created_at, resolved_at, was_accurate)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "f2", "reminder", "Unreplied message from d@example.com", 0.35, "OBSERVE",
-                "Reply to d@example.com", json.dumps({"contact_email": "d@example.com"}),
-                0, "filtered", three_days_ago.isoformat(), three_days_ago.isoformat(), None,
+                "f2",
+                "reminder",
+                "Unreplied message from d@example.com",
+                0.35,
+                "OBSERVE",
+                "Reply to d@example.com",
+                json.dumps({"contact_email": "d@example.com"}),
+                0,
+                "filtered",
+                three_days_ago.isoformat(),
+                three_days_ago.isoformat(),
+                None,
             ),
         )
         # Filtered 3 (inaccurate - true negative)
@@ -483,9 +519,18 @@ async def test_stats_breakdown_by_type(db):
                 created_at, resolved_at, was_accurate)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "f3", "reminder", "Unreplied message from e@example.com", 0.30, "OBSERVE",
-                "Reply to e@example.com", json.dumps({"contact_email": "e@example.com"}),
-                0, "filtered", three_days_ago.isoformat(), three_days_ago.isoformat(), None,
+                "f3",
+                "reminder",
+                "Unreplied message from e@example.com",
+                0.30,
+                "OBSERVE",
+                "Reply to e@example.com",
+                json.dumps({"contact_email": "e@example.com"}),
+                0,
+                "filtered",
+                three_days_ago.isoformat(),
+                three_days_ago.isoformat(),
+                None,
             ),
         )
 
@@ -495,21 +540,35 @@ async def test_stats_breakdown_by_type(db):
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            ("e1", "email.sent", "protonmail", two_days_ago.isoformat(), "normal",
-             json.dumps({"to_addresses": ["a@example.com"]}), "{}"),
+            (
+                "e1",
+                "email.sent",
+                "protonmail",
+                two_days_ago.isoformat(),
+                "normal",
+                json.dumps({"to_addresses": ["a@example.com"]}),
+                "{}",
+            ),
         )
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            ("e2", "email.sent", "protonmail", two_days_ago.isoformat(), "normal",
-             json.dumps({"to_addresses": ["c@example.com"]}), "{}"),
+            (
+                "e2",
+                "email.sent",
+                "protonmail",
+                two_days_ago.isoformat(),
+                "normal",
+                json.dumps({"to_addresses": ["c@example.com"]}),
+                "{}",
+            ),
         )
 
     # Run tracker
     stats = await tracker.run_inference_cycle()
 
     # Verify stats
-    assert stats['marked_accurate'] == 2, "A and C"
-    assert stats['marked_inaccurate'] == 3, "B, D, E"
-    assert stats['surfaced'] == 2, "S1 and S2"
-    assert stats['filtered'] == 3, "F1, F2, F3"
+    assert stats["marked_accurate"] == 2, "A and C"
+    assert stats["marked_inaccurate"] == 3, "B, D, E"
+    assert stats["surfaced"] == 2, "S1 and S2"
+    assert stats["filtered"] == 3, "F1, F2, F3"

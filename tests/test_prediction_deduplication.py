@@ -61,12 +61,14 @@ async def test_no_duplicate_predictions_for_same_email(db, user_model_store):
                 "protonmail",
                 email_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-001",
-                    "from_address": "alice@example.com",
-                    "subject": "Can we meet tomorrow?",
-                    "body_plain": "Hi, can we schedule a meeting?",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-001",
+                        "from_address": "alice@example.com",
+                        "subject": "Can we meet tomorrow?",
+                        "body_plain": "Hi, can we schedule a meeting?",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -82,9 +84,7 @@ async def test_no_duplicate_predictions_for_same_email(db, user_model_store):
                AND supporting_signals LIKE '%msg-001%'""",
         ).fetchone()["cnt"]
 
-    assert count_after_cycle_1 == 1, (
-        f"Should create exactly ONE prediction on first cycle, got {count_after_cycle_1}"
-    )
+    assert count_after_cycle_1 == 1, f"Should create exactly ONE prediction on first cycle, got {count_after_cycle_1}"
 
     # Second prediction cycle (15 minutes later) — should NOT create duplicate
     # Even though the email is still unreplied, we already have a prediction for it
@@ -98,9 +98,7 @@ async def test_no_duplicate_predictions_for_same_email(db, user_model_store):
                AND supporting_signals LIKE '%msg-001%'""",
         ).fetchone()["cnt"]
 
-    assert count_after_cycle_2 == 1, (
-        f"Should NOT create duplicate prediction. Expected 1, got {count_after_cycle_2}"
-    )
+    assert count_after_cycle_2 == 1, f"Should NOT create duplicate prediction. Expected 1, got {count_after_cycle_2}"
 
 
 @pytest.mark.asyncio
@@ -132,12 +130,14 @@ async def test_predictions_created_for_multiple_unreplied_emails(db, user_model_
                     "protonmail",
                     (now - timedelta(hours=6)).isoformat(),
                     "normal",
-                    json.dumps({
-                        "message_id": msg_id,
-                        "from_address": from_addr,
-                        "subject": subject,
-                        "body_plain": f"Email from {from_addr}",
-                    }),
+                    json.dumps(
+                        {
+                            "message_id": msg_id,
+                            "from_address": from_addr,
+                            "subject": subject,
+                            "body_plain": f"Email from {from_addr}",
+                        }
+                    ),
                     json.dumps({"related_contacts": []}),
                 ),
             )
@@ -180,11 +180,13 @@ async def test_no_predictions_for_already_replied_emails(db, user_model_store):
                 "protonmail",
                 email_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-001",
-                    "from_address": "alice@example.com",
-                    "subject": "Meeting tomorrow?",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-001",
+                        "from_address": "alice@example.com",
+                        "subject": "Meeting tomorrow?",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -199,11 +201,13 @@ async def test_no_predictions_for_already_replied_emails(db, user_model_store):
                 "protonmail",
                 (email_time + timedelta(hours=1)).isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-002",
-                    "in_reply_to": "msg-001",  # Links to the inbound email
-                    "to": "alice@example.com",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-002",
+                        "in_reply_to": "msg-001",  # Links to the inbound email
+                        "to": "alice@example.com",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -253,12 +257,14 @@ async def test_no_predictions_for_marketing_emails(db, user_model_store):
                     "protonmail",
                     email_time.isoformat(),
                     "normal",
-                    json.dumps({
-                        "message_id": f"msg-{idx:03d}",
-                        "from_address": from_addr,
-                        "subject": "Special offer!",
-                        "body_plain": "Check out our deals!",
-                    }),
+                    json.dumps(
+                        {
+                            "message_id": f"msg-{idx:03d}",
+                            "from_address": from_addr,
+                            "subject": "Special offer!",
+                            "body_plain": "Check out our deals!",
+                        }
+                    ),
                     json.dumps({"related_contacts": []}),
                 ),
             )
@@ -302,11 +308,13 @@ async def test_deduplication_across_48_hour_window(db, user_model_store):
                 "protonmail",
                 old_email_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-001",
-                    "from_address": "alice@example.com",
-                    "subject": "Urgent meeting request",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-001",
+                        "from_address": "alice@example.com",
+                        "subject": "Urgent meeting request",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -342,11 +350,13 @@ async def test_prediction_created_only_after_3_hour_grace_period(db, user_model_
                 "protonmail",
                 recent_email_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-001",
-                    "from_address": "alice@example.com",
-                    "subject": "Quick question",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-001",
+                        "from_address": "alice@example.com",
+                        "subject": "Quick question",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -388,11 +398,13 @@ async def test_message_id_tracking_in_supporting_signals(db, user_model_store):
                 "protonmail",
                 email_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-001",
-                    "from_address": "alice@example.com",
-                    "subject": "Test email",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-001",
+                        "from_address": "alice@example.com",
+                        "subject": "Test email",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )

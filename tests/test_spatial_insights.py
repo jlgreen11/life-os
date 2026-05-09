@@ -55,8 +55,7 @@ def _make_engine(db) -> InsightEngine:
     return InsightEngine(db=db, ums=ums)
 
 
-def _set_spatial_profile(ums: UserModelStore, place_behaviors: dict,
-                          samples_count: int = 10) -> None:
+def _set_spatial_profile(ums: UserModelStore, place_behaviors: dict, samples_count: int = 10) -> None:
     """Write a spatial signal profile with the given place_behaviors dict.
 
     Serialises ``place_behaviors`` to a JSON string (mirroring what
@@ -73,8 +72,13 @@ def _set_spatial_profile(ums: UserModelStore, place_behaviors: dict,
         ums.update_signal_profile("spatial", data)
 
 
-def _make_place(visit_count: int = 5, work: int = 0, personal: int = 0,
-                avg_dur: float | None = None, dominant_domain: str = "personal") -> dict:
+def _make_place(
+    visit_count: int = 5,
+    work: int = 0,
+    personal: int = 0,
+    avg_dur: float | None = None,
+    dominant_domain: str = "personal",
+) -> dict:
     """Build a minimal place-behavior dict for test fixtures.
 
     Args:
@@ -126,9 +130,12 @@ def test_no_insight_when_place_behaviors_empty(db):
 def test_no_insight_when_top_place_below_min_visits(db):
     """No insights when the most-visited place has fewer than 3 visits."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=2, work=2, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=2, work=2, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     assert insights == []
 
@@ -141,9 +148,12 @@ def test_no_insight_when_top_place_below_min_visits(db):
 def test_top_location_fires_with_sufficient_visits(db):
     """spatial_top_location insight fires when top place has >= 3 visits."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "conference room": _make_place(visit_count=10, avg_dur=60.0, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "conference room": _make_place(visit_count=10, avg_dur=60.0, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     top = [i for i in insights if i.category == "spatial_top_location"]
     assert len(top) == 1
@@ -154,9 +164,12 @@ def test_top_location_fires_with_sufficient_visits(db):
 def test_top_location_summary_includes_duration_when_available(db):
     """Average duration appears in summary when average_duration_minutes is set."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "home": _make_place(visit_count=8, avg_dur=45.0, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "home": _make_place(visit_count=8, avg_dur=45.0, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     top = [i for i in insights if i.category == "spatial_top_location"]
     assert len(top) == 1
@@ -166,9 +179,12 @@ def test_top_location_summary_includes_duration_when_available(db):
 def test_top_location_summary_omits_duration_when_absent(db):
     """No duration clause in summary when average_duration_minutes is missing."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "library": _make_place(visit_count=5, avg_dur=None, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "library": _make_place(visit_count=5, avg_dur=None, dominant_domain="personal"),
+        },
+    )
     insights = engine._spatial_insights()
     top = [i for i in insights if i.category == "spatial_top_location"]
     assert len(top) == 1
@@ -180,9 +196,12 @@ def test_top_location_confidence_scales_with_visit_count(db):
     """Confidence increases with visit count and is capped at 0.85."""
     engine = _make_engine(db)
     # Low visit count → lower confidence
-    _set_spatial_profile(engine.ums, {
-        "gym": _make_place(visit_count=3, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "gym": _make_place(visit_count=3, dominant_domain="personal"),
+        },
+    )
     insights_low = engine._spatial_insights()
     top_low = [i for i in insights_low if i.category == "spatial_top_location"]
     assert len(top_low) == 1
@@ -191,9 +210,12 @@ def test_top_location_confidence_scales_with_visit_count(db):
     engine2 = _make_engine(db.__class__(db._path if hasattr(db, "_path") else ":memory:"))
     engine2 = _make_engine(db)
     # Override with high visit count to test cap
-    _set_spatial_profile(engine2.ums, {
-        "office": _make_place(visit_count=100, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine2.ums,
+        {
+            "office": _make_place(visit_count=100, dominant_domain="work"),
+        },
+    )
     insights_high = engine2._spatial_insights()
     top_high = [i for i in insights_high if i.category == "spatial_top_location"]
     assert len(top_high) == 1
@@ -204,9 +226,12 @@ def test_top_location_truncates_long_name_in_summary(db):
     """Location names longer than 40 chars are truncated with '…' in the summary."""
     engine = _make_engine(db)
     long_name = "a" * 50  # 50-character location name
-    _set_spatial_profile(engine.ums, {
-        long_name: _make_place(visit_count=5, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            long_name: _make_place(visit_count=5, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     top = [i for i in insights if i.category == "spatial_top_location"]
     assert len(top) == 1
@@ -218,9 +243,12 @@ def test_top_location_truncates_long_name_in_summary(db):
 def test_top_location_entity_is_location_name(db):
     """Entity is set to the location name (stable dedup anchor)."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "downtown office": _make_place(visit_count=7, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "downtown office": _make_place(visit_count=7, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     top = [i for i in insights if i.category == "spatial_top_location"]
     assert len(top) == 1
@@ -230,9 +258,12 @@ def test_top_location_entity_is_location_name(db):
 def test_top_location_staleness_ttl_is_168_hours(db):
     """Staleness TTL is 168 hours (7 days)."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=5, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=5, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     top = [i for i in insights if i.category == "spatial_top_location"]
     assert len(top) == 1
@@ -247,9 +278,12 @@ def test_top_location_staleness_ttl_is_168_hours(db):
 def test_no_work_location_when_no_work_events(db):
     """No spatial_work_location insight when all locations have 0 work events."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "park": _make_place(visit_count=5, personal=5, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "park": _make_place(visit_count=5, personal=5, dominant_domain="personal"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert work == []
@@ -258,9 +292,12 @@ def test_no_work_location_when_no_work_events(db):
 def test_no_work_location_when_below_min_work_visits(db):
     """No spatial_work_location insight when top work location has < 3 work events."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=5, work=2, personal=3, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=5, work=2, personal=3, dominant_domain="personal"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert work == []
@@ -269,10 +306,13 @@ def test_no_work_location_when_below_min_work_visits(db):
 def test_work_location_fires_for_highest_work_count(db):
     """spatial_work_location fires for the location with the most work-domain events."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=10, work=8, personal=2, dominant_domain="work"),
-        "home": _make_place(visit_count=5, work=2, personal=3, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=10, work=8, personal=2, dominant_domain="work"),
+            "home": _make_place(visit_count=5, work=2, personal=3, dominant_domain="personal"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert len(work) == 1
@@ -283,9 +323,12 @@ def test_work_location_fires_for_highest_work_count(db):
 def test_work_location_detects_home_office_pattern(db):
     """Home-office pattern detected when work location name contains 'home'."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "home": _make_place(visit_count=15, work=10, personal=5, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "home": _make_place(visit_count=15, work=10, personal=5, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert len(work) == 1
@@ -295,9 +338,12 @@ def test_work_location_detects_home_office_pattern(db):
 def test_work_location_detects_home_office_for_apartment(db):
     """Home-office pattern detected when normalized location contains 'apartment'."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "apartment": _make_place(visit_count=8, work=5, personal=3, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "apartment": _make_place(visit_count=8, work=5, personal=3, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert len(work) == 1
@@ -307,9 +353,12 @@ def test_work_location_detects_home_office_for_apartment(db):
 def test_work_location_non_home_uses_generic_summary(db):
     """Non-home work location uses 'most frequent work location' phrasing."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "downtown coworking": _make_place(visit_count=6, work=5, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "downtown coworking": _make_place(visit_count=6, work=5, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert len(work) == 1
@@ -320,9 +369,12 @@ def test_work_location_non_home_uses_generic_summary(db):
 def test_work_location_entity_is_location_name(db):
     """Entity is the work location name for stable dedup."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "open plan office": _make_place(visit_count=7, work=6, dominant_domain="work"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "open plan office": _make_place(visit_count=7, work=6, dominant_domain="work"),
+        },
+    )
     insights = engine._spatial_insights()
     work = [i for i in insights if i.category == "spatial_work_location"]
     assert len(work) == 1
@@ -337,10 +389,13 @@ def test_work_location_entity_is_location_name(db):
 def test_no_diversity_when_only_one_frequent_location(db):
     """No spatial_location_diversity insight when only one place has >= 3 visits."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=10, work=8, dominant_domain="work"),
-        "gym": _make_place(visit_count=2, personal=2, dominant_domain="personal"),  # below threshold
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=10, work=8, dominant_domain="work"),
+            "gym": _make_place(visit_count=2, personal=2, dominant_domain="personal"),  # below threshold
+        },
+    )
     insights = engine._spatial_insights()
     div = [i for i in insights if i.category == "spatial_location_diversity"]
     assert div == []
@@ -349,10 +404,14 @@ def test_no_diversity_when_only_one_frequent_location(db):
 def test_diversity_fires_with_two_frequent_locations(db):
     """spatial_location_diversity fires when >= 2 locations each have >= 3 visits."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=8, work=7, dominant_domain="work"),
-        "home": _make_place(visit_count=5, personal=5, dominant_domain="personal"),
-    }, samples_count=15)
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=8, work=7, dominant_domain="work"),
+            "home": _make_place(visit_count=5, personal=5, dominant_domain="personal"),
+        },
+        samples_count=15,
+    )
     insights = engine._spatial_insights()
     div = [i for i in insights if i.category == "spatial_location_diversity"]
     assert len(div) == 1
@@ -364,11 +423,14 @@ def test_diversity_fires_with_two_frequent_locations(db):
 def test_diversity_entity_encodes_distribution(db):
     """Entity key encodes total/work/personal counts for stable dedup."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=6, work=5, dominant_domain="work"),
-        "cafe": _make_place(visit_count=4, personal=4, dominant_domain="personal"),
-        "library": _make_place(visit_count=3, personal=3, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=6, work=5, dominant_domain="work"),
+            "cafe": _make_place(visit_count=4, personal=4, dominant_domain="personal"),
+            "library": _make_place(visit_count=3, personal=3, dominant_domain="personal"),
+        },
+    )
     insights = engine._spatial_insights()
     div = [i for i in insights if i.category == "spatial_location_diversity"]
     assert len(div) == 1
@@ -381,11 +443,14 @@ def test_diversity_entity_encodes_distribution(db):
 def test_diversity_summary_mentions_location_count(db):
     """Diversity summary mentions number of distinct frequent locations."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=5, work=4, dominant_domain="work"),
-        "home": _make_place(visit_count=10, personal=8, dominant_domain="personal"),
-        "cafe": _make_place(visit_count=4, personal=4, dominant_domain="personal"),
-    })
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=5, work=4, dominant_domain="work"),
+            "home": _make_place(visit_count=10, personal=8, dominant_domain="personal"),
+            "cafe": _make_place(visit_count=4, personal=4, dominant_domain="personal"),
+        },
+    )
     insights = engine._spatial_insights()
     div = [i for i in insights if i.category == "spatial_location_diversity"]
     assert len(div) == 1
@@ -400,20 +465,31 @@ def test_diversity_summary_mentions_location_count(db):
 def test_all_three_subtypes_fire_together(db):
     """All three spatial insight sub-types can fire in a single call."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(
-            visit_count=12, work=10, personal=2,
-            avg_dur=480.0, dominant_domain="work",
-        ),
-        "home": _make_place(
-            visit_count=5, work=3, personal=2,
-            avg_dur=60.0, dominant_domain="work",
-        ),
-        "gym": _make_place(
-            visit_count=4, personal=4,
-            dominant_domain="personal",
-        ),
-    }, samples_count=20)
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(
+                visit_count=12,
+                work=10,
+                personal=2,
+                avg_dur=480.0,
+                dominant_domain="work",
+            ),
+            "home": _make_place(
+                visit_count=5,
+                work=3,
+                personal=2,
+                avg_dur=60.0,
+                dominant_domain="work",
+            ),
+            "gym": _make_place(
+                visit_count=4,
+                personal=4,
+                dominant_domain="personal",
+            ),
+        },
+        samples_count=20,
+    )
     insights = engine._spatial_insights()
     categories = {i.category for i in insights}
     assert "spatial_top_location" in categories
@@ -431,6 +507,7 @@ def test_invalid_place_behaviors_json_returns_empty(db):
     engine = _make_engine(db)
     # Write a profile with invalid JSON in place_behaviors
     from storage.user_model_store import UserModelStore
+
     with engine.db.get_connection("user_model") as conn:
         conn.execute(
             """INSERT OR REPLACE INTO signal_profiles
@@ -451,10 +528,14 @@ def test_invalid_place_behaviors_json_returns_empty(db):
 async def test_spatial_correlator_wired_into_generate_insights(db):
     """spatial_insights correlator is called by generate_insights()."""
     engine = _make_engine(db)
-    _set_spatial_profile(engine.ums, {
-        "office": _make_place(visit_count=5, work=4, dominant_domain="work"),
-        "home": _make_place(visit_count=4, personal=4, dominant_domain="personal"),
-    }, samples_count=10)
+    _set_spatial_profile(
+        engine.ums,
+        {
+            "office": _make_place(visit_count=5, work=4, dominant_domain="work"),
+            "home": _make_place(visit_count=4, personal=4, dominant_domain="personal"),
+        },
+        samples_count=10,
+    )
     all_insights = await engine.generate_insights()
     spatial = [i for i in all_insights if i.category.startswith("spatial_")]
     # At least the top-location and diversity insights should fire

@@ -20,6 +20,7 @@ compute_health_score = _mod.compute_health_score
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _healthy_sections():
     """Return a sections dict that should produce zero anomalies."""
     now = datetime.now(UTC)
@@ -55,7 +56,14 @@ def _healthy_sections():
         },
         "notifications": {"pending": 5, "read": 20, "dismissed": 3},
         "source_weights": {
-            "email.personal": {"weight": 0.8, "drift": 0.0, "updated_at": None, "interactions": 100, "engagements": 10, "dismissals": 5},
+            "email.personal": {
+                "weight": 0.8,
+                "drift": 0.0,
+                "updated_at": None,
+                "interactions": 100,
+                "engagements": 10,
+                "dismissals": 5,
+            },
         },
         "feedback": [
             {"action_type": "notification", "feedback_type": "dismissed", "count": 5},
@@ -66,6 +74,7 @@ def _healthy_sections():
 # ---------------------------------------------------------------------------
 # Test: healthy sections produce no anomalies
 # ---------------------------------------------------------------------------
+
 
 class TestHealthySections:
     def test_no_anomalies(self):
@@ -80,6 +89,7 @@ class TestHealthySections:
 # ---------------------------------------------------------------------------
 # Test: (a) Prediction table empty despite generation events
 # ---------------------------------------------------------------------------
+
 
 class TestPredictionPersistence:
     def test_flags_critical_when_table_empty_but_events_exist(self):
@@ -115,6 +125,7 @@ class TestPredictionPersistence:
 # Test: (b) High dedup ratio
 # ---------------------------------------------------------------------------
 
+
 class TestHighDedupRatio:
     def test_flags_warning_when_dedup_exceeds_10x(self):
         sections = _healthy_sections()
@@ -148,6 +159,7 @@ class TestHighDedupRatio:
 # Test: (c) Zero routines with sufficient episodes
 # ---------------------------------------------------------------------------
 
+
 class TestZeroRoutines:
     def test_flags_warning_when_zero_routines_many_episodes(self):
         sections = _healthy_sections()
@@ -173,6 +185,7 @@ class TestZeroRoutines:
 # Test: (d) Zero workflows
 # ---------------------------------------------------------------------------
 
+
 class TestZeroWorkflows:
     def test_flags_warning_when_zero_workflows_many_episodes(self):
         sections = _healthy_sections()
@@ -196,6 +209,7 @@ class TestZeroWorkflows:
 # ---------------------------------------------------------------------------
 # Test: (e) Connector errors
 # ---------------------------------------------------------------------------
+
 
 class TestConnectorErrors:
     def test_flags_critical_for_error_connector(self):
@@ -239,6 +253,7 @@ class TestConnectorErrors:
 # Test: (f) Stale data sources
 # ---------------------------------------------------------------------------
 
+
 class TestStaleSources:
     def test_flags_warning_for_stale_source(self):
         sections = _healthy_sections()
@@ -268,6 +283,7 @@ class TestStaleSources:
 # Test: (g) No prediction accuracy data
 # ---------------------------------------------------------------------------
 
+
 class TestNoPredictionAccuracy:
     def test_flags_info_when_empty(self):
         sections = _healthy_sections()
@@ -286,6 +302,7 @@ class TestNoPredictionAccuracy:
 # ---------------------------------------------------------------------------
 # Test: (h) Pending notification backlog
 # ---------------------------------------------------------------------------
+
 
 class TestNotificationBacklog:
     def test_flags_warning_when_pending_over_50(self):
@@ -313,6 +330,7 @@ class TestNotificationBacklog:
 # ---------------------------------------------------------------------------
 # Test: health score computation
 # ---------------------------------------------------------------------------
+
 
 class TestHealthScore:
     def test_perfect_score(self):

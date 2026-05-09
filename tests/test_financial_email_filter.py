@@ -126,9 +126,9 @@ def test_personal_financial_contacts_not_filtered(db, user_model_store):
     personal_addresses = [
         "john.fidelity@gmail.com",  # Surname
         "sarah.schwab@company.com",  # Surname
-        "mike@myfidelity.biz",       # Personal domain containing "fidelity"
+        "mike@myfidelity.biz",  # Personal domain containing "fidelity"
         "contact@verifidelity.com",  # Company with "fidelity" in name
-        "jane.chase@example.com",    # Surname
+        "jane.chase@example.com",  # Surname
     ]
 
     for addr in personal_addresses:
@@ -151,29 +151,28 @@ async def test_follow_up_predictions_skip_financial_emails(db, user_model_store,
     ]
 
     for sender in financial_senders:
-        event_store.store_event({
-            "id": f"email-{sender}-{int(hours_ago_5.timestamp())}",
-            "type": "email.received",
-            "source": "google",
-            "timestamp": hours_ago_5.isoformat(),
-            "priority": "normal",
-            "payload": {
-                "message_id": f"msg-{sender}",
-                "from_address": sender,
-                "subject": "Your trade confirmation is available",
-                "snippet": "Your order has been executed",
-            },
-            "metadata": {"related_contacts": []},
-        })
+        event_store.store_event(
+            {
+                "id": f"email-{sender}-{int(hours_ago_5.timestamp())}",
+                "type": "email.received",
+                "source": "google",
+                "timestamp": hours_ago_5.isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "message_id": f"msg-{sender}",
+                    "from_address": sender,
+                    "subject": "Your trade confirmation is available",
+                    "snippet": "Your order has been executed",
+                },
+                "metadata": {"related_contacts": []},
+            }
+        )
 
     # Generate predictions
     predictions = await engine._check_follow_up_needs({})
 
     # None of the financial emails should generate predictions
-    financial_pred_count = sum(
-        1 for p in predictions
-        if any(sender in p.description for sender in financial_senders)
-    )
+    financial_pred_count = sum(1 for p in predictions if any(sender in p.description for sender in financial_senders))
 
     assert financial_pred_count == 0, "Financial automated emails should not generate follow-up predictions"
 
@@ -186,30 +185,29 @@ async def test_follow_up_predictions_allow_personal_finance_contacts(db, user_mo
     now = datetime.now(timezone.utc)
     hours_ago_5 = now - timedelta(hours=5)
 
-    event_store.store_event({
-        "id": "email-personal-finance-contact",
-        "type": "email.received",
-        "source": "google",
-        "timestamp": hours_ago_5.isoformat(),
-        "priority": "normal",
-        "payload": {
-            "message_id": "msg-personal-finance",
-            "from_address": "john.advisor@financialfirm.com",
-            "subject": "Following up on our meeting",
-            "snippet": "Hey, wanted to circle back on the portfolio discussion",
-        },
-        "metadata": {"related_contacts": []},
-    })
+    event_store.store_event(
+        {
+            "id": "email-personal-finance-contact",
+            "type": "email.received",
+            "source": "google",
+            "timestamp": hours_ago_5.isoformat(),
+            "priority": "normal",
+            "payload": {
+                "message_id": "msg-personal-finance",
+                "from_address": "john.advisor@financialfirm.com",
+                "subject": "Following up on our meeting",
+                "snippet": "Hey, wanted to circle back on the portfolio discussion",
+            },
+            "metadata": {"related_contacts": []},
+        }
+    )
 
     # Generate predictions
     predictions = await engine._check_follow_up_needs({})
 
     # Should generate a prediction for the personal contact
     # Description now uses resolved contact name (email prefix as fallback)
-    personal_pred = [
-        p for p in predictions
-        if "john.advisor" in p.description
-    ]
+    personal_pred = [p for p in predictions if "john.advisor" in p.description]
 
     assert len(personal_pred) == 1, "Personal finance contacts should generate predictions"
     assert personal_pred[0].prediction_type == "reminder"
@@ -231,28 +229,27 @@ async def test_fidelity_trade_confirmation_specific_case(db, user_model_store, e
     # Store multiple trade confirmation emails (as seen in diagnostic)
     for i, hours_delta in enumerate([6, 6, 15]):
         timestamp = now - timedelta(hours=hours_delta)
-        event_store.store_event({
-            "id": f"email-fidelity-{i}",
-            "type": "email.received",
-            "source": "google",
-            "timestamp": timestamp.isoformat(),
-            "priority": "normal",
-            "payload": {
-                "message_id": f"msg-fidelity-{i}",
-                "from_address": "Fidelity.Investments@mail.fidelity.com",
-                "subject": "Your trade confirmation is available",
-                "snippet": "Your order for 100 shares has been executed",
-            },
-            "metadata": {"related_contacts": []},
-        })
+        event_store.store_event(
+            {
+                "id": f"email-fidelity-{i}",
+                "type": "email.received",
+                "source": "google",
+                "timestamp": timestamp.isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "message_id": f"msg-fidelity-{i}",
+                    "from_address": "Fidelity.Investments@mail.fidelity.com",
+                    "subject": "Your trade confirmation is available",
+                    "snippet": "Your order for 100 shares has been executed",
+                },
+                "metadata": {"related_contacts": []},
+            }
+        )
 
     # Generate predictions
     predictions = await engine._check_follow_up_needs({})
 
     # NONE of the Fidelity emails should generate predictions
-    fidelity_preds = [
-        p for p in predictions
-        if "Fidelity.Investments@mail.fidelity.com" in p.description
-    ]
+    fidelity_preds = [p for p in predictions if "Fidelity.Investments@mail.fidelity.com" in p.description]
 
     assert len(fidelity_preds) == 0, "Fidelity trade confirmations should be completely filtered out"

@@ -41,7 +41,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 
 # Allow importing from project root
@@ -66,10 +66,10 @@ def _extract_actual_timestamp(payload: dict, event_timestamp: str) -> str | None
         The best actual timestamp string, or None if no improvement is found.
     """
     return (
-        payload.get("email_date")   # Google/Proton — actual Date header
-        or payload.get("sent_at")   # iMessage, Signal — message send time
+        payload.get("email_date")  # Google/Proton — actual Date header
+        or payload.get("sent_at")  # iMessage, Signal — message send time
         or payload.get("received_at")  # arrival time for some connectors
-        or payload.get("date")      # generic date field
+        or payload.get("date")  # generic date field
         or payload.get("start_time")  # CalDAV / Google Calendar meeting start
     )
 
@@ -114,7 +114,7 @@ def backfill(data_dir: str = "data", dry_run: bool = False, limit: int | None = 
 
     # Attach events.db to the user_model connection so we can JOIN across DBs.
     # Using ATTACH lets us do the cross-db join in a single statement.
-    um_conn.execute(f"ATTACH DATABASE ? AS eventsdb", (ev_db_path,))
+    um_conn.execute("ATTACH DATABASE ? AS eventsdb", (ev_db_path,))
 
     try:
         # Fetch episodes that have a source event ID to look up.
@@ -187,7 +187,9 @@ def backfill(data_dir: str = "data", dry_run: bool = False, limit: int | None = 
             if dry_run:
                 logger.info(
                     "  [DRY RUN] Would update episode %s: %s → %s",
-                    episode_id, current_episode_ts, better_ts_str,
+                    episode_id,
+                    current_episode_ts,
+                    better_ts_str,
                 )
             else:
                 um_conn.execute(
@@ -201,9 +203,11 @@ def backfill(data_dir: str = "data", dry_run: bool = False, limit: int | None = 
             um_conn.commit()
 
         logger.info(
-            "Done. updated=%d, skipped_no_payload=%d, skipped_no_better_ts=%d, "
-            "skipped_parse_fail=%d",
-            updated, skipped_no_payload, skipped_no_better_ts, skipped_ts_parse_fail,
+            "Done. updated=%d, skipped_no_payload=%d, skipped_no_better_ts=%d, skipped_parse_fail=%d",
+            updated,
+            skipped_no_payload,
+            skipped_no_better_ts,
+            skipped_ts_parse_fail,
         )
         return updated
 

@@ -33,16 +33,22 @@ def populated_db(db, user_model_store):
             response_time = (now - timedelta(days=i, minutes=30)).isoformat()
 
             # Received email
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_from, email_to)
                 VALUES (?, 'email.received', 'test', ?, 'medium', '{}', '{}', 'boss@company.com', 'user@company.com')
-            """, (f"email_recv_{i}", timestamp))
+            """,
+                (f"email_recv_{i}", timestamp),
+            )
 
             # Sent email in response
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_from, email_to)
                 VALUES (?, 'email.sent', 'test', ?, 'medium', '{}', '{}', 'user@company.com', 'boss@company.com')
-            """, (f"email_sent_{i}", response_time))
+            """,
+                (f"email_sent_{i}", response_time),
+            )
 
     # Populate user_model.db episodic memory for routine detection
     with db.get_connection("user_model") as conn:
@@ -50,12 +56,15 @@ def populated_db(db, user_model_store):
         for i in range(15):
             morning_time = (now - timedelta(days=i)).replace(hour=8, minute=30, second=0, microsecond=0)
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO episodes (id, event_id, interaction_type, content_summary,
                                      location, contacts_involved, outcome, timestamp)
                 VALUES (?, ?, 'email_received', 'Morning email check',
                        'home', '["boss@company.com"]', 'read', ?)
-            """, (f"morning_episode_{i}", f"morning_email_{i}", morning_time.isoformat()))
+            """,
+                (f"morning_episode_{i}", f"morning_email_{i}", morning_time.isoformat()),
+            )
 
     return db
 
@@ -89,16 +98,15 @@ async def test_routine_detection_publishes_events(populated_db, user_model_store
     await asyncio.sleep(0.1)
 
     # Verify events were published through event bus
-    assert event_bus.publish.call_count >= stored_count, \
+    assert event_bus.publish.call_count >= stored_count, (
         f"Expected at least {stored_count} publish calls, got {event_bus.publish.call_count}"
+    )
 
     # Verify event bus received routine events
-    routine_events = [
-        call for call in event_bus.publish.call_args_list
-        if call[0][0] == "usermodel.routine.updated"
-    ]
-    assert len(routine_events) == stored_count, \
+    routine_events = [call for call in event_bus.publish.call_args_list if call[0][0] == "usermodel.routine.updated"]
+    assert len(routine_events) == stored_count, (
         f"Event count mismatch: stored {stored_count} routines but published {len(routine_events)} events"
+    )
 
 
 @pytest.mark.asyncio
@@ -131,16 +139,15 @@ async def test_workflow_detection_publishes_events(populated_db, user_model_stor
     await asyncio.sleep(0.1)
 
     # Verify events were published through event bus
-    assert event_bus.publish.call_count >= workflow_stored, \
+    assert event_bus.publish.call_count >= workflow_stored, (
         f"Expected at least {workflow_stored} publish calls, got {event_bus.publish.call_count}"
+    )
 
     # Verify event bus received workflow events
-    workflow_events = [
-        call for call in event_bus.publish.call_args_list
-        if call[0][0] == "usermodel.workflow.updated"
-    ]
-    assert len(workflow_events) == workflow_stored, \
+    workflow_events = [call for call in event_bus.publish.call_args_list if call[0][0] == "usermodel.workflow.updated"]
+    assert len(workflow_events) == workflow_stored, (
         f"Event count mismatch: stored {workflow_stored} workflows but published {len(workflow_events)} events"
+    )
 
 
 @pytest.mark.asyncio
@@ -171,10 +178,7 @@ async def test_event_payloads_match_stored_data(populated_db, user_model_store, 
     await asyncio.sleep(0.1)
 
     # Check the published events via mock
-    workflow_calls = [
-        call for call in event_bus.publish.call_args_list
-        if call[0][0] == "usermodel.workflow.updated"
-    ]
+    workflow_calls = [call for call in event_bus.publish.call_args_list if call[0][0] == "usermodel.workflow.updated"]
 
     assert len(workflow_calls) > 0, "No workflow events published"
 
@@ -252,22 +256,18 @@ async def test_detection_loop_integration(populated_db, user_model_store, event_
     await asyncio.sleep(0.1)
 
     # Verify both types of events were published
-    routine_events = [
-        call for call in event_bus.publish.call_args_list
-        if call[0][0] == "usermodel.routine.updated"
-    ]
-    workflow_events = [
-        call for call in event_bus.publish.call_args_list
-        if call[0][0] == "usermodel.workflow.updated"
-    ]
+    routine_events = [call for call in event_bus.publish.call_args_list if call[0][0] == "usermodel.routine.updated"]
+    workflow_events = [call for call in event_bus.publish.call_args_list if call[0][0] == "usermodel.workflow.updated"]
 
     # At least one of each should exist if any were stored
     if stored_count > 0:
-        assert len(routine_events) == stored_count, \
+        assert len(routine_events) == stored_count, (
             f"Stored {stored_count} routines but published {len(routine_events)} events"
+        )
     if workflow_stored > 0:
-        assert len(workflow_events) == workflow_stored, \
+        assert len(workflow_events) == workflow_stored, (
             f"Stored {workflow_stored} workflows but published {len(workflow_events)} events"
+        )
 
 
 @pytest.mark.asyncio
@@ -293,8 +293,7 @@ async def test_publishing_from_thread_fails_silently(populated_db, user_model_st
 
     # BUG DEMONSTRATION: No events were published because _emit_telemetry()
     # silently failed when called from the thread pool
-    assert event_bus.publish.call_count == 0, \
-        "BUG: Events should NOT be published from thread context (no event loop)"
+    assert event_bus.publish.call_count == 0, "BUG: Events should NOT be published from thread context (no event loop)"
 
     # Now publish from async context (the fix)
     for workflow in workflows:
@@ -315,5 +314,6 @@ async def test_publishing_from_thread_fails_silently(populated_db, user_model_st
     await asyncio.sleep(0.1)
 
     # FIX VERIFICATION: Now events ARE published because we're in async context
-    assert event_bus.publish.call_count == workflow_stored, \
+    assert event_bus.publish.call_count == workflow_stored, (
         f"Fix works: published {event_bus.publish.call_count} events from async context"
+    )

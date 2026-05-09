@@ -110,10 +110,7 @@ class TestTopicProfilePersistence:
         # These content keywords should be present
         content_keywords = {"machine", "learning", "neural", "networks", "data", "science"}
         found = content_keywords & set(topic_counts.keys())
-        assert found, (
-            f"Expected at least one of {content_keywords} in topic_counts, "
-            f"got: {set(topic_counts.keys())}"
-        )
+        assert found, f"Expected at least one of {content_keywords} in topic_counts, got: {set(topic_counts.keys())}"
 
         # HTML/CSS tokens must NOT be present
         html_css_garbage = {"html", "head", "body", "style", "padding", "color", "blue", "nbsp", "btn"}
@@ -133,9 +130,7 @@ class TestTopicProfilePersistence:
         counts = profile["data"]["topic_counts"]
 
         # "python" appears in all 3 messages — count must be 3
-        assert counts.get("python", 0) == 3, (
-            f"Expected python count=3, got {counts.get('python', 0)}"
-        )
+        assert counts.get("python", 0) == 3, f"Expected python count=3, got {counts.get('python', 0)}"
         # recent_topics ring must have 3 entries
         assert len(profile["data"]["recent_topics"]) == 3
 
@@ -157,9 +152,7 @@ class TestTopicProfilePersistence:
 
         # Every keyword returned in the signal must be persisted
         missing = extracted_topics - persisted_counts
-        assert not missing, (
-            f"These keywords were in the signal but not persisted: {missing}"
-        )
+        assert not missing, f"These keywords were in the signal but not persisted: {missing}"
 
 
 # ---------------------------------------------------------------------------
@@ -172,10 +165,7 @@ class TestHTMLParsingSafety:
 
     def test_malformed_html_unclosed_tags_still_extracts_topics(self, topic_extractor):
         """Unclosed tags must not crash extraction — fallback produces usable text."""
-        malformed = (
-            "<p>This email discusses machine learning and artificial intelligence "
-            "<b>without closing tags"
-        )
+        malformed = "<p>This email discusses machine learning and artificial intelligence <b>without closing tags"
         event = _email_event(body=malformed)
 
         # Should not raise
@@ -198,6 +188,7 @@ class TestHTMLParsingSafety:
         def raising_stripper(html_text: str) -> str:
             """Simulate HTMLParser choking on corrupted input."""
             from services.signal_extractor.topic import HTMLStripper
+
             with patch.object(HTMLStripper, "feed", side_effect=Exception("encoding error")):
                 return original_extract(html_text)
 
@@ -230,9 +221,7 @@ class TestHTMLParsingSafety:
         from services.signal_extractor.topic import HTMLStripper
 
         with patch.object(HTMLStripper, "feed", side_effect=Exception("bad html")):
-            result = topic_extractor._strip_html(
-                "<div>Hello <span>world</span> content</div>"
-            )
+            result = topic_extractor._strip_html("<div>Hello <span>world</span> content</div>")
 
         assert "<" not in result, "All tags must be removed by the regex fallback"
         assert "Hello" in result

@@ -66,16 +66,18 @@ async def test_reminder_automated_sender_immediately_inaccurate_via_signals(db):
             (
                 pred_id,
                 "reminder",
-                'Unreplied message from Fidelity.Investments@mail.fidelity.com: '
+                "Unreplied message from Fidelity.Investments@mail.fidelity.com: "
                 '"Your trade confirmation" (5 hours ago)',
                 0.55,
                 "suggest",
                 "24_hours",
                 "Reply to Fidelity.Investments",
-                json.dumps({
-                    "contact_email": "Fidelity.Investments@mail.fidelity.com",
-                    "contact_name": "Fidelity.Investments",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "Fidelity.Investments@mail.fidelity.com",
+                        "contact_name": "Fidelity.Investments",
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -84,9 +86,7 @@ async def test_reminder_automated_sender_immediately_inaccurate_via_signals(db):
     stats = await tracker.run_inference_cycle()
 
     # Should be resolved in this cycle — automated sender, no waiting
-    assert stats["marked_inaccurate"] >= 1, (
-        "Expected automated-sender reminder to be marked inaccurate immediately"
-    )
+    assert stats["marked_inaccurate"] >= 1, "Expected automated-sender reminder to be marked inaccurate immediately"
 
     with db.get_connection("user_model") as conn:
         row = conn.execute(
@@ -121,8 +121,7 @@ async def test_reminder_automated_sender_via_description_extraction(db):
             (
                 pred_id,
                 "reminder",
-                'Unreplied message from noreply@instagram.com: '
-                '"Your account security update" (8 hours ago)',
+                'Unreplied message from noreply@instagram.com: "Your account security update" (8 hours ago)',
                 0.45,
                 "suggest",
                 "24_hours",
@@ -141,9 +140,7 @@ async def test_reminder_automated_sender_via_description_extraction(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["was_accurate"] == 0, (
-        "Automated sender parsed from description should be immediately INACCURATE"
-    )
+    assert row["was_accurate"] == 0, "Automated sender parsed from description should be immediately INACCURATE"
 
 
 @pytest.mark.asyncio
@@ -168,16 +165,17 @@ async def test_reminder_fidelity_mail_subdomain_detected(db):
             (
                 pred_id,
                 "reminder",
-                'Unreplied message from benefitscenter@mail.fidelity.com: '
-                '"Name your beneficiary today" (1 hour ago)',
+                'Unreplied message from benefitscenter@mail.fidelity.com: "Name your beneficiary today" (1 hour ago)',
                 0.50,
                 "suggest",
                 "24_hours",
                 "Reply to benefitscenter",
-                json.dumps({
-                    "contact_email": "benefitscenter@mail.fidelity.com",
-                    "contact_name": "benefitscenter",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "benefitscenter@mail.fidelity.com",
+                        "contact_name": "benefitscenter",
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -191,9 +189,7 @@ async def test_reminder_fidelity_mail_subdomain_detected(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["was_accurate"] == 0, (
-        "Fidelity mail subdomain should be detected as automated and marked INACCURATE"
-    )
+    assert row["was_accurate"] == 0, "Fidelity mail subdomain should be detected as automated and marked INACCURATE"
 
 
 @pytest.mark.asyncio
@@ -223,10 +219,12 @@ async def test_reminder_real_human_waits_for_window(db):
                 "suggest",
                 "24_hours",
                 "Reply to Alice",
-                json.dumps({
-                    "contact_email": "alice@gmail.com",
-                    "contact_name": "Alice",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "alice@gmail.com",
+                        "contact_name": "Alice",
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -241,12 +239,8 @@ async def test_reminder_real_human_waits_for_window(db):
         ).fetchone()
 
     # Should NOT be resolved yet — still within the 48-hour window, no reply sent
-    assert row["was_accurate"] is None, (
-        "Human contact reminder should not be resolved within the 48-hour window"
-    )
-    assert row["resolved_at"] is None, (
-        "Human contact reminder should remain unresolved during the window"
-    )
+    assert row["was_accurate"] is None, "Human contact reminder should not be resolved within the 48-hour window"
+    assert row["resolved_at"] is None, "Human contact reminder should remain unresolved during the window"
 
 
 @pytest.mark.asyncio
@@ -274,10 +268,12 @@ async def test_reminder_real_human_accurate_after_reply(db):
                 "suggest",
                 "24_hours",
                 "Reply to Bob",
-                json.dumps({
-                    "contact_email": "bob@company.com",
-                    "contact_name": "Bob",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "bob@company.com",
+                        "contact_name": "Bob",
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -294,10 +290,12 @@ async def test_reminder_real_human_accurate_after_reply(db):
                 "proton_mail",
                 reply_at.isoformat(),
                 "normal",
-                json.dumps({
-                    "to_addresses": ["bob@company.com"],
-                    "subject": "Re: Project update needed",
-                }),
+                json.dumps(
+                    {
+                        "to_addresses": ["bob@company.com"],
+                        "subject": "Re: Project update needed",
+                    }
+                ),
                 "{}",
             ),
         )
@@ -362,8 +360,7 @@ async def test_reminder_multiple_automated_senders_bulk_resolved(db):
     stats = await tracker.run_inference_cycle()
 
     assert stats["marked_inaccurate"] >= len(cases), (
-        f"Expected all {len(cases)} automated-sender reminders to be resolved, "
-        f"got {stats['marked_inaccurate']}"
+        f"Expected all {len(cases)} automated-sender reminders to be resolved, got {stats['marked_inaccurate']}"
     )
 
     with db.get_connection("user_model") as conn:
@@ -372,9 +369,7 @@ async def test_reminder_multiple_automated_senders_bulk_resolved(db):
                 "SELECT was_accurate FROM predictions WHERE id = ?",
                 (pred_id,),
             ).fetchone()
-            assert row["was_accurate"] == 0, (
-                f"Prediction {pred_id} should be marked INACCURATE"
-            )
+            assert row["was_accurate"] == 0, f"Prediction {pred_id} should be marked INACCURATE"
 
 
 # ============================================================================
@@ -420,9 +415,7 @@ async def test_reminder_no_contact_info_resolves_after_48h(db):
     stats = await tracker.run_inference_cycle()
 
     # Should be marked inaccurate due to the 48-hour no-contact timeout
-    assert stats["marked_inaccurate"] >= 1, (
-        "Expected no-contact prediction older than 48h to be marked inaccurate"
-    )
+    assert stats["marked_inaccurate"] >= 1, "Expected no-contact prediction older than 48h to be marked inaccurate"
 
     with db.get_connection("user_model") as conn:
         row = conn.execute(
@@ -430,9 +423,7 @@ async def test_reminder_no_contact_info_resolves_after_48h(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["was_accurate"] == 0, (
-        "No-contact reminder older than 48h should be marked INACCURATE"
-    )
+    assert row["was_accurate"] == 0, "No-contact reminder older than 48h should be marked INACCURATE"
     assert row["resolved_at"] is not None, "Prediction should be resolved"
 
 
@@ -479,9 +470,7 @@ async def test_reminder_no_contact_info_waits_within_48h(db):
         ).fetchone()
 
     # Should NOT be resolved yet — within the 48-hour window
-    assert row["was_accurate"] is None, (
-        "No-contact reminder within 48-hour window should remain unresolved"
-    )
+    assert row["was_accurate"] is None, "No-contact reminder within 48-hour window should remain unresolved"
     assert row["resolved_at"] is None
 
 
@@ -528,9 +517,7 @@ async def test_reminder_no_contact_info_list_format_timeout(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["was_accurate"] == 0, (
-        "Empty-list format no-contact reminder older than 48h should be INACCURATE"
-    )
+    assert row["was_accurate"] == 0, "Empty-list format no-contact reminder older than 48h should be INACCURATE"
 
 
 # ============================================================================
@@ -566,10 +553,12 @@ async def test_reminder_inaccurate_after_48h_with_human_contact(db):
                 "suggest",
                 "24_hours",
                 "Reply to Charlie",
-                json.dumps({
-                    "contact_email": "charlie@company.com",
-                    "contact_name": "Charlie",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "charlie@company.com",
+                        "contact_name": "Charlie",
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -585,6 +574,4 @@ async def test_reminder_inaccurate_after_48h_with_human_contact(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["was_accurate"] == 0, (
-        "Human contact reminder with no reply after 48h should be INACCURATE"
-    )
+    assert row["was_accurate"] == 0, "Human contact reminder with no reply after 48h should be INACCURATE"

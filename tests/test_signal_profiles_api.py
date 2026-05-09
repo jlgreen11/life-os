@@ -163,9 +163,7 @@ def test_profile_data_is_dict(client, populated_profiles):
     profiles = response.json()["profiles"]
 
     for ptype, entry in profiles.items():
-        assert isinstance(entry["data"], dict), (
-            f"Profile {ptype!r} data should be a dict, got {type(entry['data'])}"
-        )
+        assert isinstance(entry["data"], dict), f"Profile {ptype!r} data should be a dict, got {type(entry['data'])}"
 
 
 def test_profile_data_content_matches_stored_values(client, populated_profiles):
@@ -270,9 +268,7 @@ def test_filter_all_known_valid_types_accepted(client):
     ]
     for ptype in known_types:
         response = client.get(f"/api/user-model/signal-profiles?profile_type={ptype}")
-        assert response.status_code == 200, (
-            f"Expected 200 for profile_type={ptype!r}, got {response.status_code}"
-        )
+        assert response.status_code == 200, f"Expected 200 for profile_type={ptype!r}, got {response.status_code}"
 
 
 # ---------------------------------------------------------------------------

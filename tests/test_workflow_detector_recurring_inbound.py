@@ -28,10 +28,15 @@ def _ts(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def _insert_event(conn, event_type: str, timestamp: datetime, *,
-                  email_from: str | None = None,
-                  email_to: str | None = None,
-                  source: str = "test"):
+def _insert_event(
+    conn,
+    event_type: str,
+    timestamp: datetime,
+    *,
+    email_from: str | None = None,
+    email_to: str | None = None,
+    source: str = "test",
+):
     """Insert a single event into the events table with denormalized columns."""
     eid = str(uuid.uuid4())
     conn.execute(

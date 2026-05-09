@@ -46,10 +46,10 @@ logger = logging.getLogger(__name__)
 
 # -- Drift tuning constants --------------------------------------------------
 
-DRIFT_STEP = 0.02        # How much each feedback signal nudges the drift
-MAX_DRIFT = 0.3           # Absolute cap on AI drift (user stays in control)
-MIN_INTERACTIONS = 5      # Minimum events before drift kicks in
-DECAY_HALF_LIFE_DAYS = 28 # Drift decays toward zero with this half-life
+DRIFT_STEP = 0.02  # How much each feedback signal nudges the drift
+MAX_DRIFT = 0.3  # Absolute cap on AI drift (user stays in control)
+MIN_INTERACTIONS = 5  # Minimum events before drift kicks in
+DECAY_HALF_LIFE_DAYS = 28  # Drift decays toward zero with this half-life
 
 # -- Default source weight seeds ---------------------------------------------
 # These are created on first run.  Users can adjust; AI will drift from here.
@@ -306,9 +306,16 @@ class SourceWeightManager:
 
         # Common personal email domains
         personal_domains = {
-            "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
-            "icloud.com", "me.com", "aol.com", "protonmail.com",
-            "proton.me", "fastmail.com",
+            "gmail.com",
+            "yahoo.com",
+            "hotmail.com",
+            "outlook.com",
+            "icloud.com",
+            "me.com",
+            "aol.com",
+            "protonmail.com",
+            "proton.me",
+            "fastmail.com",
         }
         if domain in personal_domains:
             return "email.personal"
@@ -357,9 +364,7 @@ class SourceWeightManager:
     def get_all_weights(self) -> list[dict]:
         """Return all source weights with computed effective values."""
         with self.db.get_connection("preferences") as conn:
-            rows = conn.execute(
-                """SELECT * FROM source_weights ORDER BY category, source_key"""
-            ).fetchall()
+            rows = conn.execute("""SELECT * FROM source_weights ORDER BY category, source_key""").fetchall()
 
         results = []
         for row in rows:
@@ -451,12 +456,14 @@ class SourceWeightManager:
 
             # Record the reset in drift history
             history = json.loads(existing["drift_history"] or "[]")
-            history.append({
-                "timestamp": now,
-                "old_drift": existing["ai_drift"],
-                "new_drift": 0.0,
-                "reason": "user_reset",
-            })
+            history.append(
+                {
+                    "timestamp": now,
+                    "old_drift": existing["ai_drift"],
+                    "new_drift": 0.0,
+                    "reason": "user_reset",
+                }
+            )
             # Keep last 50 history entries
             history = history[-50:]
 
@@ -470,8 +477,9 @@ class SourceWeightManager:
 
         return self._get_weight_row(source_key)
 
-    def add_source(self, source_key: str, category: str, label: str,
-                   description: str = "", user_weight: float = 0.5) -> dict:
+    def add_source(
+        self, source_key: str, category: str, label: str, description: str = "", user_weight: float = 0.5
+    ) -> dict:
         """Add a new custom source weight (user-created).
 
         Users can create custom source classifications beyond the defaults,
@@ -685,9 +693,7 @@ class SourceWeightManager:
                     continue
 
                 # Check for drift saturation and warn if user preference becomes invisible
-                saturation = self._check_drift_saturation(
-                    row_dict["source_key"], row_dict["user_weight"], new_drift
-                )
+                saturation = self._check_drift_saturation(row_dict["source_key"], row_dict["user_weight"], new_drift)
                 if saturation:
                     logger.warning(
                         "Source weight drift saturated for %s: drift=%s, user_weight=%s, "
@@ -731,9 +737,7 @@ class SourceWeightManager:
     # Drift Saturation Check
     # ------------------------------------------------------------------
 
-    def _check_drift_saturation(
-        self, source_key: str, user_weight: float, new_drift: float
-    ) -> dict:
+    def _check_drift_saturation(self, source_key: str, user_weight: float, new_drift: float) -> dict:
         """Check whether the given drift saturates the effective weight.
 
         Saturation occurs when:
@@ -756,11 +760,7 @@ class SourceWeightManager:
             ``drift``, ``effective_weight``, ``saturated`` (always True).
         """
         effective = max(0.0, min(1.0, user_weight + new_drift))
-        is_saturated = (
-            abs(new_drift) >= MAX_DRIFT
-            or user_weight + new_drift <= 0.0
-            or user_weight + new_drift >= 1.0
-        )
+        is_saturated = abs(new_drift) >= MAX_DRIFT or user_weight + new_drift <= 0.0 or user_weight + new_drift >= 1.0
         if not is_saturated:
             return {}
         return {
@@ -870,9 +870,7 @@ class SourceWeightManager:
         # Per-source details and stale source detection
         try:
             with self.db.get_connection("preferences") as conn:
-                rows = conn.execute(
-                    "SELECT * FROM source_weights ORDER BY source_key"
-                ).fetchall()
+                rows = conn.execute("SELECT * FROM source_weights ORDER BY source_key").fetchall()
 
             stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
             per_source = []
@@ -884,16 +882,18 @@ class SourceWeightManager:
                 effective = max(0.0, min(1.0, d["user_weight"] + d["ai_drift"]))
                 # Use ai_updated_at if available, otherwise fall back to created_at
                 last_updated = d.get("ai_updated_at") or d.get("created_at")
-                per_source.append({
-                    "source_key": d["source_key"],
-                    "interactions": d["interactions"],
-                    "engagements": d["engagements"],
-                    "dismissals": d["dismissals"],
-                    "user_weight": d["user_weight"],
-                    "ai_drift": d["ai_drift"],
-                    "effective_weight": round(effective, 4),
-                    "updated_at": last_updated,
-                })
+                per_source.append(
+                    {
+                        "source_key": d["source_key"],
+                        "interactions": d["interactions"],
+                        "engagements": d["engagements"],
+                        "dismissals": d["dismissals"],
+                        "user_weight": d["user_weight"],
+                        "ai_drift": d["ai_drift"],
+                        "effective_weight": round(effective, 4),
+                        "updated_at": last_updated,
+                    }
+                )
 
                 # Stale: has interactions but hasn't been updated in 7+ days
                 if d["interactions"] > 0 and last_updated and last_updated < stale_cutoff:
@@ -901,11 +901,7 @@ class SourceWeightManager:
 
                 # Saturated: drift at cap or effective weight is pinned at 0 or 1,
                 # meaning the user's explicit weight preference has no visible effect.
-                if (
-                    abs(d["ai_drift"]) >= MAX_DRIFT
-                    or effective == 0.0
-                    or effective == 1.0
-                ):
+                if abs(d["ai_drift"]) >= MAX_DRIFT or effective == 0.0 or effective == 1.0:
                     saturated_sources.append(d["source_key"])
 
             result["per_source"] = per_source

@@ -24,6 +24,7 @@ from web.app import create_web_app
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def mock_life_os(db, user_model_store, event_bus):
     """Create a LifeOS-like object with real DB/stores and mocked services.
@@ -60,17 +61,15 @@ def client(mock_life_os):
     return TestClient(app)
 
 
-def _seed_fact(user_model_store, key="test_fact", category="preference",
-               value="blue", confidence=0.8):
+def _seed_fact(user_model_store, key="test_fact", category="preference", value="blue", confidence=0.8):
     """Helper to insert a semantic fact via the store for test setup."""
-    user_model_store.update_semantic_fact(
-        key=key, category=category, value=value, confidence=confidence
-    )
+    user_model_store.update_semantic_fact(key=key, category=category, value=value, confidence=confidence)
 
 
 # ---------------------------------------------------------------------------
 # PATCH /api/user-model/facts/{key} — Fact Correction
 # ---------------------------------------------------------------------------
+
 
 class TestCorrectFact:
     """Tests for the PATCH /api/user-model/facts/{key} endpoint."""
@@ -237,6 +236,7 @@ class TestCorrectFact:
 # DELETE /api/user-model/facts/{key} — Fact Deletion
 # ---------------------------------------------------------------------------
 
+
 class TestDeleteFact:
     """Tests for the DELETE /api/user-model/facts/{key} endpoint."""
 
@@ -275,6 +275,7 @@ class TestDeleteFact:
 # ---------------------------------------------------------------------------
 # Integration — Combined Operations
 # ---------------------------------------------------------------------------
+
 
 class TestFactIntegration:
     """Integration tests combining correction and deletion operations."""

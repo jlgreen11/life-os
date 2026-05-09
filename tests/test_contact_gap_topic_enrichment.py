@@ -35,8 +35,9 @@ from services.insight_engine.engine import InsightEngine
 # ---------------------------------------------------------------------------
 
 
-def _store_episode(db, email_addr: str, topics: list, days_ago: float = 5.0,
-                   content_summary: str = "Discussed project plan") -> str:
+def _store_episode(
+    db, email_addr: str, topics: list, days_ago: float = 5.0, content_summary: str = "Discussed project plan"
+) -> str:
     """Insert a synthetic episode into the user_model DB and return its id.
 
     Args:
@@ -94,8 +95,7 @@ def _make_overdue_profile(email_addr: str, now: datetime) -> dict:
                 "outbound_count": 5,
                 "last_interaction": (now - timedelta(days=overdue_days)).isoformat(),
                 "interaction_timestamps": [
-                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat()
-                    for i in range(10)
+                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat() for i in range(10)
                 ],
             }
         }
@@ -138,11 +138,9 @@ def test_get_contact_last_topics_episode_without_topics(db, user_model_store):
 def test_get_contact_last_topics_returns_most_recent(db, user_model_store):
     """When multiple episodes match, returns topics from the most recent one."""
     # Older episode: topics about the old project
-    _store_episode(db, "alice@example.com", ["old-project", "legacy"],
-                   days_ago=30.0)
+    _store_episode(db, "alice@example.com", ["old-project", "legacy"], days_ago=30.0)
     # Newer episode: topics about the current project
-    _store_episode(db, "alice@example.com", ["q2-roadmap", "hiring"],
-                   days_ago=5.0)
+    _store_episode(db, "alice@example.com", ["q2-roadmap", "hiring"], days_ago=5.0)
     engine = InsightEngine(db, user_model_store)
 
     topics = engine._get_contact_last_topics("alice@example.com")
@@ -152,8 +150,7 @@ def test_get_contact_last_topics_returns_most_recent(db, user_model_store):
 
 def test_get_contact_last_topics_respects_limit(db, user_model_store):
     """limit parameter caps the returned list."""
-    _store_episode(db, "alice@example.com",
-                   ["alpha", "beta", "gamma", "delta", "epsilon"])
+    _store_episode(db, "alice@example.com", ["alpha", "beta", "gamma", "delta", "epsilon"])
     engine = InsightEngine(db, user_model_store)
 
     topics = engine._get_contact_last_topics("alice@example.com", limit=2)
@@ -163,8 +160,7 @@ def test_get_contact_last_topics_respects_limit(db, user_model_store):
 
 def test_get_contact_last_topics_default_limit_is_three(db, user_model_store):
     """Default limit of 3 is applied when limit is not specified."""
-    _store_episode(db, "alice@example.com",
-                   ["alpha", "beta", "gamma", "delta"])
+    _store_episode(db, "alice@example.com", ["alpha", "beta", "gamma", "delta"])
     engine = InsightEngine(db, user_model_store)
 
     topics = engine._get_contact_last_topics("alice@example.com")
@@ -194,18 +190,14 @@ def test_get_contact_last_topics_empty_table(db, user_model_store):
 
 
 @pytest.mark.asyncio
-async def test_contact_gap_includes_topic_suffix_when_episode_exists(
-    db, user_model_store
-):
+async def test_contact_gap_includes_topic_suffix_when_episode_exists(db, user_model_store):
     """Summary appends 'Last topics: ...' when episodic data is available."""
     email = "alice@example.com"
     now = datetime.now(timezone.utc)
 
     # Episode with clear topic tags
     _store_episode(db, email, ["budget-review", "q1-planning"])
-    user_model_store.update_signal_profile(
-        "relationships", _make_overdue_profile(email, now)
-    )
+    user_model_store.update_signal_profile("relationships", _make_overdue_profile(email, now))
     engine = InsightEngine(db, user_model_store)
 
     insights = engine._contact_gap_insights()
@@ -222,9 +214,7 @@ async def test_contact_gap_no_topic_suffix_when_no_episode(db, user_model_store)
     email = "ghost@example.com"
     now = datetime.now(timezone.utc)
 
-    user_model_store.update_signal_profile(
-        "relationships", _make_overdue_profile(email, now)
-    )
+    user_model_store.update_signal_profile("relationships", _make_overdue_profile(email, now))
     engine = InsightEngine(db, user_model_store)
 
     insights = engine._contact_gap_insights()
@@ -240,9 +230,7 @@ async def test_contact_gap_topics_in_evidence(db, user_model_store):
     now = datetime.now(timezone.utc)
 
     _store_episode(db, email, ["project-deadline", "sprint-review"])
-    user_model_store.update_signal_profile(
-        "relationships", _make_overdue_profile(email, now)
-    )
+    user_model_store.update_signal_profile("relationships", _make_overdue_profile(email, now))
     engine = InsightEngine(db, user_model_store)
 
     insights = engine._contact_gap_insights()
@@ -262,9 +250,7 @@ async def test_contact_gap_standard_evidence_always_present(db, user_model_store
     email = "charlie@example.com"
     now = datetime.now(timezone.utc)
 
-    user_model_store.update_signal_profile(
-        "relationships", _make_overdue_profile(email, now)
-    )
+    user_model_store.update_signal_profile("relationships", _make_overdue_profile(email, now))
     engine = InsightEngine(db, user_model_store)
 
     insights = engine._contact_gap_insights()
@@ -284,9 +270,7 @@ async def test_contact_gap_episode_wrong_contact_no_topic_suffix(db, user_model_
 
     # Episode belongs to bob, not alice
     _store_episode(db, "bob@example.com", ["finance", "tax"])
-    user_model_store.update_signal_profile(
-        "relationships", _make_overdue_profile(email, now)
-    )
+    user_model_store.update_signal_profile("relationships", _make_overdue_profile(email, now))
     engine = InsightEngine(db, user_model_store)
 
     insights = engine._contact_gap_insights()
@@ -295,17 +279,13 @@ async def test_contact_gap_episode_wrong_contact_no_topic_suffix(db, user_model_
 
 
 @pytest.mark.asyncio
-async def test_contact_gap_insight_still_fires_when_topics_unavailable(
-    db, user_model_store
-):
+async def test_contact_gap_insight_still_fires_when_topics_unavailable(db, user_model_store):
     """Insight is generated even when topic lookup returns nothing (fail-open)."""
     email = "nodata@example.com"
     now = datetime.now(timezone.utc)
 
     # No episode stored — topic enrichment returns empty list
-    user_model_store.update_signal_profile(
-        "relationships", _make_overdue_profile(email, now)
-    )
+    user_model_store.update_signal_profile("relationships", _make_overdue_profile(email, now))
     engine = InsightEngine(db, user_model_store)
 
     insights = engine._contact_gap_insights()

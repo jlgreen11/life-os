@@ -305,8 +305,8 @@ class TestCadenceDomainResponseTimes:
         profile_data = {
             "hourly_activity": {str(h): 0 for h in range(24)},
             "avg_response_time_by_domain": {
-                "company.com": 180,    # 3 minutes — fast
-                "partner.org": 600,    # 10 minutes — moderate
+                "company.com": 180,  # 3 minutes — fast
+                "partner.org": 600,  # 10 minutes — moderate
             },
         }
 
@@ -328,7 +328,7 @@ class TestCadenceDomainResponseTimes:
         profile_data = {
             "hourly_activity": {str(h): 0 for h in range(24)},
             "avg_response_time_by_domain": {
-                "newsletter.com": 7200,   # 2 hours — slow
+                "newsletter.com": 7200,  # 2 hours — slow
                 "spam-domain.io": 14400,  # 4 hours — very slow
             },
         }
@@ -576,10 +576,9 @@ class TestMoodHighStress:
     def test_high_stress_above_30_percent(self, user_model_store):
         """When >30% of signals are negative_language, infer high_stress baseline."""
         # 4 out of 10 signals = 40% negative → high stress
-        recent_signals = (
-            [{"signal_type": "negative_language", "value": 0.8} for _ in range(4)]
-            + [{"signal_type": "positive_language", "value": 0.7} for _ in range(6)]
-        )
+        recent_signals = [{"signal_type": "negative_language", "value": 0.8} for _ in range(4)] + [
+            {"signal_type": "positive_language", "value": 0.7} for _ in range(6)
+        ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": recent_signals})
         _set_samples(user_model_store, "mood_signals", 100)
 
@@ -619,9 +618,7 @@ class TestMoodLowStress:
     def test_low_stress_below_10_percent(self, user_model_store):
         """When <10% of signals are negative_language, infer low_stress baseline."""
         # 0 out of 10 signals are negative → 0% < 10%
-        recent_signals = [
-            {"signal_type": "positive_language", "value": 0.8} for _ in range(10)
-        ]
+        recent_signals = [{"signal_type": "positive_language", "value": 0.8} for _ in range(10)]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": recent_signals})
         _set_samples(user_model_store, "mood_signals", 100)
 
@@ -637,10 +634,9 @@ class TestMoodLowStress:
     def test_no_stress_fact_for_moderate_stress(self, user_model_store):
         """When stress ratio is between 10-30%, no stress_baseline fact is stored."""
         # 2 out of 10 = 20% negative → between 10% and 30%
-        recent_signals = (
-            [{"signal_type": "negative_language", "value": 0.8} for _ in range(2)]
-            + [{"signal_type": "positive_language", "value": 0.7} for _ in range(8)]
-        )
+        recent_signals = [{"signal_type": "negative_language", "value": 0.8} for _ in range(2)] + [
+            {"signal_type": "positive_language", "value": 0.7} for _ in range(8)
+        ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": recent_signals})
         _set_samples(user_model_store, "mood_signals", 50)
 
@@ -658,10 +654,9 @@ class TestMoodIncomingPressure:
     def test_high_pressure_above_20_percent(self, user_model_store):
         """When >20% of signals are incoming_pressure, infer high_pressure_environment."""
         # 3 out of 10 = 30% incoming pressure
-        recent_signals = (
-            [{"signal_type": "incoming_pressure", "value": 0.9} for _ in range(3)]
-            + [{"signal_type": "positive_language", "value": 0.6} for _ in range(7)]
-        )
+        recent_signals = [{"signal_type": "incoming_pressure", "value": 0.9} for _ in range(3)] + [
+            {"signal_type": "positive_language", "value": 0.6} for _ in range(7)
+        ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": recent_signals})
         _set_samples(user_model_store, "mood_signals", 50)
 
@@ -677,10 +672,9 @@ class TestMoodIncomingPressure:
     def test_no_pressure_fact_below_20_percent(self, user_model_store):
         """When incoming_pressure signals are <=20%, no pressure fact is stored."""
         # 1 out of 10 = 10% incoming pressure → below 20%
-        recent_signals = (
-            [{"signal_type": "incoming_pressure", "value": 0.9}]
-            + [{"signal_type": "positive_language", "value": 0.6} for _ in range(9)]
-        )
+        recent_signals = [{"signal_type": "incoming_pressure", "value": 0.9}] + [
+            {"signal_type": "positive_language", "value": 0.6} for _ in range(9)
+        ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": recent_signals})
         _set_samples(user_model_store, "mood_signals", 50)
 
@@ -763,9 +757,7 @@ class TestMoodEarlyInferenceConfidence:
         conf_3 = inferrer._early_inference_confidence(3, old_threshold=5)
         conf_10 = inferrer._early_inference_confidence(10, old_threshold=5)
 
-        assert conf_3 < conf_10, (
-            f"Confidence at 3 samples ({conf_3}) should be less than at 10 samples ({conf_10})"
-        )
+        assert conf_3 < conf_10, f"Confidence at 3 samples ({conf_3}) should be less than at 10 samples ({conf_10})"
 
     def test_4_samples_between_3_and_5(self, user_model_store):
         """Samples=4 (between new=3 and old=5 thresholds) scales linearly."""
@@ -816,10 +808,9 @@ class TestMoodFactProvenance:
 
     def test_pressure_fact_has_correct_key(self, user_model_store):
         """Incoming pressure fact uses key='incoming_pressure_exposure'."""
-        recent_signals = (
-            [{"signal_type": "incoming_pressure", "value": 0.9} for _ in range(5)]
-            + [{"signal_type": "positive_language", "value": 0.6} for _ in range(5)]
-        )
+        recent_signals = [{"signal_type": "incoming_pressure", "value": 0.9} for _ in range(5)] + [
+            {"signal_type": "positive_language", "value": 0.6} for _ in range(5)
+        ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": recent_signals})
         _set_samples(user_model_store, "mood_signals", 50)
 

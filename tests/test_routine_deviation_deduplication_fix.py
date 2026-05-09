@@ -51,12 +51,14 @@ def sample_routine(db):
             (
                 "Morning email check",
                 "morning",
-                json.dumps([
-                    {"order": 0, "action": "email_received", "typical_duration_minutes": 5.0},
-                    {"order": 1, "action": "email_received", "typical_duration_minutes": 5.0},
-                ]),
+                json.dumps(
+                    [
+                        {"order": 0, "action": "email_received", "typical_duration_minutes": 5.0},
+                        {"order": 1, "action": "email_received", "typical_duration_minutes": 5.0},
+                    ]
+                ),
                 1.0,  # Perfect consistency
-                50,   # Well-established routine
+                50,  # Well-established routine
             ),
         )
         conn.commit()
@@ -132,10 +134,7 @@ def test_deduplication_query_uses_correct_prediction_type(db, user_model_store, 
     # Verify deduplication worked:
     # - Should NOT create a new prediction for "Morning email check"
     # - The existing routine_deviation prediction should block it
-    routine_names = [
-        pred.supporting_signals.get("routine_name")
-        for pred in predictions
-    ]
+    routine_names = [pred.supporting_signals.get("routine_name") for pred in predictions]
 
     assert "Morning email check" not in routine_names, (
         "Deduplication failed: created duplicate prediction for routine that "
@@ -179,8 +178,7 @@ def test_deduplication_ignores_opportunity_predictions(db, user_model_store, pre
 
     # Verify a routine_deviation prediction was created
     routine_predictions = [
-        pred for pred in predictions
-        if pred.supporting_signals.get("routine_name") == "Morning email check"
+        pred for pred in predictions if pred.supporting_signals.get("routine_name") == "Morning email check"
     ]
 
     assert len(routine_predictions) == 1, (
@@ -238,7 +236,7 @@ def test_routine_deviation_not_generated_when_routine_completed(
                     f"test-email-{i}",
                     "email.received",
                     "test",
-                    (today_start + timedelta(hours=8, minutes=i*5)).isoformat(),
+                    (today_start + timedelta(hours=8, minutes=i * 5)).isoformat(),
                     "medium",
                     json.dumps({"subject": f"Test email {i}"}),
                     json.dumps({}),
@@ -251,13 +249,10 @@ def test_routine_deviation_not_generated_when_routine_completed(
 
     # Should NOT create a routine_deviation prediction
     routine_predictions = [
-        pred for pred in predictions
-        if pred.supporting_signals.get("routine_name") == "Morning email check"
+        pred for pred in predictions if pred.supporting_signals.get("routine_name") == "Morning email check"
     ]
 
-    assert len(routine_predictions) == 0, (
-        "Routine deviation prediction created even though routine was completed today"
-    )
+    assert len(routine_predictions) == 0, "Routine deviation prediction created even though routine was completed today"
 
 
 def test_deduplication_prevents_duplicate_predictions_across_multiple_runs(
@@ -300,15 +295,11 @@ def test_deduplication_prevents_duplicate_predictions_across_multiple_runs(
 
     # Second run (15 minutes later): should NOT create a duplicate
     predictions_run2 = asyncio.run(prediction_engine._check_routine_deviations({}))
-    assert len(predictions_run2) == 0, (
-        "Deduplication failed: created duplicate prediction on second run"
-    )
+    assert len(predictions_run2) == 0, "Deduplication failed: created duplicate prediction on second run"
 
     # Third run (another 15 minutes later): still no duplicate
     predictions_run3 = asyncio.run(prediction_engine._check_routine_deviations({}))
-    assert len(predictions_run3) == 0, (
-        "Deduplication failed: created duplicate prediction on third run"
-    )
+    assert len(predictions_run3) == 0, "Deduplication failed: created duplicate prediction on third run"
 
 
 def test_multiple_routines_with_independent_deduplication(db, user_model_store, prediction_engine):
@@ -400,7 +391,5 @@ def test_deduplication_resets_next_day(db, user_model_store, prediction_engine, 
     # Should create a new prediction because yesterday's shouldn't count
     predictions = asyncio.run(prediction_engine._check_routine_deviations({}))
 
-    assert len(predictions) == 1, (
-        "Deduplication incorrectly blocked prediction using yesterday's data"
-    )
+    assert len(predictions) == 1, "Deduplication incorrectly blocked prediction using yesterday's data"
     assert predictions[0].supporting_signals["routine_name"] == "Morning email check"

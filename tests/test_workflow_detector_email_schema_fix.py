@@ -41,11 +41,13 @@ class TestWorkflowDetectorEmailSchemaFix:
                     """,
                     (
                         (cutoff + timedelta(hours=i)).isoformat(),
-                        json.dumps({
-                            "message_id": f"msg-{i}",
-                            "from_address": "test@example.com",
-                            "subject": f"Email {i}",
-                        }),
+                        json.dumps(
+                            {
+                                "message_id": f"msg-{i}",
+                                "from_address": "test@example.com",
+                                "subject": f"Email {i}",
+                            }
+                        ),
                     ),
                 )
                 conn.commit()
@@ -79,17 +81,19 @@ class TestWorkflowDetectorEmailSchemaFix:
         # Create events with WRONG field name (should be ignored)
         events = []
         for i in range(5):
-            events.append({
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (cutoff + timedelta(hours=i)).isoformat(),
-                "payload": {
-                    "message_id": f"msg-{i}",
-                    "sender": "wrong@example.com",  # WRONG field name
-                    "subject": f"Test #{i}",
-                    "body": "Test",
-                },
-            })
+            events.append(
+                {
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (cutoff + timedelta(hours=i)).isoformat(),
+                    "payload": {
+                        "message_id": f"msg-{i}",
+                        "sender": "wrong@example.com",  # WRONG field name
+                        "subject": f"Test #{i}",
+                        "body": "Test",
+                    },
+                }
+            )
 
         # Insert events
         with db.get_connection("events") as conn:
@@ -113,10 +117,7 @@ class TestWorkflowDetectorEmailSchemaFix:
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
         # Should NOT find workflows from wrong schema
-        wrong_workflows = [
-            w for w in workflows
-            if "wrong@example.com" in w.get("name", "").lower()
-        ]
+        wrong_workflows = [w for w in workflows if "wrong@example.com" in w.get("name", "").lower()]
         assert len(wrong_workflows) == 0, "Should not detect workflows from wrong schema"
 
     def test_handles_mixed_email_schemas_gracefully(self, workflow_detector, db):
@@ -127,31 +128,35 @@ class TestWorkflowDetectorEmailSchemaFix:
 
         # Add 5 events with CORRECT schema
         for i in range(5):
-            events.append({
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (cutoff + timedelta(hours=i)).isoformat(),
-                "payload": {
-                    "message_id": f"correct-{i}",
-                    "from_address": "correct@example.com",  # CORRECT
-                    "subject": f"Correct #{i}",
-                    "body": "Correct schema",
-                },
-            })
+            events.append(
+                {
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (cutoff + timedelta(hours=i)).isoformat(),
+                    "payload": {
+                        "message_id": f"correct-{i}",
+                        "from_address": "correct@example.com",  # CORRECT
+                        "subject": f"Correct #{i}",
+                        "body": "Correct schema",
+                    },
+                }
+            )
 
         # Add 5 events with WRONG schema (should be ignored)
         for i in range(5):
-            events.append({
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (cutoff + timedelta(hours=i + 10)).isoformat(),
-                "payload": {
-                    "message_id": f"wrong-{i}",
-                    "sender": "wrong@example.com",  # WRONG
-                    "subject": f"Wrong #{i}",
-                    "body": "Wrong schema",
-                },
-            })
+            events.append(
+                {
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (cutoff + timedelta(hours=i + 10)).isoformat(),
+                    "payload": {
+                        "message_id": f"wrong-{i}",
+                        "sender": "wrong@example.com",  # WRONG
+                        "subject": f"Wrong #{i}",
+                        "body": "Wrong schema",
+                    },
+                }
+            )
 
         # Insert events
         with db.get_connection("events") as conn:
@@ -175,14 +180,8 @@ class TestWorkflowDetectorEmailSchemaFix:
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
         # Should only process events with correct schema
-        correct_workflows = [
-            w for w in workflows
-            if "correct@example.com" in w.get("name", "").lower()
-        ]
-        wrong_workflows = [
-            w for w in workflows
-            if "wrong@example.com" in w.get("name", "").lower()
-        ]
+        correct_workflows = [w for w in workflows if "correct@example.com" in w.get("name", "").lower()]
+        wrong_workflows = [w for w in workflows if "wrong@example.com" in w.get("name", "").lower()]
 
         # Correct schema should be found (if it meets thresholds)
         # Wrong schema should NEVER be found
@@ -350,8 +349,5 @@ class TestWorkflowDetectorEmailSchemaFix:
         assert isinstance(workflows, list), "Should return workflows list"
 
         # Should find the high-volume sender (if it meets thresholds)
-        high_volume_workflows = [
-            w for w in workflows
-            if "highvolume@example.com" in w.get("name", "").lower()
-        ]
+        high_volume_workflows = [w for w in workflows if "highvolume@example.com" in w.get("name", "").lower()]
         # Note: May not create workflow if no follow-up actions exist, but should query correctly

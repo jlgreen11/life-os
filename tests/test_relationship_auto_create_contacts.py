@@ -23,13 +23,11 @@ from storage.user_model_store import UserModelStore
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_profile(interaction_count: int, timestamps: list[str] | None = None) -> dict:
     """Build a minimal relationship profile dict as stored in the signal profile."""
     now = datetime.now(timezone.utc).isoformat()
-    ts = timestamps or [
-        (datetime.now(timezone.utc) - timedelta(days=i)).isoformat()
-        for i in range(interaction_count)
-    ]
+    ts = timestamps or [(datetime.now(timezone.utc) - timedelta(days=i)).isoformat() for i in range(interaction_count)]
     return {
         "interaction_count": interaction_count,
         "interaction_timestamps": ts[:interaction_count],
@@ -64,6 +62,7 @@ def _get_contact_by_email(db, email: str) -> dict | None:
 # _name_from_email unit tests
 # ---------------------------------------------------------------------------
 
+
 def test_name_from_email_dotted():
     """Dotted address should produce capitalised first + last name."""
     assert _name_from_email("john.doe@example.com") == "John Doe"
@@ -87,6 +86,7 @@ def test_name_from_email_hyphen():
 # ---------------------------------------------------------------------------
 # _sync_contact_metrics auto-creation integration tests
 # ---------------------------------------------------------------------------
+
 
 def test_auto_creates_contact_at_threshold(db):
     """A contact stub is created when interaction count reaches MIN_INTERACTIONS_FOR_AUTO_CREATE."""
@@ -124,10 +124,7 @@ def test_metrics_written_after_auto_creation(db):
     extractor = RelationshipExtractor(db=db, user_model_store=ums)
 
     now = datetime.now(timezone.utc)
-    timestamps = [
-        (now - timedelta(days=i * 3)).isoformat()
-        for i in range(5)
-    ]
+    timestamps = [(now - timedelta(days=i * 3)).isoformat() for i in range(5)]
     addr = "frequent@example.com"
     profile = _make_profile(interaction_count=5, timestamps=timestamps)
 
@@ -227,9 +224,7 @@ def test_name_derived_from_email_in_contact(db):
     ums = UserModelStore(db)
     extractor = RelationshipExtractor(db=db, user_model_store=ums)
 
-    extractor._sync_contact_metrics(
-        {"sarah.jones@company.com": _make_profile(interaction_count=3)}
-    )
+    extractor._sync_contact_metrics({"sarah.jones@company.com": _make_profile(interaction_count=3)})
 
     contact = _get_contact_by_email(db, "sarah.jones@company.com")
     assert contact is not None

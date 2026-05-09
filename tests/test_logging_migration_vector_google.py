@@ -22,12 +22,14 @@ from unittest.mock import MagicMock, patch
 # VectorStore logging tests
 # ---------------------------------------------------------------------------
 
+
 class TestVectorStoreLogging:
     """VectorStore.initialize() and error paths emit structured log records."""
 
     def _make_store(self, tmp_path: Path):
         """Return a VectorStore pointing at a temporary directory."""
         from storage.vector_store import VectorStore
+
         return VectorStore(db_path=str(tmp_path / "vectors"))
 
     def test_lancedb_not_available_logs_warning(self, tmp_path, caplog):
@@ -35,10 +37,14 @@ class TestVectorStoreLogging:
         store = self._make_store(tmp_path)
 
         # Simulate ImportError raised when lancedb is not installed.
-        with patch("builtins.__import__", side_effect=lambda name, *a, **kw: (
-            (_ for _ in ()).throw(ImportError(f"No module named '{name}'"))
-            if name == "lancedb" else __import__(name, *a, **kw)
-        )):
+        with patch(
+            "builtins.__import__",
+            side_effect=lambda name, *a, **kw: (
+                (_ for _ in ()).throw(ImportError(f"No module named '{name}'"))
+                if name == "lancedb"
+                else __import__(name, *a, **kw)
+            ),
+        ):
             with caplog.at_level(logging.WARNING, logger="storage.vector_store"):
                 # Re-initialize to exercise the fallback branch.
                 store._use_lancedb = False
@@ -118,12 +124,14 @@ class TestVectorStoreLogging:
 # Google connector logging tests
 # ---------------------------------------------------------------------------
 
+
 class TestGoogleConnectorLogging:
     """GoogleConnector uses the module logger instead of print()."""
 
     def _make_connector(self, tmp_path: Path):
         """Return a GoogleConnector with minimal config."""
         from connectors.google.connector import GoogleConnector
+
         config = {
             "email_address": "test@gmail.com",
             "credentials_file": str(tmp_path / "creds.json"),
@@ -150,9 +158,7 @@ class TestGoogleConnectorLogging:
         """authenticate() logs ERROR when the Google API call raises."""
         connector = self._make_connector(tmp_path)
 
-        with patch.object(
-            connector, "_load_credentials", return_value=MagicMock()
-        ):
+        with patch.object(connector, "_load_credentials", return_value=MagicMock()):
             # The google API build call will fail without real credentials.
             with caplog.at_level(logging.ERROR, logger="connectors.google.connector"):
                 result = connector.authenticate()
@@ -163,6 +169,7 @@ class TestGoogleConnectorLogging:
     def test_logger_exists_on_module(self, tmp_path):
         """The module-level logger is properly configured."""
         import connectors.google.connector as mod
+
         assert hasattr(mod, "logger")
         assert mod.logger.name == "connectors.google.connector"
 
@@ -170,6 +177,7 @@ class TestGoogleConnectorLogging:
 # ---------------------------------------------------------------------------
 # main.py background task exception handler logging test
 # ---------------------------------------------------------------------------
+
 
 class TestMainLoggingMigration:
     """Background-task exception handler in main.py uses logger.critical()."""
@@ -181,6 +189,7 @@ class TestMainLoggingMigration:
 
         # Verify that the module-level logger exists.
         import main as main_mod
+
         assert hasattr(main_mod, "logger"), "main.py must define a module-level logger"
         assert main_mod.logger.name == "__main__" or "main" in main_mod.logger.name
 
@@ -191,6 +200,5 @@ class TestMainLoggingMigration:
 
         source = inspect.getsource(main_mod.LifeOS._start_background_task)
         assert "print(" not in source, (
-            "_start_background_task still contains print() — "
-            "should use logger.critical() instead"
+            "_start_background_task still contains print() — should use logger.critical() instead"
         )

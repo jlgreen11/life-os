@@ -31,7 +31,7 @@ Safety:
 
 import argparse
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -51,30 +51,22 @@ def analyze_backlog(db: DatabaseManager) -> dict:
         total = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
 
         # Surfaced vs unsurfaced
-        surfaced = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()[0]
-        unsurfaced = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 0"
-        ).fetchone()[0]
+        surfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
+        unsurfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 0").fetchone()[0]
 
         # Resolved vs unresolved
-        resolved = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NOT NULL"
-        ).fetchone()[0]
-        unresolved = conn.execute(
-            "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL"
-        ).fetchone()[0]
+        resolved = conn.execute("SELECT COUNT(*) FROM predictions WHERE resolved_at IS NOT NULL").fetchone()[0]
+        unresolved = conn.execute("SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL").fetchone()[0]
 
         # Backlog: unsurfaced + unresolved + older than 1 hour
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = (now - timedelta(hours=1)).isoformat()
         backlog = conn.execute(
             """SELECT COUNT(*) FROM predictions
                WHERE was_surfaced = 0
                AND resolved_at IS NULL
                AND created_at < ?""",
-            (cutoff,)
+            (cutoff,),
         ).fetchone()[0]
 
         # Age range of backlog
@@ -112,7 +104,7 @@ def cleanup_backlog(db: DatabaseManager, timeout_hours: int = 1, dry_run: bool =
     Returns:
         Number of predictions cleaned up (or that would be cleaned up in dry-run)
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = (now - timedelta(hours=timeout_hours)).isoformat()
 
     with db.get_connection("user_model") as conn:
@@ -123,7 +115,7 @@ def cleanup_backlog(db: DatabaseManager, timeout_hours: int = 1, dry_run: bool =
                    WHERE was_surfaced = 0
                    AND resolved_at IS NULL
                    AND created_at < ?""",
-                (cutoff,)
+                (cutoff,),
             )
             return result.fetchone()[0]
         else:
@@ -142,25 +134,12 @@ def cleanup_backlog(db: DatabaseManager, timeout_hours: int = 1, dry_run: bool =
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Clean up the Life OS prediction backlog"
-    )
+    parser = argparse.ArgumentParser(description="Clean up the Life OS prediction backlog")
+    parser.add_argument("--data-dir", default="./data", help="Path to data directory (default: ./data)")
     parser.add_argument(
-        "--data-dir",
-        default="./data",
-        help="Path to data directory (default: ./data)"
+        "--timeout-hours", type=int, default=1, help="Hours after creation to consider stale (default: 1)"
     )
-    parser.add_argument(
-        "--timeout-hours",
-        type=int,
-        default=1,
-        help="Hours after creation to consider stale (default: 1)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be cleaned up without making changes"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be cleaned up without making changes")
     args = parser.parse_args()
 
     # Initialize database
@@ -175,7 +154,7 @@ def main():
     print("Analyzing current state...")
     stats = analyze_backlog(db)
 
-    print(f"\nCurrent State:")
+    print("\nCurrent State:")
     print(f"  Total predictions:        {stats['total']:,}")
     print(f"  Surfaced (shown to user): {stats['surfaced']:,}")
     print(f"  Unsurfaced (filtered):    {stats['unsurfaced']:,}")
@@ -183,12 +162,12 @@ def main():
     print(f"  Unresolved:               {stats['unresolved']:,}")
     print(f"  Backlog to clean:         {stats['backlog_size']:,}")
 
-    if stats['oldest_backlog']:
-        print(f"\nBacklog age range:")
+    if stats["oldest_backlog"]:
+        print("\nBacklog age range:")
         print(f"  Oldest: {stats['oldest_backlog']}")
         print(f"  Newest: {stats['newest_backlog']}")
 
-    if stats['backlog_size'] == 0:
+    if stats["backlog_size"] == 0:
         print("\n✓ No backlog to clean up!")
         return 0
 
@@ -206,7 +185,7 @@ def main():
         # Show new state
         print("\nAnalyzing final state...")
         final_stats = analyze_backlog(db)
-        print(f"\nFinal State:")
+        print("\nFinal State:")
         print(f"  Total predictions:        {final_stats['total']:,}")
         print(f"  Resolved:                 {final_stats['resolved']:,}")
         print(f"  Unresolved:               {final_stats['unresolved']:,}")

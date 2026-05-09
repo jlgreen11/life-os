@@ -47,11 +47,13 @@ async def test_calendar_conflict_prediction(prediction_engine, db):
                 "caldav",
                 event1_start.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Team Meeting",
-                    "start_time": event1_start.isoformat(),
-                    "end_time": event1_end.isoformat(),
-                }),
+                json.dumps(
+                    {
+                        "title": "Team Meeting",
+                        "start_time": event1_start.isoformat(),
+                        "end_time": event1_end.isoformat(),
+                    }
+                ),
                 "{}",
             ),
         )
@@ -64,11 +66,13 @@ async def test_calendar_conflict_prediction(prediction_engine, db):
                 "caldav",
                 event2_start.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Client Call",
-                    "start_time": event2_start.isoformat(),
-                    "end_time": event2_end.isoformat(),
-                }),
+                json.dumps(
+                    {
+                        "title": "Client Call",
+                        "start_time": event2_start.isoformat(),
+                        "end_time": event2_end.isoformat(),
+                    }
+                ),
                 "{}",
             ),
         )
@@ -108,11 +112,13 @@ async def test_tight_transition_prediction(prediction_engine, db):
                 "caldav",
                 event1_start.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Morning Standup",
-                    "start_time": event1_start.isoformat(),
-                    "end_time": event1_end.isoformat(),
-                }),
+                json.dumps(
+                    {
+                        "title": "Morning Standup",
+                        "start_time": event1_start.isoformat(),
+                        "end_time": event1_end.isoformat(),
+                    }
+                ),
                 "{}",
             ),
         )
@@ -125,11 +131,13 @@ async def test_tight_transition_prediction(prediction_engine, db):
                 "caldav",
                 event2_start.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Weekly Review",
-                    "start_time": event2_start.isoformat(),
-                    "end_time": event2_end.isoformat(),
-                }),
+                json.dumps(
+                    {
+                        "title": "Weekly Review",
+                        "start_time": event2_start.isoformat(),
+                        "end_time": event2_end.isoformat(),
+                    }
+                ),
                 "{}",
             ),
         )
@@ -214,12 +222,14 @@ async def test_follow_up_reminder_prediction(prediction_engine, db):
                 "protonmail",
                 received_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "test-message-123",
-                    "from_address": "boss@company.com",
-                    "subject": "Q4 Budget Review Needed",
-                    "body": "Can you review this by EOD?",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "test-message-123",
+                        "from_address": "boss@company.com",
+                        "subject": "Q4 Budget Review Needed",
+                        "body": "Can you review this by EOD?",
+                    }
+                ),
                 "{}",
             ),
         )
@@ -255,12 +265,14 @@ async def test_travel_preparation_prediction(prediction_engine, db):
                 "caldav",
                 flight_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Flight to NYC",
-                    "start_time": flight_time.isoformat(),
-                    "end_time": (flight_time + timedelta(hours=3)).isoformat(),
-                    "location": "JFK Airport",
-                }),
+                json.dumps(
+                    {
+                        "title": "Flight to NYC",
+                        "start_time": flight_time.isoformat(),
+                        "end_time": (flight_time + timedelta(hours=3)).isoformat(),
+                        "location": "JFK Airport",
+                    }
+                ),
                 "{}",
             ),
         )
@@ -299,12 +311,14 @@ async def test_large_meeting_preparation_prediction(prediction_engine, db):
                 "caldav",
                 meeting_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "title": "Board Meeting",
-                    "start_time": meeting_time.isoformat(),
-                    "end_time": (meeting_time + timedelta(hours=2)).isoformat(),
-                    "attendees": ["alice@co.com", "bob@co.com", "carol@co.com", "dave@co.com"],
-                }),
+                json.dumps(
+                    {
+                        "title": "Board Meeting",
+                        "start_time": meeting_time.isoformat(),
+                        "end_time": (meeting_time + timedelta(hours=2)).isoformat(),
+                        "attendees": ["alice@co.com", "bob@co.com", "carol@co.com", "dave@co.com"],
+                    }
+                ),
                 "{}",
             ),
         )
@@ -314,7 +328,9 @@ async def test_large_meeting_preparation_prediction(prediction_engine, db):
 
     # Should suggest agenda review
     need_preds = [p for p in predictions if p.prediction_type == "need"]
-    meeting_preds = [p for p in need_preds if "meeting" in p.description.lower() and "attendees" in p.description.lower()]
+    meeting_preds = [
+        p for p in need_preds if "meeting" in p.description.lower() and "attendees" in p.description.lower()
+    ]
     assert len(meeting_preds) >= 1, "Should detect large meeting preparation need"
 
     meeting = meeting_preds[0]
@@ -342,11 +358,13 @@ async def test_spending_anomaly_prediction(prediction_engine, db):
                     "plaid",
                     (now - timedelta(days=i * 3)).isoformat(),
                     "normal",
-                    json.dumps({
-                        "amount": -100,
-                        "category": "subscription",
-                        "merchant": "Software Inc",
-                    }),
+                    json.dumps(
+                        {
+                            "amount": -100,
+                            "category": "subscription",
+                            "merchant": "Software Inc",
+                        }
+                    ),
                     "{}",
                 ),
             )
@@ -362,11 +380,13 @@ async def test_spending_anomaly_prediction(prediction_engine, db):
                     "plaid",
                     (now - timedelta(days=i * 2)).isoformat(),
                     "normal",
-                    json.dumps({
-                        "amount": -100,
-                        "category": "groceries",
-                        "merchant": "Grocery Store",
-                    }),
+                    json.dumps(
+                        {
+                            "amount": -100,
+                            "category": "groceries",
+                            "merchant": "Grocery Store",
+                        }
+                    ),
                     "{}",
                 ),
             )
@@ -395,11 +415,13 @@ async def test_confidence_floor_alignment_with_gates(prediction_engine):
 
     # Read the actual code to verify the fix
     import inspect
+
     source = inspect.getsource(prediction_engine.generate_predictions)
 
     # Should NOT contain the old 0.6 floor
-    assert "0.6" not in source or "Confidence floor" not in source.split("0.6")[0].split("\n")[-1], \
+    assert "0.6" not in source or "Confidence floor" not in source.split("0.6")[0].split("\n")[-1], (
         "Old 0.6 confidence floor should be removed"
+    )
 
     # Should contain the new 0.3 floor
     assert "0.3" in source, "New 0.3 confidence floor should be present"
@@ -454,21 +476,29 @@ async def test_all_prediction_types_can_surface(prediction_engine, user_model_st
             conn.execute(
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (event_id, "calendar.event.created", "caldav", start.isoformat(),
-                 "normal", json.dumps(payload), "{}"),
+                (event_id, "calendar.event.created", "caldav", start.isoformat(), "normal", json.dumps(payload), "{}"),
             )
 
         # Unreplied email
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), "email.received", "protonmail", received_time.isoformat(),
-             "normal", json.dumps({
-                 "message_id": "test-123",
-                 "from_address": "colleague@company.com",
-                 "subject": "Quick question",
-                 "body": "Can you help with this?",
-             }), "{}"),
+            (
+                str(uuid.uuid4()),
+                "email.received",
+                "protonmail",
+                received_time.isoformat(),
+                "normal",
+                json.dumps(
+                    {
+                        "message_id": "test-123",
+                        "from_address": "colleague@company.com",
+                        "subject": "Quick question",
+                        "body": "Can you help with this?",
+                    }
+                ),
+                "{}",
+            ),
         )
         conn.commit()
 
@@ -495,10 +525,8 @@ async def test_all_prediction_types_can_surface(prediction_engine, user_model_st
     types_found = set(p.prediction_type for p in predictions)
 
     # Should have multiple types (not just "reminder")
-    assert len(types_found) >= 3, \
-        f"Should generate multiple prediction types, got: {types_found}"
+    assert len(types_found) >= 3, f"Should generate multiple prediction types, got: {types_found}"
 
     # Verify at least some SUGGEST-level predictions surfaced
     suggest_preds = [p for p in predictions if 0.3 <= p.confidence < 0.6]
-    assert len(suggest_preds) >= 1, \
-        "Should surface at least one SUGGEST-level prediction (0.3-0.6 confidence)"
+    assert len(suggest_preds) >= 1, "Should surface at least one SUGGEST-level prediction (0.3-0.6 confidence)"

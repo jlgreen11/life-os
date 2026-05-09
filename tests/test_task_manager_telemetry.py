@@ -179,16 +179,16 @@ class TestFilterCounters:
         assert task_manager_with_ai._tasks_extracted == 0
 
     @pytest.mark.asyncio
-    async def test_non_actionable_type_does_not_increment_any_filter_counter(
-        self, task_manager_with_ai
-    ):
+    async def test_non_actionable_type_does_not_increment_any_filter_counter(self, task_manager_with_ai):
         """System events are dropped before counters for text/marketing filters —
         but _events_processed IS incremented."""
-        await task_manager_with_ai.process_event({
-            "id": "evt-sys",
-            "type": "system.rule.triggered",
-            "payload": {"body": _LONG_TEXT},
-        })
+        await task_manager_with_ai.process_event(
+            {
+                "id": "evt-sys",
+                "type": "system.rule.triggered",
+                "payload": {"body": _LONG_TEXT},
+            }
+        )
         # The event was processed (counted) but all filter counters stay zero.
         assert task_manager_with_ai._events_processed == 1
         assert task_manager_with_ai._events_skipped_no_text == 0
@@ -205,9 +205,7 @@ class TestExtractionCounting:
     """When the AI returns action items the extraction counters should update."""
 
     @pytest.mark.asyncio
-    async def test_tasks_extracted_counts_individual_tasks(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_tasks_extracted_counts_individual_tasks(self, task_manager_with_ai, mock_ai_engine):
         """_tasks_extracted is the sum of task objects across all events, not
         just a count of events that produced at least one task."""
         mock_ai_engine.extract_action_items.return_value = [
@@ -218,33 +216,23 @@ class TestExtractionCounting:
         assert task_manager_with_ai._tasks_extracted == 2
 
     @pytest.mark.asyncio
-    async def test_tasks_extracted_accumulates_across_events(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_tasks_extracted_accumulates_across_events(self, task_manager_with_ai, mock_ai_engine):
         """Counter accumulates when multiple events each produce tasks."""
-        mock_ai_engine.extract_action_items.return_value = [
-            {"title": "Task A", "priority": "normal"}
-        ]
+        mock_ai_engine.extract_action_items.return_value = [{"title": "Task A", "priority": "normal"}]
         await task_manager_with_ai.process_event(_make_email_event(_LONG_TEXT))
         await task_manager_with_ai.process_event(_make_message_event(_LONG_TEXT))
         assert task_manager_with_ai._tasks_extracted == 2
 
     @pytest.mark.asyncio
-    async def test_last_extraction_time_updated_on_success(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_last_extraction_time_updated_on_success(self, task_manager_with_ai, mock_ai_engine):
         """_last_extraction_time is set after a successful extraction."""
         assert task_manager_with_ai._last_extraction_time is None
-        mock_ai_engine.extract_action_items.return_value = [
-            {"title": "Follow up with client", "priority": "high"}
-        ]
+        mock_ai_engine.extract_action_items.return_value = [{"title": "Follow up with client", "priority": "high"}]
         await task_manager_with_ai.process_event(_make_email_event(_LONG_TEXT))
         assert task_manager_with_ai._last_extraction_time is not None
 
     @pytest.mark.asyncio
-    async def test_last_extraction_time_not_set_when_no_tasks(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_last_extraction_time_not_set_when_no_tasks(self, task_manager_with_ai, mock_ai_engine):
         """_last_extraction_time remains None when AI returns empty list."""
         mock_ai_engine.extract_action_items.return_value = []
         await task_manager_with_ai.process_event(_make_email_event(_LONG_TEXT))
@@ -270,18 +258,14 @@ class TestExtractionErrorCounting:
     """AI engine exceptions should increment _extraction_errors without crashing."""
 
     @pytest.mark.asyncio
-    async def test_ai_exception_increments_error_counter(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_ai_exception_increments_error_counter(self, task_manager_with_ai, mock_ai_engine):
         """RuntimeError from AI engine → _extraction_errors == 1."""
         mock_ai_engine.extract_action_items.side_effect = RuntimeError("Model down")
         await task_manager_with_ai.process_event(_make_email_event(_LONG_TEXT))
         assert task_manager_with_ai._extraction_errors == 1
 
     @pytest.mark.asyncio
-    async def test_ai_exception_does_not_increment_tasks_extracted(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_ai_exception_does_not_increment_tasks_extracted(self, task_manager_with_ai, mock_ai_engine):
         """On AI failure, _tasks_extracted must remain zero."""
         mock_ai_engine.extract_action_items.side_effect = ValueError("Parse error")
         await task_manager_with_ai.process_event(_make_email_event(_LONG_TEXT))
@@ -313,10 +297,18 @@ class TestGetDiagnosticsTelemetry:
         """All expected sub-fields are present in extraction_telemetry."""
         telemetry = task_manager_no_ai.get_diagnostics()["extraction_telemetry"]
         required = {
-            "events_processed", "events_skipped_no_ai", "events_skipped_no_text",
-            "events_skipped_marketing", "tasks_extracted", "extraction_errors",
-            "last_extraction_time", "last_ai_check_time",
-            "ai_engine_available", "ai_engine_type", "skip_rate", "extraction_rate",
+            "events_processed",
+            "events_skipped_no_ai",
+            "events_skipped_no_text",
+            "events_skipped_marketing",
+            "tasks_extracted",
+            "extraction_errors",
+            "last_extraction_time",
+            "last_ai_check_time",
+            "ai_engine_available",
+            "ai_engine_type",
+            "skip_rate",
+            "extraction_rate",
         }
         assert required.issubset(set(telemetry.keys()))
 
@@ -331,9 +323,7 @@ class TestGetDiagnosticsTelemetry:
         assert telemetry["skip_rate"] == 1.0
 
     @pytest.mark.asyncio
-    async def test_extraction_rate_tasks_per_ai_eligible_event(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_extraction_rate_tasks_per_ai_eligible_event(self, task_manager_with_ai, mock_ai_engine):
         """extraction_rate = tasks_extracted / (events_processed - skipped_no_ai).
 
         Two events each produce 3 tasks → rate == 3.0 tasks/event.
@@ -352,6 +342,7 @@ class TestGetDiagnosticsTelemetry:
 
     def test_ai_engine_type_reflects_class_name(self, db):
         """ai_engine_type should return the class name of the engine."""
+
         class FakeAIEngine:
             pass
 
@@ -367,9 +358,7 @@ class TestGetDiagnosticsTelemetry:
         assert telemetry["ai_engine_type"] is None
 
     @pytest.mark.asyncio
-    async def test_extraction_rate_zero_when_no_tasks_extracted(
-        self, task_manager_with_ai, mock_ai_engine
-    ):
+    async def test_extraction_rate_zero_when_no_tasks_extracted(self, task_manager_with_ai, mock_ai_engine):
         """extraction_rate stays 0.0 when AI engine returns nothing."""
         mock_ai_engine.extract_action_items.return_value = []
         await task_manager_with_ai.process_event(_make_email_event(_LONG_TEXT))

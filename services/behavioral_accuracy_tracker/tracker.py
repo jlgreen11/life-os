@@ -150,9 +150,7 @@ class BehavioralAccuracyTracker:
                     return  # Schema not initialized yet; migration will run at startup
 
                 # 2. Check whether the column already exists (schema v4+)
-                columns = [row[1] for row in conn.execute(
-                    "PRAGMA table_info(predictions)"
-                ).fetchall()]
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()]
 
                 if "resolution_reason" in columns:
                     return  # Already migrated — nothing to do
@@ -169,16 +167,10 @@ class BehavioralAccuracyTracker:
                 #    re-run the same migration on next restart and log a confusing
                 #    "column already exists" warning.
                 try:
-                    max_ver = conn.execute(
-                        "SELECT MAX(version) FROM schema_version"
-                    ).fetchone()[0] or 0
+                    max_ver = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] or 0
                     if max_ver < 4:
-                        conn.execute(
-                            "INSERT INTO schema_version (version) VALUES (4)"
-                        )
-                        logger.info(
-                            "BehavioralAccuracyTracker: schema_version updated to 4"
-                        )
+                        conn.execute("INSERT INTO schema_version (version) VALUES (4)")
+                        logger.info("BehavioralAccuracyTracker: schema_version updated to 4")
                 except Exception:
                     pass  # schema_version table absence is non-fatal
 
@@ -286,9 +278,7 @@ class BehavioralAccuracyTracker:
                 # Also guard: resolution_reason column must exist before we can
                 # query or write it (the migration guard adds it, but may not have
                 # run yet if the table was just created).
-                columns = [row[1] for row in conn.execute(
-                    "PRAGMA table_info(predictions)"
-                ).fetchall()]
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()]
                 if "resolution_reason" not in columns:
                     return  # Migration guard will handle this on the same startup
 
@@ -312,7 +302,7 @@ class BehavioralAccuracyTracker:
 
         # Email address regex — same pattern used in _infer_opportunity_accuracy
         email_re = re.compile(
-            r'([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)',
+            r"([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)",
             re.IGNORECASE,
         )
 
@@ -380,10 +370,10 @@ class BehavioralAccuracyTracker:
             }
         """
         stats = {
-            'marked_accurate': 0,
-            'marked_inaccurate': 0,
-            'surfaced': 0,
-            'filtered': 0,
+            "marked_accurate": 0,
+            "marked_inaccurate": 0,
+            "surfaced": 0,
+            "filtered": 0,
         }
 
         # Process surfaced predictions that haven't been resolved yet
@@ -436,10 +426,10 @@ class BehavioralAccuracyTracker:
                     continue
 
                 if was_accurate:
-                    stats['marked_accurate'] += 1
+                    stats["marked_accurate"] += 1
                 else:
-                    stats['marked_inaccurate'] += 1
-                stats['surfaced'] += 1
+                    stats["marked_inaccurate"] += 1
+                stats["surfaced"] += 1
 
         # Process filtered predictions to detect false negatives (filter mistakes)
         # These predictions were auto-filtered but might have been valuable!
@@ -502,10 +492,10 @@ class BehavioralAccuracyTracker:
                     continue
 
                 if was_accurate:
-                    stats['marked_accurate'] += 1
+                    stats["marked_accurate"] += 1
                 else:
-                    stats['marked_inaccurate'] += 1
-                stats['filtered'] += 1
+                    stats["marked_inaccurate"] += 1
+                stats["filtered"] += 1
 
         # Calculate total predictions queried this cycle for diagnostics.
         # surfaced_predictions and filtered_predictions are counted separately.
@@ -528,7 +518,7 @@ class BehavioralAccuracyTracker:
         self._last_cycle_timestamp = datetime.now(timezone.utc).isoformat()
 
         # Cache cycle stats for diagnostics observability (include predictions_queried count).
-        stats['predictions_queried'] = predictions_queried
+        stats["predictions_queried"] = predictions_queried
         self._last_cycle_stats = dict(stats)
         self._total_cycles += 1
 
@@ -602,9 +592,7 @@ class BehavioralAccuracyTracker:
                        WHERE resolved_at IS NOT NULL AND created_at > datetime('now', '-7 days')
                        GROUP BY user_response"""
                 ).fetchall()
-            diagnostics["resolution_methods"] = {
-                (row["user_response"] or "unknown"): row["count"] for row in rows
-            }
+            diagnostics["resolution_methods"] = {(row["user_response"] or "unknown"): row["count"] for row in rows}
         except Exception:
             logger.warning("Diagnostics: failed to query resolution methods", exc_info=True)
 
@@ -627,6 +615,7 @@ class BehavioralAccuracyTracker:
                 signal_keys: list[str] = []
                 try:
                     import json as _json
+
                     signals = _json.loads(row["supporting_signals"] or "[]")
                     if isinstance(signals, dict):
                         signal_keys = list(signals.keys())
@@ -654,14 +643,16 @@ class BehavioralAccuracyTracker:
                     else:
                         reason = "no_matching_behavior_detected"
 
-                unresolved.append({
-                    "prediction_type": row["prediction_type"],
-                    "description": (row["description"] or "")[:100],
-                    "created_at": row["created_at"],
-                    "age_hours": age_hours,
-                    "signal_keys": signal_keys,
-                    "reason": reason,
-                })
+                unresolved.append(
+                    {
+                        "prediction_type": row["prediction_type"],
+                        "description": (row["description"] or "")[:100],
+                        "created_at": row["created_at"],
+                        "age_hours": age_hours,
+                        "signal_keys": signal_keys,
+                        "reason": reason,
+                    }
+                )
             diagnostics["unresolved_details"] = unresolved
         except Exception:
             logger.warning("Diagnostics: failed to query unresolved prediction details", exc_info=True)
@@ -743,10 +734,7 @@ class BehavioralAccuracyTracker:
             "cycles_with_no_predictions": self._cycles_with_no_predictions,
             "last_cycle_stats": self._last_cycle_stats,
             "last_cycle_timestamp": self._last_cycle_timestamp,
-            "cold_start_detected": (
-                self._cycles_with_no_predictions == self._total_cycles
-                and self._total_cycles > 0
-            ),
+            "cold_start_detected": (self._cycles_with_no_predictions == self._total_cycles and self._total_cycles > 0),
             "predictions_table_count": predictions_table_count,
         }
 
@@ -802,7 +790,7 @@ class BehavioralAccuracyTracker:
         if not contact_email:
             description = prediction.get("description") or ""
             email_match = re.search(
-                r'([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)',
+                r"([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)",
                 description,
                 re.IGNORECASE,
             )
@@ -829,7 +817,7 @@ class BehavioralAccuracyTracker:
             None if insufficient evidence to make a determination
         """
         pred_type = prediction["prediction_type"]
-        created_at = datetime.fromisoformat(prediction["created_at"].replace('Z', '+00:00'))
+        created_at = datetime.fromisoformat(prediction["created_at"].replace("Z", "+00:00"))
 
         # Parse supporting_signals JSON to extract relevant context
         # Handle both old list format and new dict format for backward compatibility
@@ -857,9 +845,7 @@ class BehavioralAccuracyTracker:
         else:
             return None  # Unknown prediction type
 
-    async def _infer_reminder_accuracy(
-        self, prediction: dict, signals: dict, created_at: datetime
-    ) -> Optional[bool]:
+    async def _infer_reminder_accuracy(self, prediction: dict, signals: dict, created_at: datetime) -> Optional[bool]:
         """Infer accuracy for 'reminder' predictions.
 
         Reminder predictions typically suggest: "Reply to X" or "Follow up with Y".
@@ -898,7 +884,9 @@ class BehavioralAccuracyTracker:
             # Pattern 1: "Unreplied message from EMAIL" (most common)
             # Example: "Unreplied message from alice@example.com: \"Subject\" (3 hours ago)"
             # Handles complex emails: john.doe+work@company-name.co.uk
-            email_match = re.search(r'from\s+([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)', prediction["description"], re.IGNORECASE)
+            email_match = re.search(
+                r"from\s+([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)", prediction["description"], re.IGNORECASE
+            )
             if email_match:
                 contact_email = email_match.group(1)
 
@@ -907,11 +895,13 @@ class BehavioralAccuracyTracker:
             # Two-stage match: trigger phrase is case-insensitive, but name must be
             # properly capitalized to avoid false matches (e.g., "Grace" not "about")
             if not contact_email:
-                trigger_match = re.search(r'(reply to|follow up with|message)\s+', prediction["description"], re.IGNORECASE)
+                trigger_match = re.search(
+                    r"(reply to|follow up with|message)\s+", prediction["description"], re.IGNORECASE
+                )
                 if trigger_match:
                     # Extract properly capitalized name after the trigger
-                    rest = prediction["description"][trigger_match.end():]
-                    name_match = re.match(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', rest)
+                    rest = prediction["description"][trigger_match.end() :]
+                    name_match = re.match(r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", rest)
                     if name_match:
                         contact_name = name_match.group(1)
 
@@ -1001,9 +991,7 @@ class BehavioralAccuracyTracker:
 
         return None  # Still within the window, can't determine yet
 
-    async def _infer_conflict_accuracy(
-        self, prediction: dict, signals: dict, created_at: datetime
-    ) -> Optional[bool]:
+    async def _infer_conflict_accuracy(self, prediction: dict, signals: dict, created_at: datetime) -> Optional[bool]:
         """Infer accuracy for 'conflict' predictions.
 
         Conflict predictions alert about calendar overlaps. We check if the user
@@ -1046,9 +1034,7 @@ class BehavioralAccuracyTracker:
 
         return None  # Still within resolution window
 
-    async def _infer_need_accuracy(
-        self, prediction: dict, signals: dict, created_at: datetime
-    ) -> Optional[bool]:
+    async def _infer_need_accuracy(self, prediction: dict, signals: dict, created_at: datetime) -> Optional[bool]:
         """Infer accuracy for 'need' predictions.
 
         Need predictions suggest: "You'll probably need X soon". The most common
@@ -1074,6 +1060,7 @@ class BehavioralAccuracyTracker:
         # Handles: "Large meeting in 36h: 'Q4 Planning' with 5 attendees"
         if not event_title:
             import re
+
             # Pattern: "...: 'EVENT_TITLE'"
             title_match = re.search(r":\s*'([^']+)'", prediction["description"])
             if title_match:
@@ -1086,9 +1073,7 @@ class BehavioralAccuracyTracker:
         # Parse event start time to know when to check if it happened
         if event_start_time_str:
             try:
-                event_start_time = datetime.fromisoformat(
-                    event_start_time_str.replace("Z", "+00:00")
-                )
+                event_start_time = datetime.fromisoformat(event_start_time_str.replace("Z", "+00:00"))
                 if event_start_time.tzinfo is None:
                     event_start_time = event_start_time.replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
@@ -1137,9 +1122,7 @@ class BehavioralAccuracyTracker:
                         # Check if start time was rescheduled away
                         new_start_time_str = payload.get("start_time")
                         if new_start_time_str:
-                            new_start_time = datetime.fromisoformat(
-                                new_start_time_str.replace("Z", "+00:00")
-                            )
+                            new_start_time = datetime.fromisoformat(new_start_time_str.replace("Z", "+00:00"))
                             if new_start_time.tzinfo is None:
                                 new_start_time = new_start_time.replace(tzinfo=timezone.utc)
                             # If rescheduled to a different day, prediction was for the
@@ -1153,9 +1136,7 @@ class BehavioralAccuracyTracker:
                     elif mod["type"] == "calendar.event.updated":
                         new_start_time_str = payload.get("start_time")
                         if new_start_time_str:
-                            new_start_time = datetime.fromisoformat(
-                                new_start_time_str.replace("Z", "+00:00")
-                            )
+                            new_start_time = datetime.fromisoformat(new_start_time_str.replace("Z", "+00:00"))
                             if new_start_time.tzinfo is None:
                                 new_start_time = new_start_time.replace(tzinfo=timezone.utc)
                             if abs((new_start_time - event_start_time).total_seconds()) > 3600:
@@ -1231,25 +1212,19 @@ class BehavioralAccuracyTracker:
         # Handles: "Consider reaching out to Bob — last contact was 60 days ago"
         if not contact_email and not contact_name:
             # Pattern 1: Email address in description
-            email_match = re.search(
-                r'([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)',
-                prediction["description"],
-                re.IGNORECASE
-            )
+            email_match = re.search(r"([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)", prediction["description"], re.IGNORECASE)
             if email_match:
                 contact_email = email_match.group(1)
 
             # Pattern 2: "Reach out to NAME" or "reaching out to NAME"
             if not contact_email:
                 trigger_match = re.search(
-                    r'(reach out to|reaching out to)\s+',
-                    prediction["description"],
-                    re.IGNORECASE
+                    r"(reach out to|reaching out to)\s+", prediction["description"], re.IGNORECASE
                 )
                 if trigger_match:
-                    rest = prediction["description"][trigger_match.end():]
+                    rest = prediction["description"][trigger_match.end() :]
                     # Extract name (must be capitalized)
-                    name_match = re.match(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', rest)
+                    name_match = re.match(r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", rest)
                     if name_match:
                         contact_name = name_match.group(1)
 
@@ -1326,9 +1301,7 @@ class BehavioralAccuracyTracker:
 
         return None  # Still within the 7-day window, can't determine yet
 
-    async def _infer_risk_accuracy(
-        self, prediction: dict, signals: dict, created_at: datetime
-    ) -> Optional[bool]:
+    async def _infer_risk_accuracy(self, prediction: dict, signals: dict, created_at: datetime) -> Optional[bool]:
         """Infer accuracy for 'risk' predictions.
 
         Risk predictions warn: "Something might go wrong if you don't..."
@@ -1360,6 +1333,7 @@ class BehavioralAccuracyTracker:
         # Handles: "Spending alert: $450 on 'groceries' this month (35% of total)"
         if not category:
             import re
+
             # Pattern: "on 'CATEGORY'" or "on \"CATEGORY\""
             category_match = re.search(r"on\s+['\"]([^'\"]+)['\"]", prediction["description"])
             if category_match:
@@ -1367,7 +1341,7 @@ class BehavioralAccuracyTracker:
 
             # Also extract amount if not in signals
             if not flagged_amount:
-                amount_match = re.search(r'\$(\d+)', prediction["description"])
+                amount_match = re.search(r"\$(\d+)", prediction["description"])
                 if amount_match:
                     flagged_amount = float(amount_match.group(1))
 
@@ -1476,10 +1450,7 @@ class BehavioralAccuracyTracker:
             "task_completed": "task.completed",
             "calendar_event_created": "calendar.event.created",
         }
-        expected_event_types = [
-            action_to_event.get(a, a.replace("_", "."))
-            for a in expected_actions
-        ]
+        expected_event_types = [action_to_event.get(a, a.replace("_", ".")) for a in expected_actions]
 
         # If we have neither a routine name nor expected actions, fall back to
         # trying to parse them from the prediction description.
@@ -1524,9 +1495,7 @@ class BehavioralAccuracyTracker:
         if events:
             # At least one expected routine event occurred within the observation
             # window — the routine was performed (possibly after a delay).
-            first_event_time = datetime.fromisoformat(
-                events[0]["timestamp"].replace("Z", "+00:00")
-            )
+            first_event_time = datetime.fromisoformat(events[0]["timestamp"].replace("Z", "+00:00"))
             if first_event_time <= accurate_window_end:
                 # User completed the routine within 2 hours of the prediction →
                 # the prediction correctly identified a late-start deviation.

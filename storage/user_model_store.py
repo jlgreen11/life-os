@@ -76,9 +76,7 @@ class UserModelStore:
         if self._event_bus and self._event_bus.is_connected:
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(
-                    self._event_bus.publish(event_type, payload, source="user_model_store")
-                )
+                loop.create_task(self._event_bus.publish(event_type, payload, source="user_model_store"))
                 published_via_bus = True
             except RuntimeError:
                 # No running event loop in this context. Fall through to event
@@ -111,10 +109,10 @@ class UserModelStore:
                 # Last resort: if both event bus AND event store fail, log the
                 # error so we know telemetry is completely broken.
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.warning(
-                    f"Failed to publish telemetry event {event_type} via both "
-                    f"event bus and event store: {e}"
+                    f"Failed to publish telemetry event {event_type} via both event bus and event store: {e}"
                 )
 
     def store_episode(self, episode: dict):
@@ -180,9 +178,7 @@ class UserModelStore:
             # succeed at the connection level while silently failing to persist
             # (e.g., WAL corruption or constraint violation swallowed upstream).
             with self.db.get_connection("user_model") as conn:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM episodes WHERE id = ?", (episode["id"],)
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM episodes WHERE id = ?", (episode["id"],)).fetchone()[0]
             if count == 0:
                 logger.critical(
                     "UserModelStore.store_episode: post-write verification FAILED "
@@ -211,21 +207,22 @@ class UserModelStore:
             # Mirroring the fix applied to update_signal_profile() and
             # update_semantic_fact() — telemetry is evidence of a successful
             # write, not a signal that a write was attempted.
-            self._emit_telemetry("usermodel.episode.stored", {
-                "episode_id": episode["id"],
-                "event_id": episode["event_id"],
-                "interaction_type": episode.get("interaction_type", "unknown"),
-                "active_domain": episode.get("active_domain"),
-                # Use the normalized list values (not raw episode dict) to avoid
-                # len(None) error when contacts/topics are None
-                "contacts_count": len(contacts_involved),
-                "topics_count": len(topics),
-                "stored_at": episode["timestamp"],
-            })
-        except Exception as e:
-            logger.warning(
-                "UserModelStore.store_episode failed (user_model.db may be corrupt): %s", e
+            self._emit_telemetry(
+                "usermodel.episode.stored",
+                {
+                    "episode_id": episode["id"],
+                    "event_id": episode["event_id"],
+                    "interaction_type": episode.get("interaction_type", "unknown"),
+                    "active_domain": episode.get("active_domain"),
+                    # Use the normalized list values (not raw episode dict) to avoid
+                    # len(None) error when contacts/topics are None
+                    "contacts_count": len(contacts_involved),
+                    "topics_count": len(topics),
+                    "stored_at": episode["timestamp"],
+                },
             )
+        except Exception as e:
+            logger.warning("UserModelStore.store_episode failed (user_model.db may be corrupt): %s", e)
 
     def update_episode(
         self,
@@ -264,25 +261,34 @@ class UserModelStore:
         except Exception as e:
             logger.warning(
                 "UserModelStore.update_episode failed for episode %s: %s",
-                episode_id, e,
+                episode_id,
+                e,
             )
 
         # Track which fields were supplied for observability.
         fields_set = [
-            name for name, val in
-            [("outcome", outcome), ("user_satisfaction", user_satisfaction), ("embedding_id", embedding_id)]
+            name
+            for name, val in [
+                ("outcome", outcome),
+                ("user_satisfaction", user_satisfaction),
+                ("embedding_id", embedding_id),
+            ]
             if val is not None
         ]
-        self._emit_telemetry("usermodel.episode.updated", {
-            "episode_id": episode_id,
-            "fields_set": fields_set,
-            "row_updated": updated,
-        })
+        self._emit_telemetry(
+            "usermodel.episode.updated",
+            {
+                "episode_id": episode_id,
+                "fields_set": fields_set,
+                "row_updated": updated,
+            },
+        )
 
         return updated
 
-    def update_semantic_fact(self, key: str, category: str, value: Any,
-                            confidence: float, episode_id: str | None = None):
+    def update_semantic_fact(
+        self, key: str, category: str, value: Any, confidence: float, episode_id: str | None = None
+    ):
         """Update or create a semantic memory fact.
 
         Confidence increment logic:
@@ -308,9 +314,7 @@ class UserModelStore:
         try:
             with self.db.get_connection("user_model") as conn:
                 # Check whether this fact already exists in semantic memory.
-                existing = conn.execute(
-                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-                ).fetchone()
+                existing = conn.execute("SELECT * FROM semantic_facts WHERE key = ?", (key,)).fetchone()
 
                 if existing:
                     # --- Guard: never overwrite a user-corrected fact ---
@@ -359,14 +363,17 @@ class UserModelStore:
             # Previously this was inside the block, causing phantom telemetry when
             # the transaction rolled back — telemetry wrote to events.db via a
             # separate connection that committed independently.
-            self._emit_telemetry("usermodel.fact.learned", {
-                "key": key,
-                "category": category,
-                "confidence": final_confidence,
-                "is_new": is_new,
-                "episode_id": episode_id,
-                "learned_at": datetime.now(UTC).isoformat(),
-            })
+            self._emit_telemetry(
+                "usermodel.fact.learned",
+                {
+                    "key": key,
+                    "category": category,
+                    "confidence": final_confidence,
+                    "is_new": is_new,
+                    "episode_id": episode_id,
+                    "learned_at": datetime.now(UTC).isoformat(),
+                },
+            )
         except Exception as e:
             logger.warning("update_semantic_fact failed: %s", e)
 
@@ -384,9 +391,7 @@ class UserModelStore:
             Fact dictionary or None if not found
         """
         with self.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM semantic_facts WHERE key = ?", (key,)).fetchone()
 
             if row:
                 fact = dict(row)
@@ -396,8 +401,7 @@ class UserModelStore:
                 return fact
             return None
 
-    def get_semantic_facts(self, category: str | None = None,
-                          min_confidence: float = 0.0) -> list[dict]:
+    def get_semantic_facts(self, category: str | None = None, min_confidence: float = 0.0) -> list[dict]:
         """Retrieve semantic memory facts.
 
         Deserializes the ``value`` and ``source_episodes`` fields from JSON
@@ -423,8 +427,7 @@ class UserModelStore:
                 facts.append(fact)
             return facts
 
-    def get_high_confidence_facts(self, min_confirmations: int = 3,
-                                  category: str | None = None) -> list[dict]:
+    def get_high_confidence_facts(self, min_confirmations: int = 3, category: str | None = None) -> list[dict]:
         """Retrieve semantic facts that have been confirmed multiple times.
 
         Filters by ``times_confirmed`` to distinguish well-established facts
@@ -498,14 +501,15 @@ class UserModelStore:
             # Telemetry fires only after a successful DB write.  Previously this
             # was outside the try/except, inflating event counts when the DB was
             # corrupt (phantom telemetry bug).
-            self._emit_telemetry("usermodel.signal_profile.updated", {
-                "profile_type": profile_type,
-                "updated_at": datetime.now(UTC).isoformat(),
-            })
-        except Exception as e:
-            logger.warning(
-                "UserModelStore.update_signal_profile failed (user_model.db may be corrupt): %s", e
+            self._emit_telemetry(
+                "usermodel.signal_profile.updated",
+                {
+                    "profile_type": profile_type,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                },
             )
+        except Exception as e:
+            logger.warning("UserModelStore.update_signal_profile failed (user_model.db may be corrupt): %s", e)
 
     def get_signal_profile(self, profile_type: str) -> dict | None:
         """Retrieve a signal profile.
@@ -528,9 +532,7 @@ class UserModelStore:
         except Exception as e:
             # Fail-open: corruption is indistinguishable from "no data yet".
             # Callers (signal extractors) will bootstrap fresh profiles.
-            logger.warning(
-                "UserModelStore.get_signal_profile failed (user_model.db may be corrupt): %s", e
-            )
+            logger.warning("UserModelStore.get_signal_profile failed (user_model.db may be corrupt): %s", e)
             return None
 
     def store_mood(self, mood: dict):
@@ -561,23 +563,24 @@ class UserModelStore:
                     ),
                 )
         except Exception as e:
-            logger.warning(
-                "UserModelStore.store_mood failed (user_model.db may be corrupt): %s", e
-            )
+            logger.warning("UserModelStore.store_mood failed (user_model.db may be corrupt): %s", e)
 
         # Telemetry runs outside the try/except so it fires even when the
         # DB write fails — tracks that a mood recording was attempted.
-        self._emit_telemetry("usermodel.mood.recorded", {
-            "energy_level": mood.get("energy_level", 0.5),
-            "stress_level": mood.get("stress_level", 0.3),
-            "social_battery": mood.get("social_battery", 0.5),
-            "cognitive_load": mood.get("cognitive_load", 0.3),
-            "emotional_valence": mood.get("emotional_valence", 0.5),
-            "confidence": mood.get("confidence", 0.0),
-            "trend": mood.get("trend", "stable"),
-            "signals_count": len(mood.get("contributing_signals", [])),
-            "recorded_at": timestamp,
-        })
+        self._emit_telemetry(
+            "usermodel.mood.recorded",
+            {
+                "energy_level": mood.get("energy_level", 0.5),
+                "stress_level": mood.get("stress_level", 0.3),
+                "social_battery": mood.get("social_battery", 0.5),
+                "cognitive_load": mood.get("cognitive_load", 0.3),
+                "emotional_valence": mood.get("emotional_valence", 0.5),
+                "confidence": mood.get("confidence", 0.0),
+                "trend": mood.get("trend", "stable"),
+                "signals_count": len(mood.get("contributing_signals", [])),
+                "recorded_at": timestamp,
+            },
+        )
 
     def store_prediction(self, prediction: dict) -> bool:
         """Store a prediction for later accuracy evaluation.
@@ -637,12 +640,15 @@ class UserModelStore:
             # If duplicate exists (either unresolved or recently filtered), skip storage
             if existing:
                 # Telemetry for observability: track that deduplication occurred
-                self._emit_telemetry("usermodel.prediction.deduplicated", {
-                    "existing_prediction_id": existing["id"],
-                    "attempted_prediction_type": prediction["prediction_type"],
-                    "attempted_description": prediction["description"][:100],  # Truncate for telemetry
-                    "deduplicated_at": datetime.now(UTC).isoformat(),
-                })
+                self._emit_telemetry(
+                    "usermodel.prediction.deduplicated",
+                    {
+                        "existing_prediction_id": existing["id"],
+                        "attempted_prediction_type": prediction["prediction_type"],
+                        "attempted_description": prediction["description"][:100],  # Truncate for telemetry
+                        "deduplicated_at": datetime.now(UTC).isoformat(),
+                    },
+                )
                 return False  # Skip storage — duplicate exists
 
             # No duplicate found, store the prediction
@@ -670,16 +676,19 @@ class UserModelStore:
 
         # Prediction was stored successfully
         # Emit telemetry for successfully stored (non-duplicate) prediction
-        self._emit_telemetry("usermodel.prediction.generated", {
-            "prediction_id": prediction["id"],
-            "prediction_type": prediction["prediction_type"],
-            "confidence": prediction["confidence"],
-            "confidence_gate": prediction["confidence_gate"],
-            "time_horizon": prediction.get("time_horizon"),
-            "was_surfaced": prediction.get("was_surfaced", False),
-            "signals_count": len(prediction.get("supporting_signals", [])),
-            "generated_at": datetime.now(UTC).isoformat(),
-        })
+        self._emit_telemetry(
+            "usermodel.prediction.generated",
+            {
+                "prediction_id": prediction["id"],
+                "prediction_type": prediction["prediction_type"],
+                "confidence": prediction["confidence"],
+                "confidence_gate": prediction["confidence_gate"],
+                "time_horizon": prediction.get("time_horizon"),
+                "was_surfaced": prediction.get("was_surfaced", False),
+                "signals_count": len(prediction.get("supporting_signals", [])),
+                "generated_at": datetime.now(UTC).isoformat(),
+            },
+        )
         return True
 
     def store_communication_template(self, template: dict):
@@ -734,14 +743,17 @@ class UserModelStore:
                 wal_err,
             )
 
-        self._emit_telemetry("usermodel.template.updated", {
-            "template_id": template["id"],
-            "contact_id": template.get("contact_id"),
-            "channel": template.get("channel"),
-            "formality": template.get("formality", 0.5),
-            "samples_analyzed": template.get("samples_analyzed", 0),
-            "updated_at": datetime.now(UTC).isoformat(),
-        })
+        self._emit_telemetry(
+            "usermodel.template.updated",
+            {
+                "template_id": template["id"],
+                "contact_id": template.get("contact_id"),
+                "channel": template.get("channel"),
+                "formality": template.get("formality", 0.5),
+                "samples_analyzed": template.get("samples_analyzed", 0),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
 
     def _deserialize_template_row(self, row) -> dict:
         """Convert a communication_templates row to a dict with deserialized JSON fields.
@@ -762,9 +774,7 @@ class UserModelStore:
                 template[field] = []
         return template
 
-    def get_communication_template(
-        self, contact_id: str | None = None, channel: str | None = None
-    ) -> dict | None:
+    def get_communication_template(self, contact_id: str | None = None, channel: str | None = None) -> dict | None:
         """Retrieve the best-matching communication template.
 
         Looks up a template by contact_id and/or channel, returning the one
@@ -853,16 +863,17 @@ class UserModelStore:
                 )
                 deleted = cursor.rowcount > 0
         except Exception as e:
-            logger.warning(
-                "UserModelStore.delete_communication_template failed: %s", e
-            )
+            logger.warning("UserModelStore.delete_communication_template failed: %s", e)
             return False
 
         if deleted:
-            self._emit_telemetry("usermodel.template.deleted", {
-                "template_id": template_id,
-                "deleted_at": datetime.now(UTC).isoformat(),
-            })
+            self._emit_telemetry(
+                "usermodel.template.deleted",
+                {
+                    "template_id": template_id,
+                    "deleted_at": datetime.now(UTC).isoformat(),
+                },
+            )
         return deleted
 
     def update_communication_template(self, template_id: str, updates: dict) -> dict | None:
@@ -884,15 +895,19 @@ class UserModelStore:
             if no template matched the ID
         """
         ALLOWED_FIELDS = {
-            "greeting", "closing", "formality", "typical_length",
-            "uses_emoji", "common_phrases", "avoids_phrases", "tone_notes",
+            "greeting",
+            "closing",
+            "formality",
+            "typical_length",
+            "uses_emoji",
+            "common_phrases",
+            "avoids_phrases",
+            "tone_notes",
         }
 
         try:
             with self.db.get_connection("user_model") as conn:
-                existing = conn.execute(
-                    "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
-                ).fetchone()
+                existing = conn.execute("SELECT * FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
                 if not existing:
                     return None
 
@@ -922,14 +937,10 @@ class UserModelStore:
                     params,
                 )
 
-                row = conn.execute(
-                    "SELECT * FROM communication_templates WHERE id = ?", (template_id,)
-                ).fetchone()
+                row = conn.execute("SELECT * FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
                 result = self._deserialize_template_row(row) if row else None
         except Exception as e:
-            logger.warning(
-                "UserModelStore.update_communication_template failed: %s", e
-            )
+            logger.warning("UserModelStore.update_communication_template failed: %s", e)
             return None
 
         if result:
@@ -943,15 +954,19 @@ class UserModelStore:
                     "UserModelStore: WAL checkpoint after template update failed: %s",
                     wal_err,
                 )
-            self._emit_telemetry("usermodel.template.patched", {
-                "template_id": template_id,
-                "fields_updated": [f for f in updates if f in ALLOWED_FIELDS],
-                "updated_at": datetime.now(UTC).isoformat(),
-            })
+            self._emit_telemetry(
+                "usermodel.template.patched",
+                {
+                    "template_id": template_id,
+                    "fields_updated": [f for f in updates if f in ALLOWED_FIELDS],
+                    "updated_at": datetime.now(UTC).isoformat(),
+                },
+            )
         return result
 
-    def resolve_prediction(self, prediction_id: str, was_accurate: bool,
-                          user_response: str = None, resolution_reason: str = None):
+    def resolve_prediction(
+        self, prediction_id: str, was_accurate: bool, user_response: str = None, resolution_reason: str = None
+    ):
         """Mark a prediction as resolved with user feedback.
 
         Records whether the prediction was accurate, any optional user response
@@ -988,13 +1003,16 @@ class UserModelStore:
                 (int(was_accurate), user_response, resolution_reason, prediction_id),
             )
 
-        self._emit_telemetry("usermodel.prediction.resolved", {
-            "prediction_id": prediction_id,
-            "was_accurate": was_accurate,
-            "has_response": bool(user_response),
-            "resolution_reason": resolution_reason,
-            "resolved_at": datetime.now(UTC).isoformat(),
-        })
+        self._emit_telemetry(
+            "usermodel.prediction.resolved",
+            {
+                "prediction_id": prediction_id,
+                "was_accurate": was_accurate,
+                "has_response": bool(user_response),
+                "resolution_reason": resolution_reason,
+                "resolved_at": datetime.now(UTC).isoformat(),
+            },
+        )
 
     def store_routine(self, routine: dict):
         """Store or update a detected routine (Layer 3: Procedural Memory).
@@ -1040,14 +1058,17 @@ class UserModelStore:
                 ),
             )
 
-        self._emit_telemetry("usermodel.routine.updated", {
-            "routine_name": routine["name"],
-            "trigger": routine["trigger"],
-            "steps_count": len(routine.get("steps", [])),
-            "consistency_score": routine.get("consistency_score", 0.5),
-            "times_observed": routine.get("times_observed", 0),
-            "updated_at": datetime.now(UTC).isoformat(),
-        })
+        self._emit_telemetry(
+            "usermodel.routine.updated",
+            {
+                "routine_name": routine["name"],
+                "trigger": routine["trigger"],
+                "steps_count": len(routine.get("steps", [])),
+                "consistency_score": routine.get("consistency_score", 0.5),
+                "times_observed": routine.get("times_observed", 0),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
 
     def get_routines(self, trigger: str | None = None) -> list[dict]:
         """Retrieve stored routines, optionally filtered by trigger.
@@ -1067,7 +1088,7 @@ class UserModelStore:
                        FROM routines
                        WHERE trigger_condition = ?
                        ORDER BY consistency_score DESC, times_observed DESC""",
-                    (trigger,)
+                    (trigger,),
                 )
             else:
                 cursor = conn.execute(
@@ -1079,16 +1100,18 @@ class UserModelStore:
 
             routines = []
             for row in cursor.fetchall():
-                routines.append({
-                    "name": row[0],
-                    "trigger": row[1],
-                    "steps": json.loads(row[2]) if row[2] else [],
-                    "typical_duration_minutes": row[3],
-                    "consistency_score": row[4],
-                    "times_observed": row[5],
-                    "variations": json.loads(row[6]) if row[6] else [],
-                    "updated_at": row[7],
-                })
+                routines.append(
+                    {
+                        "name": row[0],
+                        "trigger": row[1],
+                        "steps": json.loads(row[2]) if row[2] else [],
+                        "typical_duration_minutes": row[3],
+                        "consistency_score": row[4],
+                        "times_observed": row[5],
+                        "variations": json.loads(row[6]) if row[6] else [],
+                        "updated_at": row[7],
+                    }
+                )
 
             return routines
 
@@ -1137,15 +1160,18 @@ class UserModelStore:
                 ),
             )
 
-        self._emit_telemetry("usermodel.workflow.updated", {
-            "workflow_name": workflow["name"],
-            "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
-            "steps_count": len(workflow.get("steps", [])),
-            "tools_count": len(workflow.get("tools_used", [])),
-            "success_rate": workflow.get("success_rate", 0.5),
-            "times_observed": workflow.get("times_observed", 0),
-            "updated_at": datetime.now(UTC).isoformat(),
-        })
+        self._emit_telemetry(
+            "usermodel.workflow.updated",
+            {
+                "workflow_name": workflow["name"],
+                "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
+                "steps_count": len(workflow.get("steps", [])),
+                "tools_count": len(workflow.get("tools_used", [])),
+                "success_rate": workflow.get("success_rate", 0.5),
+                "times_observed": workflow.get("times_observed", 0),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
 
     def get_workflows(self, name_filter: str | None = None) -> list[dict]:
         """Retrieve stored workflows, optionally filtered by name pattern.
@@ -1165,7 +1191,7 @@ class UserModelStore:
                        FROM workflows
                        WHERE name LIKE ?
                        ORDER BY success_rate DESC, times_observed DESC""",
-                    (name_filter,)
+                    (name_filter,),
                 )
             else:
                 cursor = conn.execute(
@@ -1177,15 +1203,17 @@ class UserModelStore:
 
             workflows = []
             for row in cursor.fetchall():
-                workflows.append({
-                    "name": row[0],
-                    "trigger_conditions": json.loads(row[1]) if row[1] else [],
-                    "steps": json.loads(row[2]) if row[2] else [],
-                    "typical_duration_minutes": row[3],
-                    "tools_used": json.loads(row[4]) if row[4] else [],
-                    "success_rate": row[5],
-                    "times_observed": row[6],
-                    "updated_at": row[7],
-                })
+                workflows.append(
+                    {
+                        "name": row[0],
+                        "trigger_conditions": json.loads(row[1]) if row[1] else [],
+                        "steps": json.loads(row[2]) if row[2] else [],
+                        "typical_duration_minutes": row[3],
+                        "tools_used": json.loads(row[4]) if row[4] else [],
+                        "success_rate": row[5],
+                        "times_observed": row[6],
+                        "updated_at": row[7],
+                    }
+                )
 
             return workflows

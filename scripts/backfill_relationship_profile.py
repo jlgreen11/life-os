@@ -244,7 +244,7 @@ def backfill_relationship_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_relationship] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_relationship] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_relationship] Events processed: {events_processed}")
     print(f"[backfill_relationship] Signals extracted: {signals_extracted}")
     print(
@@ -257,12 +257,11 @@ def backfill_relationship_profile(
     )
     print(f"[backfill_relationship] Errors: {errors}")
     print(
-        f"[backfill_relationship] Elapsed: {elapsed_seconds:.1f}s "
-        f"({events_processed / elapsed_seconds:.1f} events/sec)"
+        f"[backfill_relationship] Elapsed: {elapsed_seconds:.1f}s ({events_processed / elapsed_seconds:.1f} events/sec)"
     )
 
     if dry_run:
-        print(f"[backfill_relationship] DRY RUN — no changes written to database")
+        print("[backfill_relationship] DRY RUN — no changes written to database")
 
     # Show top contacts by interaction count for verification.
     if final_profile and not dry_run:
@@ -273,7 +272,7 @@ def backfill_relationship_profile(
                 key=lambda kv: kv[1].get("interaction_count", 0),
                 reverse=True,
             )[:10]
-            print(f"\n[backfill_relationship] ===== TOP 10 CONTACTS =====")
+            print("\n[backfill_relationship] ===== TOP 10 CONTACTS =====")
             for addr, data in top_contacts:
                 count = data.get("interaction_count", 0)
                 inbound = data.get("inbound_count", 0)

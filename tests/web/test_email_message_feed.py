@@ -40,18 +40,20 @@ def _make_email_row(
     has_attachments: bool = False,
 ) -> dict:
     """Create a fake sqlite3.Row-like dict for an email.received event."""
-    payload = json.dumps({
-        "subject": subject,
-        "from_address": from_addr,
-        "from_name": from_name,
-        "body": body,
-        "snippet": body[:120],
-        "timestamp": timestamp,
-        "message_id": message_id,
-        "thread_id": thread_id,
-        "has_attachments": has_attachments,
-        "to_addresses": ["me@example.com"],
-    })
+    payload = json.dumps(
+        {
+            "subject": subject,
+            "from_address": from_addr,
+            "from_name": from_name,
+            "body": body,
+            "snippet": body[:120],
+            "timestamp": timestamp,
+            "message_id": message_id,
+            "thread_id": thread_id,
+            "has_attachments": has_attachments,
+            "to_addresses": ["me@example.com"],
+        }
+    )
     row = MagicMock()
     row.__getitem__ = lambda self, key: {
         "id": row_id,
@@ -71,16 +73,18 @@ def _make_message_row(
     message_id: str = "msg-2",
 ) -> dict:
     """Create a fake sqlite3.Row-like dict for a message.received event."""
-    payload = json.dumps({
-        "from_address": from_addr,
-        "contact_name": contact_name,
-        "body": body,
-        "channel": channel,
-        "timestamp": timestamp,
-        "message_id": message_id,
-        "is_group": False,
-        "group_name": None,
-    })
+    payload = json.dumps(
+        {
+            "from_address": from_addr,
+            "contact_name": contact_name,
+            "body": body,
+            "channel": channel,
+            "timestamp": timestamp,
+            "message_id": message_id,
+            "is_group": False,
+            "group_name": None,
+        }
+    )
     row = MagicMock()
     row.__getitem__ = lambda self, key: {
         "id": row_id,
@@ -147,8 +151,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -197,7 +206,7 @@ def mock_life_os():
     life_os.get_connector_config = Mock(return_value={})
     life_os.save_connector_config = Mock()
     life_os.test_connector = Mock(return_value={"success": True})
-    life_os.enable_connector = Mock(return_value={"status": "started"}),
+    life_os.enable_connector = (Mock(return_value={"status": "started"}),)
     life_os.disable_connector = Mock(return_value={"status": "stopped"})
 
     return life_os
@@ -289,12 +298,14 @@ def test_email_feed_returns_email_items(mock_life_os):
 def test_email_feed_item_has_correct_shape(mock_life_os):
     """Email feed items contain the expected fields for the UI to render."""
     mock_life_os.db.get_connection = _make_db_mock_with_rows(
-        email_rows=[_make_email_row(
-            subject="Contract Review",
-            from_addr="lawyer@example.com",
-            from_name="Smith & Jones LLP",
-            has_attachments=True,
-        )]
+        email_rows=[
+            _make_email_row(
+                subject="Contract Review",
+                from_addr="lawyer@example.com",
+                from_name="Smith & Jones LLP",
+                has_attachments=True,
+            )
+        ]
     )
     app = create_web_app(mock_life_os)
     client = TestClient(app)
@@ -435,12 +446,14 @@ def test_message_feed_returns_message_items(mock_life_os):
 def test_message_feed_item_has_correct_shape(mock_life_os):
     """Message feed items contain the expected fields for the UI to render."""
     mock_life_os.db.get_connection = _make_db_mock_with_rows(
-        message_rows=[_make_message_row(
-            from_addr="dave@example.com",
-            contact_name="Dave",
-            body="Meeting in 10 mins",
-            channel="signal",
-        )]
+        message_rows=[
+            _make_message_row(
+                from_addr="dave@example.com",
+                contact_name="Dave",
+                body="Meeting in 10 mins",
+                channel="signal",
+            )
+        ]
     )
     app = create_web_app(mock_life_os)
     client = TestClient(app)
@@ -462,9 +475,7 @@ def test_message_feed_item_has_correct_shape(mock_life_os):
 
 def test_message_feed_appears_in_inbox_topic(mock_life_os):
     """Message events appear in the inbox (default) topic."""
-    mock_life_os.db.get_connection = _make_db_mock_with_rows(
-        message_rows=[_make_message_row(contact_name="Eve")]
-    )
+    mock_life_os.db.get_connection = _make_db_mock_with_rows(message_rows=[_make_message_row(contact_name="Eve")])
     app = create_web_app(mock_life_os)
     client = TestClient(app)
 
@@ -476,9 +487,7 @@ def test_message_feed_appears_in_inbox_topic(mock_life_os):
 
 def test_message_feed_not_shown_in_email_topic(mock_life_os):
     """Message events must NOT appear in the email topic feed."""
-    mock_life_os.db.get_connection = _make_db_mock_with_rows(
-        message_rows=[_make_message_row(contact_name="Frank")]
-    )
+    mock_life_os.db.get_connection = _make_db_mock_with_rows(message_rows=[_make_message_row(contact_name="Frank")])
     app = create_web_app(mock_life_os)
     client = TestClient(app)
 

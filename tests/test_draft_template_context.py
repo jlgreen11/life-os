@@ -13,10 +13,21 @@ import pytest
 from services.ai_engine.context import ContextAssembler
 
 
-def _insert_template(conn, *, contact_id=None, channel="email", formality=0.5,
-                     greeting=None, closing=None, typical_length=100,
-                     uses_emoji=0, common_phrases=None, avoids_phrases=None,
-                     tone_notes=None, samples_analyzed=10):
+def _insert_template(
+    conn,
+    *,
+    contact_id=None,
+    channel="email",
+    formality=0.5,
+    greeting=None,
+    closing=None,
+    typical_length=100,
+    uses_emoji=0,
+    common_phrases=None,
+    avoids_phrases=None,
+    tone_notes=None,
+    samples_analyzed=10,
+):
     """Insert a communication template with all fields including tone_notes and avoids_phrases."""
     conn.execute(
         """INSERT INTO communication_templates (

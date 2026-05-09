@@ -54,8 +54,10 @@ from services.prediction_engine.engine import PredictionEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_email_received(db, from_addr: str, hours_ago: float, message_id: str = None,
-                             requires_response: bool = False) -> str:
+
+def _insert_email_received(
+    db, from_addr: str, hours_ago: float, message_id: str = None, requires_response: bool = False
+) -> str:
     """Insert an email.received event and return its message_id."""
     if message_id is None:
         message_id = f"msg-{uuid.uuid4()}"
@@ -69,12 +71,14 @@ def _insert_email_received(db, from_addr: str, hours_ago: float, message_id: str
                 "email.received",
                 "proton_mail",
                 ts,
-                json.dumps({
-                    "from_address": from_addr,
-                    "subject": f"Test from {from_addr}",
-                    "message_id": message_id,
-                    "requires_response": requires_response,
-                }),
+                json.dumps(
+                    {
+                        "from_address": from_addr,
+                        "subject": f"Test from {from_addr}",
+                        "message_id": message_id,
+                        "requires_response": requires_response,
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -112,14 +116,17 @@ async def test_priority_contact_gets_boosted_confidence(db, user_model_store):
     """
     engine = PredictionEngine(db, user_model_store)
 
-    _set_relationships_profile(user_model_store, {
-        "alice@example.com": {
-            "interaction_count": 10,
-            "outbound_count": 5,   # User has emailed Alice → priority
-            "inbound_count": 5,
-            "last_interaction": datetime.now(timezone.utc).isoformat(),
-        }
-    })
+    _set_relationships_profile(
+        user_model_store,
+        {
+            "alice@example.com": {
+                "interaction_count": 10,
+                "outbound_count": 5,  # User has emailed Alice → priority
+                "inbound_count": 5,
+                "last_interaction": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
 
     _insert_email_received(db, from_addr="alice@example.com", hours_ago=6)
 
@@ -146,14 +153,17 @@ async def test_non_priority_contact_gets_default_confidence(db, user_model_store
     """
     engine = PredictionEngine(db, user_model_store)
 
-    _set_relationships_profile(user_model_store, {
-        "bob@example.com": {
-            "interaction_count": 20,
-            "outbound_count": 0,   # User has never emailed Bob → not priority
-            "inbound_count": 20,
-            "last_interaction": datetime.now(timezone.utc).isoformat(),
-        }
-    })
+    _set_relationships_profile(
+        user_model_store,
+        {
+            "bob@example.com": {
+                "interaction_count": 20,
+                "outbound_count": 0,  # User has never emailed Bob → not priority
+                "inbound_count": 20,
+                "last_interaction": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
 
     _insert_email_received(db, from_addr="bob@example.com", hours_ago=6)
 
@@ -203,14 +213,17 @@ async def test_priority_detection_is_case_insensitive(db, user_model_store):
     engine = PredictionEngine(db, user_model_store)
 
     # Profile stored with uppercase address
-    _set_relationships_profile(user_model_store, {
-        "ALICE@EXAMPLE.COM": {
-            "interaction_count": 8,
-            "outbound_count": 4,
-            "inbound_count": 4,
-            "last_interaction": datetime.now(timezone.utc).isoformat(),
-        }
-    })
+    _set_relationships_profile(
+        user_model_store,
+        {
+            "ALICE@EXAMPLE.COM": {
+                "interaction_count": 8,
+                "outbound_count": 4,
+                "inbound_count": 4,
+                "last_interaction": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
 
     # Email arrives with lowercase address
     _insert_email_received(db, from_addr="alice@example.com", hours_ago=5)
@@ -236,25 +249,25 @@ async def test_marketing_sender_not_priority_even_with_outbound(db, user_model_s
     engine = PredictionEngine(db, user_model_store)
 
     # Simulate a marketing-style address with outbound history
-    _set_relationships_profile(user_model_store, {
-        "noreply@marketing.example.com": {
-            "interaction_count": 5,
-            "outbound_count": 3,   # Some outbound (shouldn't matter — it's noreply)
-            "inbound_count": 2,
-            "last_interaction": datetime.now(timezone.utc).isoformat(),
-        }
-    })
+    _set_relationships_profile(
+        user_model_store,
+        {
+            "noreply@marketing.example.com": {
+                "interaction_count": 5,
+                "outbound_count": 3,  # Some outbound (shouldn't matter — it's noreply)
+                "inbound_count": 2,
+                "last_interaction": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
 
     _insert_email_received(db, from_addr="noreply@marketing.example.com", hours_ago=6)
 
     predictions = await engine._check_follow_up_needs({})
 
     # Marketing sender should be filtered entirely — no prediction at all
-    noreply_preds = [p for p in predictions
-                     if "noreply@marketing.example.com" in p.description]
-    assert len(noreply_preds) == 0, (
-        "Marketing/noreply senders should be filtered before priority check"
-    )
+    noreply_preds = [p for p in predictions if "noreply@marketing.example.com" in p.description]
+    assert len(noreply_preds) == 0, "Marketing/noreply senders should be filtered before priority check"
 
 
 @pytest.mark.asyncio
@@ -266,32 +279,29 @@ async def test_multiple_priority_contacts_all_boosted(db, user_model_store):
     """
     engine = PredictionEngine(db, user_model_store)
 
-    _set_relationships_profile(user_model_store, {
-        "alice@example.com": {"interaction_count": 10, "outbound_count": 5, "inbound_count": 5},
-        "bob@example.com":   {"interaction_count": 20, "outbound_count": 0, "inbound_count": 20},
-        "carol@example.com": {"interaction_count": 6,  "outbound_count": 2, "inbound_count": 4},
-    })
+    _set_relationships_profile(
+        user_model_store,
+        {
+            "alice@example.com": {"interaction_count": 10, "outbound_count": 5, "inbound_count": 5},
+            "bob@example.com": {"interaction_count": 20, "outbound_count": 0, "inbound_count": 20},
+            "carol@example.com": {"interaction_count": 6, "outbound_count": 2, "inbound_count": 4},
+        },
+    )
 
-    _insert_email_received(db, from_addr="alice@example.com", hours_ago=6,
-                           message_id="alice-msg-1")
-    _insert_email_received(db, from_addr="bob@example.com",   hours_ago=6,
-                           message_id="bob-msg-1")
-    _insert_email_received(db, from_addr="carol@example.com", hours_ago=6,
-                           message_id="carol-msg-1")
+    _insert_email_received(db, from_addr="alice@example.com", hours_ago=6, message_id="alice-msg-1")
+    _insert_email_received(db, from_addr="bob@example.com", hours_ago=6, message_id="bob-msg-1")
+    _insert_email_received(db, from_addr="carol@example.com", hours_ago=6, message_id="carol-msg-1")
 
     predictions = await engine._check_follow_up_needs({})
 
-    by_contact = {
-        p.supporting_signals.get("contact_email"): p
-        for p in predictions
-    }
+    by_contact = {p.supporting_signals.get("contact_email"): p for p in predictions}
 
     assert "alice@example.com" in by_contact, "Alice should have a prediction"
-    assert "bob@example.com"   in by_contact, "Bob should have a prediction"
+    assert "bob@example.com" in by_contact, "Bob should have a prediction"
     assert "carol@example.com" in by_contact, "Carol should have a prediction"
 
     assert by_contact["alice@example.com"].confidence == pytest.approx(0.7, abs=0.05)
-    assert by_contact["bob@example.com"].confidence   == pytest.approx(0.4, abs=0.05)
+    assert by_contact["bob@example.com"].confidence == pytest.approx(0.4, abs=0.05)
     assert by_contact["carol@example.com"].confidence == pytest.approx(0.7, abs=0.05)
 
     assert by_contact["alice@example.com"].supporting_signals["is_priority_contact"] is True
@@ -307,12 +317,11 @@ async def test_priority_plus_requires_response_capped_at_90(db, user_model_store
     """
     engine = PredictionEngine(db, user_model_store)
 
-    _set_relationships_profile(user_model_store, {
-        "alice@example.com": {"interaction_count": 10, "outbound_count": 5, "inbound_count": 5}
-    })
+    _set_relationships_profile(
+        user_model_store, {"alice@example.com": {"interaction_count": 10, "outbound_count": 5, "inbound_count": 5}}
+    )
 
-    _insert_email_received(db, from_addr="alice@example.com", hours_ago=6,
-                           requires_response=True)
+    _insert_email_received(db, from_addr="alice@example.com", hours_ago=6, requires_response=True)
 
     predictions = await engine._check_follow_up_needs({})
 
@@ -332,13 +341,12 @@ async def test_non_priority_requires_response_gets_06(db, user_model_store):
     """
     engine = PredictionEngine(db, user_model_store)
 
-    _set_relationships_profile(user_model_store, {
-        "bob@example.com": {"interaction_count": 10, "outbound_count": 0, "inbound_count": 10}
-    })
+    _set_relationships_profile(
+        user_model_store, {"bob@example.com": {"interaction_count": 10, "outbound_count": 0, "inbound_count": 10}}
+    )
 
     # Non-priority email with explicit requires_response
-    _insert_email_received(db, from_addr="bob@example.com", hours_ago=6,
-                           requires_response=True)
+    _insert_email_received(db, from_addr="bob@example.com", hours_ago=6, requires_response=True)
 
     predictions = await engine._check_follow_up_needs({})
 
@@ -381,15 +389,16 @@ async def test_priority_flag_in_supporting_signals(db, user_model_store):
     """
     engine = PredictionEngine(db, user_model_store)
 
-    _set_relationships_profile(user_model_store, {
-        "alice@example.com": {"interaction_count": 10, "outbound_count": 5, "inbound_count": 5},
-        "bob@example.com":   {"interaction_count": 10, "outbound_count": 0, "inbound_count": 10},
-    })
+    _set_relationships_profile(
+        user_model_store,
+        {
+            "alice@example.com": {"interaction_count": 10, "outbound_count": 5, "inbound_count": 5},
+            "bob@example.com": {"interaction_count": 10, "outbound_count": 0, "inbound_count": 10},
+        },
+    )
 
-    _insert_email_received(db, from_addr="alice@example.com", hours_ago=6,
-                           message_id="alice-sig-1")
-    _insert_email_received(db, from_addr="bob@example.com",   hours_ago=6,
-                           message_id="bob-sig-1")
+    _insert_email_received(db, from_addr="alice@example.com", hours_ago=6, message_id="alice-sig-1")
+    _insert_email_received(db, from_addr="bob@example.com", hours_ago=6, message_id="bob-sig-1")
 
     predictions = await engine._check_follow_up_needs({})
 

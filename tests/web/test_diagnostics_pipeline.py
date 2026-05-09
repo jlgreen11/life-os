@@ -58,8 +58,10 @@ def _make_app(db, *, signal_profiles: dict | None = None) -> TestClient:
     real_ums = UserModelStore(db, event_bus=MagicMock())
 
     if signal_profiles is not None:
+
         def _get_profile(ptype):
             return signal_profiles.get(ptype)
+
         life_os.user_model_store.get_signal_profile = MagicMock(side_effect=_get_profile)
     else:
         life_os.user_model_store.get_signal_profile = MagicMock(return_value=None)
@@ -115,13 +117,17 @@ def _insert_notification(db, hours_ago: float) -> None:
 def _all_profiles_present() -> dict:
     """Return a signal_profiles dict where every expected profile exists."""
     names = [
-        "relationships", "temporal", "topics", "linguistic",
-        "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
+        "relationships",
+        "temporal",
+        "topics",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "spatial",
+        "decision",
     ]
-    return {
-        name: {"samples_count": 10, "updated_at": "2026-01-01T00:00:00"}
-        for name in names
-    }
+    return {name: {"samples_count": 10, "updated_at": "2026-01-01T00:00:00"} for name in names}
 
 
 def _insert_episode(db) -> None:

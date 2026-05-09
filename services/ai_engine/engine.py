@@ -52,8 +52,9 @@ class AIEngine:
     manages context, and handles PII protection.
     """
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore, config: dict[str, Any],
-                 vector_store: VectorStore = None):
+    def __init__(
+        self, db: DatabaseManager, ums: UserModelStore, config: dict[str, Any], vector_store: VectorStore = None
+    ):
         """
         Initialize the AI Engine.
 
@@ -131,15 +132,12 @@ CONSTRAINTS:
             logger.error("Briefing generation failed: %s (type=%s, details=%s)", e, e.error_type, e.details)
             return f"Briefing unavailable — {e} ({e.error_type}: {e.details})"
 
-    async def draft_reply(self, contact_id: str, channel: str,
-                          incoming_message: str) -> str:
+    async def draft_reply(self, contact_id: str, channel: str, incoming_message: str) -> str:
         """Draft a reply in the user's voice."""
         # Build context that includes: the user's communication template for this
         # contact/channel (greeting, closing, formality, emoji usage, common
         # phrases), relationship history, and their general linguistic profile.
-        context = self.context.assemble_draft_context(
-            contact_id, channel, incoming_message
-        )
+        context = self.context.assemble_draft_context(contact_id, channel, incoming_message)
 
         # The system prompt is a synthesis guide for the 5-layer context window
         # assembled above.  It tells the LLM *how* to interpret each section —
@@ -421,16 +419,18 @@ Respond with exactly one word: critical, high, normal, or low."""
 
                     for row in rows_sorted:
                         payload = json.loads(row["payload"])
-                        results.append({
-                            "type": row["type"],
-                            "source": row["source"],
-                            "date": row["timestamp"],
-                            # Include the snippet from the vector store (already
-                            # extracted at indexing time) for consistency
-                            "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
-                            # Include similarity score for debugging/transparency
-                            "relevance": round(similarity_by_id.get(row["id"], 0.0), 3),
-                        })
+                        results.append(
+                            {
+                                "type": row["type"],
+                                "source": row["source"],
+                                "date": row["timestamp"],
+                                # Include the snippet from the vector store (already
+                                # extracted at indexing time) for consistency
+                                "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
+                                # Include similarity score for debugging/transparency
+                                "relevance": round(similarity_by_id.get(row["id"], 0.0), 3),
+                            }
+                        )
             except Exception as e:
                 # Graceful degradation: if vector search fails for any reason
                 # (database error, model loading issue, etc.), fall back to SQL.
@@ -457,13 +457,15 @@ Respond with exactly one word: critical, high, normal, or low."""
             # Convert SQL rows into the common result format
             for row in rows:
                 payload = json.loads(row["payload"])
-                results.append({
-                    "type": row["type"],
-                    "source": row["source"],
-                    "date": row["timestamp"],
-                    # Prefer "snippet" field; fall back to "subject" if absent.
-                    "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
-                })
+                results.append(
+                    {
+                        "type": row["type"],
+                        "source": row["source"],
+                        "date": row["timestamp"],
+                        # Prefer "snippet" field; fall back to "subject" if absent.
+                        "snippet": payload.get("snippet", payload.get("subject", ""))[:100],
+                    }
+                )
 
         # --- Result formatting layer ---
         # Append formatted results to the context for the LLM to synthesize.

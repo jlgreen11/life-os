@@ -29,9 +29,7 @@ class TestEpisodeMoodIntegration:
         return SignalExtractorPipeline(db, user_model_store)
 
     @pytest.mark.asyncio
-    async def test_episode_mood_integration_with_signals(
-        self, db, user_model_store, signal_extractor
-    ):
+    async def test_episode_mood_integration_with_signals(self, db, user_model_store, signal_extractor):
         """
         Test that episodes capture mood when signals exist.
 
@@ -84,14 +82,10 @@ class TestEpisodeMoodIntegration:
             "emotional_valence": mood_state.emotional_valence,
         }
         assert inferred_mood["stress_level"] > 0.2
-        assert all(
-            k in inferred_mood for k in ["energy_level", "stress_level", "emotional_valence"]
-        )
+        assert all(k in inferred_mood for k in ["energy_level", "stress_level", "emotional_valence"])
 
     @pytest.mark.asyncio
-    async def test_episode_mood_integration_without_signals(
-        self, db, user_model_store, signal_extractor
-    ):
+    async def test_episode_mood_integration_without_signals(self, db, user_model_store, signal_extractor):
         """
         Test that episodes handle missing mood gracefully.
 
@@ -146,9 +140,7 @@ class TestEpisodeMoodIntegration:
         assert mood_state.confidence >= 0.1
 
     @pytest.mark.asyncio
-    async def test_mood_dimensions_from_different_signal_types(
-        self, db, user_model_store, signal_extractor
-    ):
+    async def test_mood_dimensions_from_different_signal_types(self, db, user_model_store, signal_extractor):
         """
         Test that different event types contribute to different mood dimensions.
 
@@ -197,9 +189,7 @@ class TestEpisodeMoodIntegration:
         assert mood_state.confidence > 0
 
     @pytest.mark.asyncio
-    async def test_inbound_message_pressure_affects_mood(
-        self, db, user_model_store, signal_extractor
-    ):
+    async def test_inbound_message_pressure_affects_mood(self, db, user_model_store, signal_extractor):
         """
         Test that inbound messages with urgency markers affect mood.
 
@@ -229,9 +219,7 @@ class TestEpisodeMoodIntegration:
         assert mood_state.confidence > 0
 
     @pytest.mark.asyncio
-    async def test_mood_profile_ring_buffer_cap(
-        self, db, user_model_store, signal_extractor
-    ):
+    async def test_mood_profile_ring_buffer_cap(self, db, user_model_store, signal_extractor):
         """
         Test that mood signals are capped at 500 entries (ring buffer).
 
@@ -262,14 +250,10 @@ class TestEpisodeMoodIntegration:
         profile = user_model_store.get_signal_profile("mood_signals")
         assert profile is not None
         recent_signals = profile["data"].get("recent_signals", [])
-        assert len(recent_signals) <= 500, (
-            f"Ring buffer must cap at 500 signals; found {len(recent_signals)}"
-        )
+        assert len(recent_signals) <= 500, f"Ring buffer must cap at 500 signals; found {len(recent_signals)}"
 
     @pytest.mark.asyncio
-    async def test_episode_stores_mood_state_correctly(
-        self, db, user_model_store, signal_extractor
-    ):
+    async def test_episode_stores_mood_state_correctly(self, db, user_model_store, signal_extractor):
         """
         Integration test: Verify episodes actually store mood data.
 

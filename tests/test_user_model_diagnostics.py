@@ -18,6 +18,7 @@ from web.app import create_web_app
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_conn(query_results=None):
     """Create a mock SQLite connection with configurable query results.
 
@@ -80,22 +81,29 @@ def _make_life_os(
 
     life_os.db = Mock()
     life_os.db.get_connection = _get_connection
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+    )
 
     # --- event_store ---
     life_os.event_store = Mock()
     life_os.event_store.get_event_count = Mock(return_value=42)
     life_os.event_store.get_events = Mock(return_value=[])
     life_os.event_store.store_event = Mock(return_value="evt-123")
-    life_os.event_store.get_event_flow_stats = Mock(return_value={
-        "sources": {}, "stale_sources": [], "total_24h": 0, "events_per_hour": 0.0,
-    })
+    life_os.event_store.get_event_flow_stats = Mock(
+        return_value={
+            "sources": {},
+            "stale_sources": [],
+            "total_24h": 0,
+            "events_per_hour": 0.0,
+        }
+    )
 
     # --- event_bus ---
     life_os.event_bus = Mock()
@@ -119,10 +127,17 @@ def _make_life_os(
 
     life_os.signal_extractor = _make_service("signal_extractor")
     life_os.signal_extractor.get_user_summary = Mock(return_value={})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.3, social_battery=0.5,
-        cognitive_load=0.3, emotional_valence=0.5, confidence=0.5, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.5,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
     life_os.prediction_engine = _make_service("prediction_engine")
     life_os.notification_manager = _make_service("notification_manager")
     life_os.notification_manager.get_stats = Mock(return_value={})
@@ -172,12 +187,14 @@ def test_diagnostics_endpoint_returns_200():
 
 def test_diagnostics_includes_db_counts():
     """Response includes db_counts with expected table keys."""
-    conn = _make_mock_conn({
-        "episodes": (150,),
-        "semantic_facts": (10,),
-        "routines": (3,),
-        "predictions": (50,),
-    })
+    conn = _make_mock_conn(
+        {
+            "episodes": (150,),
+            "semantic_facts": (10,),
+            "routines": (3,),
+            "predictions": (50,),
+        }
+    )
     life_os = _make_life_os(user_model_conn=conn)
     app = create_web_app(life_os)
     client = TestClient(app)
@@ -220,12 +237,14 @@ def test_diagnostics_includes_signal_profiles():
 
 def test_diagnostics_health_degraded_when_facts_zero():
     """When episodes > 100 but semantic_facts == 0, health is 'degraded'."""
-    conn = _make_mock_conn({
-        "episodes": (200,),
-        "semantic_facts": (0,),
-        "routines": (5,),
-        "predictions": (10,),
-    })
+    conn = _make_mock_conn(
+        {
+            "episodes": (200,),
+            "semantic_facts": (0,),
+            "routines": (5,),
+            "predictions": (10,),
+        }
+    )
     life_os = _make_life_os(user_model_conn=conn)
     app = create_web_app(life_os)
     client = TestClient(app)
@@ -239,18 +258,27 @@ def test_diagnostics_health_degraded_when_facts_zero():
 
 def test_diagnostics_health_healthy():
     """When episodes and facts are populated, health is 'healthy'."""
-    conn = _make_mock_conn({
-        "episodes": (50,),
-        "semantic_facts": (10,),
-        "routines": (3,),
-        "predictions": (20,),
-    })
+    conn = _make_mock_conn(
+        {
+            "episodes": (50,),
+            "semantic_facts": (10,),
+            "routines": (3,),
+            "predictions": (20,),
+        }
+    )
     # Populate enough signal profiles to avoid the 'missing > 3' issue
     all_profiles = {
         ptype: {"samples_count": 10}
         for ptype in [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
     }
     life_os = _make_life_os(user_model_conn=conn, signal_profiles=all_profiles)
@@ -348,17 +376,26 @@ def test_diagnostics_includes_behavioral_tracker():
 
 def test_diagnostics_degraded_when_insight_engine_no_data():
     """Health is degraded when insight_engine reports 'no_data'."""
-    conn = _make_mock_conn({
-        "episodes": (50,),
-        "semantic_facts": (10,),
-        "routines": (3,),
-        "predictions": (20,),
-    })
+    conn = _make_mock_conn(
+        {
+            "episodes": (50,),
+            "semantic_facts": (10,),
+            "routines": (3,),
+            "predictions": (20,),
+        }
+    )
     all_profiles = {
         ptype: {"samples_count": 10}
         for ptype in [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
     }
     service_diags = {
@@ -388,17 +425,26 @@ def test_diagnostics_degraded_when_insight_engine_no_data():
 
 def test_diagnostics_degraded_when_behavioral_tracker_stalled():
     """Health is degraded when behavioral_tracker reports 'stalled'."""
-    conn = _make_mock_conn({
-        "episodes": (50,),
-        "semantic_facts": (10,),
-        "routines": (3,),
-        "predictions": (20,),
-    })
+    conn = _make_mock_conn(
+        {
+            "episodes": (50,),
+            "semantic_facts": (10,),
+            "routines": (3,),
+            "predictions": (20,),
+        }
+    )
     all_profiles = {
         ptype: {"samples_count": 10}
         for ptype in [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
     }
     service_diags = {

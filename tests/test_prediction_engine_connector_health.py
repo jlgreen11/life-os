@@ -22,9 +22,9 @@ from services.prediction_engine.engine import PredictionEngine
 # -------------------------------------------------------------------------
 
 
-def _insert_connector_state(db, connector_id, *, status="active", enabled=1,
-                            error_count=0, last_error=None, last_sync=None,
-                            updated_at=None):
+def _insert_connector_state(
+    db, connector_id, *, status="active", enabled=1, error_count=0, last_error=None, last_sync=None, updated_at=None
+):
     """Insert a row into the connector_state table for testing."""
     if updated_at is None:
         updated_at = datetime.now(timezone.utc).isoformat()
@@ -53,12 +53,14 @@ def _insert_existing_prediction(db, connector_id, *, days_ago=0):
                 0.95,
                 "default",
                 "this_week",
-                json.dumps({
-                    "prediction_source": "connector_health",
-                    "connector_id": connector_id,
-                    "error_count": 5,
-                    "last_error": "Auth failed",
-                }),
+                json.dumps(
+                    {
+                        "prediction_source": "connector_health",
+                        "connector_id": connector_id,
+                        "error_count": 5,
+                        "last_error": "Auth failed",
+                    }
+                ),
                 created_at,
             ),
         )
@@ -76,9 +78,13 @@ async def test_broken_connector_produces_risk_prediction(db, user_model_store):
     last_sync = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
 
     _insert_connector_state(
-        db, "google",
-        status="error", enabled=1, error_count=10,
-        last_error="Authentication failed", last_sync=last_sync,
+        db,
+        "google",
+        status="error",
+        enabled=1,
+        error_count=10,
+        last_error="Authentication failed",
+        last_sync=last_sync,
     )
 
     predictions = await engine._check_connector_health({})
@@ -104,8 +110,11 @@ async def test_disabled_connector_is_ignored(db, user_model_store):
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "proton_mail",
-        status="error", enabled=0, error_count=50,
+        db,
+        "proton_mail",
+        status="error",
+        enabled=0,
+        error_count=50,
         last_error="Connection refused",
     )
 
@@ -119,8 +128,11 @@ async def test_low_error_count_is_ignored(db, user_model_store):
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "signal",
-        status="error", enabled=1, error_count=2,
+        db,
+        "signal",
+        status="error",
+        enabled=1,
+        error_count=2,
         last_error="Timeout",
     )
 
@@ -134,8 +146,11 @@ async def test_healthy_connector_produces_no_prediction(db, user_model_store):
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "caldav",
-        status="active", enabled=1, error_count=0,
+        db,
+        "caldav",
+        status="active",
+        enabled=1,
+        error_count=0,
         last_sync=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -149,8 +164,11 @@ async def test_deduplication_prevents_re_alerting(db, user_model_store):
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "google",
-        status="error", enabled=1, error_count=10,
+        db,
+        "google",
+        status="error",
+        enabled=1,
+        error_count=10,
         last_error="Auth failed",
         last_sync=(datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),
     )
@@ -168,8 +186,11 @@ async def test_old_prediction_allows_re_alerting(db, user_model_store):
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "google",
-        status="error", enabled=1, error_count=15,
+        db,
+        "google",
+        status="error",
+        enabled=1,
+        error_count=15,
         last_error="Token expired",
         last_sync=(datetime.now(timezone.utc) - timedelta(days=14)).isoformat(),
     )
@@ -189,8 +210,11 @@ async def test_multiple_broken_connectors(db, user_model_store):
 
     for cid in ["google", "proton_mail", "signal"]:
         _insert_connector_state(
-            db, cid,
-            status="error", enabled=1, error_count=5,
+            db,
+            cid,
+            status="error",
+            enabled=1,
+            error_count=5,
             last_error=f"{cid} auth failed",
             last_sync=(datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
         )
@@ -208,9 +232,13 @@ async def test_connector_health_with_null_last_sync(db, user_model_store):
 
     updated_at = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
     _insert_connector_state(
-        db, "imessage",
-        status="error", enabled=1, error_count=4,
-        last_error="Database locked", last_sync=None,
+        db,
+        "imessage",
+        status="error",
+        enabled=1,
+        error_count=4,
+        last_error="Database locked",
+        last_sync=None,
         updated_at=updated_at,
     )
 
@@ -239,8 +267,11 @@ async def test_connector_health_wired_into_generate_predictions(db, event_store,
     engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
     _insert_connector_state(
-        db, "google",
-        status="error", enabled=1, error_count=10,
+        db,
+        "google",
+        status="error",
+        enabled=1,
+        error_count=10,
         last_error="Auth expired",
         last_sync=(datetime.now(timezone.utc) - timedelta(days=7)).isoformat(),
     )
@@ -249,21 +280,20 @@ async def test_connector_health_wired_into_generate_predictions(db, event_store,
     engine._last_time_based_run = datetime.now(timezone.utc) - timedelta(hours=1)
 
     # Add a dummy event so the engine doesn't skip entirely
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "system.heartbeat",
-        "source": "test",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "system.heartbeat",
+            "source": "test",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {},
+            "metadata": {},
+        }
+    )
 
     predictions = await engine.generate_predictions({})
 
     # Find our connector health prediction in the results
-    connector_preds = [
-        p for p in predictions
-        if p.supporting_signals.get("prediction_source") == "connector_health"
-    ]
+    connector_preds = [p for p in predictions if p.supporting_signals.get("prediction_source") == "connector_health"]
     assert len(connector_preds) == 1
     assert connector_preds[0].supporting_signals["connector_id"] == "google"

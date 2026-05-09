@@ -382,16 +382,13 @@ def test_missing_source_dbs_are_noted(tmp_path: Path) -> None:
     assert report.entities.translated == 0
 
 
-def test_feedback_events_rows_land_in_output_with_v1_source(
-    v1_sample_dir: Path, tmp_path: Path
-) -> None:
+def test_feedback_events_rows_land_in_output_with_v1_source(v1_sample_dir: Path, tmp_path: Path) -> None:
     out = tmp_path / "dryrun.db"
     migrate.run_migration(v1_sample_dir, out)
 
     with sqlite3.connect(out) as conn:
         rows = conn.execute(
-            "SELECT id, ts, action_id, action_type, feedback_type, source "
-            "FROM feedback_events ORDER BY id"
+            "SELECT id, ts, action_id, action_type, feedback_type, source FROM feedback_events ORDER BY id"
         ).fetchall()
 
     # 3 fixture rows land as 3 output rows, all tagged as v1_migration.

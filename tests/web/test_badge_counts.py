@@ -64,8 +64,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -223,9 +228,7 @@ def test_badges_inbox_aggregates_all(mock_life_os, client):
             {"id": "n2", "domain": "email", "title": "Email 2"},
         ]
     )
-    mock_life_os.task_manager.get_pending_tasks = Mock(
-        return_value=[{"id": "t1", "title": "Task"}]
-    )
+    mock_life_os.task_manager.get_pending_tasks = Mock(return_value=[{"id": "t1", "title": "Task"}])
     # Simulate 3 upcoming calendar events from the DB
     mock_cursor = MagicMock()
     mock_cursor.fetchone.return_value = (3,)
@@ -252,9 +255,7 @@ def test_badges_inbox_aggregates_all(mock_life_os, client):
 
 def test_badges_handles_notification_error(mock_life_os, client):
     """Endpoint returns 200 even if the notification manager raises."""
-    mock_life_os.notification_manager.get_pending = Mock(
-        side_effect=RuntimeError("DB unavailable")
-    )
+    mock_life_os.notification_manager.get_pending = Mock(side_effect=RuntimeError("DB unavailable"))
     response = client.get("/api/dashboard/badges")
     assert response.status_code == 200
     badges = response.json()["badges"]
@@ -265,9 +266,7 @@ def test_badges_handles_notification_error(mock_life_os, client):
 
 def test_badges_handles_task_error(mock_life_os, client):
     """Endpoint returns 200 even if the task manager raises."""
-    mock_life_os.task_manager.get_pending_tasks = Mock(
-        side_effect=RuntimeError("Task DB error")
-    )
+    mock_life_os.task_manager.get_pending_tasks = Mock(side_effect=RuntimeError("Task DB error"))
     response = client.get("/api/dashboard/badges")
     assert response.status_code == 200
     assert response.json()["badges"]["tasks"] == 0
@@ -275,9 +274,7 @@ def test_badges_handles_task_error(mock_life_os, client):
 
 def test_badges_handles_calendar_db_error(mock_life_os, client):
     """Endpoint returns 200 even if the calendar DB query raises."""
-    mock_life_os.db.get_connection = Mock(
-        side_effect=RuntimeError("Calendar DB error")
-    )
+    mock_life_os.db.get_connection = Mock(side_effect=RuntimeError("Calendar DB error"))
     response = client.get("/api/dashboard/badges")
     assert response.status_code == 200
     assert response.json()["badges"]["calendar"] == 0
@@ -312,9 +309,7 @@ def test_badges_insights_count_from_db(mock_life_os, client):
 def test_badges_insights_handles_db_error(mock_life_os, client):
     """Insights badge defaults to 0 when the user_model DB query fails."""
     # Calendar and insights both use db.get_connection; make it raise.
-    mock_life_os.db.get_connection = Mock(
-        side_effect=RuntimeError("user_model DB unavailable")
-    )
+    mock_life_os.db.get_connection = Mock(side_effect=RuntimeError("user_model DB unavailable"))
     response = client.get("/api/dashboard/badges")
     assert response.status_code == 200
     assert response.json()["badges"]["insights"] == 0

@@ -103,12 +103,7 @@ async def test_query_local_success(db, user_model_store):
     """_query_local should successfully call Ollama and extract response."""
     engine = AIEngine(db, user_model_store, {})
 
-    mock_response = {
-        "message": {
-            "role": "assistant",
-            "content": "This is the model's response"
-        }
-    }
+    mock_response = {"message": {"role": "assistant", "content": "This is the model's response"}}
 
     with patch("services.ai_engine.engine.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
@@ -172,10 +167,7 @@ async def test_query_local_empty_response(db, user_model_store):
 @pytest.mark.asyncio
 async def test_query_local_custom_url_and_model(db, user_model_store):
     """_query_local should use configured Ollama URL and model."""
-    config = {
-        "ollama_url": "http://remote-ollama:9999",
-        "ollama_model": "custom-model"
-    }
+    config = {"ollama_url": "http://remote-ollama:9999", "ollama_model": "custom-model"}
     engine = AIEngine(db, user_model_store, config)
 
     with patch("services.ai_engine.engine.httpx.AsyncClient") as mock_client_cls:
@@ -208,11 +200,7 @@ async def test_query_cloud_success(db, user_model_store):
     }
     engine = AIEngine(db, user_model_store, config)
 
-    mock_response = {
-        "content": [
-            {"type": "text", "text": "Claude's response"}
-        ]
-    }
+    mock_response = {"content": [{"type": "text", "text": "Claude's response"}]}
 
     with patch("services.ai_engine.engine.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
@@ -250,7 +238,7 @@ async def test_query_cloud_no_api_key_falls_back_to_local(db, user_model_store):
     """_query_cloud should fall back to local model if no API key is configured."""
     engine = AIEngine(db, user_model_store, {})  # No cloud_api_key
 
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "local response"
 
         result = await engine._query_cloud("sys", "usr")
@@ -304,10 +292,10 @@ async def test_generate_briefing_uses_local_model(db, user_model_store):
     """Briefings should always use the local model for privacy."""
     engine = AIEngine(db, user_model_store, {})
 
-    with patch.object(engine.context, 'assemble_briefing_context') as mock_context:
+    with patch.object(engine.context, "assemble_briefing_context") as mock_context:
         mock_context.return_value = "context data"
 
-        with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
             mock_local.return_value = "Good morning! Here's your briefing."
 
             result = await engine.generate_briefing()
@@ -339,32 +327,28 @@ async def test_draft_reply_uses_cloud_when_enabled(db, user_model_store):
     config = {"cloud_api_key": "sk-ant-test", "use_cloud": True}
     engine = AIEngine(db, user_model_store, config)
 
-    with patch.object(engine.context, 'assemble_draft_context') as mock_context:
+    with patch.object(engine.context, "assemble_draft_context") as mock_context:
         mock_context.return_value = "style: casual"
 
-        with patch.object(engine.pii_shield, 'strip') as mock_strip:
+        with patch.object(engine.pii_shield, "strip") as mock_strip:
             # PII shield returns stripped text and mapping
             mock_strip.side_effect = [
                 ("stripped context", {"[PERSON_1]": "Alice"}),
                 ("stripped message", {"[PERSON_2]": "Bob"}),
             ]
 
-            with patch.object(engine.pii_shield, 'restore') as mock_restore:
+            with patch.object(engine.pii_shield, "restore") as mock_restore:
                 mock_restore.return_value = "Hey Alice, thanks for asking!"
 
-                with patch.object(engine, '_query_cloud', new_callable=AsyncMock) as mock_cloud:
+                with patch.object(engine, "_query_cloud", new_callable=AsyncMock) as mock_cloud:
                     mock_cloud.return_value = "Hey [PERSON_1], thanks for asking!"
 
                     result = await engine.draft_reply(
-                        contact_id="alice@example.com",
-                        channel="email",
-                        incoming_message="Hey, can you help?"
+                        contact_id="alice@example.com", channel="email", incoming_message="Hey, can you help?"
                     )
 
                     # Verify context was assembled
-                    mock_context.assert_called_once_with(
-                        "alice@example.com", "email", "Hey, can you help?"
-                    )
+                    mock_context.assert_called_once_with("alice@example.com", "email", "Hey, can you help?")
 
                     # Verify PII stripping was called twice (context + message)
                     assert mock_strip.call_count == 2
@@ -391,16 +375,14 @@ async def test_draft_reply_falls_back_to_local_when_cloud_disabled(db, user_mode
     """Draft replies should use local model when cloud is disabled."""
     engine = AIEngine(db, user_model_store, {})  # No cloud config
 
-    with patch.object(engine.context, 'assemble_draft_context') as mock_context:
+    with patch.object(engine.context, "assemble_draft_context") as mock_context:
         mock_context.return_value = "style: formal"
 
-        with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
             mock_local.return_value = "Dear colleague, thank you for reaching out."
 
             result = await engine.draft_reply(
-                contact_id="boss@corp.com",
-                channel="email",
-                incoming_message="Need the report ASAP"
+                contact_id="boss@corp.com", channel="email", incoming_message="Need the report ASAP"
             )
 
             # Verify local model was called (no PII stripping)
@@ -422,17 +404,18 @@ async def test_extract_action_items_parses_json(db, user_model_store):
     """extract_action_items should parse valid JSON from LLM response."""
     engine = AIEngine(db, user_model_store, {})
 
-    mock_llm_response = json.dumps([
-        {"title": "Review PR #123", "due_hint": "by Friday", "priority": "high"},
-        {"title": "Update documentation", "due_hint": None, "priority": "normal"},
-    ])
+    mock_llm_response = json.dumps(
+        [
+            {"title": "Review PR #123", "due_hint": "by Friday", "priority": "high"},
+            {"title": "Update documentation", "due_hint": None, "priority": "normal"},
+        ]
+    )
 
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = mock_llm_response
 
         result = await engine.extract_action_items(
-            text="Can you review PR #123 by Friday and update the docs?",
-            source="email.received"
+            text="Can you review PR #123 by Friday and update the docs?", source="email.received"
         )
 
         # Verify local model was called
@@ -462,7 +445,7 @@ async def test_extract_action_items_strips_markdown_code_fence(db, user_model_st
 ]
 ```"""
 
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = mock_llm_response
 
         result = await engine.extract_action_items("Buy groceries today", "message.received")
@@ -479,14 +462,14 @@ async def test_extract_action_items_returns_empty_list_on_parse_error(db, user_m
     engine = AIEngine(db, user_model_store, {})
 
     # Case 1: Invalid JSON
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "I found no action items in this message."
 
         result = await engine.extract_action_items("Just saying hi!", "message.received")
         assert result == []
 
     # Case 2: Malformed JSON
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "[{broken json"
 
         result = await engine.extract_action_items("Some text", "email.received")
@@ -507,11 +490,11 @@ async def test_classify_priority_returns_valid_level(db, user_model_store):
         "payload": {
             "from_address": "ceo@company.com",
             "subject": "URGENT: Server down",
-            "snippet": "Production is completely offline. Need immediate fix."
+            "snippet": "Production is completely offline. Need immediate fix.",
         }
     }
 
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "critical"
 
         result = await engine.classify_priority(event)
@@ -537,19 +520,19 @@ async def test_classify_priority_defaults_to_normal_on_invalid_response(db, user
         "payload": {
             "from_address": "friend@example.com",
             "subject": "Dinner plans?",
-            "snippet": "Want to grab dinner this weekend?"
+            "snippet": "Want to grab dinner this weekend?",
         }
     }
 
     # Case 1: LLM returns unexpected value
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "medium"  # Not in valid set
 
         result = await engine.classify_priority(event)
         assert result == "normal"
 
     # Case 2: LLM returns verbose response instead of single word
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "This message has a high priority because..."
 
         result = await engine.classify_priority(event)
@@ -569,7 +552,7 @@ async def test_classify_priority_case_insensitive(db, user_model_store):
         ("CrItIcAl", "critical"),
         ("NORMAL", "normal"),
     ]:
-        with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
             mock_local.return_value = llm_response
             result = await engine.classify_priority(event)
             assert result == expected
@@ -581,15 +564,9 @@ async def test_classify_priority_truncates_long_snippets(db, user_model_store):
     engine = AIEngine(db, user_model_store, {})
 
     long_snippet = "A" * 500  # 500 chars
-    event = {
-        "payload": {
-            "from_address": "test@test.com",
-            "subject": "Long message",
-            "snippet": long_snippet
-        }
-    }
+    event = {"payload": {"from_address": "test@test.com", "subject": "Long message", "snippet": long_snippet}}
 
-    with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+    with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
         mock_local.return_value = "normal"
 
         await engine.classify_priority(event)
@@ -610,25 +587,24 @@ async def test_classify_priority_truncates_long_snippets(db, user_model_store):
 async def test_search_life_finds_results(db, user_model_store, event_store):
     """search_life should query events DB and synthesize results via LLM."""
     # Insert test events
-    event_store.store_event({
-        "id": "evt-1",
-        "type": "email.received",
-        "source": "gmail",
-        "timestamp": "2026-02-10T10:00:00Z",
-        "priority": "normal",
-        "payload": {
-            "subject": "Project Alpha Update",
-            "snippet": "The Alpha project is on track for Q1 launch."
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "evt-1",
+            "type": "email.received",
+            "source": "gmail",
+            "timestamp": "2026-02-10T10:00:00Z",
+            "priority": "normal",
+            "payload": {"subject": "Project Alpha Update", "snippet": "The Alpha project is on track for Q1 launch."},
+            "metadata": {},
+        }
+    )
 
     engine = AIEngine(db, user_model_store, {})
 
-    with patch.object(engine.context, 'assemble_search_context') as mock_context:
+    with patch.object(engine.context, "assemble_search_context") as mock_context:
         mock_context.return_value = "User is searching for: Alpha project"
 
-        with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
             mock_local.return_value = "The Alpha project is on track for Q1 launch according to an email from Feb 10."
 
             result = await engine.search_life("Alpha project")
@@ -657,10 +633,10 @@ async def test_search_life_no_results(db, user_model_store):
     """search_life should handle case where no events match the query."""
     engine = AIEngine(db, user_model_store, {})
 
-    with patch.object(engine.context, 'assemble_search_context') as mock_context:
+    with patch.object(engine.context, "assemble_search_context") as mock_context:
         mock_context.return_value = "User is searching for: nonexistent topic"
 
-        with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
             mock_local.return_value = "I couldn't find any information about that topic."
 
             result = await engine.search_life("nonexistent topic")
@@ -679,22 +655,24 @@ async def test_search_life_limits_results_to_20(db, user_model_store, event_stor
     """search_life should cap results at 20 to respect token budget."""
     # Insert 25 matching events
     for i in range(25):
-        event_store.store_event({
-            "id": f"evt-{i}",
-            "type": "message.received",
-            "source": "slack",
-            "timestamp": f"2026-02-{10+i:02d}T10:00:00Z",
-            "priority": "normal",
-            "payload": {"snippet": f"Test message {i}"},
-            "metadata": {}
-        })
+        event_store.store_event(
+            {
+                "id": f"evt-{i}",
+                "type": "message.received",
+                "source": "slack",
+                "timestamp": f"2026-02-{10 + i:02d}T10:00:00Z",
+                "priority": "normal",
+                "payload": {"snippet": f"Test message {i}"},
+                "metadata": {},
+            }
+        )
 
     engine = AIEngine(db, user_model_store, {})
 
-    with patch.object(engine.context, 'assemble_search_context') as mock_context:
+    with patch.object(engine.context, "assemble_search_context") as mock_context:
         mock_context.return_value = "Searching for: Test"
 
-        with patch.object(engine, '_query_local', new_callable=AsyncMock) as mock_local:
+        with patch.object(engine, "_query_local", new_callable=AsyncMock) as mock_local:
             mock_local.return_value = "Found many test messages."
 
             await engine.search_life("Test")
@@ -719,18 +697,18 @@ async def test_pii_shield_integration_in_draft_reply(db, user_model_store):
     # Real PIIShield instance (not mocked) with known names
     engine.pii_shield = PIIShield(known_names=["Alice Cooper"])
 
-    with patch.object(engine.context, 'assemble_draft_context') as mock_context:
+    with patch.object(engine.context, "assemble_draft_context") as mock_context:
         # Context contains PII (name and email address)
         mock_context.return_value = "Recipient: Alice Cooper <alice@example.com>\nFormality: casual"
 
-        with patch.object(engine, '_query_cloud', new_callable=AsyncMock) as mock_cloud:
+        with patch.object(engine, "_query_cloud", new_callable=AsyncMock) as mock_cloud:
             # Cloud model returns response with PII tokens
             mock_cloud.return_value = "Hey [PERSON_1], got your message at [EMAIL_1]!"
 
             result = await engine.draft_reply(
                 contact_id="alice@example.com",
                 channel="email",
-                incoming_message="Hey Alice Cooper, can you send me the report?"
+                incoming_message="Hey Alice Cooper, can you send me the report?",
             )
 
             # Verify cloud was called with stripped content
@@ -758,27 +736,31 @@ async def test_search_sql_fallback_excludes_old_events(db, user_model_store, eve
 
     # Insert a recent event (within 90-day window)
     recent_ts = (now - timedelta(days=10)).isoformat()
-    event_store.store_event({
-        "id": "evt-recent",
-        "type": "email.received",
-        "source": "gmail",
-        "timestamp": recent_ts,
-        "priority": "normal",
-        "payload": {"snippet": "Recent budget report for Q1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-recent",
+            "type": "email.received",
+            "source": "gmail",
+            "timestamp": recent_ts,
+            "priority": "normal",
+            "payload": {"snippet": "Recent budget report for Q1"},
+            "metadata": {},
+        }
+    )
 
     # Insert an old event (outside 90-day window)
     old_ts = (now - timedelta(days=180)).isoformat()
-    event_store.store_event({
-        "id": "evt-old",
-        "type": "email.received",
-        "source": "gmail",
-        "timestamp": old_ts,
-        "priority": "normal",
-        "payload": {"snippet": "Old budget report from last year"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-old",
+            "type": "email.received",
+            "source": "gmail",
+            "timestamp": old_ts,
+            "priority": "normal",
+            "payload": {"snippet": "Old budget report from last year"},
+            "metadata": {},
+        }
+    )
 
     # Force SQL fallback by setting vector_store=None
     engine = AIEngine(db, user_model_store, {})
@@ -806,15 +788,17 @@ async def test_search_sql_fallback_includes_boundary_events(db, user_model_store
 
     # Insert an event just inside the 90-day window (89 days ago)
     boundary_ts = (now - timedelta(days=89)).isoformat()
-    event_store.store_event({
-        "id": "evt-boundary",
-        "type": "message.received",
-        "source": "slack",
-        "timestamp": boundary_ts,
-        "priority": "normal",
-        "payload": {"snippet": "Boundary meeting notes"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-boundary",
+            "type": "message.received",
+            "source": "slack",
+            "timestamp": boundary_ts,
+            "priority": "normal",
+            "payload": {"snippet": "Boundary meeting notes"},
+            "metadata": {},
+        }
+    )
 
     engine = AIEngine(db, user_model_store, {})
     engine.vector_store = None

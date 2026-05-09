@@ -11,8 +11,8 @@ Modules:
     database.py         — Backward-compatibility shim (re-exports from above modules)
 """
 
-from storage.manager import DatabaseManager
 from storage.event_store import EventStore
+from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
 from storage.vector_store import VectorStore
 

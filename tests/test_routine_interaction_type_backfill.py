@@ -41,9 +41,7 @@ def _relax_interaction_type_constraint(db):
                 return  # Already relaxed
         # SQLite doesn't support ALTER COLUMN; we must recreate the table.
         # Get the full CREATE TABLE statement and modify it.
-        row = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes'"
-        ).fetchone()
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes'").fetchone()
         if not row:
             return
         original_sql = row[0]

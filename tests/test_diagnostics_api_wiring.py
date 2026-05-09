@@ -33,9 +33,16 @@ def life_os_mock(db, event_store, user_model_store):
     mock.onboarding = MagicMock()
     # Remove get_diagnostics from services that shouldn't have it by default
     # so only the ones we explicitly set up will report
-    for attr in ("prediction_engine", "routine_detector", "workflow_detector",
-                 "semantic_fact_inferrer", "insight_engine", "behavioral_tracker",
-                 "task_completion_detector", "conflict_detector"):
+    for attr in (
+        "prediction_engine",
+        "routine_detector",
+        "workflow_detector",
+        "semantic_fact_inferrer",
+        "insight_engine",
+        "behavioral_tracker",
+        "task_completion_detector",
+        "conflict_detector",
+    ):
         setattr(mock, attr, None)
     return mock
 
@@ -44,6 +51,7 @@ def life_os_mock(db, event_store, user_model_store):
 def client(life_os_mock):
     """Create a test client with the mocked LifeOS."""
     from web.app import create_web_app
+
     app = create_web_app(life_os_mock)
     return TestClient(app)
 

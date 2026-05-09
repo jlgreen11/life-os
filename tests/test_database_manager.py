@@ -63,9 +63,7 @@ class TestDatabaseManagerInitialization:
 
             with db_manager.get_connection("events") as conn:
                 # Check events table exists
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='events'"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
                 assert cursor.fetchone() is not None
 
                 # Check event_processing_log table exists
@@ -75,9 +73,7 @@ class TestDatabaseManagerInitialization:
                 assert cursor.fetchone() is not None
 
                 # Check event_tags table exists
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='event_tags'"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='event_tags'")
                 assert cursor.fetchone() is not None
 
     def test_events_db_indexes(self):
@@ -87,9 +83,7 @@ class TestDatabaseManagerInitialization:
             db_manager.initialize_all()
 
             with db_manager.get_connection("events") as conn:
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='events'"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='events'")
                 indexes = {row[0] for row in cursor.fetchall()}
 
                 # Verify expected indexes exist
@@ -106,9 +100,7 @@ class TestDatabaseManagerInitialization:
             db_manager.initialize_all()
 
             with db_manager.get_connection("entities") as conn:
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 tables = {row[0] for row in cursor.fetchall()}
 
                 assert "contacts" in tables
@@ -124,9 +116,7 @@ class TestDatabaseManagerInitialization:
             db_manager.initialize_all()
 
             with db_manager.get_connection("state") as conn:
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 tables = {row[0] for row in cursor.fetchall()}
 
                 assert "tasks" in tables
@@ -141,9 +131,7 @@ class TestDatabaseManagerInitialization:
             db_manager.initialize_all()
 
             with db_manager.get_connection("user_model") as conn:
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 tables = {row[0] for row in cursor.fetchall()}
 
                 assert "episodes" in tables
@@ -162,9 +150,7 @@ class TestDatabaseManagerInitialization:
             db_manager.initialize_all()
 
             with db_manager.get_connection("preferences") as conn:
-                cursor = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                )
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                 tables = {row[0] for row in cursor.fetchall()}
 
                 assert "user_preferences" in tables
@@ -215,10 +201,7 @@ class TestConnectionManagement:
 
             # Insert data in a transaction
             with db_manager.get_connection("state") as conn:
-                conn.execute(
-                    "INSERT INTO kv_store (key, value) VALUES (?, ?)",
-                    ("test_key", "test_value")
-                )
+                conn.execute("INSERT INTO kv_store (key, value) VALUES (?, ?)", ("test_key", "test_value"))
 
             # Verify data persisted in a new connection
             with db_manager.get_connection("state") as conn:
@@ -237,8 +220,7 @@ class TestConnectionManagement:
             try:
                 with db_manager.get_connection("state") as conn:
                     conn.execute(
-                        "INSERT INTO kv_store (key, value) VALUES (?, ?)",
-                        ("rollback_test", "should_not_persist")
+                        "INSERT INTO kv_store (key, value) VALUES (?, ?)", ("rollback_test", "should_not_persist")
                     )
                     raise ValueError("Simulated error")
             except ValueError:
@@ -260,7 +242,7 @@ class TestConnectionManagement:
             with db_manager.get_connection("events") as conn:
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("test-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("test-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
             # Open two concurrent connections and read the same data
@@ -297,7 +279,7 @@ class TestForeignKeyConstraints:
                 with pytest.raises(sqlite3.IntegrityError):
                     conn.execute(
                         "INSERT INTO contact_identifiers (identifier, identifier_type, contact_id) VALUES (?, ?, ?)",
-                        ("test@example.com", "email", "nonexistent-contact-id")
+                        ("test@example.com", "email", "nonexistent-contact-id"),
                     )
 
     def test_contact_identifiers_allows_valid_fk(self):
@@ -308,21 +290,17 @@ class TestForeignKeyConstraints:
 
             with db_manager.get_connection("entities") as conn:
                 # Create contact
-                conn.execute(
-                    "INSERT INTO contacts (id, name) VALUES (?, ?)",
-                    ("contact-123", "Test Person")
-                )
+                conn.execute("INSERT INTO contacts (id, name) VALUES (?, ?)", ("contact-123", "Test Person"))
 
                 # Create identifier referencing that contact — should succeed
                 conn.execute(
                     "INSERT INTO contact_identifiers (identifier, identifier_type, contact_id) VALUES (?, ?, ?)",
-                    ("test@example.com", "email", "contact-123")
+                    ("test@example.com", "email", "contact-123"),
                 )
 
                 # Verify it was inserted
                 cursor = conn.execute(
-                    "SELECT contact_id FROM contact_identifiers WHERE identifier = ?",
-                    ("test@example.com",)
+                    "SELECT contact_id FROM contact_identifiers WHERE identifier = ?", ("test@example.com",)
                 )
                 row = cursor.fetchone()
                 assert row["contact_id"] == "contact-123"
@@ -340,14 +318,14 @@ class TestPrimaryKeyConstraints:
             with db_manager.get_connection("events") as conn:
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
                 # Attempt to insert duplicate ID should fail
                 with pytest.raises(sqlite3.IntegrityError):
                     conn.execute(
                         "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                        ("event-1", "test.event.other", "test", "2026-02-15T12:01:00Z")
+                        ("event-1", "test.event.other", "test", "2026-02-15T12:01:00Z"),
                     )
 
     def test_event_tags_composite_pk_prevents_duplicate_tag_per_event(self):
@@ -360,21 +338,15 @@ class TestPrimaryKeyConstraints:
                 # Create event
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
                 # Add tag
-                conn.execute(
-                    "INSERT INTO event_tags (event_id, tag) VALUES (?, ?)",
-                    ("event-1", "marketing")
-                )
+                conn.execute("INSERT INTO event_tags (event_id, tag) VALUES (?, ?)", ("event-1", "marketing"))
 
                 # Attempt to add same tag again should fail
                 with pytest.raises(sqlite3.IntegrityError):
-                    conn.execute(
-                        "INSERT INTO event_tags (event_id, tag) VALUES (?, ?)",
-                        ("event-1", "marketing")
-                    )
+                    conn.execute("INSERT INTO event_tags (event_id, tag) VALUES (?, ?)", ("event-1", "marketing"))
 
     def test_event_processing_log_composite_pk(self):
         """event_processing_log should enforce composite PRIMARY KEY (event_id, service)."""
@@ -386,20 +358,20 @@ class TestPrimaryKeyConstraints:
                 # Create event
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
                 # Log processing
                 conn.execute(
                     "INSERT INTO event_processing_log (event_id, service, result) VALUES (?, ?, ?)",
-                    ("event-1", "signal_extractor", "success")
+                    ("event-1", "signal_extractor", "success"),
                 )
 
                 # Attempt to log same service processing same event again should fail
                 with pytest.raises(sqlite3.IntegrityError):
                     conn.execute(
                         "INSERT INTO event_processing_log (event_id, service, result) VALUES (?, ?, ?)",
-                        ("event-1", "signal_extractor", "retry")
+                        ("event-1", "signal_extractor", "retry"),
                     )
 
 
@@ -415,7 +387,7 @@ class TestDefaultValues:
             with db_manager.get_connection("events") as conn:
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
                 cursor = conn.execute("SELECT priority FROM events WHERE id = ?", ("event-1",))
@@ -431,7 +403,7 @@ class TestDefaultValues:
             with db_manager.get_connection("events") as conn:
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
                 cursor = conn.execute("SELECT created_at FROM events WHERE id = ?", ("event-1",))
@@ -448,10 +420,7 @@ class TestDefaultValues:
             db_manager.initialize_all()
 
             with db_manager.get_connection("state") as conn:
-                conn.execute(
-                    "INSERT INTO tasks (id, title) VALUES (?, ?)",
-                    ("task-1", "Test task")
-                )
+                conn.execute("INSERT INTO tasks (id, title) VALUES (?, ?)", ("task-1", "Test task"))
 
                 cursor = conn.execute("SELECT status FROM tasks WHERE id = ?", ("task-1",))
                 row = cursor.fetchone()
@@ -466,7 +435,7 @@ class TestDefaultValues:
             with db_manager.get_connection("user_model") as conn:
                 conn.execute(
                     "INSERT INTO semantic_facts (key, category, value) VALUES (?, ?, ?)",
-                    ("test_fact", "preference", "tea")
+                    ("test_fact", "preference", "tea"),
                 )
 
                 cursor = conn.execute("SELECT confidence FROM semantic_facts WHERE key = ?", ("test_fact",))
@@ -485,9 +454,7 @@ class TestIndexEffectiveness:
 
             with db_manager.get_connection("events") as conn:
                 # Check query plan
-                cursor = conn.execute(
-                    "EXPLAIN QUERY PLAN SELECT * FROM events WHERE type = 'email.received'"
-                )
+                cursor = conn.execute("EXPLAIN QUERY PLAN SELECT * FROM events WHERE type = 'email.received'")
                 plan = " ".join(row[3] for row in cursor.fetchall()).lower()
 
                 # Verify the index is being used
@@ -656,9 +623,7 @@ class TestDatabaseHealth:
 
             # Blob probe queries should only appear for user_model.db
             blob_probe_sqls = [
-                (path, sql)
-                for path, sql in executed_sql
-                if "SUM(LENGTH(" in sql or "content_full" in sql
+                (path, sql) for path, sql in executed_sql if "SUM(LENGTH(" in sql or "content_full" in sql
             ]
             for path, _sql in blob_probe_sqls:
                 assert "user_model" in path, f"Blob probe ran against non-user_model DB: {path}"
@@ -709,15 +674,12 @@ class TestDatabaseIndependence:
             with db_manager.get_connection("events") as conn:
                 conn.execute(
                     "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
-                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z")
+                    ("event-1", "test.event", "test", "2026-02-15T12:00:00Z"),
                 )
 
             # Add data to state.db
             with db_manager.get_connection("state") as conn:
-                conn.execute(
-                    "INSERT INTO tasks (id, title) VALUES (?, ?)",
-                    ("task-1", "Test task")
-                )
+                conn.execute("INSERT INTO tasks (id, title) VALUES (?, ?)", ("task-1", "Test task"))
 
             # Delete state.db
             state_db_path = Path(tmpdir) / "state.db"
@@ -759,9 +721,7 @@ class TestDatabaseIndependence:
             tables_by_db = {}
             for db_name in ["events", "entities", "state", "user_model", "preferences"]:
                 with db_manager.get_connection(db_name) as conn:
-                    cursor = conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                    )
+                    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
                     all_tables = {row[0] for row in cursor.fetchall()}
                     # Only keep domain tables, not shared infrastructure
                     tables_by_db[db_name] = all_tables - SHARED_INFRASTRUCTURE_TABLES

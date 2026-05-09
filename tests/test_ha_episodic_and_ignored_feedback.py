@@ -23,6 +23,7 @@ from main import LifeOS
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def lifeos_from_config(tmp_path):
     """Create a minimal LifeOS instance via config file for classification tests."""
@@ -59,6 +60,7 @@ def _make_lifeos(db, user_model_store, event_bus):
 # Part A: Home Assistant events in episodic memory
 # ===========================================================================
 
+
 class TestHomeAssistantEpisodicTypes:
     """Verify home.arrived and home.departed are in the episodic event set."""
 
@@ -69,17 +71,13 @@ class TestHomeAssistantEpisodicTypes:
         # that home.arrived events don't return early (i.e., they're in the set).
         # We verify by checking the classification works (only episodic types
         # reach the classifier).
-        interaction_type = lifeos_from_config._classify_interaction_type(
-            "home.arrived", {}
-        )
+        interaction_type = lifeos_from_config._classify_interaction_type("home.arrived", {})
         assert interaction_type == "home_arrived"
 
     def test_home_departed_in_episodic_event_types(self, lifeos_from_config):
         """home.departed should be included in episodic event types so HA
         departure data enters the user's episodic memory."""
-        interaction_type = lifeos_from_config._classify_interaction_type(
-            "home.departed", {}
-        )
+        interaction_type = lifeos_from_config._classify_interaction_type("home.departed", {})
         assert interaction_type == "home_departed"
 
     def test_home_device_state_changed_not_in_episodic_types(self, lifeos_from_config):
@@ -88,9 +86,7 @@ class TestHomeAssistantEpisodicTypes:
         interactions and would add noise to episodic memory."""
         # home.device.state_changed should fall through to the fallback
         # classifier, indicating it's NOT in the explicit episodic set.
-        interaction_type = lifeos_from_config._classify_interaction_type(
-            "home.device.state_changed", {}
-        )
+        interaction_type = lifeos_from_config._classify_interaction_type("home.device.state_changed", {})
         # Should hit the fallback: extracts suffix after last dot
         assert interaction_type == "state_changed"
 
@@ -127,16 +123,12 @@ class TestHomeAssistantEpisodeSummary:
 
     def test_home_arrived_summary(self, lifeos_from_config):
         """home.arrived events should generate 'Arrived home' summary."""
-        summary = lifeos_from_config._generate_episode_summary(
-            {"type": "home.arrived", "payload": {}}
-        )
+        summary = lifeos_from_config._generate_episode_summary({"type": "home.arrived", "payload": {}})
         assert summary == "Arrived home"
 
     def test_home_departed_summary(self, lifeos_from_config):
         """home.departed events should generate 'Left home' summary."""
-        summary = lifeos_from_config._generate_episode_summary(
-            {"type": "home.departed", "payload": {}}
-        )
+        summary = lifeos_from_config._generate_episode_summary({"type": "home.departed", "payload": {}})
         assert summary == "Left home"
 
 
@@ -144,14 +136,13 @@ class TestHomeAssistantEpisodeSummary:
 # Part B: notification.ignored feedback handler
 # ===========================================================================
 
+
 class TestNotificationIgnoredFeedback:
     """Verify that notification.ignored events are routed to the feedback
     collector with the correct parameters."""
 
     @pytest.mark.asyncio
-    async def test_ignored_notification_calls_feedback_collector(
-        self, db, user_model_store, event_bus
-    ):
+    async def test_ignored_notification_calls_feedback_collector(self, db, user_model_store, event_bus):
         """notification.ignored should call process_notification_response
         with response_type='ignored' and response_time_seconds=None."""
         lifeos = _make_lifeos(db, user_model_store, event_bus)
@@ -196,9 +187,7 @@ class TestNotificationIgnoredFeedback:
         )
 
     @pytest.mark.asyncio
-    async def test_ignored_notification_uses_none_for_response_time(
-        self, db, user_model_store, event_bus
-    ):
+    async def test_ignored_notification_uses_none_for_response_time(self, db, user_model_store, event_bus):
         """Ignored notifications should pass response_time_seconds=None since
         the user never interacted, so there is no meaningful response time."""
         lifeos = _make_lifeos(db, user_model_store, event_bus)
@@ -211,8 +200,7 @@ class TestNotificationIgnoredFeedback:
                 """INSERT INTO notifications
                    (id, title, body, priority, domain, status, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (notif_id, "Ignored", "body", "low", "task", "delivered",
-                 datetime.now(timezone.utc).isoformat()),
+                (notif_id, "Ignored", "body", "low", "task", "delivered", datetime.now(timezone.utc).isoformat()),
             )
 
         event = {
@@ -235,9 +223,7 @@ class TestNotificationIgnoredFeedback:
         assert call_kwargs["response_time_seconds"] is None
 
     @pytest.mark.asyncio
-    async def test_ignored_notification_without_id_is_skipped(
-        self, db, user_model_store, event_bus
-    ):
+    async def test_ignored_notification_without_id_is_skipped(self, db, user_model_store, event_bus):
         """notification.ignored events without a notification_id should be
         silently skipped (fail-open)."""
         lifeos = _make_lifeos(db, user_model_store, event_bus)

@@ -51,9 +51,7 @@ def test_is_automated_sender_noreply_variants():
         "automated@example.com",
     ]
     for addr in variants:
-        assert BehavioralAccuracyTracker._is_automated_sender(addr), (
-            f"Expected {addr!r} to be detected as automated"
-        )
+        assert BehavioralAccuracyTracker._is_automated_sender(addr), f"Expected {addr!r} to be detected as automated"
 
 
 def test_is_automated_sender_bulk_prefixes():
@@ -76,9 +74,7 @@ def test_is_automated_sender_bulk_prefixes():
         "paypal@payments.com",
     ]
     for addr in automated:
-        assert BehavioralAccuracyTracker._is_automated_sender(addr), (
-            f"Expected {addr!r} to be detected as automated"
-        )
+        assert BehavioralAccuracyTracker._is_automated_sender(addr), f"Expected {addr!r} to be detected as automated"
 
 
 def test_is_automated_sender_embedded_patterns():
@@ -91,9 +87,7 @@ def test_is_automated_sender_embedded_patterns():
         "lafconews@lafc.com",
     ]
     for addr in automated:
-        assert BehavioralAccuracyTracker._is_automated_sender(addr), (
-            f"Expected {addr!r} to be detected as automated"
-        )
+        assert BehavioralAccuracyTracker._is_automated_sender(addr), f"Expected {addr!r} to be detected as automated"
 
 
 def test_is_automated_sender_marketing_subdomains():
@@ -107,9 +101,7 @@ def test_is_automated_sender_marketing_subdomains():
         "receipt@transaction@info.samsclub.com",
     ]
     for addr in automated:
-        assert BehavioralAccuracyTracker._is_automated_sender(addr), (
-            f"Expected {addr!r} to be detected as automated"
-        )
+        assert BehavioralAccuracyTracker._is_automated_sender(addr), f"Expected {addr!r} to be detected as automated"
 
 
 def test_is_automated_sender_real_humans_not_flagged():
@@ -120,10 +112,10 @@ def test_is_automated_sender_real_humans_not_flagged():
         "jane.doe@startup.io",
         "john@outlook.com",
         "mary@protonmail.com",
-        "contact@mycompany.com",   # 'contact@' is NOT in bulk_prefixes
-        "team@startup.io",         # 'team@' is NOT in bulk_prefixes
-        "admin@company.com",       # 'admin@' is NOT in bulk_prefixes
-        "sales@partner.biz",       # 'sales@' — not a marketing keyword
+        "contact@mycompany.com",  # 'contact@' is NOT in bulk_prefixes
+        "team@startup.io",  # 'team@' is NOT in bulk_prefixes
+        "admin@company.com",  # 'admin@' is NOT in bulk_prefixes
+        "sales@partner.biz",  # 'sales@' — not a marketing keyword
     ]
     for addr in humans:
         assert not BehavioralAccuracyTracker._is_automated_sender(addr), (
@@ -176,9 +168,7 @@ async def test_opportunity_automated_sender_immediately_inaccurate(db):
     stats = await tracker.run_inference_cycle()
 
     # Should be resolved in this cycle (not waiting 7 days)
-    assert stats["marked_inaccurate"] >= 1, (
-        "Expected automated-sender prediction to be marked inaccurate immediately"
-    )
+    assert stats["marked_inaccurate"] >= 1, "Expected automated-sender prediction to be marked inaccurate immediately"
 
     with db.get_connection("user_model") as conn:
         row = conn.execute(
@@ -213,8 +203,7 @@ async def test_opportunity_real_human_waits_for_window(db):
             (
                 pred_id,
                 "opportunity",
-                "It's been 30 days since you last contacted alice@gmail.com "
-                "(you usually connect every ~14 days)",
+                "It's been 30 days since you last contacted alice@gmail.com (you usually connect every ~14 days)",
                 0.60,
                 "suggest",
                 "7_days",
@@ -234,12 +223,8 @@ async def test_opportunity_real_human_waits_for_window(db):
         ).fetchone()
 
     # Should NOT be resolved yet — still within the 7-day window
-    assert row["was_accurate"] is None, (
-        "Human contact prediction should not be resolved within the 7-day window"
-    )
-    assert row["resolved_at"] is None, (
-        "Human contact prediction should remain unresolved during the window"
-    )
+    assert row["was_accurate"] is None, "Human contact prediction should not be resolved within the 7-day window"
+    assert row["resolved_at"] is None, "Human contact prediction should remain unresolved during the window"
 
 
 @pytest.mark.asyncio
@@ -324,10 +309,12 @@ async def test_opportunity_automated_sender_via_signals_dict(db):
                 "suggest",
                 "7_days",
                 "Consider reaching out",
-                json.dumps({
-                    "contact_email": "newsletter@brand.com",
-                    "contact_name": "Brand Newsletter",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "newsletter@brand.com",
+                        "contact_name": "Brand Newsletter",
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -341,9 +328,7 @@ async def test_opportunity_automated_sender_via_signals_dict(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["was_accurate"] == 0, (
-        "Automated sender (via signals dict) should be immediately marked INACCURATE"
-    )
+    assert row["was_accurate"] == 0, "Automated sender (via signals dict) should be immediately marked INACCURATE"
 
 
 @pytest.mark.asyncio
@@ -419,8 +404,16 @@ async def test_opportunity_multiple_automated_senders_bulk_resolved(db):
                     was_surfaced, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    pred_id, "opportunity", desc, 0.50, "suggest", "7_days",
-                    "Consider reaching out", "[]", 1, created_at.isoformat(),
+                    pred_id,
+                    "opportunity",
+                    desc,
+                    0.50,
+                    "suggest",
+                    "7_days",
+                    "Consider reaching out",
+                    "[]",
+                    1,
+                    created_at.isoformat(),
                 ),
             )
 
@@ -437,6 +430,4 @@ async def test_opportunity_multiple_automated_senders_bulk_resolved(db):
                 "SELECT was_accurate FROM predictions WHERE id = ?",
                 (pred_id,),
             ).fetchone()
-            assert row["was_accurate"] == 0, (
-                f"Prediction {pred_id} should be marked INACCURATE"
-            )
+            assert row["was_accurate"] == 0, f"Prediction {pred_id} should be marked INACCURATE"

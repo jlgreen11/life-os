@@ -40,6 +40,7 @@ from services.signal_extractor.linguistic import LinguisticExtractor
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _make_inbound_email(
     from_address: str,
     body: str = "Hello, this is a test email with enough words to pass the length filter.",
@@ -71,6 +72,7 @@ def _make_contacts(n: int, prefix: str = "contact") -> list[str]:
 # Basic persistence: profile created and populated
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestInboundProfilePersistenceBasic:
     """Verify that the linguistic_inbound profile is written after inbound events."""
 
@@ -100,9 +102,7 @@ class TestInboundProfilePersistenceBasic:
         extractor.extract(_make_inbound_email("alice@example.com"))
 
         profile = user_model_store.get_signal_profile("linguistic_inbound")
-        assert "per_contact" in profile["data"], (
-            "linguistic_inbound profile data must contain 'per_contact' key"
-        )
+        assert "per_contact" in profile["data"], "linguistic_inbound profile data must contain 'per_contact' key"
 
     def test_profile_has_per_contact_averages_key(self, extractor, user_model_store):
         """Persisted profile must contain a 'per_contact_averages' dict."""
@@ -148,13 +148,9 @@ class TestInboundProfilePersistenceBasic:
 
         per_contact = profile["data"]["per_contact"]
         for contact in contacts:
-            assert contact in per_contact, (
-                f"Contact {contact!r} missing from per_contact after processing their email"
-            )
+            assert contact in per_contact, f"Contact {contact!r} missing from per_contact after processing their email"
 
-    def test_per_contact_averages_populated_for_all_ten_contacts(
-        self, extractor, user_model_store
-    ):
+    def test_per_contact_averages_populated_for_all_ten_contacts(self, extractor, user_model_store):
         """per_contact_averages must be populated for every contact with events."""
         contacts = _make_contacts(10)
         for contact in contacts:
@@ -164,20 +160,12 @@ class TestInboundProfilePersistenceBasic:
         per_contact_avgs = profile["data"]["per_contact_averages"]
 
         for contact in contacts:
-            assert contact in per_contact_avgs, (
-                f"Contact {contact!r} missing from per_contact_averages"
-            )
+            assert contact in per_contact_avgs, f"Contact {contact!r} missing from per_contact_averages"
             avgs = per_contact_avgs[contact]
-            assert "formality" in avgs, (
-                f"per_contact_averages[{contact!r}] missing 'formality' field"
-            )
-            assert "samples_count" in avgs, (
-                f"per_contact_averages[{contact!r}] missing 'samples_count' field"
-            )
+            assert "formality" in avgs, f"per_contact_averages[{contact!r}] missing 'formality' field"
+            assert "samples_count" in avgs, f"per_contact_averages[{contact!r}] missing 'samples_count' field"
 
-    def test_samples_count_increments_with_repeated_events(
-        self, extractor, user_model_store
-    ):
+    def test_samples_count_increments_with_repeated_events(self, extractor, user_model_store):
         """Sending multiple events from the same contact increments their sample count."""
         contact = "repeated@example.com"
         for _ in range(3):
@@ -185,14 +173,13 @@ class TestInboundProfilePersistenceBasic:
 
         profile = user_model_store.get_signal_profile("linguistic_inbound")
         samples = profile["data"]["per_contact"][contact]
-        assert len(samples) == 3, (
-            "Three events from the same contact must produce three samples in the ring buffer"
-        )
+        assert len(samples) == 3, "Three events from the same contact must produce three samples in the ring buffer"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Ring buffer cap: per-contact buffer stays ≤ 100
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestRingBufferCap:
     """Verify that the per-contact ring buffer is capped at 100 samples."""
@@ -209,13 +196,15 @@ class TestRingBufferCap:
         """
         contact = "prolific@example.com"
         for i in range(110):
-            extractor.extract(_make_inbound_email(contact, body=f"Email number {i} with enough words to be processed by the extractor."))
+            extractor.extract(
+                _make_inbound_email(
+                    contact, body=f"Email number {i} with enough words to be processed by the extractor."
+                )
+            )
 
         profile = user_model_store.get_signal_profile("linguistic_inbound")
         samples = profile["data"]["per_contact"][contact]
-        assert len(samples) <= 100, (
-            f"Ring buffer must be capped at 100 samples; got {len(samples)}"
-        )
+        assert len(samples) <= 100, f"Ring buffer must be capped at 100 samples; got {len(samples)}"
 
     def test_ring_buffer_keeps_most_recent_samples(self, extractor, user_model_store):
         """The ring buffer must retain the 100 most recent samples, not the oldest."""
@@ -223,24 +212,25 @@ class TestRingBufferCap:
         # Process 110 events; the body text encodes the sequence number so we
         # can verify which samples were retained.
         for i in range(110):
-            extractor.extract(_make_inbound_email(
-                contact,
-                body=f"Message sequence number marker {i} with sufficient words to pass the extractor filter minimum.",
-            ))
+            extractor.extract(
+                _make_inbound_email(
+                    contact,
+                    body=f"Message sequence number marker {i} with sufficient words to pass the extractor filter minimum.",
+                )
+            )
 
         profile = user_model_store.get_signal_profile("linguistic_inbound")
         samples = profile["data"]["per_contact"][contact]
         # The 100 retained samples must all come from the last 100 events (i=10..109).
         # We verify this by checking word_count consistency (each message had
         # slightly different length due to the sequence number string).
-        assert len(samples) == 100, (
-            "Ring buffer must contain exactly 100 samples when 110 events were processed"
-        )
+        assert len(samples) == 100, "Ring buffer must contain exactly 100 samples when 110 events were processed"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Contact count pruning
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestContactCountPruning:
     """Verify that the contact count is pruned to _MAX_INBOUND_CONTACTS when exceeded.
@@ -253,9 +243,7 @@ class TestContactCountPruning:
     def extractor(self, db, user_model_store):
         return LinguisticExtractor(db, user_model_store)
 
-    def test_contact_count_stays_at_cap_after_exceeding(
-        self, extractor, user_model_store
-    ):
+    def test_contact_count_stays_at_cap_after_exceeding(self, extractor, user_model_store):
         """After processing 8 contacts with a cap of 5 the profile holds ≤ 5 contacts.
 
         The oldest (least-recently-updated) contacts are pruned.
@@ -268,13 +256,9 @@ class TestContactCountPruning:
         profile = user_model_store.get_signal_profile("linguistic_inbound")
         assert profile is not None, "Profile must exist after processing 8 contacts"
         per_contact = profile["data"]["per_contact"]
-        assert len(per_contact) <= 5, (
-            f"Contact count must be pruned to ≤5 (cap); got {len(per_contact)}"
-        )
+        assert len(per_contact) <= 5, f"Contact count must be pruned to ≤5 (cap); got {len(per_contact)}"
 
-    def test_most_recent_contacts_are_retained_after_pruning(
-        self, extractor, user_model_store
-    ):
+    def test_most_recent_contacts_are_retained_after_pruning(self, extractor, user_model_store):
         """When contacts are pruned the most recently updated ones are kept.
 
         We process the first 3 contacts, then process contacts 3–7.  With a cap
@@ -283,8 +267,8 @@ class TestContactCountPruning:
         """
         with patch.object(LinguisticExtractor, "_MAX_INBOUND_CONTACTS", 5):
             all_contacts = _make_contacts(8)
-            early_contacts = all_contacts[:3]    # contacts 0,1,2
-            late_contacts = all_contacts[3:]     # contacts 3,4,5,6,7
+            early_contacts = all_contacts[:3]  # contacts 0,1,2
+            late_contacts = all_contacts[3:]  # contacts 3,4,5,6,7
 
             # Process early contacts first, then late contacts (which push the
             # count over the cap).
@@ -299,13 +283,9 @@ class TestContactCountPruning:
         # The 5 most recently updated should all be in late_contacts (3–7).
         # At minimum, the 5 late contacts must be present.
         for contact in late_contacts:
-            assert contact in per_contact, (
-                f"Recently updated contact {contact!r} must be retained after pruning"
-            )
+            assert contact in per_contact, f"Recently updated contact {contact!r} must be retained after pruning"
 
-    def test_per_contact_averages_pruned_in_sync_with_per_contact(
-        self, extractor, user_model_store
-    ):
+    def test_per_contact_averages_pruned_in_sync_with_per_contact(self, extractor, user_model_store):
         """per_contact_averages must stay in sync with per_contact after pruning."""
         with patch.object(LinguisticExtractor, "_MAX_INBOUND_CONTACTS", 5):
             contacts = _make_contacts(8)
@@ -323,9 +303,7 @@ class TestContactCountPruning:
                 "per_contact_averages after pruning — dicts out of sync"
             )
 
-    def test_per_contact_updated_at_pruned_in_sync(
-        self, extractor, user_model_store
-    ):
+    def test_per_contact_updated_at_pruned_in_sync(self, extractor, user_model_store):
         """per_contact_updated_at must stay in sync with per_contact after pruning."""
         with patch.object(LinguisticExtractor, "_MAX_INBOUND_CONTACTS", 5):
             contacts = _make_contacts(8)
@@ -346,6 +324,7 @@ class TestContactCountPruning:
 # ──────────────────────────────────────────────────────────────────────────────
 # Post-write verification
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestPostWriteVerification:
     """Verify the post-write read-back in _update_inbound_profile() works correctly."""
@@ -381,13 +360,10 @@ class TestPostWriteVerification:
         with caplog.at_level(logging.CRITICAL, logger="services.signal_extractor.linguistic"):
             extractor.extract(event)
 
-        critical_messages = [
-            r.message for r in caplog.records if r.levelno >= logging.CRITICAL
-        ]
+        critical_messages = [r.message for r in caplog.records if r.levelno >= logging.CRITICAL]
         persistence_failures = [m for m in critical_messages if "FAILED to persist" in m]
         assert len(persistence_failures) == 0, (
-            "No post-write CRITICAL expected for a normal email.received event; "
-            f"got: {persistence_failures}"
+            f"No post-write CRITICAL expected for a normal email.received event; got: {persistence_failures}"
         )
 
     def test_no_error_log_for_normal_inbound_event(self, extractor, caplog):
@@ -405,8 +381,7 @@ class TestPostWriteVerification:
         error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
         inbound_errors = [m for m in error_messages if "_update_inbound_profile" in m]
         assert len(inbound_errors) == 0, (
-            "No ERROR from _update_inbound_profile expected for a valid event; "
-            f"got: {inbound_errors}"
+            f"No ERROR from _update_inbound_profile expected for a valid event; got: {inbound_errors}"
         )
 
     def test_profile_data_is_json_serializable(self, extractor):
@@ -427,6 +402,7 @@ class TestPostWriteVerification:
         # The fact that get_signal_profile returns a valid dict (not None) is
         # sufficient — it proves json.dumps succeeded inside update_signal_profile.
         from storage.user_model_store import UserModelStore
+
         # Build a fresh extractor tied to the same stores
         profile = extractor.ums.get_signal_profile("linguistic_inbound")
         assert profile is not None, "Profile round-trip (write+read) must succeed"
@@ -444,6 +420,7 @@ class TestPostWriteVerification:
 # ──────────────────────────────────────────────────────────────────────────────
 # Edge cases: missing contact_id and short body text
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestEdgeCases:
     """Verify that edge-case inputs are handled gracefully."""
@@ -476,9 +453,7 @@ class TestEdgeCases:
         profile = user_model_store.get_signal_profile("linguistic_inbound")
         if profile is not None:
             per_contact = profile["data"]["per_contact"]
-            assert None not in per_contact, (
-                "per_contact must not contain a None key from events with no from_address"
-            )
+            assert None not in per_contact, "per_contact must not contain a None key from events with no from_address"
 
     def test_event_with_short_body_produces_no_signals(self, extractor, user_model_store):
         """email.received with a body under 10 characters produces no signals.
@@ -498,11 +473,8 @@ class TestEdgeCases:
 
         signals = extractor.extract(event)
 
-        assert signals == [], (
-            "email.received with a body shorter than 10 characters must produce no signals"
-        )
+        assert signals == [], "email.received with a body shorter than 10 characters must produce no signals"
         profile = user_model_store.get_signal_profile("linguistic_inbound")
         assert profile is None, (
-            "No linguistic_inbound profile should be written when the message body "
-            "is too short to be analysed"
+            "No linguistic_inbound profile should be written when the message body is too short to be analysed"
         )

@@ -59,15 +59,15 @@ class TestGenericStopwordFiltering:
         # expertise threshold: >= 10 occurrences AND > 10% frequency (>= 100/1000).
         topic_data = {
             "topic_counts": {
-                "more": 200,     # Generic word — must be filtered (20%)
-                "here": 60,      # Generic word — must be filtered (6%)
-                "please": 65,    # Generic word — must be filtered (6.5%)
-                "free": 60,      # Generic word — must be filtered (6%)
-                "valid": 55,     # Generic word — must be filtered (5.5%)
-                "view": 150,     # Generic word — must be filtered (15%)
-                "just": 55,      # Generic stopword — must be filtered (5.5%)
-                "python": 120,   # Legitimate expertise — must pass through (12%)
-                "kubernetes": 60, # Legitimate interest — must pass through (6%)
+                "more": 200,  # Generic word — must be filtered (20%)
+                "here": 60,  # Generic word — must be filtered (6%)
+                "please": 65,  # Generic word — must be filtered (6.5%)
+                "free": 60,  # Generic word — must be filtered (6%)
+                "valid": 55,  # Generic word — must be filtered (5.5%)
+                "view": 150,  # Generic word — must be filtered (15%)
+                "just": 55,  # Generic stopword — must be filtered (5.5%)
+                "python": 120,  # Legitimate expertise — must pass through (12%)
+                "kubernetes": 60,  # Legitimate interest — must pass through (6%)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -104,15 +104,15 @@ class TestGenericStopwordFiltering:
         # interest: >= 3 count AND > 3% (>30); expertise: >= 5 count AND > 8% (>80).
         topic_data = {
             "topic_counts": {
-                "email": 150,    # Generic email word — must be filtered (15%)
+                "email": 150,  # Generic email word — must be filtered (15%)
                 "message": 100,  # Generic email word — must be filtered (10%)
-                "update": 95,    # Generic email word — must be filtered (9.5%)
-                "offer": 70,     # Generic marketing word — must be filtered (7%)
-                "shop": 60,      # Generic marketing word — must be filtered (6%)
-                "account": 55,   # Generic email word — must be filtered (5.5%)
-                "click": 55,     # Generic marketing word — must be filtered (5.5%)
-                "chatgpt": 90,   # Legitimate topic — must pass through (9% → expertise)
-                "task": 90,      # Legitimate topic — must pass through (9% → expertise)
+                "update": 95,  # Generic email word — must be filtered (9.5%)
+                "offer": 70,  # Generic marketing word — must be filtered (7%)
+                "shop": 60,  # Generic marketing word — must be filtered (6%)
+                "account": 55,  # Generic email word — must be filtered (5.5%)
+                "click": 55,  # Generic marketing word — must be filtered (5.5%)
+                "chatgpt": 90,  # Legitimate topic — must pass through (9% → expertise)
+                "task": 90,  # Legitimate topic — must pass through (9% → expertise)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -146,13 +146,13 @@ class TestGenericStopwordFiltering:
         # Use 1000 total samples so thresholds are reachable.
         topic_data = {
             "topic_counts": {
-                "lspace": 100,   # CSS whitespace artifact — must be filtered (10%)
-                "rspace": 90,    # CSS whitespace artifact — must be filtered (9%)
-                "sans": 80,      # Font family fragment — must be filtered (8%)
-                "serif": 60,     # Font family fragment — must be filtered (6%)
-                "line": 90,      # Generic CSS/layout word — must be filtered (9%)
-                "normal": 75,    # CSS keyword — must be filtered (7.5%)
-                "bold": 70,      # CSS keyword — must be filtered (7%)
+                "lspace": 100,  # CSS whitespace artifact — must be filtered (10%)
+                "rspace": 90,  # CSS whitespace artifact — must be filtered (9%)
+                "sans": 80,  # Font family fragment — must be filtered (8%)
+                "serif": 60,  # Font family fragment — must be filtered (6%)
+                "line": 90,  # Generic CSS/layout word — must be filtered (9%)
+                "normal": 75,  # CSS keyword — must be filtered (7.5%)
+                "bold": 70,  # CSS keyword — must be filtered (7%)
                 "machine-learning": 110,  # Legitimate expertise — must pass through (11%)
             }
         }
@@ -313,8 +313,8 @@ class TestPurgeNoiseFacts:
         # Run inference with a topic profile that only has legitimate topics
         topic_data = {
             "topic_counts": {
-                "more": 15000,    # Still in profile (will be blocked, not re-added)
-                "python": 8000,   # Legitimate — will create new fact (8.3% → expertise)
+                "more": 15000,  # Still in profile (will be blocked, not re-added)
+                "python": 8000,  # Legitimate — will create new fact (8.3% → expertise)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -339,15 +339,16 @@ class TestLogMessageUpdated:
     def test_log_message_says_noise_tokens(self, user_model_store, caplog):
         """Log message must say 'noise tokens' not 'HTML/CSS tokens'."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         inferrer = SemanticFactInferrer(user_model_store)
 
         topic_data = {
             "topic_counts": {
-                "nbsp": 150,    # HTML entity
-                "more": 140,    # Generic English stopword (new blocklist)
-                "email": 130,   # Generic email word (new blocklist)
+                "nbsp": 150,  # HTML entity
+                "more": 140,  # Generic English stopword (new blocklist)
+                "email": 130,  # Generic email word (new blocklist)
                 "python": 120,  # Legitimate
             }
         }
@@ -357,6 +358,6 @@ class TestLogMessageUpdated:
         inferrer.infer_from_topic_profile()
 
         # Log must say "noise tokens" (not the old "HTML/CSS tokens")
-        assert any(
-            "noise tokens" in record.message for record in caplog.records
-        ), "Log message should say 'noise tokens'"
+        assert any("noise tokens" in record.message for record in caplog.records), (
+            "Log message should say 'noise tokens'"
+        )

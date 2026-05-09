@@ -68,7 +68,7 @@ def test_backfill_email_received_basic(tmp_path):
     for event in events:
         conn.execute(
             "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-            (event["id"], event["type"], event["source"], event["timestamp"], event["priority"], event["payload"])
+            (event["id"], event["type"], event["source"], event["timestamp"], event["priority"], event["payload"]),
         )
     conn.commit()
 
@@ -114,8 +114,15 @@ def test_backfill_email_received_ignores_already_filled(tmp_path):
     # Insert event with email_from already populated
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload, email_from) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("email-1", "email.received", "protonmail", datetime.now(timezone.utc).isoformat(), "normal",
-         json.dumps({"from_address": "new@example.com"}), "existing@example.com")
+        (
+            "email-1",
+            "email.received",
+            "protonmail",
+            datetime.now(timezone.utc).isoformat(),
+            "normal",
+            json.dumps({"from_address": "new@example.com"}),
+            "existing@example.com",
+        ),
     )
     conn.commit()
 
@@ -162,7 +169,7 @@ def test_backfill_email_received_large_batch(tmp_path):
         payload = json.dumps({"from_address": f"sender{i}@example.com", "subject": f"Email {i}"})
         conn.execute(
             "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-            (f"email-{i}", "email.received", "protonmail", timestamp, "normal", payload)
+            (f"email-{i}", "email.received", "protonmail", timestamp, "normal", payload),
         )
 
     conn.commit()
@@ -212,14 +219,12 @@ def test_backfill_email_sent_events(tmp_path):
     """)
 
     # Insert email.sent events
-    payload = json.dumps({
-        "from_address": "Me@Example.Com",
-        "to_addresses": "Boss@Company.Org",
-        "subject": "Re: Question"
-    })
+    payload = json.dumps(
+        {"from_address": "Me@Example.Com", "to_addresses": "Boss@Company.Org", "subject": "Re: Question"}
+    )
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("sent-1", "email.sent", "protonmail", datetime.now(timezone.utc).isoformat(), "normal", payload)
+        ("sent-1", "email.sent", "protonmail", datetime.now(timezone.utc).isoformat(), "normal", payload),
     )
     conn.commit()
 
@@ -273,7 +278,7 @@ def test_backfill_task_events(tmp_path):
     for event_id, event_type, payload in events:
         conn.execute(
             "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-            (event_id, event_type, "task_manager", timestamp, "normal", payload)
+            (event_id, event_type, "task_manager", timestamp, "normal", payload),
         )
     conn.commit()
 
@@ -328,7 +333,7 @@ def test_backfill_calendar_events(tmp_path):
     for event_id, event_type, payload in events:
         conn.execute(
             "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-            (event_id, event_type, "caldav", timestamp, "normal", payload)
+            (event_id, event_type, "caldav", timestamp, "normal", payload),
         )
     conn.commit()
 
@@ -376,11 +381,11 @@ def test_backfill_ignores_events_without_payload_fields(tmp_path):
     timestamp = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("email-1", "email.received", "protonmail", timestamp, "normal", json.dumps({"subject": "No sender"}))
+        ("email-1", "email.received", "protonmail", timestamp, "normal", json.dumps({"subject": "No sender"})),
     )
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("task-1", "task.created", "task_manager", timestamp, "normal", json.dumps({"title": "No task_id"}))
+        ("task-1", "task.created", "task_manager", timestamp, "normal", json.dumps({"title": "No task_id"})),
     )
     conn.commit()
 
@@ -428,13 +433,20 @@ def test_backfill_handles_malformed_json(tmp_path):
     timestamp = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("email-1", "email.received", "protonmail", timestamp, "normal", "{not valid json")
+        ("email-1", "email.received", "protonmail", timestamp, "normal", "{not valid json"),
     )
 
     # Insert valid event
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("email-2", "email.received", "protonmail", timestamp, "normal", json.dumps({"from_address": "valid@example.com"}))
+        (
+            "email-2",
+            "email.received",
+            "protonmail",
+            timestamp,
+            "normal",
+            json.dumps({"from_address": "valid@example.com"}),
+        ),
     )
     conn.commit()
 
@@ -480,7 +492,7 @@ def test_backfill_preserves_case_sensitivity_in_payload(tmp_path):
     original_payload = json.dumps({"from_address": "Boss@Example.Com", "subject": "IMPORTANT"})
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("email-1", "email.received", "protonmail", datetime.now(timezone.utc).isoformat(), "normal", original_payload)
+        ("email-1", "email.received", "protonmail", datetime.now(timezone.utc).isoformat(), "normal", original_payload),
     )
     conn.commit()
 
@@ -528,23 +540,33 @@ def test_backfill_multiple_event_types_together(tmp_path):
     timestamp = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("email-recv-1", "email.received", "protonmail", timestamp, "normal",
-         json.dumps({"from_address": "sender@example.com"}))
+        (
+            "email-recv-1",
+            "email.received",
+            "protonmail",
+            timestamp,
+            "normal",
+            json.dumps({"from_address": "sender@example.com"}),
+        ),
     )
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("email-sent-1", "email.sent", "protonmail", timestamp, "normal",
-         json.dumps({"from_address": "me@example.com", "to_addresses": "recipient@example.com"}))
+        (
+            "email-sent-1",
+            "email.sent",
+            "protonmail",
+            timestamp,
+            "normal",
+            json.dumps({"from_address": "me@example.com", "to_addresses": "recipient@example.com"}),
+        ),
     )
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("task-1", "task.created", "task_manager", timestamp, "normal",
-         json.dumps({"task_id": "task-123"}))
+        ("task-1", "task.created", "task_manager", timestamp, "normal", json.dumps({"task_id": "task-123"})),
     )
     conn.execute(
         "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-        ("cal-1", "calendar.event.created", "caldav", timestamp, "normal",
-         json.dumps({"event_id": "cal-123"}))
+        ("cal-1", "calendar.event.created", "caldav", timestamp, "normal", json.dumps({"event_id": "cal-123"})),
     )
     conn.commit()
 

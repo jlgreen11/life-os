@@ -13,6 +13,7 @@ senders.  The patterns added in this iteration close those gaps:
   - ``shopifyemail.com``   → Shopify's hosted email delivery service
   - ``seatengine.com``     → Event ticketing/venue platform
 """
+
 import pytest
 
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
@@ -21,46 +22,53 @@ from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 class TestProductionMissedSenders:
     """Addresses that slipped through the marketing filter in production."""
 
-    @pytest.mark.parametrize("addr,description", [
-        (
-            "lenovo@ecomm.lenovo.com",
-            "Lenovo e-commerce mailer (@ecomm. subdomain)",
-        ),
-        (
-            "AceRewards@e1.acehardware.com",
-            "Ace Hardware loyalty program (@e1. ESP subdomain)",
-        ),
-        (
-            "USAA.Customer.Service@mailcenter.usaa.com",
-            "USAA bank service mailer (@mailcenter. subdomain)",
-        ),
-        (
-            "mr.m@news.monopolygo.com",
-            "Monopoly Go promotions (@news. subdomain)",
-        ),
-        (
-            "store+328499209@g.shopifyemail.com",
-            "Shopify merchant email via g.shopifyemail.com",
-        ),
-        (
-            "the-comedy-club-of-kansas-city@seatengine.com",
-            "Event venue mailer via seatengine.com ticketing platform",
-        ),
-    ])
+    @pytest.mark.parametrize(
+        "addr,description",
+        [
+            (
+                "lenovo@ecomm.lenovo.com",
+                "Lenovo e-commerce mailer (@ecomm. subdomain)",
+            ),
+            (
+                "AceRewards@e1.acehardware.com",
+                "Ace Hardware loyalty program (@e1. ESP subdomain)",
+            ),
+            (
+                "USAA.Customer.Service@mailcenter.usaa.com",
+                "USAA bank service mailer (@mailcenter. subdomain)",
+            ),
+            (
+                "mr.m@news.monopolygo.com",
+                "Monopoly Go promotions (@news. subdomain)",
+            ),
+            (
+                "store+328499209@g.shopifyemail.com",
+                "Shopify merchant email via g.shopifyemail.com",
+            ),
+            (
+                "the-comedy-club-of-kansas-city@seatengine.com",
+                "Event venue mailer via seatengine.com ticketing platform",
+            ),
+        ],
+    )
     def test_production_sender_blocked(self, addr, description):
         """Each production sender must be recognised as marketing/automated."""
-        assert is_marketing_or_noreply(addr) is True, (
-            f"Expected {addr!r} ({description}) to be filtered, but it wasn't"
-        )
+        assert is_marketing_or_noreply(addr) is True, f"Expected {addr!r} ({description}) to be filtered, but it wasn't"
 
-    @pytest.mark.parametrize("addr,description", [
-        ("alice@gmail.com", "freemail personal address"),
-        ("john.smith@company.com", "corporate personal address"),
-        ("bob@proton.me", "ProtonMail personal address"),
-        ("jane@news.mycompany.com", "Should NOT block legitimate work subdomain … "
-                                    "wait — '@news.' IS a marketing subdomain; "
-                                    "this verifies the rule is intentional"),
-    ])
+    @pytest.mark.parametrize(
+        "addr,description",
+        [
+            ("alice@gmail.com", "freemail personal address"),
+            ("john.smith@company.com", "corporate personal address"),
+            ("bob@proton.me", "ProtonMail personal address"),
+            (
+                "jane@news.mycompany.com",
+                "Should NOT block legitimate work subdomain … "
+                "wait — '@news.' IS a marketing subdomain; "
+                "this verifies the rule is intentional",
+            ),
+        ],
+    )
     def test_false_positive_check(self, addr, description):
         """Verify common personal addresses are not over-blocked.
 
@@ -72,9 +80,7 @@ class TestProductionMissedSenders:
         if "news.mycompany" in addr:
             # @news. is intentionally a marketing pattern — skip this check
             pytest.skip("@news. is intentionally blocked as a marketing subdomain")
-        assert is_marketing_or_noreply(addr) is False, (
-            f"Expected {addr!r} ({description}) to pass, but it was blocked"
-        )
+        assert is_marketing_or_noreply(addr) is False, f"Expected {addr!r} ({description}) to pass, but it was blocked"
 
 
 class TestNewSubdomainPatterns:

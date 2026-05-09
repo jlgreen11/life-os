@@ -82,9 +82,7 @@ def test_extract_detects_humor_lol(db, user_model_store):
 def test_extract_humor_count_zero_on_serious_message(db, user_model_store):
     """Humor count should be zero for a plainly serious message."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "Please find attached the revised quarterly report for your review."
-    ))
+    signals = ex.extract(_sent_event("Please find attached the revised quarterly report for your review."))
     assert signals[0]["metrics"]["humor_count"] == 0
     assert signals[0]["metrics"]["humor_type"] is None
 
@@ -157,9 +155,7 @@ def test_extract_gratitude_appreciate(db, user_model_store):
 def test_extract_negative_unfortunately(db, user_model_store):
     """'unfortunately' should register as a negative/declination pattern."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "Unfortunately, I won't be able to attend the meeting on Friday."
-    ))
+    signals = ex.extract(_sent_event("Unfortunately, I won't be able to attend the meeting on Friday."))
     m = signals[0]["metrics"]
     assert m["negative_count"] >= 1
     assert m["negative_word"] == "unfortunately"
@@ -173,9 +169,7 @@ def test_extract_negative_unfortunately(db, user_model_store):
 def test_extract_oxford_comma_detected(db, user_model_store):
     """Oxford comma pattern fires for 'a, b, and c' constructions."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "Please bring eggs, bacon, and coffee to the meeting."
-    ))
+    signals = ex.extract(_sent_event("Please bring eggs, bacon, and coffee to the meeting."))
     m = signals[0]["metrics"]
     assert m["oxford_comma_count"] >= 1
     assert m["no_oxford_count"] == 0
@@ -184,9 +178,7 @@ def test_extract_oxford_comma_detected(db, user_model_store):
 def test_extract_no_oxford_comma_detected(db, user_model_store):
     """No-oxford pattern fires for 'a, b and c' constructions (no serial comma)."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "Please bring eggs, bacon and coffee to the meeting."
-    ))
+    signals = ex.extract(_sent_event("Please bring eggs, bacon and coffee to the meeting."))
     m = signals[0]["metrics"]
     assert m["no_oxford_count"] >= 1
     assert m["oxford_comma_count"] == 0
@@ -195,9 +187,7 @@ def test_extract_no_oxford_comma_detected(db, user_model_store):
 def test_extract_no_comma_fire_on_simple_and(db, user_model_store):
     """'and' without a preceding comma list should not match either pattern."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "I went to the store and bought milk for the recipe."
-    ))
+    signals = ex.extract(_sent_event("I went to the store and bought milk for the recipe."))
     m = signals[0]["metrics"]
     assert m["oxford_comma_count"] == 0
     assert m["no_oxford_count"] == 0
@@ -211,9 +201,7 @@ def test_extract_no_comma_fire_on_simple_and(db, user_model_store):
 def test_extract_cap_starts_counted(db, user_model_store):
     """Sentence starts should be counted correctly."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "This is the first sentence. This is the second sentence."
-    ))
+    signals = ex.extract(_sent_event("This is the first sentence. This is the second sentence."))
     m = signals[0]["metrics"]
     assert m["cap_starts"] == 2
     assert m["lower_starts"] == 0
@@ -222,9 +210,7 @@ def test_extract_cap_starts_counted(db, user_model_store):
 def test_extract_lower_starts_counted(db, user_model_store):
     """Lowercase sentence starts should be counted correctly."""
     ex = make_extractor(db, user_model_store)
-    signals = ex.extract(_sent_event(
-        "this is a message. another sentence here."
-    ))
+    signals = ex.extract(_sent_event("this is a message. another sentence here."))
     m = signals[0]["metrics"]
     assert m["lower_starts"] >= 1
 
@@ -246,10 +232,12 @@ def test_extract_avg_word_length_present(db, user_model_store):
 def test_profile_vocabulary_complexity_populated(db, user_model_store):
     """After processing a message, vocabulary_complexity should be in the profile."""
     ex = make_extractor(db, user_model_store)
-    ex.extract(_sent_event(
-        "I fundamentally believe that collaborative teamwork accelerates productivity "
-        "and ensures comprehensive outcomes across multifaceted organizational challenges."
-    ))
+    ex.extract(
+        _sent_event(
+            "I fundamentally believe that collaborative teamwork accelerates productivity "
+            "and ensures comprehensive outcomes across multifaceted organizational challenges."
+        )
+    )
     profile = user_model_store.get_signal_profile("linguistic")
     assert profile is not None
     assert "vocabulary_complexity" in profile["data"]
@@ -369,11 +357,11 @@ def test_emoji_usage_dict_populated(db, user_model_store):
     """After processing messages with emojis, emoji_usage should map emoji chars to frequencies summing to ~1.0."""
     ex = make_extractor(db, user_model_store)
     # Send 5 messages with various emojis to build enough data
-    ex.extract(_sent_event("Great job on the presentation! \U0001F600\U0001F44D"))
-    ex.extract(_sent_event("Sounds good, let's do it \U0001F44D\U0001F44D"))
-    ex.extract(_sent_event("Happy Friday everyone \U0001F389\U0001F600"))
-    ex.extract(_sent_event("Can't wait for the weekend \U0001F600\U0001F389\U0001F44D"))
-    ex.extract(_sent_event("Love this idea so much \U0001F44D\U0001F600"))
+    ex.extract(_sent_event("Great job on the presentation! \U0001f600\U0001f44d"))
+    ex.extract(_sent_event("Sounds good, let's do it \U0001f44d\U0001f44d"))
+    ex.extract(_sent_event("Happy Friday everyone \U0001f389\U0001f600"))
+    ex.extract(_sent_event("Can't wait for the weekend \U0001f600\U0001f389\U0001f44d"))
+    ex.extract(_sent_event("Love this idea so much \U0001f44d\U0001f600"))
     profile = user_model_store.get_signal_profile("linguistic")
     emoji_usage = profile["data"].get("emoji_usage", {})
     assert isinstance(emoji_usage, dict)
@@ -402,11 +390,11 @@ def test_emoji_usage_top_20_cap(db, user_model_store):
     ex = make_extractor(db, user_model_store)
     # Build a message with 25+ distinct emojis (each from different Unicode ranges)
     many_emojis = (
-        "\U0001F600\U0001F601\U0001F602\U0001F603\U0001F604"
-        "\U0001F605\U0001F606\U0001F607\U0001F608\U0001F609"
-        "\U0001F60A\U0001F60B\U0001F60C\U0001F60D\U0001F60E"
-        "\U0001F60F\U0001F610\U0001F611\U0001F612\U0001F613"
-        "\U0001F614\U0001F615\U0001F616\U0001F617\U0001F618"
+        "\U0001f600\U0001f601\U0001f602\U0001f603\U0001f604"
+        "\U0001f605\U0001f606\U0001f607\U0001f608\U0001f609"
+        "\U0001f60a\U0001f60b\U0001f60c\U0001f60d\U0001f60e"
+        "\U0001f60f\U0001f610\U0001f611\U0001f612\U0001f613"
+        "\U0001f614\U0001f615\U0001f616\U0001f617\U0001f618"
     )
     # Send several messages so the sample buffer has data
     for _ in range(3):
@@ -448,23 +436,25 @@ def test_existing_samples_without_new_keys_do_not_crash(db, user_model_store):
     ex = make_extractor(db, user_model_store)
     # Manually inject a legacy sample with only the old keys
     existing = {
-        "samples": [{
-            "word_count": 10,
-            "avg_sentence_length": 10.0,
-            "unique_word_ratio": 0.5,
-            "formality": 0.5,
-            "hedge_rate": 0.0,
-            "assertion_rate": 0.0,
-            "exclamation_rate": 0.0,
-            "question_rate": 0.0,
-            "ellipsis_rate": 0.0,
-            "emoji_count": 0,
-            "emojis_used": [],
-            "profanity_count": 0,
-            "greeting_detected": None,
-            "closing_detected": None,
-            # Note: no humor_count, affirmative_count, etc.
-        }],
+        "samples": [
+            {
+                "word_count": 10,
+                "avg_sentence_length": 10.0,
+                "unique_word_ratio": 0.5,
+                "formality": 0.5,
+                "hedge_rate": 0.0,
+                "assertion_rate": 0.0,
+                "exclamation_rate": 0.0,
+                "question_rate": 0.0,
+                "ellipsis_rate": 0.0,
+                "emoji_count": 0,
+                "emojis_used": [],
+                "profanity_count": 0,
+                "greeting_detected": None,
+                "closing_detected": None,
+                # Note: no humor_count, affirmative_count, etc.
+            }
+        ],
         "per_contact": {},
     }
     user_model_store.update_signal_profile("linguistic", existing)

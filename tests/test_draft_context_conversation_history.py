@@ -33,12 +33,16 @@ CONTACT = "alice@example.com"
 OTHER_CONTACT = "bob@example.com"
 
 
-def _ep(db, contact: str, summary: str, interaction_type: str = "email_received",
-        topics: list | None = None, days_ago: int = 1):
+def _ep(
+    db,
+    contact: str,
+    summary: str,
+    interaction_type: str = "email_received",
+    topics: list | None = None,
+    days_ago: int = 1,
+):
     """Insert a minimal episode row involving *contact* into the user_model DB."""
-    ts = (
-        datetime.now(timezone.utc) - timedelta(days=days_ago)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
     ep_id = str(uuid.uuid4())
     with db.get_connection("user_model") as conn:
         conn.execute(

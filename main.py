@@ -73,9 +73,15 @@ def _prediction_priority(prediction) -> str:
 class LifeOS:
     """The main application orchestrator."""
 
-    def __init__(self, config_path: str = "config/settings.yaml",
-                 db=None, event_bus=None, event_store=None,
-                 user_model_store=None, config=None):
+    def __init__(
+        self,
+        config_path: str = "config/settings.yaml",
+        db=None,
+        event_bus=None,
+        event_store=None,
+        user_model_store=None,
+        config=None,
+    ):
         """Initialize Life OS.
 
         For testing, dependencies can be injected directly via keyword args.
@@ -106,10 +112,10 @@ class LifeOS:
         self.event_store = event_store if event_store is not None else EventStore(self.db)
         nats_url = os.environ.get("NATS_URL") or self.config.get("nats_url", "nats://localhost:4222")
         self.event_bus = event_bus if event_bus is not None else EventBus(nats_url)
-        self.user_model_store = user_model_store if user_model_store is not None else UserModelStore(
-            self.db,
-            event_bus=self.event_bus,
-            event_store=self.event_store
+        self.user_model_store = (
+            user_model_store
+            if user_model_store is not None
+            else UserModelStore(self.db, event_bus=self.event_bus, event_store=self.event_store)
         )
         self.vector_store = VectorStore(
             db_path=str(Path(data_dir) / "vectors"),
@@ -125,20 +131,21 @@ class LifeOS:
         # AIEngine receives the vector_store for semantic search capabilities.
         # The vector store enables intelligent search queries like "What did Mike
         # say about the Denver project?" via embedding-based similarity matching.
-        self.ai_engine = AIEngine(self.db, self.user_model_store, self.config.get("ai", {}),
-                                  vector_store=self.vector_store)
+        self.ai_engine = AIEngine(
+            self.db, self.user_model_store, self.config.get("ai", {}), vector_store=self.vector_store
+        )
         self.rules_engine = RulesEngine(self.db, event_bus=self.event_bus)
         self.source_weight_manager = SourceWeightManager(self.db)
         self.feedback_collector = FeedbackCollector(
-            self.db, self.user_model_store,
+            self.db,
+            self.user_model_store,
             event_bus=self.event_bus,
             source_weight_manager=self.source_weight_manager,
         )
-        self.prediction_engine = PredictionEngine(
-            self.db, self.user_model_store, timezone=self.user_tz
-        )
+        self.prediction_engine = PredictionEngine(self.db, self.user_model_store, timezone=self.user_tz)
         self.insight_engine = InsightEngine(
-            self.db, self.user_model_store,
+            self.db,
+            self.user_model_store,
             source_weight_manager=self.source_weight_manager,
             timezone=self.user_tz,
         )
@@ -157,7 +164,9 @@ class LifeOS:
         # TaskCompletionDetector infers task completion from behavioral signals
         # (emails sent, inactivity, etc.) to enable workflow detection
         self.task_completion_detector = TaskCompletionDetector(
-            self.db, self.task_manager, self.event_bus,
+            self.db,
+            self.task_manager,
+            self.event_bus,
             user_model_store=self.user_model_store,
         )
         # ConflictDetector scans calendar events for scheduling overlaps and
@@ -270,18 +279,24 @@ class LifeOS:
 
                     if restarts > max_restarts:
                         logger.critical(
-                            "Background task '%s' exceeded max restarts (%d) — "
-                            "permanently stopped. Last error: %s",
-                            name, max_restarts, e, exc_info=True,
+                            "Background task '%s' exceeded max restarts (%d) — permanently stopped. Last error: %s",
+                            name,
+                            max_restarts,
+                            e,
+                            exc_info=True,
                         )
                         return
 
                     # Exponential backoff: 30s, 60s, 120s, 240s, 480s, 600s (capped)
                     backoff = min(30 * (2 ** (restarts - 1)), 600)
                     logger.warning(
-                        "Background task '%s' crashed (restart %d/%d): %s — "
-                        "restarting in %ds",
-                        name, restarts, max_restarts, e, backoff, exc_info=True,
+                        "Background task '%s' crashed (restart %d/%d): %s — restarting in %ds",
+                        name,
+                        restarts,
+                        max_restarts,
+                        e,
+                        backoff,
+                        exc_info=True,
                     )
                     await asyncio.sleep(backoff)
 
@@ -301,7 +316,9 @@ class LifeOS:
             except Exception as e:
                 logger.critical(
                     "Background task '%s' restart wrapper crashed: %s",
-                    name, e, exc_info=True,
+                    name,
+                    e,
+                    exc_info=True,
                 )
 
         task.add_done_callback(handle_task_exception)
@@ -372,7 +389,7 @@ class LifeOS:
         self.startup_state = "ready"
         self.startup_detail = "Web server starting"
         logger.info("[6/6] Core services ready.")
-        port = self.config.get('web_port', 8080)
+        port = self.config.get("web_port", 8080)
         logger.info("  → Web UI:  http://localhost:%s", port)
         logger.info("  → API:     http://localhost:%s/api", port)
         logger.info("  → Health:  http://localhost:%s/health", port)
@@ -449,9 +466,7 @@ class LifeOS:
             except Exception as e:
                 logger.warning("deferred startup: %s backfill failed (non-fatal): %s", name, e)
 
-        await asyncio.gather(
-            *[_safe_backfill(name, fn) for name, fn in concurrent_backfills]
-        )
+        await asyncio.gather(*[_safe_backfill(name, fn) for name, fn in concurrent_backfills])
 
         # --- Post-backfill verification ---
 
@@ -596,9 +611,10 @@ class LifeOS:
 
             # Run the backfill: fetch each stale episode, get its original event,
             # reclassify it, and update the database
-            with self.db.get_connection("user_model") as user_model_conn, \
-                 self.db.get_connection("events") as events_conn:
-
+            with (
+                self.db.get_connection("user_model") as user_model_conn,
+                self.db.get_connection("events") as events_conn,
+            ):
                 # Fetch all stale episodes (NULL, 'communication', or 'unknown')
                 cursor = user_model_conn.execute("""
                     SELECT id, event_id FROM episodes
@@ -610,10 +626,13 @@ class LifeOS:
                 reclassified = 0
                 for episode_id, event_id in stale_episodes:
                     # Fetch the original event to get its type and payload
-                    event_cursor = events_conn.execute("""
+                    event_cursor = events_conn.execute(
+                        """
                         SELECT type, payload FROM events
                         WHERE id = ?
-                    """, (event_id,))
+                    """,
+                        (event_id,),
+                    )
                     event_row = event_cursor.fetchone()
 
                     if not event_row:
@@ -631,11 +650,14 @@ class LifeOS:
                         continue
 
                     # Update the episode
-                    user_model_conn.execute("""
+                    user_model_conn.execute(
+                        """
                         UPDATE episodes
                         SET interaction_type = ?
                         WHERE id = ?
-                    """, (new_interaction_type, episode_id))
+                    """,
+                        (new_interaction_type, episode_id),
+                    )
 
                     reclassified += 1
 
@@ -696,19 +718,74 @@ class LifeOS:
 
             # Completion signal keywords to look for in sent email/message content
             completion_keywords = {
-                'done', 'finished', 'completed', 'sent', 'submitted',
-                'delivered', 'shipped', 'resolved', 'closed', 'fixed',
-                'merged', 'deployed', 'published', 'launched', 'ready'
+                "done",
+                "finished",
+                "completed",
+                "sent",
+                "submitted",
+                "delivered",
+                "shipped",
+                "resolved",
+                "closed",
+                "fixed",
+                "merged",
+                "deployed",
+                "published",
+                "launched",
+                "ready",
             }
 
             # Stop words to filter out when extracting task keywords
             stop_words = {
-                'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-                'with', 'from', 'about', 'into', 'through', 'during', 'before',
-                'after', 'above', 'below', 'between', 'under', 'again', 'further',
-                'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
-                'all', 'each', 'other', 'some', 'such', 'only', 'own', 'same',
-                'than', 'too', 'very', 'just', 'should', 'would', 'could', 'will'
+                "the",
+                "a",
+                "an",
+                "and",
+                "or",
+                "but",
+                "in",
+                "on",
+                "at",
+                "to",
+                "for",
+                "with",
+                "from",
+                "about",
+                "into",
+                "through",
+                "during",
+                "before",
+                "after",
+                "above",
+                "below",
+                "between",
+                "under",
+                "again",
+                "further",
+                "then",
+                "once",
+                "here",
+                "there",
+                "when",
+                "where",
+                "why",
+                "how",
+                "all",
+                "each",
+                "other",
+                "some",
+                "such",
+                "only",
+                "own",
+                "same",
+                "than",
+                "too",
+                "very",
+                "just",
+                "should",
+                "would",
+                "could",
+                "will",
             }
 
             # Get all pending tasks
@@ -725,15 +802,14 @@ class LifeOS:
 
             # Check each task for completion signals
             for task in pending_tasks:
-                task_id = task['id']
-                task_title = task['title'].lower() if task['title'] else ''
-                task_desc = task['description'].lower() if task['description'] else ''
-                created_at = task['created_at']
+                task_id = task["id"]
+                task_title = task["title"].lower() if task["title"] else ""
+                task_desc = task["description"].lower() if task["description"] else ""
+                created_at = task["created_at"]
 
                 # Extract meaningful keywords from task title for matching
                 title_words = {
-                    word for word in re.findall(r'\w+', task_title)
-                    if len(word) > 3 and word not in stop_words
+                    word for word in re.findall(r"\w+", task_title) if len(word) > 3 and word not in stop_words
                 }
                 title_stems = {word[:4] for word in title_words if len(word) >= 4}
 
@@ -743,14 +819,17 @@ class LifeOS:
 
                 # Search for sent emails/messages after task creation
                 with self.db.get_connection("events") as events_conn:
-                    cursor = events_conn.execute("""
+                    cursor = events_conn.execute(
+                        """
                         SELECT id, type, payload, timestamp
                         FROM events
                         WHERE type IN ('email.sent', 'message.sent')
                           AND timestamp >= ?
                         ORDER BY timestamp ASC
                         LIMIT 100
-                    """, (created_at,))
+                    """,
+                        (created_at,),
+                    )
                     sent_events = cursor.fetchall()
 
                 # Check each sent event for task reference + completion keywords
@@ -765,20 +844,20 @@ class LifeOS:
 
                     # Extract text content from the payload
                     text_parts = []
-                    if payload.get('subject'):
-                        text_parts.append(payload['subject'])
-                    if payload.get('body_plain'):
-                        text_parts.append(payload['body_plain'])
-                    if payload.get('snippet'):
-                        text_parts.append(payload['snippet'])
+                    if payload.get("subject"):
+                        text_parts.append(payload["subject"])
+                    if payload.get("body_plain"):
+                        text_parts.append(payload["body_plain"])
+                    if payload.get("snippet"):
+                        text_parts.append(payload["snippet"])
 
-                    text_content = ' '.join(text_parts).lower()
+                    text_content = " ".join(text_parts).lower()
 
                     if not text_content:
                         continue
 
                     # Count keyword matches
-                    text_words = set(re.findall(r'\w+', text_content))
+                    text_words = set(re.findall(r"\w+", text_content))
                     text_stems = {word[:4] for word in text_words if len(word) >= 4}
 
                     exact_matches = len(title_words & text_words)
@@ -786,55 +865,56 @@ class LifeOS:
                     keyword_overlap = exact_matches + (stem_matches * 0.5)
 
                     # Check for completion signal keywords
-                    has_completion_keyword = any(
-                        keyword in text_content for keyword in completion_keywords
-                    )
+                    has_completion_keyword = any(keyword in text_content for keyword in completion_keywords)
 
                     # If we have both keyword overlap AND completion signals, mark complete
                     if keyword_overlap >= 2.0 and has_completion_keyword:
                         # Update task status to completed
                         with self.db.get_connection("state") as state_conn:
-                            state_conn.execute("""
+                            state_conn.execute(
+                                """
                                 UPDATE tasks
                                 SET status = 'completed',
                                     completed_at = ?
                                 WHERE id = ?
-                            """, (datetime.now(timezone.utc).isoformat(), task_id))
+                            """,
+                                (datetime.now(timezone.utc).isoformat(), task_id),
+                            )
 
                         # Publish task.completed event for workflow detection
                         event = {
-                            'id': f"{task_id}-completion",
-                            'type': 'task.completed',
-                            'source': 'backfill.task_completion',
-                            'timestamp': datetime.now(timezone.utc).isoformat(),
-                            'priority': 'normal',
-                            'payload': {
-                                'task_id': task_id,
-                                'title': task['title'],
-                                'source': task.get('source', 'unknown'),
-                                'backfill': True
+                            "id": f"{task_id}-completion",
+                            "type": "task.completed",
+                            "source": "backfill.task_completion",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "priority": "normal",
+                            "payload": {
+                                "task_id": task_id,
+                                "title": task["title"],
+                                "source": task.get("source", "unknown"),
+                                "backfill": True,
                             },
-                            'metadata': {
-                                'backfill_run': True,
-                                'detection_method': 'behavioral_signal'
-                            }
+                            "metadata": {"backfill_run": True, "detection_method": "behavioral_signal"},
                         }
 
                         # Store the event
                         with self.db.get_connection("events") as events_conn:
-                            events_conn.execute("""
+                            events_conn.execute(
+                                """
                                 INSERT OR IGNORE INTO events
                                 (id, type, source, timestamp, priority, payload, metadata)
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                event['id'],
-                                event['type'],
-                                event['source'],
-                                event['timestamp'],
-                                event['priority'],
-                                json.dumps(event['payload']),
-                                json.dumps(event['metadata'])
-                            ))
+                            """,
+                                (
+                                    event["id"],
+                                    event["type"],
+                                    event["source"],
+                                    event["timestamp"],
+                                    event["priority"],
+                                    json.dumps(event["payload"]),
+                                    json.dumps(event["metadata"]),
+                                ),
+                            )
 
                         completed_count += 1
                         task_completed = True
@@ -925,7 +1005,9 @@ class LifeOS:
                     conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
                     conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
                     # Probe remaining tables with TEXT columns on overflow pages
-                    conn.execute("SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts").fetchone()
+                    conn.execute(
+                        "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts"
+                    ).fetchone()
                     conn.execute("SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines").fetchone()
                     conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
                     conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
@@ -969,13 +1051,9 @@ class LifeOS:
             with self.db.get_connection("user_model") as src:
                 # Episodes: read only the safe columns
                 try:
-                    rows = src.execute(
-                        f"SELECT {SAFE_EPISODE_COLS} FROM episodes"
-                    ).fetchall()
+                    rows = src.execute(f"SELECT {SAFE_EPISODE_COLS} FROM episodes").fetchall()
                     recovered_episodes = [tuple(r) for r in rows]
-                    logger.info(
-                        "       ✓ Recovered %d episodes (safe columns only)", len(rows)
-                    )
+                    logger.info("       ✓ Recovered %d episodes (safe columns only)", len(rows))
                 except Exception as e:
                     logger.warning("       ⚠ Could not recover episodes: %s", e)
 
@@ -991,8 +1069,7 @@ class LifeOS:
                         "last_confirmed, times_confirmed, is_user_corrected"
                     ),
                     "routines": (
-                        "name, trigger_condition, typical_duration, "
-                        "consistency_score, times_observed, updated_at"
+                        "name, trigger_condition, typical_duration, consistency_score, times_observed, updated_at"
                     ),
                     "predictions": (
                         "id, prediction_type, description, confidence, "
@@ -1013,19 +1090,19 @@ class LifeOS:
                     # Strategy 1: safe columns only (skips blob columns)
                     if safe_cols and not recovered:
                         try:
-                            rows = src.execute(
-                                f"SELECT {safe_cols} FROM {table}"
-                            ).fetchall()
+                            rows = src.execute(f"SELECT {safe_cols} FROM {table}").fetchall()
                             recovered_tables[table] = [tuple(r) for r in rows]
                             logger.info(
                                 "       ✓ Recovered %d rows from %s (safe columns)",
-                                len(rows), table,
+                                len(rows),
+                                table,
                             )
                             recovered = True
                         except Exception as e:
                             logger.warning(
                                 "       ⚠ Safe-column recovery failed for %s: %s",
-                                table, e,
+                                table,
+                                e,
                             )
 
                     # Strategy 2: full SELECT * (works if no blob corruption)
@@ -1035,21 +1112,21 @@ class LifeOS:
                             recovered_tables[table] = [tuple(r) for r in rows]
                             logger.info(
                                 "       ✓ Recovered %d rows from %s (all columns)",
-                                len(rows), table,
+                                len(rows),
+                                table,
                             )
                             recovered = True
                         except Exception as e:
                             logger.warning(
                                 "       ⚠ Full SELECT recovery failed for %s: %s",
-                                table, e,
+                                table,
+                                e,
                             )
 
                     # Strategy 3: row-by-row using ROWID (salvages partial data)
                     if not recovered and safe_cols:
                         try:
-                            max_rowid = src.execute(
-                                f"SELECT MAX(rowid) FROM {table}"
-                            ).fetchone()[0]
+                            max_rowid = src.execute(f"SELECT MAX(rowid) FROM {table}").fetchone()[0]
                             if max_rowid:
                                 partial_rows = []
                                 for rid in range(1, max_rowid + 1):
@@ -1065,13 +1142,16 @@ class LifeOS:
                                 recovered_tables[table] = partial_rows
                                 logger.info(
                                     "       ✓ Recovered %d/%d rows from %s (row-by-row)",
-                                    len(partial_rows), max_rowid, table,
+                                    len(partial_rows),
+                                    max_rowid,
+                                    table,
                                 )
                             recovered = True
                         except Exception as e:
                             logger.warning(
                                 "       ⚠ Row-by-row recovery failed for %s: %s",
-                                table, e,
+                                table,
+                                e,
                             )
 
         except Exception as dump_err:
@@ -1107,8 +1187,7 @@ class LifeOS:
                     safe_col_count = len(SAFE_EPISODE_COLS.split(","))
                     placeholders = ", ".join(["?"] * safe_col_count)
                     dst.executemany(
-                        f"INSERT OR IGNORE INTO episodes ({SAFE_EPISODE_COLS}) "
-                        f"VALUES ({placeholders})",
+                        f"INSERT OR IGNORE INTO episodes ({SAFE_EPISODE_COLS}) VALUES ({placeholders})",
                         recovered_episodes,
                     )
 
@@ -1123,8 +1202,7 @@ class LifeOS:
                         if col_list and len(rows[0]) == len(col_list.split(",")):
                             # Rows came from safe-column or row-by-row recovery
                             dst.executemany(
-                                f"INSERT OR IGNORE INTO {table} ({col_list}) "
-                                f"VALUES ({placeholders})",
+                                f"INSERT OR IGNORE INTO {table} ({col_list}) VALUES ({placeholders})",
                                 rows,
                             )
                         else:
@@ -1134,9 +1212,7 @@ class LifeOS:
                                 rows,
                             )
                     except Exception as insert_err:
-                        logger.warning(
-                            "       ⚠ Could not restore %s: %s", table, insert_err
-                        )
+                        logger.warning("       ⚠ Could not restore %s: %s", table, insert_err)
 
             logger.info(
                 "       ✓ Rebuilt fresh user_model.db with %d episodes, "
@@ -1176,6 +1252,7 @@ class LifeOS:
             # don't overwrite each other — previous archives may contain
             # recoverable data that this cycle's archive does not.
             from datetime import datetime, timezone
+
             timestamp_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             corrupted_archive = db_path.with_suffix(f".db.corrupted.{timestamp_str}")
 
@@ -1224,8 +1301,7 @@ class LifeOS:
 
         except Exception as rebuild_err:
             logger.error(
-                "       ✗ Failed to rebuild user_model.db: %s — "
-                "attempting restore from backup",
+                "       ✗ Failed to rebuild user_model.db: %s — attempting restore from backup",
                 rebuild_err,
             )
             # Rebuild process itself failed — try backup restore as last resort
@@ -1255,12 +1331,8 @@ class LifeOS:
             with self.db.get_connection("user_model") as conn:
                 conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
                 conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
-                conn.execute(
-                    "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts"
-                ).fetchone()
-                conn.execute(
-                    "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines"
-                ).fetchone()
+                conn.execute("SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts").fetchone()
+                conn.execute("SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines").fetchone()
                 conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
                 conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
                 conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
@@ -1434,9 +1506,7 @@ class LifeOS:
             # query that exercises every row's data column; a LIMIT 1 check
             # only reads the first row and misses corruption in later rows.
             with self.db.get_connection("user_model") as conn:
-                conn.execute(
-                    "SELECT SUM(LENGTH(data)) FROM signal_profiles"
-                ).fetchone()
+                conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
             # Table is healthy — nothing to do.
             logger.debug("       ✓ signal_profiles table is healthy")
 
@@ -1444,9 +1514,7 @@ class LifeOS:
             error_msg = str(e).lower()
             # Catch both "malformed" corruption and any other read failure that
             # would leave profiles permanently unreadable.
-            logger.warning(
-                "       ⚠ signal_profiles table is corrupted (%s) — rebuilding…", e
-            )
+            logger.warning("       ⚠ signal_profiles table is corrupted (%s) — rebuilding…", e)
 
             try:
                 # Step 2: Drop the corrupted table and re-create it.
@@ -1472,8 +1540,8 @@ class LifeOS:
                 # Repair itself failed — log and continue. The system will
                 # run without signal profiles rather than crash on startup.
                 logger.error(
-                    "       ✗ Failed to repair signal_profiles table: %s — "
-                    "system will run without signal profiles", repair_err
+                    "       ✗ Failed to repair signal_profiles table: %s — system will run without signal profiles",
+                    repair_err,
                 )
 
     async def _backfill_communication_templates_if_needed(self):
@@ -1503,9 +1571,7 @@ class LifeOS:
         try:
             # Check if we already have templates (skip if > 100)
             with self.db.get_connection("user_model") as conn:
-                template_count = conn.execute(
-                    "SELECT COUNT(*) FROM communication_templates"
-                ).fetchone()[0]
+                template_count = conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
 
             # If we already have a significant number of templates, skip backfill
             if template_count >= 100:
@@ -1532,8 +1598,10 @@ class LifeOS:
             # cause WAL lock contention and silently drop writes.
             _db = self.db
             _ums = self.user_model_store
+
             def _run_backfill():
                 from scripts.backfill_communication_templates import backfill_communication_templates
+
                 stats = backfill_communication_templates(
                     batch_size=5000,
                     db=_db,
@@ -1547,7 +1615,7 @@ class LifeOS:
                 "       ✓ Created %s templates from %s events (%.1fs)",
                 f"{stats['templates_created']:,}",
                 f"{stats['events_processed']:,}",
-                stats['elapsed_seconds'],
+                stats["elapsed_seconds"],
             )
 
         except Exception as e:
@@ -2399,10 +2467,7 @@ class LifeOS:
             # Apply marketing detection to every contact address
             from scripts.clean_relationship_profile_marketing import is_marketing_or_noreply
 
-            marketing_count = sum(
-                1 for addr in contacts.keys()
-                if is_marketing_or_noreply(addr)
-            )
+            marketing_count = sum(1 for addr in contacts.keys() if is_marketing_or_noreply(addr))
 
             # If < 10% of contacts are marketing, profile is already clean
             if marketing_count / len(contacts) < 0.1:
@@ -2413,6 +2478,7 @@ class LifeOS:
             # Run the cleanup in a thread to avoid blocking startup
             def _run_cleanup():
                 from scripts.clean_relationship_profile_marketing import clean_relationship_profile
+
                 stats = clean_relationship_profile(
                     db=self.db,
                     dry_run=False,  # Actually modify the database
@@ -2447,19 +2513,20 @@ class LifeOS:
             try:
                 self.event_store.store_event(event)
             except Exception as e:
-                logger.error("Event store error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
+                logger.error("Event store error (event_id=%s, type=%s): %s", event.get("id"), event.get("type"), e)
 
             # WebSocket broadcast — push the new event to all connected
             # dashboard clients so the UI updates in real time instead of
             # relying on 60-second polling.  Non-critical: failures are
             # silently swallowed to protect the event pipeline.
             try:
-                await ws_manager.broadcast({
-                    "type": "event",
-                    "event_type": event.get("type"),
-                    "event_id": event.get("id"),
-                })
+                await ws_manager.broadcast(
+                    {
+                        "type": "event",
+                        "event_type": event.get("type"),
+                        "event_id": event.get("id"),
+                    }
+                )
             except Exception:
                 pass
 
@@ -2550,8 +2617,7 @@ class LifeOS:
             try:
                 await self.signal_extractor.process_event(event)
             except Exception as e:
-                logger.error("Signal extractor error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
+                logger.error("Signal extractor error (event_id=%s, type=%s): %s", event.get("id"), event.get("type"), e)
 
             # WebSocket mood broadcast — content-bearing events (email, message,
             # chat) may shift the detected mood.  Push an update so the
@@ -2577,24 +2643,21 @@ class LifeOS:
                 for action in suppress_actions + other_actions:
                     await self._execute_rule_action(action, event)
             except Exception as e:
-                logger.error("Rules engine error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
+                logger.error("Rules engine error (event_id=%s, type=%s): %s", event.get("id"), event.get("type"), e)
 
             # Stage 4 — Extract tasks: scan the event payload (e.g. email
             # body, chat message) for actionable items and create tasks.
             try:
                 await self.task_manager.process_event(event)
             except Exception as e:
-                logger.error("Task manager error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
+                logger.error("Task manager error (event_id=%s, type=%s): %s", event.get("id"), event.get("type"), e)
 
             # Stage 5 — Embed: generate a vector embedding of the event
             # content so it can be retrieved via semantic search later.
             try:
                 await self._embed_event(event)
             except Exception as e:
-                logger.error("Embedding error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
+                logger.error("Embedding error (event_id=%s, type=%s): %s", event.get("id"), event.get("type"), e)
 
             # Stage 6 — Episodic Memory: convert each event into a memory
             # episode for the user model's Layer 1 (Episodic) storage.
@@ -2606,8 +2669,7 @@ class LifeOS:
             try:
                 await self._create_episode(event)
             except Exception as e:
-                logger.error("Episode creation error (event_id=%s, type=%s): %s",
-                             event.get("id"), event.get("type"), e)
+                logger.error("Episode creation error (event_id=%s, type=%s): %s", event.get("id"), event.get("type"), e)
 
         # Subscribe with a wildcard so every subject published on the bus
         # is routed to master_event_handler.
@@ -2628,9 +2690,7 @@ class LifeOS:
                     (notif_id,),
                 ).fetchone()
                 if row and row["created_at"]:
-                    created = datetime.fromisoformat(
-                        row["created_at"].replace("Z", "+00:00")
-                    )
+                    created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
                     return max(0.0, (datetime.now(timezone.utc) - created).total_seconds())
         except Exception:
             pass  # Fall back to 0 if lookup fails
@@ -2747,9 +2807,7 @@ class LifeOS:
                 ).fetchone()
             if not row:
                 return None
-            return self._PREDICTION_TYPE_TO_SOURCE.get(
-                row["prediction_type"].upper(), "email.work"
-            )
+            return self._PREDICTION_TYPE_TO_SOURCE.get(row["prediction_type"].upper(), "email.work")
         except Exception as e:
             logger.debug("Failed to classify prediction source for %s: %s", prediction_id, e)
             return None
@@ -2864,11 +2922,13 @@ class LifeOS:
             )
             # Push the notification to connected dashboard clients in real time.
             try:
-                await ws_manager.broadcast({
-                    "type": "notification",
-                    "title": title,
-                    "source_event_id": event.get("id"),
-                })
+                await ws_manager.broadcast(
+                    {
+                        "type": "notification",
+                        "title": title,
+                        "source_event_id": event.get("id"),
+                    }
+                )
             except Exception:
                 pass
         elif action_type == "tag":
@@ -2911,11 +2971,13 @@ class LifeOS:
                 domain=domain,
             )
             try:
-                await ws_manager.broadcast({
-                    "type": "notification",
-                    "title": f"Task created: {task_title}",
-                    "source_event_id": event.get("id"),
-                })
+                await ws_manager.broadcast(
+                    {
+                        "type": "notification",
+                        "title": f"Task created: {task_title}",
+                        "source_event_id": event.get("id"),
+                    }
+                )
             except Exception:
                 pass
         elif action_type == "archive":
@@ -2956,14 +3018,15 @@ class LifeOS:
                     subject = f"Fwd: {subject}"
                 # Uses "send_email" — the standard action name implemented by
                 # ProtonMailConnector and GoogleConnector.
-                await connector.execute("send_email", {
-                    "to": [forward_to] if isinstance(forward_to, str) else forward_to,
-                    "subject": subject,
-                    "body": event.get("payload", {}).get(
-                        "body", event.get("payload", {}).get("snippet", "")
-                    ),
-                    "forwarded_from": event.get("id"),
-                })
+                await connector.execute(
+                    "send_email",
+                    {
+                        "to": [forward_to] if isinstance(forward_to, str) else forward_to,
+                        "subject": subject,
+                        "body": event.get("payload", {}).get("body", event.get("payload", {}).get("snippet", "")),
+                        "forwarded_from": event.get("id"),
+                    },
+                )
             except Exception as e:
                 logger.error(
                     "forward action failed (rule_id=%r, source=%r): %s",
@@ -2995,16 +3058,15 @@ class LifeOS:
             try:
                 # Uses "reply_email" — the standard action name implemented by
                 # ProtonMailConnector and GoogleConnector.
-                await connector.execute("reply_email", {
-                    "to": [event.get("payload", {}).get(
-                        "sender", event.get("payload", {}).get("from", "")
-                    )],
-                    "in_reply_to": event.get("payload", {}).get(
-                        "message_id", event.get("id")
-                    ),
-                    "original_subject": event.get("payload", {}).get("subject", "") or "",
-                    "body": reply_text,
-                })
+                await connector.execute(
+                    "reply_email",
+                    {
+                        "to": [event.get("payload", {}).get("sender", event.get("payload", {}).get("from", ""))],
+                        "in_reply_to": event.get("payload", {}).get("message_id", event.get("id")),
+                        "original_subject": event.get("payload", {}).get("subject", "") or "",
+                        "body": reply_text,
+                    },
+                )
             except Exception as e:
                 logger.error(
                     "auto_reply action failed (rule_id=%r, source=%r): %s",
@@ -3017,8 +3079,7 @@ class LifeOS:
             # rules. Previously these were silently dropped, making it impossible
             # to diagnose rules that specified unsupported types.
             logger.warning(
-                "Rule action type %r is not implemented; action dropped "
-                "(rule_id=%r, event_type=%r)",
+                "Rule action type %r is not implemented; action dropped (rule_id=%r, event_type=%r)",
                 action_type,
                 action.get("rule_id"),
                 event.get("type"),
@@ -3050,15 +3111,24 @@ class LifeOS:
         # System events (connector syncs, internal state changes) are
         # excluded because they're not part of the user's lived experience.
         episodic_event_types = {
-            "email.received", "email.sent",
-            "message.received", "message.sent",
-            "call.received", "call.missed",
-            "calendar.event.created", "calendar.event.updated",
+            "email.received",
+            "email.sent",
+            "message.received",
+            "message.sent",
+            "call.received",
+            "call.missed",
+            "calendar.event.created",
+            "calendar.event.updated",
             "finance.transaction.new",
-            "task.created", "task.completed",
-            "location.changed", "location.arrived", "location.departed",
-            "home.arrived", "home.departed",
-            "context.location", "context.activity",
+            "task.created",
+            "task.completed",
+            "location.changed",
+            "location.arrived",
+            "location.departed",
+            "home.arrived",
+            "home.departed",
+            "context.location",
+            "context.activity",
             "system.user.command",
         }
 
@@ -3110,9 +3180,7 @@ class LifeOS:
         #  2. Truncate any remaining string value that exceeds 500 characters
         #     to a concise snippet (adds "…" suffix).
         #  3. Cap the total JSON at 4 000 chars as a hard backstop.
-        _LARGE_FIELDS = frozenset(
-            {"body", "html_body", "raw", "raw_mime", "text_body", "html", "content"}
-        )
+        _LARGE_FIELDS = frozenset({"body", "html_body", "raw", "raw_mime", "text_body", "html", "content"})
         _SNIPPET_CHARS = 500
         _MAX_TOTAL_CHARS = 4_000
 
@@ -3134,8 +3202,7 @@ class LifeOS:
         # at a safe boundary (this should never happen in practice, but
         # prevents any future schema additions from reintroducing bloat).
         content_full = (
-            content_full_json[:_MAX_TOTAL_CHARS] if len(content_full_json) > _MAX_TOTAL_CHARS
-            else content_full_json
+            content_full_json[:_MAX_TOTAL_CHARS] if len(content_full_json) > _MAX_TOTAL_CHARS else content_full_json
         )
 
         # Retrieve current mood from the user model if available — this
@@ -3192,12 +3259,12 @@ class LifeOS:
         #
         # The relationship extractor uses an identical priority chain; keep in sync.
         actual_timestamp = (
-            payload.get("email_date")   # Google/Proton mail — actual Date header
-            or payload.get("sent_at")   # iMessage, Signal — message send time
+            payload.get("email_date")  # Google/Proton mail — actual Date header
+            or payload.get("sent_at")  # iMessage, Signal — message send time
             or payload.get("received_at")  # some connectors — arrival time
-            or payload.get("date")      # generic fallback for older connectors
+            or payload.get("date")  # generic fallback for older connectors
             or payload.get("start_time")  # Calendar: actual event start
-            or event.get("timestamp")   # Last resort: sync timestamp
+            or event.get("timestamp")  # Last resort: sync timestamp
         )
 
         episode = {
@@ -3373,7 +3440,13 @@ class LifeOS:
         # Location: show location name or coordinates
         elif "location" in event_type:
             location = payload.get("location", "Unknown location")
-            action = "arrived at" if "arrived" in event_type else "departed from" if "departed" in event_type else "changed to"
+            action = (
+                "arrived at"
+                if "arrived" in event_type
+                else "departed from"
+                if "departed" in event_type
+                else "changed to"
+            )
             return f"Location {action} {location}"[:200]
 
         # Home Assistant presence: arriving/leaving home
@@ -3463,10 +3536,12 @@ class LifeOS:
                 # prediction widget refreshes without waiting for the next poll.
                 if predictions:
                     try:
-                        await ws_manager.broadcast({
-                            "type": "new_prediction",
-                            "count": len(predictions),
-                        })
+                        await ws_manager.broadcast(
+                            {
+                                "type": "new_prediction",
+                                "count": len(predictions),
+                            }
+                        )
                     except Exception:
                         pass
 
@@ -3537,9 +3612,7 @@ class LifeOS:
         while not self.shutdown_event.is_set():
             try:
                 with self.db.get_connection("state") as conn:
-                    cursor = conn.execute(
-                        "SELECT connector_id, status, last_sync, last_error FROM connector_state"
-                    )
+                    cursor = conn.execute("SELECT connector_id, status, last_sync, last_error FROM connector_state")
                     rows = cursor.fetchall()
 
                 now = datetime.now(timezone.utc)
@@ -3556,9 +3629,7 @@ class LifeOS:
                     # Check for stale sync (no sync in 24+ hours)
                     elif row["last_sync"]:
                         try:
-                            last_sync = datetime.fromisoformat(
-                                row["last_sync"].replace("Z", "+00:00")
-                            )
+                            last_sync = datetime.fromisoformat(row["last_sync"].replace("Z", "+00:00"))
                             stale_seconds = (now - last_sync).total_seconds()
                             if stale_seconds > 86400:  # 24 hours
                                 is_degraded = True
@@ -3593,9 +3664,7 @@ class LifeOS:
 
                     # Auto-retry: attempt start() for error-state connectors
                     if row["status"] == "error":
-                        await self._maybe_retry_connector(
-                            connector_id, retry_counts, last_retry, now_ts
-                        )
+                        await self._maybe_retry_connector(connector_id, retry_counts, last_retry, now_ts)
             except Exception as e:
                 logger.error("Connector health monitor error: %s", e)
             await asyncio.sleep(3600)  # check every hour
@@ -3630,7 +3699,7 @@ class LifeOS:
 
         # Calculate exponential backoff: 1h, 2h, 4h, 8h, capped at 24h
         attempt = retry_counts.get(connector_id, 0)
-        backoff_hours = min(1 * (2 ** attempt), 24)
+        backoff_hours = min(1 * (2**attempt), 24)
         backoff_seconds = backoff_hours * 3600
 
         # Check if enough time has elapsed since last retry
@@ -3804,11 +3873,13 @@ class LifeOS:
                                 source="routine_detector",
                             )
                         except Exception as e:
-                            logger.warning("  ⚠ Failed to publish routine event for '%s': %s", routine.get('name'), e)
+                            logger.warning("  ⚠ Failed to publish routine event for '%s': %s", routine.get("name"), e)
                 else:
                     # Event bus not connected — log the skip for visibility
                     if routines:
-                        logger.warning("  ⚠ Skipping %d routine event publications (event bus not connected)", len(routines))
+                        logger.warning(
+                            "  ⚠ Skipping %d routine event publications (event bus not connected)", len(routines)
+                        )
 
                 # Detect workflows from last 90 days of event sequences.
                 # 90 days covers realistic connector outage windows -- a 30-day
@@ -3835,21 +3906,23 @@ class LifeOS:
                                 "usermodel.workflow.updated",
                                 {
                                     "workflow_name": workflow["name"],
-                                "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
-                                "steps_count": len(workflow.get("steps", [])),
-                                "tools_count": len(workflow.get("tools_used", [])),
-                                "success_rate": workflow.get("success_rate", 0.5),
-                                "times_observed": workflow.get("times_observed", 0),
-                                "updated_at": datetime.now(timezone.utc).isoformat(),
-                            },
-                            source="workflow_detector",
-                        )
+                                    "trigger_conditions_count": len(workflow.get("trigger_conditions", [])),
+                                    "steps_count": len(workflow.get("steps", [])),
+                                    "tools_count": len(workflow.get("tools_used", [])),
+                                    "success_rate": workflow.get("success_rate", 0.5),
+                                    "times_observed": workflow.get("times_observed", 0),
+                                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                                },
+                                source="workflow_detector",
+                            )
                         except Exception as e:
-                            logger.warning("  ⚠ Failed to publish workflow event for '%s': %s", workflow.get('name'), e)
+                            logger.warning("  ⚠ Failed to publish workflow event for '%s': %s", workflow.get("name"), e)
                 else:
                     # Event bus not connected — log the skip for visibility
                     if workflows:
-                        logger.warning("  ⚠ Skipping %d workflow event publications (event bus not connected)", len(workflows))
+                        logger.warning(
+                            "  ⚠ Skipping %d workflow event publications (event bus not connected)", len(workflows)
+                        )
 
                 # Adaptive retry interval based on detection success:
                 # - 0 patterns: retry in 1 hour (cold start, connectors may be syncing)
@@ -3917,11 +3990,11 @@ class LifeOS:
                 # Run inference cycle over all unresolved predictions
                 stats = await self.behavioral_tracker.run_inference_cycle()
 
-                if stats['marked_accurate'] + stats['marked_inaccurate'] > 0:
+                if stats["marked_accurate"] + stats["marked_inaccurate"] > 0:
                     logger.info(
                         "  BehavioralAccuracyTracker: inferred accuracy for %d accurate, %d inaccurate predictions",
-                        stats['marked_accurate'],
-                        stats['marked_inaccurate'],
+                        stats["marked_accurate"],
+                        stats["marked_inaccurate"],
                     )
             except Exception as e:
                 logger.error("Behavioral accuracy tracker error: %s", e)
@@ -3962,8 +4035,9 @@ class LifeOS:
                 completed_count = await self.task_completion_detector.detect_completions()
 
                 if completed_count > 0:
-                    logger.info("  TaskCompletionDetector: auto-completed %d tasks from behavioral signals",
-                                completed_count)
+                    logger.info(
+                        "  TaskCompletionDetector: auto-completed %d tasks from behavioral signals", completed_count
+                    )
             except Exception as e:
                 logger.error("Task completion detector error: %s", e)
 
@@ -4105,20 +4179,24 @@ class LifeOS:
                         # so users in 'batched' mode actually see their notifications.
                         for item in digest:
                             try:
-                                await ws_manager.broadcast({
-                                    "type": "notification",
-                                    "title": item.get("title", ""),
-                                    "source_event_id": item.get("source_event_id"),
-                                })
+                                await ws_manager.broadcast(
+                                    {
+                                        "type": "notification",
+                                        "title": item.get("title", ""),
+                                        "source_event_id": item.get("source_event_id"),
+                                    }
+                                )
                             except Exception:
                                 pass  # Fail-open: don't let broadcast errors block delivery
 
                         # Send a digest summary so the dashboard can show a banner
                         try:
-                            await ws_manager.broadcast({
-                                "type": "digest",
-                                "count": len(digest),
-                            })
+                            await ws_manager.broadcast(
+                                {
+                                    "type": "digest",
+                                    "count": len(digest),
+                                }
+                            )
                         except Exception:
                             pass
 
@@ -4309,9 +4387,7 @@ class LifeOS:
                         conn.execute(
                             "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts"
                         ).fetchone()
-                        conn.execute(
-                            "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines"
-                        ).fetchone()
+                        conn.execute("SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines").fetchone()
                         conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
                         conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
                         conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
@@ -4333,8 +4409,7 @@ class LifeOS:
                 # Corruption detected — attempt rebuild
                 self._runtime_db_rebuilds += 1
                 logger.warning(
-                    "DB health check: user_model.db corruption detected (%s) — "
-                    "triggering rebuild (attempt %d/3)",
+                    "DB health check: user_model.db corruption detected (%s) — triggering rebuild (attempt %d/3)",
                     probe_error,
                     self._runtime_db_rebuilds,
                 )
@@ -4358,11 +4433,13 @@ class LifeOS:
                 # Notify connected dashboards immediately so the UI
                 # reflects the corruption without waiting for the next poll.
                 try:
-                    await ws_manager.broadcast({
-                        "type": "db_corruption",
-                        "database": "user_model",
-                        "rebuild_attempt": self._runtime_db_rebuilds,
-                    })
+                    await ws_manager.broadcast(
+                        {
+                            "type": "db_corruption",
+                            "database": "user_model",
+                            "rebuild_attempt": self._runtime_db_rebuilds,
+                        }
+                    )
                 except Exception:
                     pass
 
@@ -4374,8 +4451,7 @@ class LifeOS:
                     fresh_ok = self._fresh_start_user_model_db()
                     if fresh_ok:
                         logger.warning(
-                            "DB health check: fresh start succeeded — "
-                            "running backfills to rebuild from event history"
+                            "DB health check: fresh start succeeded — running backfills to rebuild from event history"
                         )
                         try:
                             await self.notification_manager.create_notification(
@@ -4404,10 +4480,7 @@ class LifeOS:
                             pass
                         self._runtime_db_rebuilds = 0
                     else:
-                        logger.error(
-                            "DB health check: fresh start FAILED — "
-                            "system requires manual intervention"
-                        )
+                        logger.error("DB health check: fresh start FAILED — system requires manual intervention")
                         try:
                             await self.notification_manager.create_notification(
                                 title="Database repair failed, manual intervention needed",
@@ -4450,8 +4523,7 @@ class LifeOS:
                     continue
 
                 logger.info(
-                    "DB health check: rebuild completed (attempt %d/3) — "
-                    "running backfill verification",
+                    "DB health check: rebuild completed (attempt %d/3) — running backfill verification",
                     self._runtime_db_rebuilds,
                 )
 
@@ -4511,13 +4583,12 @@ class LifeOS:
         # Uses the `enabled` flag which persists across restarts — unlike
         # `status` which gets overwritten to 'inactive' during shutdown.
         with self.db.get_connection("state") as conn:
-            rows = conn.execute(
-                "SELECT connector_id, config FROM connector_state WHERE enabled = 1"
-            ).fetchall()
+            rows = conn.execute("SELECT connector_id, config FROM connector_state WHERE enabled = 1").fetchall()
             for row in rows:
                 cid = row["connector_id"]
                 if cid in CONNECTOR_REGISTRY and cid not in to_start:
                     import json
+
                     db_config = json.loads(row["config"]) if row["config"] else {}
                     if db_config:
                         to_start[cid] = db_config
@@ -4557,8 +4628,7 @@ class LifeOS:
             return set()
         return {f.name for f in typedef.config_fields if f.sensitive}
 
-    def _resolve_connector_config(self, connector_id: str,
-                                  override: dict | None = None) -> dict:
+    def _resolve_connector_config(self, connector_id: str, override: dict | None = None) -> dict:
         """Merge and decrypt config: DB > override/YAML > defaults."""
         import json
 
@@ -4680,8 +4750,7 @@ class LifeOS:
                    VALUES (?, ?, ?)
                    ON CONFLICT(connector_id) DO UPDATE SET
                        config = ?, updated_at = ?""",
-                (connector_id, json.dumps(encrypted), now,
-                 json.dumps(encrypted), now),
+                (connector_id, json.dumps(encrypted), now, json.dumps(encrypted), now),
             )
 
     async def enable_connector(self, connector_id: str) -> dict:
@@ -4698,8 +4767,7 @@ class LifeOS:
             raise ValueError(f"Unknown connector: {connector_id}")
 
         if typedef.category == "browser":
-            return {"status": "error",
-                    "detail": "Browser connectors are managed via the browser orchestrator"}
+            return {"status": "error", "detail": "Browser connectors are managed via the browser orchestrator"}
 
         config = self._resolve_connector_config(connector_id)
         cls = get_connector_class(connector_id)
@@ -4744,16 +4812,14 @@ class LifeOS:
 
         return {"status": "stopped"}
 
-    async def test_connector(self, connector_id: str,
-                             config: dict | None = None) -> dict:
+    async def test_connector(self, connector_id: str, config: dict | None = None) -> dict:
         """Create a temporary connector instance and test authentication."""
         typedef = CONNECTOR_REGISTRY.get(connector_id)
         if not typedef:
             raise ValueError(f"Unknown connector: {connector_id}")
 
         if typedef.category == "browser":
-            return {"success": False,
-                    "detail": "Browser connectors require the browser engine to test"}
+            return {"success": False, "detail": "Browser connectors require the browser engine to test"}
 
         resolved = self._resolve_connector_config(connector_id, override=config)
         cls = get_connector_class(connector_id)
@@ -4761,8 +4827,7 @@ class LifeOS:
 
         try:
             success = await tmp.authenticate()
-            return {"success": success,
-                    "detail": "Authentication successful" if success else "Authentication failed"}
+            return {"success": success, "detail": "Authentication successful" if success else "Authentication failed"}
         except Exception as e:
             return {"success": False, "detail": str(e)}
 
@@ -4823,6 +4888,7 @@ def create_app():
     process (e.g. ``uvicorn main:create_app --factory``).
     """
     from web.app import create_web_app
+
     life_os = LifeOS()
     return create_web_app(life_os)
 
@@ -4844,6 +4910,7 @@ async def main():
 
     # Run the embedded web server — blocks until shutdown
     from web.app import create_web_app
+
     app = create_web_app(life_os)
 
     config = uvicorn.Config(

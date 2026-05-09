@@ -18,20 +18,20 @@ from services.routine_detector.detector import RoutineDetector
 
 def _store_event(event_store, event_id: str, event_type: str, timestamp: str):
     """Helper to insert a raw event into events.db for fallback derivation."""
-    event_store.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": "test",
-        "timestamp": timestamp,
-        "priority": "normal",
-        "payload": json.dumps({}),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": "test",
+            "timestamp": timestamp,
+            "priority": "normal",
+            "payload": json.dumps({}),
+            "metadata": json.dumps({}),
+        }
+    )
 
 
-def _store_episode_with_null_type(
-    db, event_id: str, timestamp: str, location: str | None = None
-):
+def _store_episode_with_null_type(db, event_id: str, timestamp: str, location: str | None = None):
     """Helper to store an episode with NULL interaction_type.
 
     In production, many episodes have NULL interaction_type from before the
@@ -91,16 +91,13 @@ class TestLocationRoutineFallback:
         # Should detect a location routine for "Home" via fallback derivation
         home_routines = [r for r in routines if "Home" in r.get("name", "")]
         assert len(home_routines) >= 1, (
-            "Expected location routine for 'Home' from NULL-type episodes "
-            "recovered via event_type derivation fallback"
+            "Expected location routine for 'Home' from NULL-type episodes recovered via event_type derivation fallback"
         )
         routine = home_routines[0]
         assert "Arrive at Home" in routine["name"]
         assert routine["consistency_score"] > 0
 
-    def test_location_fallback_not_used_when_main_query_has_results(
-        self, db, event_store, user_model_store
-    ):
+    def test_location_fallback_not_used_when_main_query_has_results(self, db, event_store, user_model_store):
         """When the main location query returns results, the fallback should
         NOT be used (performance guard).
 
@@ -114,14 +111,16 @@ class TestLocationRoutineFallback:
             ts = (base_date + timedelta(days=day_offset, hours=17)).isoformat()
 
             # Store episode WITH a proper interaction_type and location
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": ts,
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "smart_home",
-                "location": "Office",
-                "content_summary": "Smart home action at office",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": ts,
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "smart_home",
+                    "location": "Office",
+                    "content_summary": "Smart home action at office",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -129,9 +128,7 @@ class TestLocationRoutineFallback:
         office_routines = [r for r in routines if "Office" in r.get("name", "")]
         assert len(office_routines) >= 1
 
-    def test_location_fallback_skips_underivable_episodes(
-        self, db, event_store, user_model_store
-    ):
+    def test_location_fallback_skips_underivable_episodes(self, db, event_store, user_model_store):
         """Episodes where _derive_interaction_type_from_event returns None
         (no matching event in events.db) should be silently skipped.
 
@@ -153,13 +150,9 @@ class TestLocationRoutineFallback:
 
         # No routines should be detected for GhostPlace since derivation fails
         ghost_routines = [r for r in routines if "GhostPlace" in r.get("name", "")]
-        assert len(ghost_routines) == 0, (
-            "Episodes with underivable interaction_type should be skipped"
-        )
+        assert len(ghost_routines) == 0, "Episodes with underivable interaction_type should be skipped"
 
-    def test_location_fallback_mixed_derivable_and_underivable(
-        self, db, event_store, user_model_store
-    ):
+    def test_location_fallback_mixed_derivable_and_underivable(self, db, event_store, user_model_store):
         """Mix of derivable and underivable episodes: only derivable ones
         should contribute to routine detection.
         """
@@ -183,9 +176,7 @@ class TestLocationRoutineFallback:
 
         # 5 derivable episodes on 5 distinct days >= min_occurrences (3)
         gym_routines = [r for r in routines if "Gym" in r.get("name", "")]
-        assert len(gym_routines) >= 1, (
-            "5 derivable episodes on distinct days should produce a routine"
-        )
+        assert len(gym_routines) >= 1, "5 derivable episodes on distinct days should produce a routine"
 
     def test_fallback_location_episodes_method_directly(self, db, event_store, user_model_store):
         """Test the _fallback_location_episodes method directly to verify
@@ -211,9 +202,7 @@ class TestLocationRoutineFallback:
         assert location == "Office"
         assert derived_type == "email_received"  # dots converted to underscores
 
-    def test_fallback_preserves_existing_interaction_types(
-        self, db, event_store, user_model_store
-    ):
+    def test_fallback_preserves_existing_interaction_types(self, db, event_store, user_model_store):
         """Episodes with existing non-null, non-placeholder interaction_type
         should use their existing type in the fallback, not re-derive.
         """
@@ -223,14 +212,16 @@ class TestLocationRoutineFallback:
         ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
         # Store episode with existing interaction_type "smart_home" and location
-        user_model_store.store_episode({
-            "id": str(uuid.uuid4()),
-            "timestamp": ts,
-            "event_id": str(uuid.uuid4()),
-            "interaction_type": "smart_home",
-            "location": "Home",
-            "content_summary": "Smart home action",
-        })
+        user_model_store.store_episode(
+            {
+                "id": str(uuid.uuid4()),
+                "timestamp": ts,
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "smart_home",
+                "location": "Home",
+                "content_summary": "Smart home action",
+            }
+        )
 
         results = detector._fallback_location_episodes(cutoff)
 
@@ -243,9 +234,7 @@ class TestLocationRoutineFallback:
 class TestEventTriggeredRoutineFallback:
     """Tests for the event-triggered routine detector fallback path."""
 
-    def test_event_triggered_routine_detected_via_fallback(
-        self, db, event_store, user_model_store
-    ):
+    def test_event_triggered_routine_detected_via_fallback(self, db, event_store, user_model_store):
         """Episodes with NULL/unknown interaction_type should produce
         event-triggered routines via the fallback derivation path.
 
@@ -279,13 +268,10 @@ class TestEventTriggeredRoutineFallback:
         # Should detect an event-triggered routine via fallback derivation
         event_routines = [r for r in routines if r.get("trigger", "").startswith("after_")]
         assert len(event_routines) >= 1, (
-            "Expected event-triggered routine from unknown-type episodes "
-            "recovered via event_type derivation fallback"
+            "Expected event-triggered routine from unknown-type episodes recovered via event_type derivation fallback"
         )
 
-    def test_event_triggered_fallback_not_used_when_main_query_has_results(
-        self, db, event_store, user_model_store
-    ):
+    def test_event_triggered_fallback_not_used_when_main_query_has_results(self, db, event_store, user_model_store):
         """When the main trigger query returns results, the fallback should
         NOT be used (performance guard).
         """
@@ -296,21 +282,25 @@ class TestEventTriggeredRoutineFallback:
             meeting_time = base_date + timedelta(days=day_offset, hours=14)
 
             # Trigger event WITH proper interaction_type
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": meeting_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "video_call",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": meeting_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "video_call",
+                }
+            )
 
             # Follow-up action
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (meeting_time + timedelta(minutes=5)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "post_call_notes",
-                "content_summary": "Post call notes",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (meeting_time + timedelta(minutes=5)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "post_call_notes",
+                    "content_summary": "Post call notes",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -318,9 +308,7 @@ class TestEventTriggeredRoutineFallback:
         event_routines = [r for r in routines if r.get("trigger", "").startswith("after_")]
         assert len(event_routines) >= 1
 
-    def test_event_triggered_fallback_skips_underivable_episodes(
-        self, db, event_store, user_model_store
-    ):
+    def test_event_triggered_fallback_skips_underivable_episodes(self, db, event_store, user_model_store):
         """Episodes where _derive_interaction_type_from_event returns None
         should be silently skipped in the fallback.
         """
@@ -342,9 +330,7 @@ class TestEventTriggeredRoutineFallback:
         # With no derivable types, no triggers are found
         assert len(event_routines) == 0
 
-    def test_fallback_event_triggered_episodes_method_directly(
-        self, db, event_store, user_model_store
-    ):
+    def test_fallback_event_triggered_episodes_method_directly(self, db, event_store, user_model_store):
         """Test the _fallback_event_triggered_episodes method directly to verify
         it returns the correct (interaction_type, timestamp) tuples.
         """
@@ -366,9 +352,7 @@ class TestEventTriggeredRoutineFallback:
         derived_type, result_ts = results[0]
         assert derived_type == "email_sent"  # dots converted to underscores
 
-    def test_event_triggered_fallback_across_three_days(
-        self, db, event_store, user_model_store
-    ):
+    def test_event_triggered_fallback_across_three_days(self, db, event_store, user_model_store):
         """Verify that fallback-derived trigger types need at least 3 distinct
         days (min_occurrences) to be considered candidates.
 
@@ -398,17 +382,10 @@ class TestEventTriggeredRoutineFallback:
         routines = detector.detect_routines(lookback_days=30)
 
         # 3 days meets min_occurrences=3, so trigger should be found
-        calendar_routines = [
-            r for r in routines
-            if r.get("trigger", "") == "after_calendar_meeting"
-        ]
-        assert len(calendar_routines) >= 1, (
-            "3 distinct days of fallback-derived trigger should meet min_occurrences=3"
-        )
+        calendar_routines = [r for r in routines if r.get("trigger", "") == "after_calendar_meeting"]
+        assert len(calendar_routines) >= 1, "3 distinct days of fallback-derived trigger should meet min_occurrences=3"
 
-    def test_fallback_preserves_existing_event_interaction_types(
-        self, db, event_store, user_model_store
-    ):
+    def test_fallback_preserves_existing_event_interaction_types(self, db, event_store, user_model_store):
         """Episodes with existing non-null, non-placeholder interaction_type
         should use their existing type in the fallback, not re-derive.
         """
@@ -418,13 +395,15 @@ class TestEventTriggeredRoutineFallback:
         ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
         # Store episode with existing interaction_type
-        user_model_store.store_episode({
-            "id": str(uuid.uuid4()),
-            "timestamp": ts,
-            "event_id": str(uuid.uuid4()),
-            "interaction_type": "video_call",
-            "content_summary": "Video call",
-        })
+        user_model_store.store_episode(
+            {
+                "id": str(uuid.uuid4()),
+                "timestamp": ts,
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "video_call",
+                "content_summary": "Video call",
+            }
+        )
 
         results = detector._fallback_event_triggered_episodes(cutoff)
 

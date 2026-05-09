@@ -75,7 +75,7 @@ def test_task_create_request_full():
         description="Finish the quarterly report",
         domain="work",
         priority="high",
-        due_date="2026-02-20T17:00:00Z"
+        due_date="2026-02-20T17:00:00Z",
     )
     assert req.title == "Complete project"
     assert req.description == "Finish the quarterly report"
@@ -139,7 +139,7 @@ def test_rule_create_request_full():
         name="Auto-tag work emails",
         trigger_event="email.received",
         conditions=[{"field": "sender", "op": "contains", "value": "@work.com"}],
-        actions=[{"type": "tag", "value": "work"}]
+        actions=[{"type": "tag", "value": "work"}],
     )
     assert req.name == "Auto-tag work emails"
     assert len(req.conditions) == 1
@@ -203,7 +203,7 @@ def test_draft_request_full():
         contact_id="c123",
         channel="signal",
         incoming_message="Can we meet tomorrow?",
-        context="Replying to project discussion"
+        context="Replying to project discussion",
     )
     assert req.contact_id == "c123"
     assert req.channel == "signal"
@@ -278,7 +278,7 @@ def test_context_payload_location():
         altitude=50.0,
         horizontal_accuracy=10.0,
         place_name="San Francisco",
-        place_type="city"
+        place_type="city",
     )
     assert payload.latitude == 37.7749
     assert payload.longitude == -122.4194
@@ -287,12 +287,7 @@ def test_context_payload_location():
 
 def test_context_payload_device():
     """Test ContextPayload with device discovery data."""
-    payload = ContextPayload(
-        device_name="iPhone 15",
-        device_type="smartphone",
-        signal_strength=-45,
-        is_connected=True
-    )
+    payload = ContextPayload(device_name="iPhone 15", device_type="smartphone", signal_strength=-45, is_connected=True)
     assert payload.device_name == "iPhone 15"
     assert payload.signal_strength == -45
     assert payload.is_connected is True
@@ -301,10 +296,7 @@ def test_context_payload_device():
 def test_context_payload_time():
     """Test ContextPayload with time context data."""
     payload = ContextPayload(
-        local_time="14:30:00",
-        timezone="America/Los_Angeles",
-        day_of_week="Saturday",
-        is_weekend=True
+        local_time="14:30:00", timezone="America/Los_Angeles", day_of_week="Saturday", is_weekend=True
     )
     assert payload.local_time == "14:30:00"
     assert payload.is_weekend is True
@@ -333,11 +325,7 @@ def test_context_payload_all_optional():
 def test_context_metadata_full():
     """Test ContextMetadata with all fields."""
     metadata = ContextMetadata(
-        device_model="iPhone 15 Pro",
-        os_version="17.3",
-        battery_level=0.75,
-        network_type="5G",
-        app_state="foreground"
+        device_model="iPhone 15 Pro", os_version="17.3", battery_level=0.75, network_type="5G", app_state="foreground"
     )
     assert metadata.device_model == "iPhone 15 Pro"
     assert metadata.battery_level == 0.75
@@ -357,10 +345,7 @@ def test_context_metadata_empty():
 
 def test_context_event_request_minimal():
     """Test ContextEventRequest with minimal required fields."""
-    req = ContextEventRequest(
-        type="context.location",
-        payload=ContextPayload(latitude=37.7749, longitude=-122.4194)
-    )
+    req = ContextEventRequest(type="context.location", payload=ContextPayload(latitude=37.7749, longitude=-122.4194))
     assert req.type == "context.location"
     assert req.source == "ios_app"
     assert req.timestamp is None
@@ -374,7 +359,7 @@ def test_context_event_request_full():
         source="ios_app_v2",
         timestamp="2026-02-15T12:00:00Z",
         payload=ContextPayload(device_name="iPhone", signal_strength=-50),
-        metadata=ContextMetadata(device_model="iPhone 15", battery_level=0.8)
+        metadata=ContextMetadata(device_model="iPhone 15", battery_level=0.8),
     )
     assert req.type == "context.device_nearby"
     assert req.source == "ios_app_v2"
@@ -401,10 +386,7 @@ def test_context_event_request_missing_payload():
 
 def test_context_batch_request_single_event():
     """Test ContextBatchRequest with one event."""
-    event = ContextEventRequest(
-        type="context.location",
-        payload=ContextPayload(latitude=37.7749, longitude=-122.4194)
-    )
+    event = ContextEventRequest(type="context.location", payload=ContextPayload(latitude=37.7749, longitude=-122.4194))
     req = ContextBatchRequest(events=[event])
     assert len(req.events) == 1
 
@@ -412,14 +394,8 @@ def test_context_batch_request_single_event():
 def test_context_batch_request_multiple_events():
     """Test ContextBatchRequest with multiple events."""
     events = [
-        ContextEventRequest(
-            type="context.location",
-            payload=ContextPayload(latitude=37.7749, longitude=-122.4194)
-        ),
-        ContextEventRequest(
-            type="context.device_nearby",
-            payload=ContextPayload(device_name="iPhone")
-        )
+        ContextEventRequest(type="context.location", payload=ContextPayload(latitude=37.7749, longitude=-122.4194)),
+        ContextEventRequest(type="context.device_nearby", payload=ContextPayload(device_name="iPhone")),
     ]
     req = ContextBatchRequest(events=events)
     assert len(req.events) == 2
@@ -548,12 +524,9 @@ def test_rule_create_request_complex_conditions():
         conditions=[
             {"field": "sender", "op": "contains", "value": "@work.com"},
             {"field": "priority", "op": "gte", "value": 0.7},
-            {"field": "tags", "op": "in", "value": ["urgent", "critical"]}
+            {"field": "tags", "op": "in", "value": ["urgent", "critical"]},
         ],
-        actions=[
-            {"type": "notify", "channel": "push"},
-            {"type": "tag", "value": "important"}
-        ]
+        actions=[{"type": "notify", "channel": "push"}, {"type": "tag", "value": "important"}],
     )
     assert len(req.conditions) == 3
     assert len(req.actions) == 2
@@ -569,10 +542,7 @@ def test_context_metadata_partial():
 
 def test_context_event_request_default_source():
     """Test ContextEventRequest defaults source to 'ios_app'."""
-    req = ContextEventRequest(
-        type="context.location",
-        payload=ContextPayload(latitude=1.0, longitude=1.0)
-    )
+    req = ContextEventRequest(type="context.location", payload=ContextPayload(latitude=1.0, longitude=1.0))
     assert req.source == "ios_app"
 
 
@@ -621,16 +591,12 @@ def test_search_request_negative_limit():
 
 def test_connector_config_request_nested_config():
     """Test ConnectorConfigRequest with deeply nested config."""
-    req = ConnectorConfigRequest(config={
-        "api": {
-            "key": "secret",
-            "endpoints": {
-                "base": "https://api.example.com",
-                "version": "v2"
-            }
-        },
-        "retries": 3
-    })
+    req = ConnectorConfigRequest(
+        config={
+            "api": {"key": "secret", "endpoints": {"base": "https://api.example.com", "version": "v2"}},
+            "retries": 3,
+        }
+    )
     assert req.config["api"]["endpoints"]["base"] == "https://api.example.com"
 
 

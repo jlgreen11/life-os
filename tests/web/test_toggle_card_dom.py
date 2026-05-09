@@ -53,9 +53,7 @@ class TestToggleCardImplementation:
         assert "getElementById('feedContent')" not in func_body, (
             "toggleCard must not use getElementById('feedContent') for re-rendering"
         )
-        assert "renderCard(feedItems" not in func_body, (
-            "toggleCard must not iterate feedItems to rebuild HTML"
-        )
+        assert "renderCard(feedItems" not in func_body, "toggleCard must not iterate feedItems to rebuild HTML"
 
     def test_toggle_card_uses_queryselector_with_data_id(self):
         """toggleCard must use querySelector('[data-id=...') to find the card."""
@@ -154,9 +152,7 @@ class TestEscapeKeyHandler:
         handler_end = TEMPLATE.find("});", esc_idx)
         handler_body = TEMPLATE[esc_idx : handler_end + 3] if handler_end > 0 else ""
 
-        assert "querySelector" in handler_body, (
-            "Escape key handler must use querySelector, not a full re-render"
-        )
+        assert "querySelector" in handler_body, "Escape key handler must use querySelector, not a full re-render"
         assert "classList.remove('expanded')" in handler_body, (
             "Escape key handler must call classList.remove('expanded')"
         )
@@ -169,9 +165,7 @@ class TestEscapeKeyHandler:
         handler_end = TEMPLATE.find("});", esc_idx)
         handler_body = TEMPLATE[esc_idx : handler_end + 3] if handler_end > 0 else ""
 
-        assert "renderCard(feedItems" not in handler_body, (
-            "Escape handler must not iterate feedItems to rebuild HTML"
-        )
+        assert "renderCard(feedItems" not in handler_body, "Escape handler must not iterate feedItems to rebuild HTML"
         assert "getElementById('feedContent')" not in handler_body, (
             "Escape handler must not re-fetch #feedContent for a full re-render"
         )

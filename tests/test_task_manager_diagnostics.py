@@ -22,10 +22,15 @@ class TestGetDiagnosticsEmpty:
         """get_diagnostics() returns all expected top-level keys."""
         result = task_manager.get_diagnostics()
         expected_keys = {
-            "total_tasks", "by_status", "tasks_due_soon_24h",
-            "tasks_due_soon_72h", "stale_pending_count",
-            "recent_completions_24h", "top_domains",
-            "ai_extraction_available", "health",
+            "total_tasks",
+            "by_status",
+            "tasks_due_soon_24h",
+            "tasks_due_soon_72h",
+            "stale_pending_count",
+            "recent_completions_24h",
+            "top_domains",
+            "ai_extraction_available",
+            "health",
             "extraction_telemetry",
         }
         assert set(result.keys()) == expected_keys
@@ -35,10 +40,18 @@ class TestGetDiagnosticsEmpty:
         result = task_manager.get_diagnostics()
         telemetry = result["extraction_telemetry"]
         expected_keys = {
-            "events_processed", "events_skipped_no_ai", "events_skipped_no_text",
-            "events_skipped_marketing", "tasks_extracted", "extraction_errors",
-            "last_extraction_time", "last_ai_check_time",
-            "ai_engine_available", "ai_engine_type", "skip_rate", "extraction_rate",
+            "events_processed",
+            "events_skipped_no_ai",
+            "events_skipped_no_text",
+            "events_skipped_marketing",
+            "tasks_extracted",
+            "extraction_errors",
+            "last_extraction_time",
+            "last_ai_check_time",
+            "ai_engine_available",
+            "ai_engine_type",
+            "skip_rate",
+            "extraction_rate",
         }
         assert set(telemetry.keys()) == expected_keys
 
@@ -170,7 +183,7 @@ class TestGetDiagnosticsStalePending:
         # Insert tasks with various ages
         self._insert_old_task(db, days_old=10)  # stale
         self._insert_old_task(db, days_old=14)  # stale
-        self._insert_old_task(db, days_old=3)   # not stale
+        self._insert_old_task(db, days_old=3)  # not stale
         self._insert_old_task(db, days_old=20, status="completed")  # not pending
 
         result = task_manager.get_diagnostics()

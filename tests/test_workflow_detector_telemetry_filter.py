@@ -21,7 +21,9 @@ def workflow_detector(db, user_model_store):
     return WorkflowDetector(db, user_model_store)
 
 
-def _insert_episodes(user_model_store, interaction_type: str, count: int, base_time: datetime, interval_hours: float = 2.0):
+def _insert_episodes(
+    user_model_store, interaction_type: str, count: int, base_time: datetime, interval_hours: float = 2.0
+):
     """Helper to insert multiple episodes with the same interaction_type.
 
     Args:
@@ -33,13 +35,15 @@ def _insert_episodes(user_model_store, interaction_type: str, count: int, base_t
     """
     for i in range(count):
         ts = base_time + timedelta(hours=i * interval_hours)
-        user_model_store.store_episode({
-            "id": str(uuid4()),
-            "timestamp": ts.isoformat(),
-            "event_id": str(uuid4()),
-            "interaction_type": interaction_type,
-            "content_summary": f"{interaction_type} episode {i}",
-        })
+        user_model_store.store_episode(
+            {
+                "id": str(uuid4()),
+                "timestamp": ts.isoformat(),
+                "event_id": str(uuid4()),
+                "interaction_type": interaction_type,
+                "content_summary": f"{interaction_type} episode {i}",
+            }
+        )
 
 
 class TestTelemetryFiltering:
@@ -51,7 +55,9 @@ class TestTelemetryFiltering:
 
         # Insert many telemetry episodes that would form patterns if not filtered
         _insert_episodes(user_model_store, "usermodel_signal_profile_updated", 20, base_time, interval_hours=0.5)
-        _insert_episodes(user_model_store, "system_rule_triggered", 20, base_time + timedelta(minutes=15), interval_hours=0.5)
+        _insert_episodes(
+            user_model_store, "system_rule_triggered", 20, base_time + timedelta(minutes=15), interval_hours=0.5
+        )
 
         # Insert a small number of real episodes (not enough to form workflows)
         _insert_episodes(user_model_store, "email_received", 2, base_time + timedelta(minutes=30), interval_hours=4.0)
@@ -89,31 +95,37 @@ class TestTelemetryFiltering:
             day_offset = i * 2
             t = base_time + timedelta(days=day_offset)
 
-            user_model_store.store_episode({
-                "id": str(uuid4()),
-                "timestamp": t.isoformat(),
-                "event_id": str(uuid4()),
-                "interaction_type": "email_received",
-                "content_summary": f"Received email {i}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid4()),
+                    "timestamp": t.isoformat(),
+                    "event_id": str(uuid4()),
+                    "interaction_type": "email_received",
+                    "content_summary": f"Received email {i}",
+                }
+            )
 
             t2 = t + timedelta(hours=1)
-            user_model_store.store_episode({
-                "id": str(uuid4()),
-                "timestamp": t2.isoformat(),
-                "event_id": str(uuid4()),
-                "interaction_type": "email_sent",
-                "content_summary": f"Sent reply {i}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid4()),
+                    "timestamp": t2.isoformat(),
+                    "event_id": str(uuid4()),
+                    "interaction_type": "email_sent",
+                    "content_summary": f"Sent reply {i}",
+                }
+            )
 
             t3 = t + timedelta(hours=2)
-            user_model_store.store_episode({
-                "id": str(uuid4()),
-                "timestamp": t3.isoformat(),
-                "event_id": str(uuid4()),
-                "interaction_type": "calendar_event_created",
-                "content_summary": f"Created follow-up event {i}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid4()),
+                    "timestamp": t3.isoformat(),
+                    "event_id": str(uuid4()),
+                    "interaction_type": "calendar_event_created",
+                    "content_summary": f"Created follow-up event {i}",
+                }
+            )
 
         workflows = workflow_detector.detect_workflows(lookback_days=30)
 
@@ -137,7 +149,9 @@ class TestTelemetryFiltering:
 
         # Massive volume of telemetry episodes forming clear patterns
         _insert_episodes(user_model_store, "usermodel_signal_profile_updated", 50, base_time, interval_hours=0.25)
-        _insert_episodes(user_model_store, "system_rule_triggered", 50, base_time + timedelta(minutes=5), interval_hours=0.25)
+        _insert_episodes(
+            user_model_store, "system_rule_triggered", 50, base_time + timedelta(minutes=5), interval_hours=0.25
+        )
         _insert_episodes(user_model_store, "test_event", 50, base_time + timedelta(minutes=10), interval_hours=0.25)
 
         # A few real episodes (not enough to form a workflow on their own)
@@ -164,7 +178,9 @@ class TestTelemetryFiltering:
 
         # Insert telemetry and real episodes
         _insert_episodes(user_model_store, "usermodel_signal_profile_updated", 10, base_time, interval_hours=1.0)
-        _insert_episodes(user_model_store, "system_rule_triggered", 10, base_time + timedelta(minutes=5), interval_hours=1.0)
+        _insert_episodes(
+            user_model_store, "system_rule_triggered", 10, base_time + timedelta(minutes=5), interval_hours=1.0
+        )
         _insert_episodes(user_model_store, "email_received", 5, base_time + timedelta(minutes=10), interval_hours=2.0)
 
         diag = workflow_detector.get_diagnostics(lookback_days=30)
@@ -174,9 +190,7 @@ class TestTelemetryFiltering:
         assert "usermodel_signal_profile_updated" not in distribution, (
             "Telemetry type appeared in diagnostics distribution"
         )
-        assert "system_rule_triggered" not in distribution, (
-            "Telemetry type appeared in diagnostics distribution"
-        )
+        assert "system_rule_triggered" not in distribution, "Telemetry type appeared in diagnostics distribution"
         # Real type should be present
         if distribution:
             assert "email_received" in distribution

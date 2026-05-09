@@ -38,6 +38,7 @@ from storage.user_model_store import UserModelStore
 # Helpers
 # =============================================================================
 
+
 def _make_insight(category: str, confidence: float = 0.8) -> Insight:
     """Build a minimal Insight for testing with the given category."""
     return Insight(
@@ -66,6 +67,7 @@ def _make_engine_with_mock_swm(db) -> tuple[InsightEngine, MagicMock]:
 # =============================================================================
 # Tests: record_interaction() is called for mapped categories
 # =============================================================================
+
 
 class TestInteractionRecordingOnApplySourceWeights:
     """_apply_source_weights() must call swm.record_interaction() for each
@@ -158,6 +160,7 @@ class TestInteractionRecordingOnApplySourceWeights:
 # Tests: unmapped categories (actionable_alert sub-types) do NOT record
 # =============================================================================
 
+
 class TestNoInteractionForUnmappedCategories:
     """Insight categories intentionally excluded from source weighting must
     not trigger record_interaction() calls."""
@@ -206,6 +209,7 @@ class TestNoInteractionForUnmappedCategories:
 # Tests: end-to-end drift activation after MIN_INTERACTIONS
 # =============================================================================
 
+
 class TestDriftActivatesAfterInteractions:
     """After record_interaction() has been called enough times, calling
     record_engagement() on the same source_key should actually advance ai_drift."""
@@ -232,8 +236,7 @@ class TestDriftActivatesAfterInteractions:
 
         row_after = swm.get_source_stats(source_key)
         assert row_after["ai_drift_raw"] > 0.0, (
-            "ai_drift should have increased after MIN_INTERACTIONS + engagement, "
-            f"but got {row_after['ai_drift_raw']}"
+            f"ai_drift should have increased after MIN_INTERACTIONS + engagement, but got {row_after['ai_drift_raw']}"
         )
 
     def test_drift_does_not_advance_below_min_interactions(self, db):
@@ -252,14 +255,13 @@ class TestDriftActivatesAfterInteractions:
         swm.record_engagement(source_key)
 
         row = swm.get_source_stats(source_key)
-        assert row["ai_drift_raw"] == 0.0, (
-            "ai_drift should remain 0.0 until MIN_INTERACTIONS threshold is crossed"
-        )
+        assert row["ai_drift_raw"] == 0.0, "ai_drift should remain 0.0 until MIN_INTERACTIONS threshold is crossed"
 
 
 # =============================================================================
 # Tests: routes.py feedback category_to_source map correctness
 # =============================================================================
+
 
 class TestFeedbackCategoryToSourceMap:
     """The category_to_source map in the routes.py feedback endpoint must
@@ -294,6 +296,7 @@ class TestFeedbackCategoryToSourceMap:
         # our expected mappings.
         from services.insight_engine.engine import InsightEngine
         from unittest.mock import MagicMock
+
         # The engine map is private but we can verify behavior via mock
         return self.EXPECTED_MAPPINGS
 
@@ -303,8 +306,9 @@ class TestFeedbackCategoryToSourceMap:
         for category in ["chronotype", "peak_hour", "busiest_day"]:
             mock_swm.reset_mock()
             engine._apply_source_weights([_make_insight(category)])
-            mock_swm.record_interaction.assert_called_once_with("email.work"), (
-                f"category '{category}' should map to 'email.work'"
+            (
+                mock_swm.record_interaction.assert_called_once_with("email.work"),
+                (f"category '{category}' should map to 'email.work'"),
             )
 
     def test_mood_trajectory_has_source_key(self, db):
@@ -320,6 +324,7 @@ class TestFeedbackCategoryToSourceMap:
         for stale_category in self.STALE_KEYS:
             mock_swm.reset_mock()
             engine._apply_source_weights([_make_insight(stale_category)])
-            mock_swm.record_interaction.assert_not_called(), (
-                f"stale category '{stale_category}' should not map to any source key"
+            (
+                mock_swm.record_interaction.assert_not_called(),
+                (f"stale category '{stale_category}' should not map to any source key"),
             )

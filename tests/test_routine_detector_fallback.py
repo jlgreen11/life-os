@@ -35,15 +35,17 @@ def _create_event(event_store, *, event_type, timestamp=None):
     """Helper to create a test event in the events database and return its ID."""
     event_id = str(uuid.uuid4())
     ts = timestamp or datetime.now(timezone.utc)
-    event_store.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": "test",
-        "timestamp": ts.isoformat(),
-        "priority": "normal",
-        "payload": json.dumps({}),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": "test",
+            "timestamp": ts.isoformat(),
+            "priority": "normal",
+            "payload": json.dumps({}),
+            "metadata": json.dumps({}),
+        }
+    )
     return event_id
 
 
@@ -193,10 +195,7 @@ class TestEpisodeFallbackDetection:
         routines = detector._detect_routines_from_episodes_fallback(lookback_days=40)
 
         # 5/35 ≈ 0.14 < 0.6 threshold → should not detect
-        email_routines = [
-            r for r in routines
-            if any(s["action"] == "email_check" for s in r.get("steps", []))
-        ]
+        email_routines = [r for r in routines if any(s["action"] == "email_check" for s in r.get("steps", []))]
         assert len(email_routines) == 0
 
     def test_fallback_marks_detection_method(self, db, user_model_store):
@@ -240,9 +239,7 @@ class TestFallbackIntegration:
                 ("temporal", json.dumps({"test": True}), 30, datetime.now(timezone.utc).isoformat()),
             )
 
-        with patch.object(
-            detector, "_detect_routines_from_episodes_fallback", return_value=[]
-        ) as mock_fallback:
+        with patch.object(detector, "_detect_routines_from_episodes_fallback", return_value=[]) as mock_fallback:
             detector.detect_routines(lookback_days=30)
             mock_fallback.assert_called_once_with(30)
 
@@ -260,9 +257,7 @@ class TestFallbackIntegration:
                 ("temporal", json.dumps({"test": True}), 10, datetime.now(timezone.utc).isoformat()),
             )
 
-        with patch.object(
-            detector, "_detect_routines_from_episodes_fallback", return_value=[]
-        ) as mock_fallback:
+        with patch.object(detector, "_detect_routines_from_episodes_fallback", return_value=[]) as mock_fallback:
             detector.detect_routines(lookback_days=30)
             mock_fallback.assert_called_once_with(30)
 
@@ -273,9 +268,7 @@ class TestFallbackIntegration:
         """
         detector = RoutineDetector(db, user_model_store, timezone="UTC")
 
-        with patch.object(
-            detector, "_detect_routines_from_episodes_fallback", return_value=[]
-        ) as mock_fallback:
+        with patch.object(detector, "_detect_routines_from_episodes_fallback", return_value=[]) as mock_fallback:
             detector.detect_routines(lookback_days=30)
             mock_fallback.assert_called_once_with(30)
 

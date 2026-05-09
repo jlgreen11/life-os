@@ -24,6 +24,7 @@ from models.core import EventType
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def lifeos_config():
     """Minimal config dict for LifeOS in test mode."""

@@ -23,6 +23,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_test_user_model_with_predictions(path: str) -> None:
     """Create a schema-correct user_model.db with predictions and other table data.
 
@@ -145,9 +146,7 @@ def _make_blob_corrupting_life_os(data_dir: Path, corrupted_blob_patterns: list[
                             }
                             for blob_col, table in table_map.items():
                                 if blob_col in pattern and table in sql_lower:
-                                    raise sqlite3.DatabaseError(
-                                        f"database disk image is malformed reading {blob_col}"
-                                    )
+                                    raise sqlite3.DatabaseError(f"database disk image is malformed reading {blob_col}")
                     return original_execute(sql, *args, **kwargs)
 
                 # Can't monkey-patch sqlite3 execute, use real conn directly
@@ -159,9 +158,7 @@ def _make_blob_corrupting_life_os(data_dir: Path, corrupted_blob_patterns: list[
 
     db.get_connection = patched_get_connection
 
-    obj._rebuild_user_model_db_if_corrupted = (
-        LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
-    )
+    obj._rebuild_user_model_db_if_corrupted = LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
     return obj
 
 
@@ -192,8 +189,15 @@ def _make_simple_corrupting_life_os(data_dir: Path):
                 """Raise for any probe query that touches blob columns."""
                 if any(
                     kw in sql
-                    for kw in ("content_full", "SUM(LENGTH(data))", "supporting_signals",
-                               "source_episodes", "steps", "contributing_signals", "evidence")
+                    for kw in (
+                        "content_full",
+                        "SUM(LENGTH(data))",
+                        "supporting_signals",
+                        "source_episodes",
+                        "steps",
+                        "contributing_signals",
+                        "evidence",
+                    )
                 ):
                     raise sqlite3.DatabaseError("database disk image is malformed")
                 result = MagicMock()
@@ -208,15 +212,14 @@ def _make_simple_corrupting_life_os(data_dir: Path):
                 yield conn
 
     db.get_connection = patched_get_connection
-    obj._rebuild_user_model_db_if_corrupted = (
-        LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
-    )
+    obj._rebuild_user_model_db_if_corrupted = LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
     return obj
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def data_dir_with_predictions(tmp_path):
@@ -228,6 +231,7 @@ def data_dir_with_predictions(tmp_path):
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestSafeColumnRecovery:
     """Verify that recovery uses safe column lists to survive blob corruption."""
@@ -271,9 +275,7 @@ class TestSafeColumnRecovery:
         db_path = data_dir_with_predictions / "user_model.db"
         conn = sqlite3.connect(str(db_path))
         try:
-            rows = conn.execute(
-                "SELECT key, category, value, confidence FROM semantic_facts ORDER BY key"
-            ).fetchall()
+            rows = conn.execute("SELECT key, category, value, confidence FROM semantic_facts ORDER BY key").fetchall()
             assert len(rows) == 2, f"Expected 2 semantic_facts after rebuild, got {len(rows)}"
             keys = {r[0] for r in rows}
             assert "morning_coffee" in keys
@@ -290,9 +292,7 @@ class TestSafeColumnRecovery:
         db_path = data_dir_with_predictions / "user_model.db"
         conn = sqlite3.connect(str(db_path))
         try:
-            rows = conn.execute(
-                "SELECT name, trigger_condition, consistency_score FROM routines"
-            ).fetchall()
+            rows = conn.execute("SELECT name, trigger_condition, consistency_score FROM routines").fetchall()
             assert len(rows) == 1, f"Expected 1 routine after rebuild, got {len(rows)}"
             assert rows[0][0] == "morning_routine"
             assert rows[0][1] == "wakeup"
@@ -309,9 +309,7 @@ class TestSafeColumnRecovery:
         db_path = data_dir_with_predictions / "user_model.db"
         conn = sqlite3.connect(str(db_path))
         try:
-            rows = conn.execute(
-                "SELECT id, type, summary, confidence FROM insights"
-            ).fetchall()
+            rows = conn.execute("SELECT id, type, summary, confidence FROM insights").fetchall()
             assert len(rows) == 1, f"Expected 1 insight after rebuild, got {len(rows)}"
             assert rows[0][0] == "ins1"
             assert rows[0][1] == "behavioral_pattern"
@@ -328,22 +326,14 @@ class TestSafeColumnRecovery:
         conn = sqlite3.connect(str(db_path))
         try:
             # predictions.supporting_signals should have default '[]'
-            row = conn.execute(
-                "SELECT supporting_signals FROM predictions WHERE id = 'pred1'"
-            ).fetchone()
+            row = conn.execute("SELECT supporting_signals FROM predictions WHERE id = 'pred1'").fetchone()
             assert row is not None
-            assert row[0] == "[]", (
-                f"Expected supporting_signals default '[]', got '{row[0]}'"
-            )
+            assert row[0] == "[]", f"Expected supporting_signals default '[]', got '{row[0]}'"
 
             # semantic_facts.source_episodes should have default '[]'
-            row = conn.execute(
-                "SELECT source_episodes FROM semantic_facts WHERE key = 'morning_coffee'"
-            ).fetchone()
+            row = conn.execute("SELECT source_episodes FROM semantic_facts WHERE key = 'morning_coffee'").fetchone()
             assert row is not None
-            assert row[0] == "[]", (
-                f"Expected source_episodes default '[]', got '{row[0]}'"
-            )
+            assert row[0] == "[]", f"Expected source_episodes default '[]', got '{row[0]}'"
         finally:
             conn.close()
 
@@ -419,8 +409,7 @@ class TestRecoveryLogging:
 
         # Find the final summary log message
         rebuild_messages = [
-            r.message for r in caplog.records
-            if "Rebuilt" in r.message and "corrupted user_model.db" in r.message
+            r.message for r in caplog.records if "Rebuilt" in r.message and "corrupted user_model.db" in r.message
         ]
         assert len(rebuild_messages) >= 1, (
             f"Expected a 'Rebuilt corrupted user_model.db' log message, "
@@ -442,10 +431,7 @@ class TestRecoveryLogging:
         with caplog.at_level(logging.INFO):
             await life_os._rebuild_user_model_db_if_corrupted()
 
-        info_messages = [
-            r.message for r in caplog.records
-            if "Rebuilt fresh user_model.db" in r.message
-        ]
+        info_messages = [r.message for r in caplog.records if "Rebuilt fresh user_model.db" in r.message]
         assert len(info_messages) >= 1, "Expected a 'Rebuilt fresh user_model.db' info log"
 
         summary = info_messages[0]

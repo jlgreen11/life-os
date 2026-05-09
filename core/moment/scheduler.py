@@ -267,13 +267,13 @@ class Scheduler:
         event_ts = event.get("timestamp")
 
         if expr.startswith("event_type:"):
-            return event_type == expr.split(":", 1)[1]
+            return bool(event_type == expr.split(":", 1)[1])
         if expr.startswith("arrive:"):
             place = expr.split(":", 1)[1]
-            return event_type == "context.location.updated" and event.get("payload", {}).get("arrival") == place
+            return bool(event_type == "context.location.updated" and event.get("payload", {}).get("arrival") == place)
         if expr.startswith("depart:"):
             place = expr.split(":", 1)[1]
-            return event_type == "context.location.updated" and event.get("payload", {}).get("departure") == place
+            return bool(event_type == "context.location.updated" and event.get("payload", {}).get("departure") == place)
         if expr.startswith("time:"):
             hhmm = expr.split(":", 1)[1]
             try:

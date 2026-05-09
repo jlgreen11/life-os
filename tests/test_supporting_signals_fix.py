@@ -32,7 +32,7 @@ async def test_prediction_model_accepts_dict_supporting_signals():
             "message_id": "msg-123",
             "hours_since_received": 4.5,
             "is_priority_contact": True,
-        }
+        },
     )
 
     assert isinstance(pred.supporting_signals, dict)
@@ -45,23 +45,25 @@ async def test_prediction_model_accepts_dict_supporting_signals():
 async def test_prediction_engine_populates_supporting_signals_dict(db, user_model_store, event_store):
     """Verify prediction engine creates predictions with structured supporting_signals."""
     # Create an inbound message that needs a reply
-    event_store.store_event({  # Not async
-        "id": "msg-inbound-1",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "message_id": "msg-inbound-1",
-            "from_address": "bob@example.com",
-            "to": "user@example.com",
-            "subject": "Quick question about the project",
-            "body_plain": "Hey, can you send me the latest status update?",
-            "requires_response": True,
-        },
-        "metadata": {
-            "related_contacts": ["bob@example.com"],
-        },
-    })
+    event_store.store_event(
+        {  # Not async
+            "id": "msg-inbound-1",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "message_id": "msg-inbound-1",
+                "from_address": "bob@example.com",
+                "to": "user@example.com",
+                "subject": "Quick question about the project",
+                "body_plain": "Hey, can you send me the latest status update?",
+                "requires_response": True,
+            },
+            "metadata": {
+                "related_contacts": ["bob@example.com"],
+            },
+        }
+    )
 
     # Run prediction engine with empty context
     engine = PredictionEngine(db, user_model_store)
@@ -89,11 +91,13 @@ async def test_behavioral_tracker_extracts_contact_from_new_format(db):
         "id": "pred-1",
         "prediction_type": "reminder",
         "description": "Reply to Alice about dinner plans",
-        "supporting_signals": json.dumps({
-            "contact_email": "alice@example.com",
-            "contact_name": "Alice",
-            "message_id": "msg-123",
-        }),
+        "supporting_signals": json.dumps(
+            {
+                "contact_email": "alice@example.com",
+                "contact_name": "Alice",
+                "message_id": "msg-123",
+            }
+        ),
         "created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
     }
 
@@ -126,29 +130,33 @@ async def test_behavioral_tracker_infers_accuracy_from_email_sent(db, event_stor
                 "suggest",  # lowercase
                 "2_hours",
                 "Reply to alice@example.com",
-                json.dumps({
-                    "contact_email": "alice@example.com",
-                    "contact_name": "Alice",
-                    "message_id": "msg-inbound-123",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "alice@example.com",
+                        "contact_name": "Alice",
+                        "message_id": "msg-inbound-123",
+                    }
+                ),
                 1,  # was_surfaced
                 prediction_time.isoformat(),
             ),
         )
 
     # User sends email to Alice 2 hours later
-    event_store.store_event({
-        "id": "msg-outbound-1",
-        "type": "email.sent",
-        "source": "test",
-        "timestamp": (prediction_time + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "to": "alice@example.com",
-            "subject": "Re: Dinner plans",
-            "body_plain": "Sounds great! Let's meet at 7pm.",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "msg-outbound-1",
+            "type": "email.sent",
+            "source": "test",
+            "timestamp": (prediction_time + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "to": "alice@example.com",
+                "subject": "Re: Dinner plans",
+                "body_plain": "Sounds great! Let's meet at 7pm.",
+            },
+            "metadata": {},
+        }
+    )
 
     # Run inference cycle
     stats = await tracker.run_inference_cycle()
@@ -190,10 +198,12 @@ async def test_behavioral_tracker_infers_inaccuracy_after_timeout(db):
                 "SUGGEST",
                 "2_hours",
                 "Reply to bob@example.com",
-                json.dumps({
-                    "contact_email": "bob@example.com",
-                    "contact_name": "Bob",
-                }),
+                json.dumps(
+                    {
+                        "contact_email": "bob@example.com",
+                        "contact_name": "Bob",
+                    }
+                ),
                 1,  # was_surfaced
                 prediction_time.isoformat(),
             ),
@@ -239,26 +249,30 @@ async def test_behavioral_tracker_handles_name_match(db, event_store):
                 "suggest",  # lowercase
                 "2_hours",
                 "Message Grace",
-                json.dumps({
-                    "contact_name": "Grace",
-                }),
+                json.dumps(
+                    {
+                        "contact_name": "Grace",
+                    }
+                ),
                 1,
                 prediction_time.isoformat(),
             ),
         )
 
     # User sends message with "Grace" in recipient field
-    event_store.store_event({
-        "id": "msg-outbound-2",
-        "type": "message.sent",
-        "source": "test",
-        "timestamp": (prediction_time + timedelta(hours=1)).isoformat(),
-        "payload": {
-            "to": "Grace Williams",
-            "body_plain": "Hi Grace, following up on our meeting discussion...",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "msg-outbound-2",
+            "type": "message.sent",
+            "source": "test",
+            "timestamp": (prediction_time + timedelta(hours=1)).isoformat(),
+            "payload": {
+                "to": "Grace Williams",
+                "body_plain": "Hi Grace, following up on our meeting discussion...",
+            },
+            "metadata": {},
+        }
+    )
 
     # Run inference
     stats = await tracker.run_inference_cycle()

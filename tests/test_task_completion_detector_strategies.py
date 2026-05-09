@@ -22,6 +22,7 @@ from services.task_completion_detector.detector import TaskCompletionDetector
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def task_manager(db):
     """Mock task manager that also updates the real DB on complete_task().
@@ -67,8 +68,8 @@ def now():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_task(db, title, *, task_id=None, description="", status="pending",
-                 created_at=None, source=None):
+
+def _insert_task(db, title, *, task_id=None, description="", status="pending", created_at=None, source=None):
     """Insert a task row directly into state.db and return the task ID."""
     task_id = task_id or str(uuid.uuid4())
     created_at = created_at or datetime.now(timezone.utc)
@@ -78,8 +79,7 @@ def _insert_task(db, title, *, task_id=None, description="", status="pending",
                (id, title, description, status, source, domain, priority,
                 created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, 'personal', 'normal', ?, ?)""",
-            (task_id, title, description, status,
-             source or "ai", created_at.isoformat(), created_at.isoformat()),
+            (task_id, title, description, status, source or "ai", created_at.isoformat(), created_at.isoformat()),
         )
     return task_id
 
@@ -101,6 +101,7 @@ def _insert_event(db, event_type, payload, *, timestamp=None, event_id=None):
 # Strategy 1 — Activity-based completion
 # ===================================================================
 
+
 class TestActivityBasedCompletion:
     """Tests for _detect_activity_based_completion."""
 
@@ -109,16 +110,19 @@ class TestActivityBasedCompletion:
         """An email.sent event whose body overlaps with the task title and
         contains a completion keyword should mark the task complete."""
         task_id = _insert_task(
-            db, "Send quarterly report to manager",
+            db,
+            "Send quarterly report to manager",
             created_at=now - timedelta(hours=3),
         )
-        _insert_event(db, "email.sent", {
-            "subject": "Quarterly report",
-            "body_plain": (
-                "Hi, the quarterly report for the manager has been sent. "
-                "Please confirm receipt."
-            ),
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Quarterly report",
+                "body_plain": ("Hi, the quarterly report for the manager has been sent. Please confirm receipt."),
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
 
@@ -129,13 +133,19 @@ class TestActivityBasedCompletion:
     async def test_unrelated_email_does_not_complete_task(self, detector, db, now):
         """An email that shares no keywords with the task should not trigger."""
         _insert_task(
-            db, "Send quarterly report to manager",
+            db,
+            "Send quarterly report to manager",
             created_at=now - timedelta(hours=3),
         )
-        _insert_event(db, "email.sent", {
-            "subject": "Lunch plans",
-            "body_plain": "Hey, want to grab lunch tomorrow? I'm done with my workout.",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Lunch plans",
+                "body_plain": "Hey, want to grab lunch tomorrow? I'm done with my workout.",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 0
@@ -149,13 +159,19 @@ class TestActivityBasedCompletion:
         old tasks are left for the inactivity/stale strategies instead.
         """
         _insert_task(
-            db, "Send quarterly report to manager",
+            db,
+            "Send quarterly report to manager",
             created_at=now - timedelta(days=10),  # older than 7-day window
         )
-        _insert_event(db, "email.sent", {
-            "subject": "Quarterly report",
-            "body_plain": "The quarterly report for the manager has been sent.",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Quarterly report",
+                "body_plain": "The quarterly report for the manager has been sent.",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 0
@@ -166,16 +182,22 @@ class TestActivityBasedCompletion:
         """Stem matching (first 4 chars) should match word variants like
         'reporting' against a task containing 'report'."""
         task_id = _insert_task(
-            db, "Complete project reporting deliverables",
+            db,
+            "Complete project reporting deliverables",
             created_at=now - timedelta(hours=4),
         )
         # "proj" matches "project", "repo" matches "reporting",
         # "deli" matches "deliverables" — via stem overlap.
         # "completed" is a completion keyword.
-        _insert_event(db, "email.sent", {
-            "subject": "Project deliverables",
-            "body_plain": "All project reporting deliverables are completed.",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Project deliverables",
+                "body_plain": "All project reporting deliverables are completed.",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 1
@@ -186,15 +208,21 @@ class TestActivityBasedCompletion:
         """Even with strong keyword overlap, missing a completion keyword
         means the task is NOT completed."""
         _insert_task(
-            db, "Update project timeline document",
+            db,
+            "Update project timeline document",
             created_at=now - timedelta(hours=2),
         )
         # High keyword overlap ("project", "timeline", "document") but NO
         # completion signal word.
-        _insert_event(db, "email.sent", {
-            "subject": "Project timeline",
-            "body_plain": "I'm still working on the project timeline document. Will update tomorrow.",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Project timeline",
+                "body_plain": "I'm still working on the project timeline document. Will update tomorrow.",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 0
@@ -203,14 +231,18 @@ class TestActivityBasedCompletion:
     async def test_message_sent_event_also_triggers(self, detector, db, now):
         """message.sent events should be checked alongside email.sent."""
         task_id = _insert_task(
-            db, "Review contract with legal team",
+            db,
+            "Review contract with legal team",
             created_at=now - timedelta(hours=4),
         )
-        _insert_event(db, "message.sent", {
-            "body_plain": (
-                "Finished the contract review with legal. Everything resolved."
-            ),
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "message.sent",
+            {
+                "body_plain": ("Finished the contract review with legal. Everything resolved."),
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 1
@@ -220,14 +252,20 @@ class TestActivityBasedCompletion:
     async def test_event_before_task_creation_ignored(self, detector, db, now):
         """Sent events timestamped before the task was created must be ignored."""
         _insert_task(
-            db, "Send invoice to Acme Corporation",
+            db,
+            "Send invoice to Acme Corporation",
             created_at=now - timedelta(hours=2),
         )
         # Event happened BEFORE the task was created
-        _insert_event(db, "email.sent", {
-            "subject": "Invoice for Acme",
-            "body_plain": "Sent the Acme Corporation invoice. Done!",
-        }, timestamp=now - timedelta(hours=5))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Invoice for Acme",
+                "body_plain": "Sent the Acme Corporation invoice. Done!",
+            },
+            timestamp=now - timedelta(hours=5),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 0
@@ -236,9 +274,14 @@ class TestActivityBasedCompletion:
     async def test_empty_title_task_skipped(self, detector, db, now):
         """Tasks with very short titles (no extractable keywords) are skipped."""
         _insert_task(db, "Go", created_at=now - timedelta(hours=1))
-        _insert_event(db, "email.sent", {
-            "body_plain": "Let's go! Done!",
-        }, timestamp=now - timedelta(minutes=30))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "body_plain": "Let's go! Done!",
+            },
+            timestamp=now - timedelta(minutes=30),
+        )
 
         count = await detector._detect_activity_based_completion()
         # "Go" is only 2 chars — below the 4-char threshold for keyword extraction
@@ -248,14 +291,20 @@ class TestActivityBasedCompletion:
     async def test_payload_with_no_text_fields_skipped(self, detector, db, now):
         """Events whose payload has no recognized text fields should be skipped."""
         _insert_task(
-            db, "Send quarterly report to manager",
+            db,
+            "Send quarterly report to manager",
             created_at=now - timedelta(hours=2),
         )
         # Payload with no subject/body_plain/snippet/description/summary/title
-        _insert_event(db, "email.sent", {
-            "to_addresses": ["someone@example.com"],
-            "attachment_count": 3,
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "to_addresses": ["someone@example.com"],
+                "attachment_count": 3,
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_activity_based_completion()
         assert count == 0
@@ -265,6 +314,7 @@ class TestActivityBasedCompletion:
 # Strategy 2 — Inactivity-based completion
 # ===================================================================
 
+
 class TestInactivityBasedCompletion:
     """Tests for _detect_inactivity_based_completion."""
 
@@ -273,7 +323,8 @@ class TestInactivityBasedCompletion:
         """A pending task older than inactivity_days with no related events
         should be marked complete."""
         task_id = _insert_task(
-            db, "Follow up with client",
+            db,
+            "Follow up with client",
             created_at=now - timedelta(days=8),
         )
 
@@ -285,7 +336,8 @@ class TestInactivityBasedCompletion:
     async def test_recent_task_not_completed(self, detector, db, now):
         """A task created 2 days ago should remain pending."""
         _insert_task(
-            db, "Follow up with client",
+            db,
+            "Follow up with client",
             created_at=now - timedelta(days=2),
         )
 
@@ -301,7 +353,8 @@ class TestInactivityBasedCompletion:
         (1 day inside the 7-day window) must remain pending.
         """
         _insert_task(
-            db, "Still fresh task",
+            db,
+            "Still fresh task",
             created_at=now - timedelta(days=6),
         )
 
@@ -313,7 +366,8 @@ class TestInactivityBasedCompletion:
         """A task one second older than the threshold SHOULD be completed."""
         cutoff = now - timedelta(days=detector.inactivity_days)
         task_id = _insert_task(
-            db, "Just past boundary",
+            db,
+            "Just past boundary",
             created_at=cutoff - timedelta(seconds=1),
         )
 
@@ -325,7 +379,8 @@ class TestInactivityBasedCompletion:
     async def test_already_completed_tasks_ignored(self, detector, db, now):
         """Tasks with status != 'pending' are not re-processed."""
         _insert_task(
-            db, "Old completed task",
+            db,
+            "Old completed task",
             status="completed",
             created_at=now - timedelta(days=10),
         )
@@ -338,15 +393,21 @@ class TestInactivityBasedCompletion:
         """Global system activity (other emails arriving) should NOT keep an
         old dormant task alive.  Only task age matters."""
         task_id = _insert_task(
-            db, "Dormant task nobody touched",
+            db,
+            "Dormant task nobody touched",
             created_at=now - timedelta(days=9),
         )
         # Lots of unrelated recent activity
         for i in range(10):
-            _insert_event(db, "email.received", {
-                "from_address": f"news{i}@example.com",
-                "body_plain": "Totally unrelated newsletter content.",
-            }, timestamp=now - timedelta(hours=i + 1))
+            _insert_event(
+                db,
+                "email.received",
+                {
+                    "from_address": f"news{i}@example.com",
+                    "body_plain": "Totally unrelated newsletter content.",
+                },
+                timestamp=now - timedelta(hours=i + 1),
+            )
 
         count = await detector._detect_inactivity_based_completion()
         assert count == 1
@@ -358,7 +419,8 @@ class TestInactivityBasedCompletion:
         ids = []
         for i in range(5):
             tid = _insert_task(
-                db, f"Old task {i}",
+                db,
+                f"Old task {i}",
                 created_at=now - timedelta(days=8 + i),
             )
             ids.append(tid)
@@ -374,6 +436,7 @@ class TestInactivityBasedCompletion:
 # Strategy 3 — Stale task cleanup
 # ===================================================================
 
+
 class TestStaleTaskCleanup:
     """Tests for _detect_stale_tasks."""
 
@@ -381,7 +444,8 @@ class TestStaleTaskCleanup:
     async def test_task_past_stale_threshold_archived(self, detector, db, now):
         """A pending task 31+ days old should be archived."""
         task_id = _insert_task(
-            db, "Ancient task",
+            db,
+            "Ancient task",
             created_at=now - timedelta(days=31),
         )
 
@@ -393,7 +457,8 @@ class TestStaleTaskCleanup:
     async def test_task_under_stale_threshold_not_archived(self, detector, db, now):
         """A pending task 29 days old should NOT be archived by the stale strategy."""
         _insert_task(
-            db, "Not yet stale",
+            db,
+            "Not yet stale",
             created_at=now - timedelta(days=29),
         )
 
@@ -405,7 +470,8 @@ class TestStaleTaskCleanup:
     async def test_task_within_stale_threshold_not_archived(self, detector, db, now):
         """A task well within the stale threshold (25 days) should NOT be archived."""
         _insert_task(
-            db, "Not stale yet",
+            db,
+            "Not stale yet",
             created_at=now - timedelta(days=25),
         )
 
@@ -418,14 +484,20 @@ class TestStaleTaskCleanup:
         archival.  (This is the current design: tasks older than 30 days are
         unconditionally archived by this strategy.)"""
         task_id = _insert_task(
-            db, "Old task with recent email",
+            db,
+            "Old task with recent email",
             created_at=now - timedelta(days=35),
         )
         # Recent email that references the task — doesn't matter for staleness
-        _insert_event(db, "email.sent", {
-            "subject": "Old task update",
-            "body_plain": "Still working on the old task with recent email discussion.",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Old task update",
+                "body_plain": "Still working on the old task with recent email discussion.",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         count = await detector._detect_stale_tasks()
         assert count == 1
@@ -435,7 +507,8 @@ class TestStaleTaskCleanup:
     async def test_already_completed_stale_task_ignored(self, detector, db, now):
         """Completed tasks older than stale_days should not be re-processed."""
         _insert_task(
-            db, "Done and dusted",
+            db,
+            "Done and dusted",
             status="completed",
             created_at=now - timedelta(days=40),
         )
@@ -449,7 +522,8 @@ class TestStaleTaskCleanup:
         ids = []
         for i in range(3):
             tid = _insert_task(
-                db, f"Stale task {i}",
+                db,
+                f"Stale task {i}",
                 created_at=now - timedelta(days=35 + i * 5),
             )
             ids.append(tid)
@@ -465,6 +539,7 @@ class TestStaleTaskCleanup:
 # Integration — detect_completions() orchestrates all strategies
 # ===================================================================
 
+
 class TestDetectCompletionsIntegration:
     """Tests for the top-level detect_completions() method."""
 
@@ -473,23 +548,31 @@ class TestDetectCompletionsIntegration:
         """Create tasks matching different strategies and verify the total."""
         # Strategy 1 — activity match (recent task + matching email)
         t1 = _insert_task(
-            db, "Send quarterly report to manager",
+            db,
+            "Send quarterly report to manager",
             created_at=now - timedelta(hours=4),
         )
-        _insert_event(db, "email.sent", {
-            "subject": "Quarterly report",
-            "body_plain": "The quarterly report for the manager is sent and completed.",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Quarterly report",
+                "body_plain": "The quarterly report for the manager is sent and completed.",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         # Strategy 2 — inactivity (8-day-old task, no matching sent events)
         t2 = _insert_task(
-            db, "Unique inactive task alpha",
+            db,
+            "Unique inactive task alpha",
             created_at=now - timedelta(days=8),
         )
 
         # Strategy 3 — stale (35-day-old task)
         t3 = _insert_task(
-            db, "Very old abandoned task beta",
+            db,
+            "Very old abandoned task beta",
             created_at=now - timedelta(days=35),
         )
 
@@ -515,10 +598,8 @@ class TestDetectCompletionsIntegration:
     @pytest.mark.asyncio
     async def test_only_pending_tasks_processed(self, detector, db, now):
         """Completed and cancelled tasks should be untouched."""
-        _insert_task(db, "Already done", status="completed",
-                     created_at=now - timedelta(days=10))
-        _insert_task(db, "Cancelled task", status="cancelled",
-                     created_at=now - timedelta(days=10))
+        _insert_task(db, "Already done", status="completed", created_at=now - timedelta(days=10))
+        _insert_task(db, "Cancelled task", status="cancelled", created_at=now - timedelta(days=10))
 
         total = await detector.detect_completions()
         assert total == 0
@@ -529,11 +610,13 @@ class TestDetectCompletionsIntegration:
         which is responsible for publishing task.completed events.  Verify
         the call happens for each detected completion."""
         _insert_task(
-            db, "Stale ignored task",
+            db,
+            "Stale ignored task",
             created_at=now - timedelta(days=35),
         )
         _insert_task(
-            db, "Another stale ignored task",
+            db,
+            "Another stale ignored task",
             created_at=now - timedelta(days=40),
         )
 
@@ -546,6 +629,7 @@ class TestDetectCompletionsIntegration:
 # ===================================================================
 # Episode outcome updates
 # ===================================================================
+
 
 class TestEpisodeOutcomeUpdates:
     """Tests for _update_episode_outcome integration."""
@@ -581,9 +665,7 @@ class TestEpisodeOutcomeUpdates:
         detector_with_ums._update_episode_outcome(source_event_id, "activity_match")
 
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT outcome FROM episodes WHERE id = ?", (episode_id,)
-            ).fetchone()
+            row = conn.execute("SELECT outcome FROM episodes WHERE id = ?", (episode_id,)).fetchone()
 
         assert row is not None
         assert row["outcome"] == "activity_match"
@@ -592,6 +674,7 @@ class TestEpisodeOutcomeUpdates:
 # ===================================================================
 # Text extraction edge cases
 # ===================================================================
+
 
 class TestTextExtraction:
     """Edge cases for _extract_text_content."""
@@ -607,8 +690,14 @@ class TestTextExtraction:
             "title": "Title field",
         }
         text = detector._extract_text_content(payload)
-        for expected in ("Subject line", "Body content", "Snippet text",
-                         "Description field", "Summary field", "Title field"):
+        for expected in (
+            "Subject line",
+            "Body content",
+            "Snippet text",
+            "Description field",
+            "Summary field",
+            "Title field",
+        ):
             assert expected in text
 
     def test_empty_payload_returns_empty_string(self, detector):

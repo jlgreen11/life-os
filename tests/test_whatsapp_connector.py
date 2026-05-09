@@ -130,7 +130,9 @@ def mock_db():
 
 
 @pytest.fixture
-def connector(mock_event_bus, mock_db, connector_config, mock_browser_engine, mock_human_emulator, mock_page_interactor):
+def connector(
+    mock_event_bus, mock_db, connector_config, mock_browser_engine, mock_human_emulator, mock_page_interactor
+):
     """WhatsAppConnector instance with mocked dependencies."""
     conn = WhatsAppConnector(
         event_bus=mock_event_bus,
@@ -214,9 +216,7 @@ async def test_authenticate_with_existing_session(
 
 
 @pytest.mark.asyncio
-async def test_authenticate_qr_scan_success(
-    connector, mock_browser_engine, mock_human_emulator, mock_page_interactor
-):
+async def test_authenticate_qr_scan_success(connector, mock_browser_engine, mock_human_emulator, mock_page_interactor):
     """authenticate() waits for QR scan and succeeds when user scans."""
     connector._browser_engine = mock_browser_engine
     connector._human = mock_human_emulator
@@ -244,9 +244,7 @@ async def test_authenticate_qr_scan_success(
 
 
 @pytest.mark.asyncio
-async def test_authenticate_qr_scan_timeout(
-    connector, mock_browser_engine, mock_human_emulator, mock_page_interactor
-):
+async def test_authenticate_qr_scan_timeout(connector, mock_browser_engine, mock_human_emulator, mock_page_interactor):
     """authenticate() fails after 24 iterations (2 minutes) if no scan."""
     connector._browser_engine = mock_browser_engine
     connector._human = mock_human_emulator
@@ -268,9 +266,7 @@ async def test_authenticate_qr_scan_timeout(
 
 
 @pytest.mark.asyncio
-async def test_authenticate_handles_exception(
-    connector, mock_browser_engine, mock_human_emulator
-):
+async def test_authenticate_handles_exception(connector, mock_browser_engine, mock_human_emulator):
     """authenticate() returns False on exception."""
     connector._browser_engine = mock_browser_engine
     connector._human = mock_human_emulator
@@ -406,9 +402,7 @@ async def test_browser_sync_respects_max_conversations(
             {"name": "Bob", "unread_count": 1, "is_group": False},
             {"name": "Carol", "unread_count": 1, "is_group": False},
         ],
-        messages=[
-            {"text": "Hi", "time": "[10:30 AM]", "is_incoming": True, "is_new": True}
-        ],
+        messages=[{"text": "Hi", "time": "[10:30 AM]", "is_incoming": True, "is_new": True}],
     )
 
     count = await connector.browser_sync(page, mock_human_emulator, mock_page_interactor)
@@ -419,9 +413,7 @@ async def test_browser_sync_respects_max_conversations(
 
 
 @pytest.mark.asyncio
-async def test_browser_sync_handles_chat_error(
-    connector, mock_event_bus, mock_human_emulator, mock_page_interactor
-):
+async def test_browser_sync_handles_chat_error(connector, mock_event_bus, mock_human_emulator, mock_page_interactor):
     """browser_sync continues processing other chats if one fails."""
     connector._human = mock_human_emulator
     connector._interactor = mock_page_interactor
@@ -524,16 +516,12 @@ async def test_browser_sync_handles_group_messages(
 
 
 @pytest.mark.asyncio
-async def test_execute_send_message_success(
-    connector, mock_event_bus, mock_human_emulator
-):
+async def test_execute_send_message_success(connector, mock_event_bus, mock_human_emulator):
     """execute() sends message via search + type + enter."""
     connector._human = mock_human_emulator
     connector._page = MockPage(logged_in=True)
 
-    result = await connector.execute(
-        "send_message", {"to": "Alice", "message": "Hello from test!"}
-    )
+    result = await connector.execute("send_message", {"to": "Alice", "message": "Hello from test!"})
 
     assert result["status"] == "sent"
     assert result["to"] == "Alice"

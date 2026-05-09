@@ -91,8 +91,9 @@ def test_script_logs_restart_actions():
     # These are partial matches against the actual log strings in the script.
     assert "Code updated" in content, "Missing log: code change detected"
     assert "Restarting" in content, "Missing log: restarting Life OS"
-    assert "Life OS" in content and ("process found" in content or "Found" in content or "PID" in content), \
+    assert "Life OS" in content and ("process found" in content or "Found" in content or "PID" in content), (
         "Missing log: process detection"
+    )
     assert "Life OS stopped gracefully" in content, "Missing log: graceful stop confirmation"
     assert "Starting Life OS with updated code" in content, "Missing log: starting new process"
     assert "Life OS started" in content, "Missing log: start confirmation"
@@ -111,25 +112,29 @@ def test_script_handles_venv_missing():
 def test_restart_happens_after_pull():
     """Verify restart logic is positioned correctly relative to git pull."""
     script_path = Path(__file__).parent.parent / "scripts" / "run-continuous-improvement.sh"
-    lines = script_path.read_text().split('\n')
+    lines = script_path.read_text().split("\n")
 
     # Find all occurrences and take the right ones (there are multiple git pulls in the script)
     # We want the one in the "Evaluate result" section after iteration completes
-    old_head_line = next(i for i, line in enumerate(lines) if 'OLD_HEAD=$(git rev-parse HEAD' in line)
+    old_head_line = next(i for i, line in enumerate(lines) if "OLD_HEAD=$(git rev-parse HEAD" in line)
 
     # Find git pull that comes after OLD_HEAD
     pull_line = next(i for i, line in enumerate(lines) if "git pull --ff-only" in line and i > old_head_line)
 
     # Find NEW_HEAD that comes after the pull
-    new_head_line = next(i for i, line in enumerate(lines) if 'NEW_HEAD=$(git rev-parse HEAD' in line and i > pull_line)
+    new_head_line = next(i for i, line in enumerate(lines) if "NEW_HEAD=$(git rev-parse HEAD" in line and i > pull_line)
 
     # Find restart check
     restart_check_line = next(i for i, line in enumerate(lines) if '"$OLD_HEAD" != "$NEW_HEAD"' in line)
 
     # Verify ordering: OLD_HEAD -> git pull -> NEW_HEAD -> restart check
-    assert old_head_line < pull_line, f"OLD_HEAD (line {old_head_line}) must be captured before git pull (line {pull_line})"
+    assert old_head_line < pull_line, (
+        f"OLD_HEAD (line {old_head_line}) must be captured before git pull (line {pull_line})"
+    )
     assert pull_line < new_head_line, f"git pull (line {pull_line}) must happen before NEW_HEAD (line {new_head_line})"
-    assert new_head_line < restart_check_line, f"NEW_HEAD (line {new_head_line}) must be captured before restart check (line {restart_check_line})"
+    assert new_head_line < restart_check_line, (
+        f"NEW_HEAD (line {new_head_line}) must be captured before restart check (line {restart_check_line})"
+    )
 
 
 def test_restart_redirects_output_to_log():
@@ -138,7 +143,7 @@ def test_restart_redirects_output_to_log():
     content = script_path.read_text()
 
     # Should redirect stdout and stderr
-    assert "nohup python main.py >> \"$LOG_DIR/lifeos.log\" 2>&1 &" in content
+    assert 'nohup python main.py >> "$LOG_DIR/lifeos.log" 2>&1 &' in content
 
 
 def test_script_gives_startup_time():
@@ -154,7 +159,7 @@ def test_script_gives_startup_time():
 def test_restart_only_on_successful_iteration():
     """Verify restart logic runs in success path of iteration evaluation."""
     script_path = Path(__file__).parent.parent / "scripts" / "run-continuous-improvement.sh"
-    lines = script_path.read_text().split('\n')
+    lines = script_path.read_text().split("\n")
 
     # Find the success block and restart logic
     success_line = next(i for i, line in enumerate(lines) if "Iteration $ITERATION completed successfully" in line)

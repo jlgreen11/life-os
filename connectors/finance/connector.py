@@ -161,7 +161,9 @@ class FinanceConnector(BaseConnector):
                     amount = abs(txn.amount)
                     priority = "high" if amount >= self._large_threshold else "normal"
                     await self.publish_event(
-                        "finance.transaction.new", payload, priority=priority,
+                        "finance.transaction.new",
+                        payload,
+                        priority=priority,
                     )
                     count += 1
 
@@ -173,7 +175,9 @@ class FinanceConnector(BaseConnector):
                     amount = abs(txn.amount)
                     priority = "high" if amount >= self._large_threshold else "normal"
                     await self.publish_event(
-                        "finance.transaction.modified", payload, priority=priority,
+                        "finance.transaction.modified",
+                        payload,
+                        priority=priority,
                     )
                     count += 1
 
@@ -185,7 +189,9 @@ class FinanceConnector(BaseConnector):
                         "transaction_id": txn.transaction_id,
                     }
                     await self.publish_event(
-                        "finance.transaction.removed", payload, priority="low",
+                        "finance.transaction.removed",
+                        payload,
+                        priority="low",
                     )
                     count += 1
 
@@ -283,7 +289,9 @@ class FinanceConnector(BaseConnector):
                 timeout=5.0,
             )
             # Extract institution name when available.
-            institution = getattr(response.get("item", None), "institution_id", None) if isinstance(response, dict) else None
+            institution = (
+                getattr(response.get("item", None), "institution_id", None) if isinstance(response, dict) else None
+            )
             if institution is None:
                 try:
                     institution = response.item.institution_id

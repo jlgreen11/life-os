@@ -38,6 +38,7 @@ def life_os_mock(db, event_store, user_model_store):
 @pytest.fixture
 def client(life_os_mock):
     from web.app import create_web_app
+
     app = create_web_app(life_os_mock)
     return TestClient(app)
 

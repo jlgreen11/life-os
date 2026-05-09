@@ -62,9 +62,7 @@ class TestPostStoreVerification:
             ).fetchone()[0]
 
         # Should find the prediction — no alarm should fire
-        assert actual_count >= 1, (
-            "Verification query should find filtered predictions by created_at"
-        )
+        assert actual_count >= 1, "Verification query should find filtered predictions by created_at"
 
     def test_surfaced_prediction_found_by_verification(self, db, _insert_prediction):
         """Predictions with resolved_at IS NULL (surfaced) should also be found."""
@@ -80,9 +78,7 @@ class TestPostStoreVerification:
                 (run_start,),
             ).fetchone()[0]
 
-        assert actual_count >= 1, (
-            "Verification query should find surfaced predictions by created_at"
-        )
+        assert actual_count >= 1, "Verification query should find surfaced predictions by created_at"
 
     def test_persistence_failure_detected_when_db_empty(self, db):
         """When stored_count > 0 but the DB has no recent rows, the alarm should fire.
@@ -102,9 +98,7 @@ class TestPostStoreVerification:
         # DB is empty — if stored_count were > 0, this would be a real failure
         stored_count = 5  # Simulated: engine thinks it stored 5 predictions
         should_alarm = stored_count > 0 and actual_count == 0
-        assert should_alarm is True, (
-            "Alarm should fire when stored_count > 0 but DB has no matching rows"
-        )
+        assert should_alarm is True, "Alarm should fire when stored_count > 0 but DB has no matching rows"
 
     def test_old_predictions_do_not_satisfy_verification(self, db, _insert_prediction):
         """Predictions created before the run window should not satisfy the check.
@@ -126,9 +120,7 @@ class TestPostStoreVerification:
             ).fetchone()[0]
 
         # Old prediction should not be found
-        assert actual_count == 0, (
-            "Old predictions should not satisfy the verification query"
-        )
+        assert actual_count == 0, "Old predictions should not satisfy the verification query"
 
 
 class TestZeroSurfacingCycleCounter:

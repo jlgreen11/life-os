@@ -36,10 +36,12 @@ def _make_utc_datetime(hour):
 async def test_digest_delivery_at_scheduled_time(db, event_bus):
     """Test that digest delivery triggers at scheduled hours (09:00, 13:00, 18:00)."""
     life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
-    life_os.notification_manager.get_digest = AsyncMock(return_value=[
-        {"id": "notif1", "title": "Test notification 1"},
-        {"id": "notif2", "title": "Test notification 2"},
-    ])
+    life_os.notification_manager.get_digest = AsyncMock(
+        return_value=[
+            {"id": "notif1", "title": "Test notification 1"},
+            {"id": "notif2", "title": "Test notification 2"},
+        ]
+    )
 
     with patch("main.datetime") as mock_datetime:
         mock_datetime.now.return_value = _make_utc_datetime(9)
@@ -74,9 +76,7 @@ async def test_digest_delivery_marks_notifications_delivered(db, event_bus):
     )
 
     with db.get_connection("state") as conn:
-        status = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (notif_id,)
-        ).fetchone()["status"]
+        status = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()["status"]
         assert status == "pending", "Notification should start as pending"
 
     digest = await life_os.notification_manager.get_digest()
@@ -84,9 +84,7 @@ async def test_digest_delivery_marks_notifications_delivered(db, event_bus):
     assert digest[0]["id"] == notif_id
 
     with db.get_connection("state") as conn:
-        status = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (notif_id,)
-        ).fetchone()["status"]
+        status = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()["status"]
         assert status == "delivered", "Notification should be marked as delivered after digest"
 
 
@@ -124,18 +122,14 @@ async def test_digest_delivery_marks_predictions_surfaced(db, event_bus):
     )
 
     with db.get_connection("user_model") as conn:
-        surfaced = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (prediction_id,)
-        ).fetchone()
+        surfaced = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (prediction_id,)).fetchone()
         if surfaced:
             assert surfaced["was_surfaced"] == 0, "Prediction should not be surfaced before digest"
 
     await life_os.notification_manager.get_digest()
 
     with db.get_connection("user_model") as conn:
-        surfaced = conn.execute(
-            "SELECT was_surfaced FROM predictions WHERE id = ?", (prediction_id,)
-        ).fetchone()
+        surfaced = conn.execute("SELECT was_surfaced FROM predictions WHERE id = ?", (prediction_id,)).fetchone()
         if surfaced:
             assert surfaced["was_surfaced"] == 1, "Prediction should be surfaced after digest delivery"
 
@@ -144,9 +138,11 @@ async def test_digest_delivery_marks_predictions_surfaced(db, event_bus):
 async def test_digest_delivery_no_duplicate_within_hour(db, event_bus):
     """Test that digest delivery doesn't trigger multiple times within the same hour."""
     life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
-    life_os.notification_manager.get_digest = AsyncMock(return_value=[
-        {"id": "notif1", "title": "Test notification"},
-    ])
+    life_os.notification_manager.get_digest = AsyncMock(
+        return_value=[
+            {"id": "notif1", "title": "Test notification"},
+        ]
+    )
 
     with patch("main.datetime") as mock_datetime:
         mock_datetime.now.return_value = _make_utc_datetime(9)
@@ -160,8 +156,9 @@ async def test_digest_delivery_no_duplicate_within_hour(db, event_bus):
         except asyncio.CancelledError:
             pass
 
-        assert life_os.notification_manager.get_digest.call_count == 1, \
+        assert life_os.notification_manager.get_digest.call_count == 1, (
             "Digest should only be delivered once per hour window"
+        )
 
 
 @pytest.mark.asyncio
@@ -210,13 +207,14 @@ async def test_digest_delivery_handles_empty_digest(db, event_bus):
 async def test_digest_broadcasts_notifications_via_websocket(db, event_bus):
     """Test that digest items are broadcast to dashboard clients via WebSocket."""
     life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
-    life_os.notification_manager.get_digest = AsyncMock(return_value=[
-        {"id": "notif1", "title": "Morning email summary", "source_event_id": "ev1"},
-        {"id": "notif2", "title": "Calendar reminder", "source_event_id": "ev2"},
-    ])
+    life_os.notification_manager.get_digest = AsyncMock(
+        return_value=[
+            {"id": "notif1", "title": "Morning email summary", "source_event_id": "ev1"},
+            {"id": "notif2", "title": "Calendar reminder", "source_event_id": "ev2"},
+        ]
+    )
 
-    with patch("main.datetime") as mock_datetime, \
-         patch("main.ws_manager") as mock_ws:
+    with patch("main.datetime") as mock_datetime, patch("main.ws_manager") as mock_ws:
         mock_datetime.now.return_value = _make_utc_datetime(9)
         mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
         mock_ws.broadcast = AsyncMock()
@@ -258,8 +256,7 @@ async def test_digest_no_broadcast_when_empty(db, event_bus):
     life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
     life_os.notification_manager.get_digest = AsyncMock(return_value=[])
 
-    with patch("main.datetime") as mock_datetime, \
-         patch("main.ws_manager") as mock_ws:
+    with patch("main.datetime") as mock_datetime, patch("main.ws_manager") as mock_ws:
         mock_datetime.now.return_value = _make_utc_datetime(13)
         mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
         mock_ws.broadcast = AsyncMock()
@@ -281,12 +278,13 @@ async def test_digest_no_broadcast_when_empty(db, event_bus):
 async def test_digest_broadcast_error_does_not_block_delivery(db, event_bus):
     """Test that a WebSocket broadcast error doesn't prevent digest delivery from completing."""
     life_os = LifeOS(db=db, event_bus=event_bus, config={"data_dir": "./test_data", "timezone": "UTC"})
-    life_os.notification_manager.get_digest = AsyncMock(return_value=[
-        {"id": "notif1", "title": "Test notification", "source_event_id": "ev1"},
-    ])
+    life_os.notification_manager.get_digest = AsyncMock(
+        return_value=[
+            {"id": "notif1", "title": "Test notification", "source_event_id": "ev1"},
+        ]
+    )
 
-    with patch("main.datetime") as mock_datetime, \
-         patch("main.ws_manager") as mock_ws:
+    with patch("main.datetime") as mock_datetime, patch("main.ws_manager") as mock_ws:
         mock_datetime.now.return_value = _make_utc_datetime(18)
         mock_datetime.side_effect = lambda *a, **kw: datetime(*a, **kw)
         # Simulate WebSocket broadcast failure

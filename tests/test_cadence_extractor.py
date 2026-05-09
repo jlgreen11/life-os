@@ -82,9 +82,7 @@ def test_ignores_non_communication_events(cadence_extractor):
 # ---------------------------------------------------------------------------
 
 
-def test_response_time_calculation_for_email_reply(
-    cadence_extractor, event_store, user_model_store
-):
+def test_response_time_calculation_for_email_reply(cadence_extractor, event_store, user_model_store):
     """Verify response time is calculated when replying to an email."""
     # Store the original inbound email
     original_time = datetime.now(timezone.utc)
@@ -132,9 +130,7 @@ def test_response_time_calculation_for_email_reply(
     assert abs(signal["response_time_seconds"] - 7200) < 1
 
 
-def test_response_time_calculation_for_message_reply(
-    cadence_extractor, event_store, user_model_store
-):
+def test_response_time_calculation_for_message_reply(cadence_extractor, event_store, user_model_store):
     """Verify response time is calculated when replying to a message."""
     # Store the original inbound message
     original_time = datetime.now(timezone.utc)
@@ -180,9 +176,7 @@ def test_response_time_calculation_for_message_reply(
     assert abs(signal["response_time_seconds"] - 900) < 1
 
 
-def test_no_response_time_signal_when_original_message_not_found(
-    cadence_extractor, user_model_store
-):
+def test_no_response_time_signal_when_original_message_not_found(cadence_extractor, user_model_store):
     """Verify that missing original message returns None (fail-open)."""
     reply_time = datetime.now(timezone.utc)
     reply_event = {
@@ -210,9 +204,7 @@ def test_no_response_time_signal_when_original_message_not_found(
     assert len(activity_signals) == 1
 
 
-def test_no_response_time_signal_for_non_reply_messages(
-    cadence_extractor, user_model_store
-):
+def test_no_response_time_signal_for_non_reply_messages(cadence_extractor, user_model_store):
     """Verify that non-reply outbound messages don't produce response-time signals."""
     event = {
         "id": "evt-1",
@@ -239,9 +231,7 @@ def test_no_response_time_signal_for_non_reply_messages(
     assert len(activity_signals) == 1
 
 
-def test_negative_response_time_is_discarded(
-    cadence_extractor, event_store, user_model_store
-):
+def test_negative_response_time_is_discarded(cadence_extractor, event_store, user_model_store):
     """Verify that negative response times (clock skew) are discarded."""
     # Store original message with LATER timestamp
     original_time = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -287,9 +277,7 @@ def test_negative_response_time_is_discarded(
 # ---------------------------------------------------------------------------
 
 
-def test_activity_signal_captures_hour_and_day_of_week(
-    cadence_extractor, user_model_store
-):
+def test_activity_signal_captures_hour_and_day_of_week(cadence_extractor, user_model_store):
     """Verify that activity signals capture hour and day-of-week correctly."""
     # Create a specific timestamp: Tuesday, 2:00 PM UTC
     timestamp = datetime(2026, 2, 17, 14, 0, 0, tzinfo=timezone.utc)
@@ -317,9 +305,7 @@ def test_activity_signal_captures_hour_and_day_of_week(
     assert signal["channel"] == "email"
 
 
-def test_activity_signal_distinguishes_inbound_outbound(
-    cadence_extractor, user_model_store
-):
+def test_activity_signal_distinguishes_inbound_outbound(cadence_extractor, user_model_store):
     """Verify that activity signals distinguish inbound vs outbound."""
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -354,9 +340,7 @@ def test_activity_signal_distinguishes_inbound_outbound(
     assert outbound_activity[0]["direction"] == "outbound"
 
 
-def test_activity_signal_handles_malformed_timestamp(
-    cadence_extractor, user_model_store
-):
+def test_activity_signal_handles_malformed_timestamp(cadence_extractor, user_model_store):
     """Verify that malformed timestamps are handled gracefully (fail-open)."""
     event = {
         "id": "evt-1",
@@ -377,9 +361,7 @@ def test_activity_signal_handles_malformed_timestamp(
     assert len(activity_signals) == 0
 
 
-def test_activity_signal_handles_missing_timestamp(
-    cadence_extractor, user_model_store
-):
+def test_activity_signal_handles_missing_timestamp(cadence_extractor, user_model_store):
     """Verify that missing timestamps are handled gracefully."""
     event = {
         "id": "evt-1",
@@ -429,9 +411,7 @@ def test_profile_persistence_basic(cadence_extractor, user_model_store):
     assert "daily_activity" in profile["data"]
 
 
-def test_profile_tracks_response_times_globally(
-    cadence_extractor, event_store, user_model_store
-):
+def test_profile_tracks_response_times_globally(cadence_extractor, event_store, user_model_store):
     """Verify that response times are tracked in global list."""
     # Store original message
     original_time = datetime.now(timezone.utc)
@@ -475,9 +455,7 @@ def test_profile_tracks_response_times_globally(
     assert abs(profile["data"]["response_times"][0] - 3600) < 1
 
 
-def test_profile_tracks_per_contact_response_times(
-    cadence_extractor, event_store, user_model_store
-):
+def test_profile_tracks_per_contact_response_times(cadence_extractor, event_store, user_model_store):
     """Verify that response times are bucketed per contact."""
     # Store messages from two different contacts
     original_time = datetime.now(timezone.utc)
@@ -558,9 +536,7 @@ def test_profile_tracks_per_contact_response_times(
     assert abs(per_contact["bob@example.com"][0] - 7200) < 1
 
 
-def test_profile_tracks_per_channel_response_times(
-    cadence_extractor, event_store, user_model_store
-):
+def test_profile_tracks_per_channel_response_times(cadence_extractor, event_store, user_model_store):
     """Verify that response times are bucketed per channel."""
     original_time = datetime.now(timezone.utc)
 
@@ -640,9 +616,7 @@ def test_profile_tracks_per_channel_response_times(
     assert abs(per_channel["imessage"][0] - 120) < 1
 
 
-def test_profile_caps_global_response_times_at_1000(
-    cadence_extractor, event_store, user_model_store
-):
+def test_profile_caps_global_response_times_at_1000(cadence_extractor, event_store, user_model_store):
     """Verify that global response_times list is capped at 1000 entries."""
     original_time = datetime.now(timezone.utc)
 
@@ -688,9 +662,7 @@ def test_profile_caps_global_response_times_at_1000(
     assert profile["data"]["response_times"][0] >= 90  # Allow some tolerance
 
 
-def test_profile_accumulates_hourly_activity_histogram(
-    cadence_extractor, user_model_store
-):
+def test_profile_accumulates_hourly_activity_histogram(cadence_extractor, user_model_store):
     """Verify that hourly activity histogram accumulates correctly."""
     # Send 3 emails at hour 14 (2 PM)
     for i in range(3):
@@ -732,9 +704,7 @@ def test_profile_accumulates_hourly_activity_histogram(
     assert hourly["9"] == 2
 
 
-def test_profile_accumulates_daily_activity_histogram(
-    cadence_extractor, user_model_store
-):
+def test_profile_accumulates_daily_activity_histogram(cadence_extractor, user_model_store):
     """Verify that daily activity histogram accumulates correctly."""
     # Monday
     for i in range(4):
@@ -781,9 +751,7 @@ def test_profile_accumulates_daily_activity_histogram(
 # ---------------------------------------------------------------------------
 
 
-def test_inbound_messages_increment_per_contact_inbound_count(
-    cadence_extractor, user_model_store
-):
+def test_inbound_messages_increment_per_contact_inbound_count(cadence_extractor, user_model_store):
     """Verify that inbound messages increment per_contact_inbound_count correctly."""
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -824,9 +792,7 @@ def test_inbound_messages_increment_per_contact_inbound_count(
     assert inbound["bob@example.com"] == 2
 
 
-def test_read_not_replied_computed_correctly(
-    cadence_extractor, event_store, user_model_store
-):
+def test_read_not_replied_computed_correctly(cadence_extractor, event_store, user_model_store):
     """Verify read_not_replied is computed when some contacts have replies and others don't."""
     original_time = datetime.now(timezone.utc)
     timestamp = original_time.isoformat()
@@ -897,9 +863,7 @@ def test_read_not_replied_computed_correctly(
     assert abs(contacts["alice@example.com"]["unreplied_ratio"] - 0.6) < 0.01
 
 
-def test_read_not_replied_excludes_low_volume_contacts(
-    cadence_extractor, user_model_store
-):
+def test_read_not_replied_excludes_low_volume_contacts(cadence_extractor, user_model_store):
     """Verify contacts with fewer than 3 inbound messages are excluded."""
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -926,9 +890,7 @@ def test_read_not_replied_excludes_low_volume_contacts(
     assert "lowvol@example.com" not in contacts
 
 
-def test_read_not_replied_ratio_is_correct(
-    cadence_extractor, event_store, user_model_store
-):
+def test_read_not_replied_ratio_is_correct(cadence_extractor, event_store, user_model_store):
     """Verify unreplied_ratio = unreplied_count / total_inbound."""
     original_time = datetime.now(timezone.utc)
     timestamp = original_time.isoformat()
@@ -976,9 +938,7 @@ def test_read_not_replied_ratio_is_correct(
     assert abs(entry["unreplied_ratio"] - 0.7) < 0.01
 
 
-def test_read_not_replied_sorted_by_ratio_descending(
-    cadence_extractor, event_store, user_model_store
-):
+def test_read_not_replied_sorted_by_ratio_descending(cadence_extractor, event_store, user_model_store):
     """Verify the list is sorted by unreplied_ratio descending."""
     original_time = datetime.now(timezone.utc)
     timestamp = original_time.isoformat()
@@ -1074,20 +1034,21 @@ def test_read_not_replied_sorted_by_ratio_descending(
     assert rnr[2]["contact_id"] == "a@example.com"
 
 
-def test_read_not_replied_backward_compat_missing_inbound_count(
-    cadence_extractor, user_model_store
-):
+def test_read_not_replied_backward_compat_missing_inbound_count(cadence_extractor, user_model_store):
     """Verify that profiles without per_contact_inbound_count are handled gracefully."""
     # Simulate an old profile without per_contact_inbound_count by writing one directly
-    user_model_store.update_signal_profile("cadence", {
-        "response_times": [],
-        "hourly_activity": {},
-        "daily_activity": {},
-        "per_contact_response_times": {},
-        "per_channel_response_times": {},
-        "per_contact_initiations": {},
-        # Intentionally omitting per_contact_inbound_count
-    })
+    user_model_store.update_signal_profile(
+        "cadence",
+        {
+            "response_times": [],
+            "hourly_activity": {},
+            "daily_activity": {},
+            "per_contact_response_times": {},
+            "per_channel_response_times": {},
+            "per_contact_initiations": {},
+            # Intentionally omitting per_contact_inbound_count
+        },
+    )
 
     # Processing a new inbound event should work without errors
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -1109,9 +1070,7 @@ def test_read_not_replied_backward_compat_missing_inbound_count(
     assert profile["data"]["per_contact_inbound_count"]["compat@example.com"] == 1
 
 
-def test_inbound_signal_emitted_for_all_received_messages(
-    cadence_extractor, user_model_store
-):
+def test_inbound_signal_emitted_for_all_received_messages(cadence_extractor, user_model_store):
     """Verify cadence_inbound_received is emitted for both replies and new conversations."""
     timestamp = datetime.now(timezone.utc).isoformat()
 

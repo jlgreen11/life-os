@@ -874,8 +874,7 @@ def test_avg_sentence_length_promoted_to_top_level(linguistic_extractor, user_mo
 
     # 1. avg_sentence_length must exist at the top level of data.
     assert "avg_sentence_length" in data, (
-        "avg_sentence_length missing from top-level data dict — "
-        "it should be promoted from data['averages']"
+        "avg_sentence_length missing from top-level data dict — it should be promoted from data['averages']"
     )
 
     # 2. The value must NOT be the LinguisticProfile default of 12.0 —

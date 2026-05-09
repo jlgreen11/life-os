@@ -254,8 +254,7 @@ def test_backfill_relationship_respects_limit_parameter(db, user_model_store):
     useful for incremental updates or testing without processing all history.
     """
     events = [
-        _email_received(f"evt-{i}", f"contact{i}@example.com", f"2026-02-{i+1:02d}T10:00:00Z")
-        for i in range(10)
+        _email_received(f"evt-{i}", f"contact{i}@example.com", f"2026-02-{i + 1:02d}T10:00:00Z") for i in range(10)
     ]
     _insert_events(db, events)
 

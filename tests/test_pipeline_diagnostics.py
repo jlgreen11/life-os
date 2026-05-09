@@ -20,6 +20,7 @@ from web.app import create_web_app
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_conn(query_results=None):
     """Create a mock SQLite connection with configurable query results.
 
@@ -99,10 +100,17 @@ def _make_life_os(signal_profiles=None, user_model_conn=None, state_conn=None, e
     life_os.vector_store.search = Mock(return_value=[])
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.3, social_battery=0.5,
-        cognitive_load=0.3, emotional_valence=0.5, confidence=0.5, trend="stable"
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.5,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
     life_os.notification_manager = Mock()
     life_os.notification_manager.get_stats = Mock(return_value={})
     life_os.notification_manager.get_pending = Mock(return_value=[])
@@ -161,8 +169,15 @@ def test_pipeline_diagnostics_reports_empty_profiles():
 
     profiles = data["signal_profiles"]
     expected_types = [
-        "relationships", "temporal", "topics", "linguistic",
-        "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
+        "relationships",
+        "temporal",
+        "topics",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "spatial",
+        "decision",
     ]
     for ptype in expected_types:
         assert ptype in profiles, f"Missing profile type: {ptype}"
@@ -234,8 +249,12 @@ def test_pipeline_diagnostics_handles_db_error():
     # rather than crashing the whole section).
     um = data["user_model"]
     for key in [
-        "episodes_count", "semantic_facts_count", "routines_count",
-        "mood_readings_count", "workflows_count", "communication_templates_count",
+        "episodes_count",
+        "semantic_facts_count",
+        "routines_count",
+        "mood_readings_count",
+        "workflows_count",
+        "communication_templates_count",
     ]:
         assert isinstance(um[key], str) and "error" in um[key], (
             f"Expected error string in user_model[{key!r}], got {um[key]!r}"
@@ -271,8 +290,15 @@ def test_pipeline_diagnostics_overall_status_healthy():
     """With all profiles, recent predictions, and Layer 3 data, overall_status is 'healthy'."""
     # Build all 9 profiles (including linguistic_inbound)
     all_types = [
-        "relationships", "temporal", "topics", "linguistic",
-        "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
+        "relationships",
+        "temporal",
+        "topics",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "spatial",
+        "decision",
     ]
     profiles = {
         ptype: {
@@ -287,13 +313,15 @@ def test_pipeline_diagnostics_overall_status_healthy():
     # Make predictions and user_model queries return non-zero counts.
     # workflows and communication_templates must have non-zero counts
     # to avoid the "degraded" status from empty Layer 3 tables.
-    pred_conn = _make_mock_conn({
-        "COUNT(*) as c FROM predictions WHERE": {"c": 5},
-        "COUNT(*) as c FROM predictions": {"c": 50},
-        "MAX(created_at)": {"ts": "2026-03-01T12:00:00Z"},
-        "COUNT(*) as c FROM workflows": {"c": 2},
-        "COUNT(*) as c FROM communication_templates": {"c": 3},
-    })
+    pred_conn = _make_mock_conn(
+        {
+            "COUNT(*) as c FROM predictions WHERE": {"c": 5},
+            "COUNT(*) as c FROM predictions": {"c": 50},
+            "MAX(created_at)": {"ts": "2026-03-01T12:00:00Z"},
+            "COUNT(*) as c FROM workflows": {"c": 2},
+            "COUNT(*) as c FROM communication_templates": {"c": 3},
+        }
+    )
 
     life_os = _make_life_os(signal_profiles=profiles, user_model_conn=pred_conn)
     app = create_web_app(life_os)

@@ -32,17 +32,13 @@ class TestGetDatabaseHealth:
         """Freshly-created test databases should pass the quick_check."""
         health = db.get_database_health()
         for db_name, info in health.items():
-            assert info["status"] == "ok", (
-                f"Expected {db_name} to be healthy; got errors: {info['errors']}"
-            )
+            assert info["status"] == "ok", f"Expected {db_name} to be healthy; got errors: {info['errors']}"
 
     def test_healthy_database_has_empty_errors(self, db):
         """A healthy database returns an empty errors list."""
         health = db.get_database_health()
         for db_name, info in health.items():
-            assert info["errors"] == [], (
-                f"{db_name} should have no errors but got: {info['errors']}"
-            )
+            assert info["errors"] == [], f"{db_name} should have no errors but got: {info['errors']}"
 
     def test_size_bytes_is_positive(self, db):
         """size_bytes should be positive for a database that has been written to."""
@@ -57,9 +53,7 @@ class TestGetDatabaseHealth:
         """Status field must be one of the two valid values."""
         health = db.get_database_health()
         for db_name, info in health.items():
-            assert info["status"] in ("ok", "corrupted"), (
-                f"{db_name} has unexpected status value: {info['status']!r}"
-            )
+            assert info["status"] in ("ok", "corrupted"), f"{db_name} has unexpected status value: {info['status']!r}"
 
 
 class TestHealthEndpointDbFields:
@@ -71,6 +65,7 @@ class TestHealthEndpointDbFields:
         # We verify the field exists in the route handler's return type by
         # inspecting the route source rather than spinning up a full HTTP server.
         from web.routes import register_routes
+
         assert callable(register_routes)
 
     def test_health_db_health_structure(self, db):
@@ -92,6 +87,5 @@ class TestHealthEndpointDbFields:
         for db_name, info in health.items():
             expected_filename = f"{db_name}.db"
             assert info["path"].endswith(expected_filename), (
-                f"Expected path to end with {expected_filename!r}; "
-                f"got: {info['path']!r}"
+                f"Expected path to end with {expected_filename!r}; got: {info['path']!r}"
             )

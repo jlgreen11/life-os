@@ -31,12 +31,10 @@ from storage.user_model_store import UserModelStore
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_timestamps(now: datetime, num: int, gap_days: float = 10) -> list[str]:
     """Return a list of ISO timestamps evenly spaced ``gap_days`` apart, ending at ``now``."""
-    return [
-        (now - timedelta(days=gap_days * (num - 1 - i))).isoformat()
-        for i in range(num)
-    ]
+    return [(now - timedelta(days=gap_days * (num - 1 - i))).isoformat() for i in range(num)]
 
 
 def _overdue_contact(
@@ -92,6 +90,7 @@ def _overdue_contact(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def user_model_store(db):
     """UserModelStore wired to the temporary DatabaseManager."""
@@ -108,6 +107,7 @@ def engine(db, user_model_store):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_inbound_only_contact_is_excluded(db, user_model_store, engine):
     """Contacts with outbound_count == 0 must NOT generate opportunity predictions.
@@ -122,9 +122,7 @@ async def test_inbound_only_contact_is_excluded(db, user_model_store, engine):
     profile = {
         "contacts": {
             # Purely inbound — user has never replied; should be skipped.
-            "inbound-only@example.com": _overdue_contact(
-                now, inbound_count=8, outbound_count=0
-            ),
+            "inbound-only@example.com": _overdue_contact(now, inbound_count=8, outbound_count=0),
         }
     }
     user_model_store.update_signal_profile("relationships", profile)
@@ -132,9 +130,7 @@ async def test_inbound_only_contact_is_excluded(db, user_model_store, engine):
     predictions = await engine._check_relationship_maintenance({})
 
     emails = [p.relevant_contacts[0] for p in predictions if p.relevant_contacts]
-    assert "inbound-only@example.com" not in emails, (
-        "inbound-only contact must not generate an opportunity prediction"
-    )
+    assert "inbound-only@example.com" not in emails, "inbound-only contact must not generate an opportunity prediction"
     assert predictions == [], "Expected zero predictions for a purely inbound contact"
 
 
@@ -146,9 +142,7 @@ async def test_bidirectional_contact_is_included(db, user_model_store, engine):
     profile = {
         "contacts": {
             # Bidirectional — user has replied; should be eligible.
-            "friend@example.com": _overdue_contact(
-                now, inbound_count=7, outbound_count=3
-            ),
+            "friend@example.com": _overdue_contact(now, inbound_count=7, outbound_count=3),
         }
     }
     user_model_store.update_signal_profile("relationships", profile)
@@ -156,9 +150,7 @@ async def test_bidirectional_contact_is_included(db, user_model_store, engine):
     predictions = await engine._check_relationship_maintenance({})
 
     emails = [p.relevant_contacts[0] for p in predictions if p.relevant_contacts]
-    assert "friend@example.com" in emails, (
-        "bidirectional contact must generate an opportunity prediction when overdue"
-    )
+    assert "friend@example.com" in emails, "bidirectional contact must generate an opportunity prediction when overdue"
 
 
 @pytest.mark.asyncio
@@ -171,17 +163,11 @@ async def test_mixed_contacts_only_bidirectional_predicted(db, user_model_store,
     profile = {
         "contacts": {
             # Inbound-only — should be suppressed
-            "newsletter@example.com": _overdue_contact(
-                now, inbound_count=10, outbound_count=0
-            ),
+            "newsletter@example.com": _overdue_contact(now, inbound_count=10, outbound_count=0),
             # Bidirectional — should generate prediction
-            "colleague@example.com": _overdue_contact(
-                now, inbound_count=6, outbound_count=4
-            ),
+            "colleague@example.com": _overdue_contact(now, inbound_count=6, outbound_count=4),
             # Bidirectional with minimum 1 outbound — edge case; should generate
-            "acquaintance@example.com": _overdue_contact(
-                now, inbound_count=9, outbound_count=1
-            ),
+            "acquaintance@example.com": _overdue_contact(now, inbound_count=9, outbound_count=1),
         }
     }
     user_model_store.update_signal_profile("relationships", profile)
@@ -189,15 +175,9 @@ async def test_mixed_contacts_only_bidirectional_predicted(db, user_model_store,
     predictions = await engine._check_relationship_maintenance({})
     emails = {p.relevant_contacts[0] for p in predictions if p.relevant_contacts}
 
-    assert "newsletter@example.com" not in emails, (
-        "inbound-only contact must not appear in predictions"
-    )
-    assert "colleague@example.com" in emails, (
-        "bidirectional contact must appear in predictions"
-    )
-    assert "acquaintance@example.com" in emails, (
-        "contact with outbound_count==1 is bidirectional and must appear"
-    )
+    assert "newsletter@example.com" not in emails, "inbound-only contact must not appear in predictions"
+    assert "colleague@example.com" in emails, "bidirectional contact must appear in predictions"
+    assert "acquaintance@example.com" in emails, "contact with outbound_count==1 is bidirectional and must appear"
 
 
 @pytest.mark.asyncio
@@ -277,18 +257,15 @@ async def test_diagnostic_log_includes_inbound_only_filtered_count(db, user_mode
     not via print() to stdout.
     """
     import logging
+
     now = datetime.now(timezone.utc)
 
     profile = {
         "contacts": {
             # One inbound-only (should appear in inbound_only_filtered count)
-            "inbound-only@example.com": _overdue_contact(
-                now, inbound_count=6, outbound_count=0
-            ),
+            "inbound-only@example.com": _overdue_contact(now, inbound_count=6, outbound_count=0),
             # One bidirectional (should not appear in inbound_only_filtered count)
-            "friend@example.com": _overdue_contact(
-                now, inbound_count=5, outbound_count=5
-            ),
+            "friend@example.com": _overdue_contact(now, inbound_count=5, outbound_count=5),
         }
     }
     user_model_store.update_signal_profile("relationships", profile)

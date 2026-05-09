@@ -22,6 +22,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _seed_relationship_profile(user_model_store, contacts: dict, samples_count: int):
     """Seed the relationship signal profile with given contacts and sample count."""
     user_model_store.update_signal_profile("relationships", {"contacts": contacts})
@@ -42,9 +43,7 @@ def _seed_topic_profile(user_model_store, topic_counts: dict, samples_count: int
         )
 
 
-def _seed_inbound_linguistic_profile(
-    user_model_store, per_contact_averages: dict, samples_count: int
-):
+def _seed_inbound_linguistic_profile(user_model_store, per_contact_averages: dict, samples_count: int):
     """Seed the inbound linguistic signal profile with given per-contact data."""
     user_model_store.update_signal_profile(
         "linguistic_inbound",
@@ -77,6 +76,7 @@ def _get_all_semantic_facts(user_model_store) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Relationship profile: large sample counts
 # ---------------------------------------------------------------------------
+
 
 class TestRelationshipHeavyDataset:
     """Relationship profile with 1000+ samples must produce at least 3 facts."""
@@ -115,8 +115,7 @@ class TestRelationshipHeavyDataset:
         assert result["processed"] is True
         facts = _get_all_semantic_facts(user_model_store)
         assert len(facts) >= 3, (
-            f"Expected at least 3 facts from 1000+ samples, got {len(facts)}: "
-            f"{[f['key'] for f in facts]}"
+            f"Expected at least 3 facts from 1000+ samples, got {len(facts)}: {[f['key'] for f in facts]}"
         )
 
     def test_relationship_55k_samples_many_contacts_produces_aggregate_facts(self, user_model_store):
@@ -158,14 +157,13 @@ class TestRelationshipHeavyDataset:
             f"Expected relationship_network_size fact. Got keys: {sorted(fact_keys)}"
         )
         # At least 3 total facts
-        assert len(facts) >= 3, (
-            f"Expected >= 3 facts from 55K samples, got {len(facts)}: {sorted(fact_keys)}"
-        )
+        assert len(facts) >= 3, f"Expected >= 3 facts from 55K samples, got {len(facts)}: {sorted(fact_keys)}"
 
 
 # ---------------------------------------------------------------------------
 # Aggregate relationship facts: 10+ contacts with 5+ interactions
 # ---------------------------------------------------------------------------
+
 
 class TestAggregateRelationshipFacts:
     """Aggregate facts must fire when 10+ contacts have 5+ interactions."""
@@ -192,12 +190,8 @@ class TestAggregateRelationshipFacts:
         facts = _get_all_semantic_facts(user_model_store)
         fact_keys = {f["key"] for f in facts}
 
-        assert "relationship_network_size" in fact_keys, (
-            f"Expected relationship_network_size. Got: {sorted(fact_keys)}"
-        )
-        assert "regular_contact_count" in fact_keys, (
-            f"Expected regular_contact_count. Got: {sorted(fact_keys)}"
-        )
+        assert "relationship_network_size" in fact_keys, f"Expected relationship_network_size. Got: {sorted(fact_keys)}"
+        assert "regular_contact_count" in fact_keys, f"Expected regular_contact_count. Got: {sorted(fact_keys)}"
 
         # Verify the network size value is extensive (10+ regular contacts)
         network_fact = next(f for f in facts if f["key"] == "relationship_network_size")
@@ -235,9 +229,17 @@ class TestAggregateRelationshipFacts:
         """
         contacts = {}
         domains = [
-            "apple.com", "google.com", "microsoft.com", "amazon.com",
-            "netflix.com", "tesla.com", "spacex.com", "stripe.com",
-            "github.com", "cloudflare.com", "fastly.com",
+            "apple.com",
+            "google.com",
+            "microsoft.com",
+            "amazon.com",
+            "netflix.com",
+            "tesla.com",
+            "spacex.com",
+            "stripe.com",
+            "github.com",
+            "cloudflare.com",
+            "fastly.com",
         ]
         for i, domain in enumerate(domains):
             contacts[f"contact{i}@{domain}"] = {
@@ -255,8 +257,7 @@ class TestAggregateRelationshipFacts:
         facts = _get_all_semantic_facts(user_model_store)
         breadth_facts = [f for f in facts if f["key"] == "contact_network_breadth"]
         assert len(breadth_facts) == 1, (
-            f"Expected contact_network_breadth fact. Got all keys: "
-            f"{sorted(f['key'] for f in facts)}"
+            f"Expected contact_network_breadth fact. Got all keys: {sorted(f['key'] for f in facts)}"
         )
         assert breadth_facts[0]["value"] == "diverse_multi_domain_network"
 
@@ -288,6 +289,7 @@ class TestAggregateRelationshipFacts:
 # Topic profile: 100+ samples must produce at least 1 fact
 # ---------------------------------------------------------------------------
 
+
 class TestTopicProfileHeavyDataset:
     """Topic profile with 100+ samples must produce at least 1 fact."""
 
@@ -312,12 +314,10 @@ class TestTopicProfileHeavyDataset:
         assert result["processed"] is True
         facts = _get_all_semantic_facts(user_model_store)
         expertise_or_interest = [
-            f for f in facts
-            if f["key"].startswith("expertise_") or f["key"].startswith("interest_")
+            f for f in facts if f["key"].startswith("expertise_") or f["key"].startswith("interest_")
         ]
         assert len(expertise_or_interest) >= 1, (
-            f"Expected at least 1 expertise/interest fact from 100 samples. "
-            f"Got keys: {[f['key'] for f in facts]}"
+            f"Expected at least 1 expertise/interest fact from 100 samples. Got keys: {[f['key'] for f in facts]}"
         )
 
     def test_topic_100_samples_fallback_with_sparse_counts(self, user_model_store):
@@ -342,8 +342,7 @@ class TestTopicProfileHeavyDataset:
         facts = _get_all_semantic_facts(user_model_store)
         # At minimum the fallback or diverse_interests fact should fire
         assert len(facts) >= 1, (
-            f"Expected at least 1 fact from sparse 100-sample topic profile. "
-            f"Got: {[f['key'] for f in facts]}"
+            f"Expected at least 1 fact from sparse 100-sample topic profile. Got: {[f['key'] for f in facts]}"
         )
 
     def test_topic_860_samples_similar_to_production_produces_facts(self, user_model_store):
@@ -354,10 +353,10 @@ class TestTopicProfileHeavyDataset:
         # Simulate a real inbox: a few genuine interest topics among some noise
         topic_counts = {
             "machine_learning": 45,  # 5.2% of 860 → interest (>3%)
-            "python": 40,            # 4.7% → interest
-            "finance": 35,           # 4.1% → interest
-            "investment": 30,        # 3.5% → interest
-            "technology": 25,        # 2.9% → below 3%, won't trigger interest
+            "python": 40,  # 4.7% → interest
+            "finance": 35,  # 4.1% → interest
+            "investment": 30,  # 3.5% → interest
+            "technology": 25,  # 2.9% → below 3%, won't trigger interest
             "health": 20,
             "cooking": 15,
         }
@@ -369,18 +368,17 @@ class TestTopicProfileHeavyDataset:
         assert result["processed"] is True
         facts = _get_all_semantic_facts(user_model_store)
         interest_or_expertise = [
-            f for f in facts
-            if f["key"].startswith("interest_") or f["key"].startswith("expertise_")
+            f for f in facts if f["key"].startswith("interest_") or f["key"].startswith("expertise_")
         ]
         assert len(interest_or_expertise) >= 1, (
-            f"Expected interest/expertise facts from 860-sample topic profile. "
-            f"All facts: {[f['key'] for f in facts]}"
+            f"Expected interest/expertise facts from 860-sample topic profile. All facts: {[f['key'] for f in facts]}"
         )
 
 
 # ---------------------------------------------------------------------------
 # Inbound linguistic profile: 500+ samples must produce at least 1 fact
 # ---------------------------------------------------------------------------
+
 
 class TestInboundLinguisticHeavyDataset:
     """Inbound linguistic profile with 500+ samples must produce at least 1 fact."""
@@ -400,9 +398,7 @@ class TestInboundLinguisticHeavyDataset:
                 "samples_count": 15 + i,
             }
 
-        _seed_inbound_linguistic_profile(
-            user_model_store, per_contact_averages, samples_count=500
-        )
+        _seed_inbound_linguistic_profile(user_model_store, per_contact_averages, samples_count=500)
 
         inferrer = SemanticFactInferrer(user_model_store)
         result = inferrer.infer_from_inbound_linguistic_profile()
@@ -410,8 +406,7 @@ class TestInboundLinguisticHeavyDataset:
         assert result["processed"] is True
         facts = _get_all_semantic_facts(user_model_store)
         assert len(facts) >= 1, (
-            f"Expected >= 1 fact from 500-sample formal inbound profile. "
-            f"Got: {[f['key'] for f in facts]}"
+            f"Expected >= 1 fact from 500-sample formal inbound profile. Got: {[f['key'] for f in facts]}"
         )
 
         env_facts = [f for f in facts if f["key"] == "inbound_communication_environment"]
@@ -432,9 +427,7 @@ class TestInboundLinguisticHeavyDataset:
                 "samples_count": 10 + i,
             }
 
-        _seed_inbound_linguistic_profile(
-            user_model_store, per_contact_averages, samples_count=860
-        )
+        _seed_inbound_linguistic_profile(user_model_store, per_contact_averages, samples_count=860)
 
         inferrer = SemanticFactInferrer(user_model_store)
         result = inferrer.infer_from_inbound_linguistic_profile()
@@ -442,8 +435,7 @@ class TestInboundLinguisticHeavyDataset:
         assert result["processed"] is True
         facts = _get_all_semantic_facts(user_model_store)
         assert len(facts) >= 1, (
-            f"Expected >= 1 fact from 860-sample casual inbound profile. "
-            f"Got: {[f['key'] for f in facts]}"
+            f"Expected >= 1 fact from 860-sample casual inbound profile. Got: {[f['key'] for f in facts]}"
         )
 
     def test_inbound_linguistic_high_question_rate_produces_fact(self, user_model_store):
@@ -461,9 +453,7 @@ class TestInboundLinguisticHeavyDataset:
                 "samples_count": 25,
             }
 
-        _seed_inbound_linguistic_profile(
-            user_model_store, per_contact_averages, samples_count=500
-        )
+        _seed_inbound_linguistic_profile(user_model_store, per_contact_averages, samples_count=500)
 
         inferrer = SemanticFactInferrer(user_model_store)
         result = inferrer.infer_from_inbound_linguistic_profile()
@@ -478,6 +468,7 @@ class TestInboundLinguisticHeavyDataset:
 # ---------------------------------------------------------------------------
 # End-to-end: run_all_inference with relationship-heavy data
 # ---------------------------------------------------------------------------
+
 
 class TestRunAllInferenceRelationshipHeavy:
     """run_all_inference with large relationship data must produce many facts."""
@@ -503,16 +494,18 @@ class TestRunAllInferenceRelationshipHeavy:
 
         facts = _get_all_semantic_facts(user_model_store)
         relationship_facts = [
-            f for f in facts
+            f
+            for f in facts
             if any(
                 f["key"].startswith(prefix)
                 for prefix in [
-                    "relationship_", "regular_contact_count",
-                    "communication_activity_level", "contact_network_breadth",
+                    "relationship_",
+                    "regular_contact_count",
+                    "communication_activity_level",
+                    "contact_network_breadth",
                 ]
             )
         ]
         assert len(relationship_facts) >= 2, (
-            f"Expected >= 2 relationship-type facts from 55K samples. "
-            f"Got: {[f['key'] for f in relationship_facts]}"
+            f"Expected >= 2 relationship-type facts from 55K samples. Got: {[f['key'] for f in relationship_facts]}"
         )

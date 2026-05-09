@@ -43,43 +43,49 @@ def _insert_event(event_store, event_type="email.received", hours_ago=6, **paylo
         "message_id": f"msg-{uuid.uuid4().hex[:8]}",
         **payload_extra,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": event_type,
-        "source": "test",
-        "timestamp": (now - timedelta(hours=hours_ago)).isoformat(),
-        "payload": payload,
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "source": "test",
+            "timestamp": (now - timedelta(hours=hours_ago)).isoformat(),
+            "payload": payload,
+            "metadata": {},
+        }
+    )
 
 
 def _insert_overlapping_calendar_events(event_store):
     """Insert two overlapping calendar events to trigger conflict predictions."""
     now = datetime.now(timezone.utc)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Meeting A",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
-        "payload": {
-            "title": "Meeting B",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Meeting A",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
+            "payload": {
+                "title": "Meeting B",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
 
 # -------------------------------------------------------------------------
@@ -164,9 +170,7 @@ async def test_trigger_checks_default_true_on_db_error(db, event_store, user_mod
         mock_logger.error = MagicMock()
         mock_logger.debug = MagicMock()
         mock_logger.warning = MagicMock()
-        mock_logger.info = MagicMock(
-            side_effect=lambda msg, *args: logged_messages.append((msg, args))
-        )
+        mock_logger.info = MagicMock(side_effect=lambda msg, *args: logged_messages.append((msg, args)))
 
         predictions = await engine.generate_predictions({})
 
@@ -174,17 +178,13 @@ async def test_trigger_checks_default_true_on_db_error(db, event_store, user_mod
 
     # The "skipped" log should NOT appear since triggers defaulted to True
     skip_logs = [msg for msg, _ in logged_messages if "skipped" in str(msg).lower()]
-    assert not skip_logs, (
-        "Pipeline should NOT have been skipped — triggers should default to True on error"
-    )
+    assert not skip_logs, "Pipeline should NOT have been skipped — triggers should default to True on error"
 
     # Warning logs should mention the trigger failures
     mock_logger.warning.assert_called()
     warning_messages = [str(call) for call in mock_logger.warning.call_args_list]
     trigger_warnings = [w for w in warning_messages if "defaulting to True" in w]
-    assert len(trigger_warnings) >= 1, (
-        "At least one trigger failure warning should have been logged"
-    )
+    assert len(trigger_warnings) >= 1, "At least one trigger failure warning should have been logged"
 
 
 # -------------------------------------------------------------------------
@@ -217,9 +217,7 @@ async def test_generation_stats_records_trigger_errors(db, event_store, user_mod
         mock_logger.error = MagicMock()
         mock_logger.debug = MagicMock()
         mock_logger.warning = MagicMock()
-        mock_logger.info = MagicMock(
-            side_effect=lambda msg, *args: logged_messages.append((msg, args))
-        )
+        mock_logger.info = MagicMock(side_effect=lambda msg, *args: logged_messages.append((msg, args)))
 
         await engine.generate_predictions({})
 
@@ -231,9 +229,7 @@ async def test_generation_stats_records_trigger_errors(db, event_store, user_mod
             break
 
     assert stats_log is not None, "generation_stats should have been logged"
-    assert "trigger_errors" in stats_log, (
-        "generation_stats should contain trigger_errors when triggers fail"
-    )
+    assert "trigger_errors" in stats_log, "generation_stats should contain trigger_errors when triggers fail"
     assert "has_new_events" in stats_log["trigger_errors"]
 
 
@@ -253,43 +249,50 @@ async def test_follow_up_dedup_skipped_on_db_error(db, event_store, user_model_s
     now = datetime.now(timezone.utc)
     from_addr = "important-contact@example.com"
     msg_id = f"msg-{uuid.uuid4().hex[:8]}"
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "test",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": from_addr,
-            "subject": "Urgent question",
-            "message_id": msg_id,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "test",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": from_addr,
+                "subject": "Urgent question",
+                "message_id": msg_id,
+            },
+            "metadata": {},
+        }
+    )
 
     # Also store an outbound message to this contact so they qualify as priority
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.sent",
-        "source": "test",
-        "timestamp": (now - timedelta(days=2)).isoformat(),
-        "payload": {
-            "to_address": from_addr,
-            "subject": "Re: Hi",
-            "message_id": f"sent-{uuid.uuid4().hex[:8]}",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.sent",
+            "source": "test",
+            "timestamp": (now - timedelta(days=2)).isoformat(),
+            "payload": {
+                "to_address": from_addr,
+                "subject": "Re: Hi",
+                "message_id": f"sent-{uuid.uuid4().hex[:8]}",
+            },
+            "metadata": {},
+        }
+    )
 
     # Seed a relationship profile so the contact is recognized as priority
-    user_model_store.update_signal_profile("relationships", {
-        "contacts": {
-            from_addr: {
-                "outbound_count": 5,
-                "inbound_count": 10,
-                "last_contact": now.isoformat(),
+    user_model_store.update_signal_profile(
+        "relationships",
+        {
+            "contacts": {
+                from_addr: {
+                    "outbound_count": 5,
+                    "inbound_count": 10,
+                    "last_contact": now.isoformat(),
+                }
             }
-        }
-    })
+        },
+    )
 
     original_get_conn = db.get_connection
 
@@ -441,6 +444,4 @@ async def test_full_pipeline_survives_corrupted_user_model(db, event_store, user
     assert isinstance(predictions, list)
     # Calendar conflicts only need events.db, so they should still work
     calendar_preds = [p for p in predictions if p.prediction_type == "conflict"]
-    assert len(calendar_preds) >= 1, (
-        "Calendar conflict predictions should survive user_model.db corruption"
-    )
+    assert len(calendar_preds) >= 1, "Calendar conflict predictions should survive user_model.db corruption"

@@ -19,8 +19,15 @@ from web.app import create_web_app
 # ---------------------------------------------------------------------------
 
 EXPECTED_PROFILES = [
-    "linguistic", "linguistic_inbound", "relationships", "topics",
-    "cadence", "mood_signals", "temporal", "spatial", "decision",
+    "linguistic",
+    "linguistic_inbound",
+    "relationships",
+    "topics",
+    "cadence",
+    "mood_signals",
+    "temporal",
+    "spatial",
+    "decision",
 ]
 
 
@@ -70,8 +77,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -242,10 +254,12 @@ def test_profile_not_exists_shows_threshold(client):
 
 def test_profile_exists_but_below_threshold(mock_life_os, client):
     """A profile with samples below threshold reports meets_threshold=False."""
+
     def side_effect(ptype):
         if ptype == "relationships":
             return {"samples_count": 2, "updated_at": "2026-01-01"}
         return None
+
     mock_life_os.user_model_store.get_signal_profile = Mock(side_effect=side_effect)
 
     response = client.get("/api/admin/semantic-facts/diagnostics")
@@ -257,10 +271,12 @@ def test_profile_exists_but_below_threshold(mock_life_os, client):
 
 def test_profile_meets_threshold(mock_life_os, client):
     """A profile with enough samples reports meets_threshold=True."""
+
     def side_effect(ptype):
         if ptype == "topics":
             return {"samples_count": 5, "updated_at": "2026-01-01"}
         return None
+
     mock_life_os.user_model_store.get_signal_profile = Mock(side_effect=side_effect)
 
     response = client.get("/api/admin/semantic-facts/diagnostics")
@@ -300,9 +316,7 @@ def test_inferrer_returns_diagnostics_when_available(mock_life_os, client):
 
 def test_diagnostics_handles_db_error(mock_life_os, client):
     """Endpoint returns 200 even if the DB query fails."""
-    mock_life_os.db.get_connection = Mock(
-        side_effect=RuntimeError("DB unavailable")
-    )
+    mock_life_os.db.get_connection = Mock(side_effect=RuntimeError("DB unavailable"))
     response = client.get("/api/admin/semantic-facts/diagnostics")
     assert response.status_code == 200
     data = response.json()
@@ -311,9 +325,7 @@ def test_diagnostics_handles_db_error(mock_life_os, client):
 
 def test_diagnostics_handles_profile_error(mock_life_os, client):
     """Endpoint returns 200 even if get_signal_profile raises."""
-    mock_life_os.user_model_store.get_signal_profile = Mock(
-        side_effect=RuntimeError("Profile DB error")
-    )
+    mock_life_os.user_model_store.get_signal_profile = Mock(side_effect=RuntimeError("Profile DB error"))
     response = client.get("/api/admin/semantic-facts/diagnostics")
     assert response.status_code == 200
     data = response.json()

@@ -20,22 +20,24 @@ def test_linguistic_inference_with_minimal_samples(user_model_store):
     """
     # Create a minimal linguistic profile with 1 sample
     data = {
-        "samples": [{
-            "word_count": 50,
-            "avg_sentence_length": 10.0,
-            "unique_word_ratio": 0.8,
-            "formality": 0.2,  # Casual style
-            "hedge_rate": 0.0,  # Very direct
-            "assertion_rate": 0.3,
-            "exclamation_rate": 0.1,
-            "question_rate": 0.05,
-            "ellipsis_rate": 0.0,
-            "emoji_count": 2,
-            "emojis_used": ["😊", "👍"],
-            "profanity_count": 0,
-            "greeting_detected": "hey",
-            "closing_detected": "cheers",
-        }],
+        "samples": [
+            {
+                "word_count": 50,
+                "avg_sentence_length": 10.0,
+                "unique_word_ratio": 0.8,
+                "formality": 0.2,  # Casual style
+                "hedge_rate": 0.0,  # Very direct
+                "assertion_rate": 0.3,
+                "exclamation_rate": 0.1,
+                "question_rate": 0.05,
+                "ellipsis_rate": 0.0,
+                "emoji_count": 2,
+                "emojis_used": ["😊", "👍"],
+                "profanity_count": 0,
+                "greeting_detected": "hey",
+                "closing_detected": "cheers",
+            }
+        ],
         "per_contact": {},
         "averages": {
             "avg_sentence_length": 10.0,
@@ -60,15 +62,14 @@ def test_linguistic_inference_with_minimal_samples(user_model_store):
     facts = user_model_store.get_semantic_facts(min_confidence=0.0)
     fact_keys = [f["key"] for f in facts]
 
-    assert "communication_style_formality" in fact_keys, \
-        "Should infer formality preference with just 1 sample"
+    assert "communication_style_formality" in fact_keys, "Should infer formality preference with just 1 sample"
 
     formality_fact = next(f for f in facts if f["key"] == "communication_style_formality")
     # get_semantic_facts already decodes the value
-    assert formality_fact["value"] == "casual", \
+    assert formality_fact["value"] == "casual", (
         f"Should detect casual style (formality=0.2), got {formality_fact['value']}"
-    assert formality_fact["confidence"] >= 0.5, \
-        "Casual style fact should have reasonable confidence"
+    )
+    assert formality_fact["confidence"] >= 0.5, "Casual style fact should have reasonable confidence"
 
 
 def test_linguistic_inference_detects_formal_style(user_model_store):
@@ -79,22 +80,24 @@ def test_linguistic_inference_detects_formal_style(user_model_store):
     a "formal" semantic fact even with minimal samples.
     """
     data = {
-        "samples": [{
-            "word_count": 100,
-            "avg_sentence_length": 20.0,
-            "unique_word_ratio": 0.9,
-            "formality": 0.8,  # Very formal
-            "hedge_rate": 0.1,
-            "assertion_rate": 0.05,
-            "exclamation_rate": 0.0,
-            "question_rate": 0.02,
-            "ellipsis_rate": 0.0,
-            "emoji_count": 0,
-            "emojis_used": [],
-            "profanity_count": 0,
-            "greeting_detected": "dear",
-            "closing_detected": "sincerely",
-        }],
+        "samples": [
+            {
+                "word_count": 100,
+                "avg_sentence_length": 20.0,
+                "unique_word_ratio": 0.9,
+                "formality": 0.8,  # Very formal
+                "hedge_rate": 0.1,
+                "assertion_rate": 0.05,
+                "exclamation_rate": 0.0,
+                "question_rate": 0.02,
+                "ellipsis_rate": 0.0,
+                "emoji_count": 0,
+                "emojis_used": [],
+                "profanity_count": 0,
+                "greeting_detected": "dear",
+                "closing_detected": "sincerely",
+            }
+        ],
         "per_contact": {},
         "averages": {
             "avg_sentence_length": 20.0,
@@ -115,15 +118,11 @@ def test_linguistic_inference_detects_formal_style(user_model_store):
     inferrer.infer_from_linguistic_profile()
 
     facts = user_model_store.get_semantic_facts(min_confidence=0.0)
-    formality_fact = next(
-        (f for f in facts if f["key"] == "communication_style_formality"),
-        None
-    )
+    formality_fact = next((f for f in facts if f["key"] == "communication_style_formality"), None)
 
     assert formality_fact is not None, "Should infer formality with 1 formal sample"
     # get_semantic_facts already decodes the value
-    assert formality_fact["value"] == "formal", \
-        f"Should detect formal style, got {formality_fact['value']}"
+    assert formality_fact["value"] == "formal", f"Should detect formal style, got {formality_fact['value']}"
 
 
 def test_mood_inference_with_minimal_samples(user_model_store, db):
@@ -141,10 +140,8 @@ def test_mood_inference_with_minimal_samples(user_model_store, db):
 
     # Read the source to verify threshold is 3, not 100
     source = inspect.getsource(SemanticFactInferrer.infer_from_mood_profile)
-    assert "< 3" in source or "samples_count, 0) < 3" in source, \
-        "Mood inference threshold should be 3"
-    assert "< 100" not in source, \
-        "Mood inference threshold should not be 100 anymore"
+    assert "< 3" in source or "samples_count, 0) < 3" in source, "Mood inference threshold should be 3"
+    assert "< 100" not in source, "Mood inference threshold should not be 100 anymore"
 
 
 def test_relationship_inference_still_requires_sufficient_data(user_model_store):
@@ -181,8 +178,7 @@ def test_relationship_inference_still_requires_sufficient_data(user_model_store)
     facts = user_model_store.get_semantic_facts(min_confidence=0.0)
     relationship_facts = [f for f in facts if "relationship_priority" in f["key"]]
 
-    assert len(relationship_facts) == 0, \
-        "Should not infer relationship priority with < 10 total samples"
+    assert len(relationship_facts) == 0, "Should not infer relationship priority with < 10 total samples"
 
 
 def test_topic_inference_threshold_unchanged(user_model_store):
@@ -213,8 +209,7 @@ def test_topic_inference_threshold_unchanged(user_model_store):
     facts = user_model_store.get_semantic_facts(min_confidence=0.0)
     topic_facts = [f for f in facts if "expertise" in f["key"]]
 
-    assert len(topic_facts) == 0, \
-        "Should not infer topic expertise with < 30 samples"
+    assert len(topic_facts) == 0, "Should not infer topic expertise with < 30 samples"
 
 
 def test_cadence_inference_threshold_unchanged(user_model_store):
@@ -240,8 +235,7 @@ def test_cadence_inference_threshold_unchanged(user_model_store):
     facts = user_model_store.get_semantic_facts(min_confidence=0.0)
     cadence_facts = [f for f in facts if "work_life" in f["key"] or "timezone" in f["key"]]
 
-    assert len(cadence_facts) == 0, \
-        "Should not infer cadence patterns with < 50 samples"
+    assert len(cadence_facts) == 0, "Should not infer cadence patterns with < 50 samples"
 
 
 def test_run_all_inference_with_mixed_thresholds(user_model_store):
@@ -252,34 +246,59 @@ def test_run_all_inference_with_mixed_thresholds(user_model_store):
     that meet their thresholds should contribute facts.
     """
     # Linguistic: 1 sample (meets new threshold of 1)
-    user_model_store.update_signal_profile("linguistic", {
-        "samples": [{"formality": 0.2, "hedge_rate": 0.0, "assertion_rate": 0.3,
-                    "exclamation_rate": 0.1, "emoji_count": 0, "emojis_used": [],
-                    "profanity_count": 0, "word_count": 50, "avg_sentence_length": 10.0,
-                    "unique_word_ratio": 0.8, "question_rate": 0.05, "ellipsis_rate": 0.0,
-                    "greeting_detected": None, "closing_detected": None}],
-        "per_contact": {},
-        "averages": {"formality": 0.2, "hedge_rate": 0.0, "assertion_rate": 0.3,
-                    "exclamation_rate": 0.1, "emoji_rate": 0.0, "profanity_rate": 0.0,
-                    "avg_sentence_length": 10.0},
-        "common_greetings": [],
-        "common_closings": [],
-    })
+    user_model_store.update_signal_profile(
+        "linguistic",
+        {
+            "samples": [
+                {
+                    "formality": 0.2,
+                    "hedge_rate": 0.0,
+                    "assertion_rate": 0.3,
+                    "exclamation_rate": 0.1,
+                    "emoji_count": 0,
+                    "emojis_used": [],
+                    "profanity_count": 0,
+                    "word_count": 50,
+                    "avg_sentence_length": 10.0,
+                    "unique_word_ratio": 0.8,
+                    "question_rate": 0.05,
+                    "ellipsis_rate": 0.0,
+                    "greeting_detected": None,
+                    "closing_detected": None,
+                }
+            ],
+            "per_contact": {},
+            "averages": {
+                "formality": 0.2,
+                "hedge_rate": 0.0,
+                "assertion_rate": 0.3,
+                "exclamation_rate": 0.1,
+                "emoji_rate": 0.0,
+                "profanity_rate": 0.0,
+                "avg_sentence_length": 10.0,
+            },
+            "common_greetings": [],
+            "common_closings": [],
+        },
+    )
 
     # Relationships: 5 samples (below threshold of 10)
-    user_model_store.update_signal_profile("relationships", {
-        "contacts": {
-            "test@example.com": {
-                "interaction_count": 5,
-                "inbound_count": 3,
-                "outbound_count": 2,
-                "channels_used": ["email"],
-                "avg_message_length": 100.0,
-                "last_interaction": "2026-02-15T14:00:00Z",
-                "interaction_timestamps": ["2026-02-15T14:00:00Z"] * 5,
+    user_model_store.update_signal_profile(
+        "relationships",
+        {
+            "contacts": {
+                "test@example.com": {
+                    "interaction_count": 5,
+                    "inbound_count": 3,
+                    "outbound_count": 2,
+                    "channels_used": ["email"],
+                    "avg_message_length": 100.0,
+                    "last_interaction": "2026-02-15T14:00:00Z",
+                    "interaction_timestamps": ["2026-02-15T14:00:00Z"] * 5,
+                }
             }
-        }
-    })
+        },
+    )
 
     inferrer = SemanticFactInferrer(user_model_store)
     inferrer.run_all_inference()

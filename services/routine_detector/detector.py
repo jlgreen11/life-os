@@ -728,7 +728,11 @@ class RoutineDetector:
             result["health"] = "no_data"
         elif isinstance(result.get("episode_count"), int) and result["episode_count"] == 0:
             result["health"] = "no_data"
-        elif self._last_detection_count == 0 and isinstance(result.get("episode_count"), int) and result["episode_count"] > 0:
+        elif (
+            self._last_detection_count == 0
+            and isinstance(result.get("episode_count"), int)
+            and result["episode_count"] > 0
+        ):
             result["health"] = "degraded"
         else:
             result["health"] = "ok"
@@ -851,10 +855,7 @@ class RoutineDetector:
                     gap_sums[itype] += gap_minutes
                     gap_counts[itype] += 1
 
-            return {
-                itype: gap_sums[itype] / gap_counts[itype]
-                for itype in gap_counts
-            }
+            return {itype: gap_sums[itype] / gap_counts[itype] for itype in gap_counts}
         except sqlite3.DatabaseError as e:
             logger.warning("_compute_step_duration_map: user_model.db query failed: %s", e)
             return {}
@@ -1229,8 +1230,10 @@ class RoutineDetector:
         # The threshold is adaptive (see _effective_min_episodes) so that cold-start
         # email-dominated installations trigger the fallback sooner.
         if len(raw_episodes) < effective_min_episodes:
-            fallback_reason = "full fallback (0 primary)" if not raw_episodes else (
-                f"supplemental fallback ({len(raw_episodes)} primary < {effective_min_episodes} threshold)"
+            fallback_reason = (
+                "full fallback (0 primary)"
+                if not raw_episodes
+                else (f"supplemental fallback ({len(raw_episodes)} primary < {effective_min_episodes} threshold)")
             )
             try:
                 fallback_episodes = self._fallback_temporal_episodes(cutoff)
@@ -1736,9 +1739,7 @@ class RoutineDetector:
 
         # Apply min_occurrences threshold and build result tuples.
         location_actions = [
-            (loc, itype, len(days))
-            for (loc, itype), days in loc_type_days.items()
-            if len(days) >= self.min_occurrences
+            (loc, itype, len(days)) for (loc, itype), days in loc_type_days.items() if len(days) >= self.min_occurrences
         ]
         location_actions.sort(key=lambda x: (x[0], -x[2]))
 
@@ -1753,8 +1754,10 @@ class RoutineDetector:
         # Location actions are already aggregated, so use a lower threshold of 3.
         min_location_pairs = 3
         if len(location_actions) < min_location_pairs:
-            fallback_reason = "full fallback (0 primary)" if not location_actions else (
-                f"supplemental fallback ({len(location_actions)} primary < {min_location_pairs} threshold)"
+            fallback_reason = (
+                "full fallback (0 primary)"
+                if not location_actions
+                else (f"supplemental fallback ({len(location_actions)} primary < {min_location_pairs} threshold)")
             )
             try:
                 fallback_rows = self._fallback_location_episodes(cutoff)
@@ -1935,9 +1938,7 @@ class RoutineDetector:
 
         # Apply min_occurrences threshold and build result tuples.
         trigger_events = [
-            (itype, len(days))
-            for itype, days in trigger_type_days.items()
-            if len(days) >= self.min_occurrences
+            (itype, len(days)) for itype, days in trigger_type_days.items() if len(days) >= self.min_occurrences
         ]
         trigger_events.sort(key=lambda x: -x[1])
 
@@ -1960,8 +1961,10 @@ class RoutineDetector:
         fallback_trigger_timestamps: dict[str, list[str]] = {}
         all_fallback_rows: list[tuple[str, str]] = []
         if len(trigger_events) < min_trigger_types:
-            fallback_reason = "full fallback (0 primary)" if not trigger_events else (
-                f"supplemental fallback ({len(trigger_events)} primary < {min_trigger_types} threshold)"
+            fallback_reason = (
+                "full fallback (0 primary)"
+                if not trigger_events
+                else (f"supplemental fallback ({len(trigger_events)} primary < {min_trigger_types} threshold)")
             )
             try:
                 all_fallback_rows = self._fallback_event_triggered_episodes(cutoff)
@@ -1988,9 +1991,7 @@ class RoutineDetector:
                             continue
                     # Build fallback trigger events and merge with primary
                     fallback_triggers = [
-                        (itype, len(days))
-                        for itype, days in type_days.items()
-                        if len(days) >= self.min_occurrences
+                        (itype, len(days)) for itype, days in type_days.items() if len(days) >= self.min_occurrences
                     ]
                     # Merge: add fallback types not already in primary results
                     existing_types = {itype for itype, _ in trigger_events}

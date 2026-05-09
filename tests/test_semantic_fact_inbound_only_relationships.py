@@ -195,8 +195,10 @@ class TestInboundOnlyRelationshipFallback:
             "heavy@example.com": {"interaction_count": 200, "outbound_count": 0, "inbound_count": 200},
             # Lower-interaction contacts: still above the 3-interaction threshold
             # so they qualify for a frequent_sender fact with lower confidence
-            **{f"filler{i}@example.com": {"interaction_count": 5, "outbound_count": 0, "inbound_count": 5}
-               for i in range(6)},
+            **{
+                f"filler{i}@example.com": {"interaction_count": 5, "outbound_count": 0, "inbound_count": 5}
+                for i in range(6)
+            },
         }
         user_model_store.update_signal_profile("relationships", {"contacts": contacts})
         _set_samples(user_model_store, "relationships", 100)

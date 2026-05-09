@@ -149,35 +149,39 @@ def test_workflow_detection_uses_denormalized_columns(db, event_store, user_mode
         sent_time = recv_time + timedelta(minutes=30)
 
         # Email received from boss
-        event_store.store_event({
-            "id": f"email-recv-{i}",
-            "type": "email.received",
-            "source": "protonmail",
-            "timestamp": recv_time.isoformat(),
-            "priority": "high",
-            "payload": {
-                "from_address": "boss@company.com",
-                "subject": f"Task {i}",
-                "body": "Please handle this",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"email-recv-{i}",
+                "type": "email.received",
+                "source": "protonmail",
+                "timestamp": recv_time.isoformat(),
+                "priority": "high",
+                "payload": {
+                    "from_address": "boss@company.com",
+                    "subject": f"Task {i}",
+                    "body": "Please handle this",
+                },
+                "metadata": {},
+            }
+        )
 
         # Email sent to boss (reply)
-        event_store.store_event({
-            "id": f"email-sent-{i}",
-            "type": "email.sent",
-            "source": "protonmail",
-            "timestamp": sent_time.isoformat(),
-            "priority": "normal",
-            "payload": {
-                "from_address": "me@company.com",
-                "to_addresses": '["boss@company.com"]',
-                "subject": f"Re: Task {i}",
-                "body": "Done",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"email-sent-{i}",
+                "type": "email.sent",
+                "source": "protonmail",
+                "timestamp": sent_time.isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "from_address": "me@company.com",
+                    "to_addresses": '["boss@company.com"]',
+                    "subject": f"Re: Task {i}",
+                    "body": "Done",
+                },
+                "metadata": {},
+            }
+        )
 
     # Detect workflows. WorkflowDetector is now active after the algorithmic redesign.
     # This test's primary purpose is verifying that the denormalized columns and
@@ -199,32 +203,36 @@ def test_workflow_detection_performance_with_denormalized_columns(db, event_stor
         recv_time = now - timedelta(hours=100 - i * 2)
         sent_time = recv_time + timedelta(hours=1)
 
-        event_store.store_event({
-            "id": f"perf-recv-{i}",
-            "type": "email.received",
-            "source": "protonmail",
-            "timestamp": recv_time.isoformat(),
-            "priority": "normal",
-            "payload": {
-                "from_address": f"sender{i % 10}@example.com",
-                "subject": f"Test {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"perf-recv-{i}",
+                "type": "email.received",
+                "source": "protonmail",
+                "timestamp": recv_time.isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "from_address": f"sender{i % 10}@example.com",
+                    "subject": f"Test {i}",
+                },
+                "metadata": {},
+            }
+        )
 
-        event_store.store_event({
-            "id": f"perf-sent-{i}",
-            "type": "email.sent",
-            "source": "protonmail",
-            "timestamp": sent_time.isoformat(),
-            "priority": "normal",
-            "payload": {
-                "from_address": "me@example.com",
-                "to_addresses": f'["sender{i % 10}@example.com"]',
-                "subject": f"Re: Test {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"perf-sent-{i}",
+                "type": "email.sent",
+                "source": "protonmail",
+                "timestamp": sent_time.isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "from_address": "me@example.com",
+                    "to_addresses": f'["sender{i % 10}@example.com"]',
+                    "subject": f"Re: Test {i}",
+                },
+                "metadata": {},
+            }
+        )
 
     # Time workflow detection
     detector = WorkflowDetector(db, user_model_store)
@@ -241,17 +249,20 @@ def test_migration_backfills_existing_events(db, event_store):
     """Verify migration backfills denormalized columns for existing events."""
     # Manually insert events without triggers (simulating old events)
     with db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            "old-email-1",
-            "email.received",
-            "protonmail",
-            datetime.now(timezone.utc).isoformat(),
-            "normal",
-            json.dumps({"from_address": "old@example.com", "subject": "Old"}),
-        ))
+        """,
+            (
+                "old-email-1",
+                "email.received",
+                "protonmail",
+                datetime.now(timezone.utc).isoformat(),
+                "normal",
+                json.dumps({"from_address": "old@example.com", "subject": "Old"}),
+            ),
+        )
 
     # Manually set email_from to NULL to simulate pre-migration state
     with db.get_connection("events") as conn:
@@ -288,15 +299,17 @@ def test_workflow_detection_handles_missing_denormalized_columns(db, event_store
 
     # Create events with incomplete payload (missing from_address)
     for i in range(5):
-        event_store.store_event({
-            "id": f"incomplete-{i}",
-            "type": "email.received",
-            "source": "protonmail",
-            "timestamp": (now - timedelta(hours=i)).isoformat(),
-            "priority": "normal",
-            "payload": {"subject": f"Incomplete {i}"},  # Missing from_address
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"incomplete-{i}",
+                "type": "email.received",
+                "source": "protonmail",
+                "timestamp": (now - timedelta(hours=i)).isoformat(),
+                "priority": "normal",
+                "payload": {"subject": f"Incomplete {i}"},  # Missing from_address
+                "metadata": {},
+            }
+        )
 
     # Workflow detection should not crash
     detector = WorkflowDetector(db, user_model_store)
@@ -312,48 +325,56 @@ def test_denormalized_columns_improve_query_performance(db, event_store):
 
     # Create 1000 email events to measure performance difference
     for i in range(1000):
-        event_store.store_event({
-            "id": f"bench-{i}",
-            "type": "email.received",
-            "source": "protonmail",
-            "timestamp": (now - timedelta(hours=i)).isoformat(),
-            "priority": "normal",
-            "payload": {"from_address": f"sender{i % 100}@example.com", "subject": f"Test {i}"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"bench-{i}",
+                "type": "email.received",
+                "source": "protonmail",
+                "timestamp": (now - timedelta(hours=i)).isoformat(),
+                "priority": "normal",
+                "payload": {"from_address": f"sender{i % 100}@example.com", "subject": f"Test {i}"},
+                "metadata": {},
+            }
+        )
 
     # Query with json_extract (old method)
     with db.get_connection("events") as conn:
         start = time.time()
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT COUNT(*)
             FROM events
             WHERE type = 'email.received'
               AND LOWER(json_extract(payload, '$.from_address')) = ?
-        """, ("sender50@example.com",))
+        """,
+            ("sender50@example.com",),
+        )
         json_extract_time = time.time() - start
         json_extract_count = cursor.fetchone()[0]
 
     # Query with denormalized column (new method)
     with db.get_connection("events") as conn:
         start = time.time()
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT COUNT(*)
             FROM events
             WHERE type = 'email.received'
               AND email_from = ?
-        """, ("sender50@example.com",))
+        """,
+            ("sender50@example.com",),
+        )
         denormalized_time = time.time() - start
         denormalized_count = cursor.fetchone()[0]
 
     # Both should return same count
-    assert json_extract_count == denormalized_count, \
+    assert json_extract_count == denormalized_count, (
         f"Query results differ: json_extract={json_extract_count}, denormalized={denormalized_count}"
+    )
 
     # Denormalized should be significantly faster (at least 2x on 1000 rows)
     speedup = json_extract_time / denormalized_time
-    assert speedup >= 2.0, \
-        f"Denormalized query not fast enough: {speedup:.1f}x speedup (expected ≥2x)"
+    assert speedup >= 2.0, f"Denormalized query not fast enough: {speedup:.1f}x speedup (expected ≥2x)"
 
 
 def test_schema_version_tracks_migration(db):
@@ -373,15 +394,17 @@ def test_workflow_detector_diagnostics(db, event_store, user_model_store):
 
     # Store a few email events so data_sufficient can be checked
     for i in range(12):
-        event_store.store_event({
-            "id": f"diag-recv-{i}",
-            "type": "email.received",
-            "source": "protonmail",
-            "timestamp": (now - timedelta(hours=i)).isoformat(),
-            "priority": "normal",
-            "payload": {"from_address": f"user{i % 3}@example.com", "subject": f"Diag {i}"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"diag-recv-{i}",
+                "type": "email.received",
+                "source": "protonmail",
+                "timestamp": (now - timedelta(hours=i)).isoformat(),
+                "priority": "normal",
+                "payload": {"from_address": f"user{i % 3}@example.com", "subject": f"Diag {i}"},
+                "metadata": {},
+            }
+        )
 
     detector = WorkflowDetector(db, user_model_store)
     diagnostics = detector.get_diagnostics(lookback_days=30)
@@ -424,15 +447,17 @@ def test_workflow_detector_diagnostics_insufficient_data(db, event_store, user_m
 
     # Store only 3 email events (below the 10-event threshold)
     for i in range(3):
-        event_store.store_event({
-            "id": f"diag-few-{i}",
-            "type": "email.received",
-            "source": "protonmail",
-            "timestamp": (now - timedelta(hours=i)).isoformat(),
-            "priority": "normal",
-            "payload": {"from_address": "sparse@example.com", "subject": f"Few {i}"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"diag-few-{i}",
+                "type": "email.received",
+                "source": "protonmail",
+                "timestamp": (now - timedelta(hours=i)).isoformat(),
+                "priority": "normal",
+                "payload": {"from_address": "sparse@example.com", "subject": f"Few {i}"},
+                "metadata": {},
+            }
+        )
 
     detector = WorkflowDetector(db, user_model_store)
     diagnostics = detector.get_diagnostics(lookback_days=30)

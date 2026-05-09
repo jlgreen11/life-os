@@ -52,6 +52,7 @@ from services.behavioral_accuracy_tracker.tracker import BehavioralAccuracyTrack
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _drop_resolution_reason_column(db) -> None:
     """Simulate a pre-migration database by recreating predictions without the column.
 
@@ -82,11 +83,13 @@ def _drop_resolution_reason_column(db) -> None:
                 -- resolution_reason intentionally omitted to simulate pre-v4 schema
             )
         """)
-        conn.execute("INSERT INTO predictions SELECT "
-                     "id, prediction_type, description, confidence, confidence_gate, "
-                     "time_horizon, suggested_action, supporting_signals, was_surfaced, "
-                     "user_response, was_accurate, created_at, resolved_at, filter_reason "
-                     "FROM predictions_old")
+        conn.execute(
+            "INSERT INTO predictions SELECT "
+            "id, prediction_type, description, confidence, confidence_gate, "
+            "time_horizon, suggested_action, supporting_signals, was_surfaced, "
+            "user_response, was_accurate, created_at, resolved_at, filter_reason "
+            "FROM predictions_old"
+        )
         conn.execute("DROP TABLE predictions_old")
         # Downgrade schema_version to 3 so the re-migration path is exercised
         conn.execute("DELETE FROM schema_version WHERE version >= 4")
@@ -105,9 +108,16 @@ def _column_names(db) -> list[str]:
         return [row[1] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()]
 
 
-def _insert_prediction(db, *, prediction_type="opportunity", was_accurate=None,
-                       was_surfaced=True, resolved_at=None, contact_email=None,
-                       resolution_reason=None) -> str:
+def _insert_prediction(
+    db,
+    *,
+    prediction_type="opportunity",
+    was_accurate=None,
+    was_surfaced=True,
+    resolved_at=None,
+    contact_email=None,
+    resolution_reason=None,
+) -> str:
     """Insert a test prediction row and return its ID.
 
     Args:
@@ -136,8 +146,13 @@ def _insert_prediction(db, *, prediction_type="opportunity", was_accurate=None,
                     resolved_at, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    pred_id, prediction_type, f"Test {prediction_type}", 0.5, "suggest",
-                    signals, 1 if was_surfaced else 0,
+                    pred_id,
+                    prediction_type,
+                    f"Test {prediction_type}",
+                    0.5,
+                    "suggest",
+                    signals,
+                    1 if was_surfaced else 0,
                     (1 if was_accurate else 0) if was_accurate is not None else None,
                     resolution_reason,
                     resolved_at or (now if was_accurate is not None else None),
@@ -153,8 +168,13 @@ def _insert_prediction(db, *, prediction_type="opportunity", was_accurate=None,
                     resolved_at, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    pred_id, prediction_type, f"Test {prediction_type}", 0.5, "suggest",
-                    signals, 1 if was_surfaced else 0,
+                    pred_id,
+                    prediction_type,
+                    f"Test {prediction_type}",
+                    0.5,
+                    "suggest",
+                    signals,
+                    1 if was_surfaced else 0,
                     (1 if was_accurate else 0) if was_accurate is not None else None,
                     resolved_at or (now if was_accurate is not None else None),
                     now,
@@ -166,6 +186,7 @@ def _insert_prediction(db, *, prediction_type="opportunity", was_accurate=None,
 # ---------------------------------------------------------------------------
 # Test 1: Fresh DB — column already present, no-op
 # ---------------------------------------------------------------------------
+
 
 def test_fresh_db_column_already_present(db):
     """With a fresh DB (schema v4), _ensure_resolution_reason_column is a no-op.
@@ -187,6 +208,7 @@ def test_fresh_db_column_already_present(db):
 # Test 2: Pre-migration DB — tracker adds the column
 # ---------------------------------------------------------------------------
 
+
 def test_inline_migration_adds_column(db):
     """When resolution_reason is missing, __init__ adds the column.
 
@@ -206,6 +228,7 @@ def test_inline_migration_adds_column(db):
 # ---------------------------------------------------------------------------
 # Test 3: Schema_version updated to 4 after inline migration
 # ---------------------------------------------------------------------------
+
 
 def test_inline_migration_updates_schema_version(db):
     """After inline migration, schema_version table records version 4.
@@ -233,6 +256,7 @@ def test_inline_migration_updates_schema_version(db):
 # Test 4: Retroactive tagging of automated-sender inaccurate predictions
 # ---------------------------------------------------------------------------
 
+
 def test_retroactive_tagging_automated_sender(db):
     """Inaccurate automated-sender predictions get resolution_reason tagged.
 
@@ -248,8 +272,11 @@ def test_retroactive_tagging_automated_sender(db):
 
     # Insert an inaccurate prediction for an automated sender (pre-migration)
     pred_id = _insert_prediction(
-        db, prediction_type="opportunity", was_accurate=False,
-        was_surfaced=True, contact_email="noreply@company.com",
+        db,
+        prediction_type="opportunity",
+        was_accurate=False,
+        was_surfaced=True,
+        contact_email="noreply@company.com",
         resolved_at=now,
     )
 
@@ -258,15 +285,14 @@ def test_retroactive_tagging_automated_sender(db):
 
     # The prediction should now be tagged
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
     assert row["resolution_reason"] == "automated_sender_fast_path"
 
 
 # ---------------------------------------------------------------------------
 # Test 5: Non-automated-sender predictions NOT tagged
 # ---------------------------------------------------------------------------
+
 
 def test_retroactive_tagging_skips_real_contacts(db):
     """Inaccurate predictions for real contacts do NOT get a fast-path tag.
@@ -279,23 +305,25 @@ def test_retroactive_tagging_skips_real_contacts(db):
     _drop_resolution_reason_column(db)
 
     pred_id = _insert_prediction(
-        db, prediction_type="opportunity", was_accurate=False,
-        was_surfaced=True, contact_email="alice@gmail.com",
+        db,
+        prediction_type="opportunity",
+        was_accurate=False,
+        was_surfaced=True,
+        contact_email="alice@gmail.com",
         resolved_at=now,
     )
 
     BehavioralAccuracyTracker(db)
 
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
     assert row["resolution_reason"] is None
 
 
 # ---------------------------------------------------------------------------
 # Test 6: Accurate predictions are NOT tagged
 # ---------------------------------------------------------------------------
+
 
 def test_retroactive_tagging_skips_accurate_predictions(db):
     """Accurate predictions for automated-sender contacts are not tagged.
@@ -309,17 +337,18 @@ def test_retroactive_tagging_skips_accurate_predictions(db):
     _drop_resolution_reason_column(db)
 
     pred_id = _insert_prediction(
-        db, prediction_type="opportunity", was_accurate=True,
-        was_surfaced=True, contact_email="noreply@company.com",
+        db,
+        prediction_type="opportunity",
+        was_accurate=True,
+        was_surfaced=True,
+        contact_email="noreply@company.com",
         resolved_at=now,
     )
 
     BehavioralAccuracyTracker(db)
 
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)
-        ).fetchone()
+        row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id,)).fetchone()
     assert row["resolution_reason"] is None
 
 
@@ -328,6 +357,7 @@ def test_retroactive_tagging_skips_accurate_predictions(db):
 # ---------------------------------------------------------------------------
 
 import asyncio
+
 
 def test_run_inference_cycle_after_inline_migration(db):
     """run_inference_cycle completes without error after the inline migration.
@@ -358,6 +388,7 @@ def test_run_inference_cycle_after_inline_migration(db):
 # ---------------------------------------------------------------------------
 # Test 8: Double initialization is idempotent
 # ---------------------------------------------------------------------------
+
 
 def test_double_initialization_idempotent(db):
     """Creating two BehavioralAccuracyTracker instances on the same DB is safe.

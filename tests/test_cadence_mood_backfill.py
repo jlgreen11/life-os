@@ -33,8 +33,7 @@ from storage.user_model_store import UserModelStore
 # ---------------------------------------------------------------------------
 
 
-def _insert_event(db, event_id: str, event_type: str, timestamp: str,
-                  payload: dict, source: str = "google") -> None:
+def _insert_event(db, event_id: str, event_type: str, timestamp: str, payload: dict, source: str = "google") -> None:
     """Insert a test event directly into events.db."""
     with db.get_connection("events") as conn:
         conn.execute(
@@ -44,24 +43,37 @@ def _insert_event(db, event_id: str, event_type: str, timestamp: str,
         )
 
 
-def _email_received(db, event_id: str, from_addr: str, hours_ago: int,
-                    body: str = "Hello, here is the update on the project.") -> None:
+def _email_received(
+    db, event_id: str, from_addr: str, hours_ago: int, body: str = "Hello, here is the update on the project."
+) -> None:
     """Insert a synthetic email.received event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "email.received", ts, {
-        "from_address": from_addr,
-        "to_addresses": ["user@example.com"],
-        "subject": "Project update",
-        "body": body,
-        "body_plain": body,
-        "email_date": ts,
-        "message_id": f"msg-{event_id}",
-    })
+    _insert_event(
+        db,
+        event_id,
+        "email.received",
+        ts,
+        {
+            "from_address": from_addr,
+            "to_addresses": ["user@example.com"],
+            "subject": "Project update",
+            "body": body,
+            "body_plain": body,
+            "email_date": ts,
+            "message_id": f"msg-{event_id}",
+        },
+    )
 
 
-def _email_sent(db, event_id: str, to_addr: str, hours_ago: int,
-                body: str = "Thanks for the update, I will review it.",
-                is_reply: bool = False, in_reply_to: str | None = None) -> None:
+def _email_sent(
+    db,
+    event_id: str,
+    to_addr: str,
+    hours_ago: int,
+    body: str = "Thanks for the update, I will review it.",
+    is_reply: bool = False,
+    in_reply_to: str | None = None,
+) -> None:
     """Insert a synthetic email.sent event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
     payload = {
@@ -78,35 +90,53 @@ def _email_sent(db, event_id: str, to_addr: str, hours_ago: int,
     _insert_event(db, event_id, "email.sent", ts, payload)
 
 
-def _message_sent(db, event_id: str, hours_ago: int,
-                  body: str = "Got it, working on it now.") -> None:
+def _message_sent(db, event_id: str, hours_ago: int, body: str = "Got it, working on it now.") -> None:
     """Insert a synthetic message.sent event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "message.sent", ts, {
-        "body": body,
-        "body_plain": body,
-    }, source="signal")
+    _insert_event(
+        db,
+        event_id,
+        "message.sent",
+        ts,
+        {
+            "body": body,
+            "body_plain": body,
+        },
+        source="signal",
+    )
 
 
-def _message_received(db, event_id: str, hours_ago: int,
-                      body: str = "Can you check the latest build?") -> None:
+def _message_received(db, event_id: str, hours_ago: int, body: str = "Can you check the latest build?") -> None:
     """Insert a synthetic message.received event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "message.received", ts, {
-        "from_address": "alice@example.com",
-        "body": body,
-        "body_plain": body,
-    }, source="signal")
+    _insert_event(
+        db,
+        event_id,
+        "message.received",
+        ts,
+        {
+            "from_address": "alice@example.com",
+            "body": body,
+            "body_plain": body,
+        },
+        source="signal",
+    )
 
 
 def _calendar_event(db, event_id: str, hours_ago: int) -> None:
     """Insert a synthetic calendar.event.created event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "calendar.event.created", ts, {
-        "title": "Team standup",
-        "start_time": ts,
-        "attendees": ["alice@example.com", "bob@example.com"],
-    })
+    _insert_event(
+        db,
+        event_id,
+        "calendar.event.created",
+        ts,
+        {
+            "title": "Team standup",
+            "start_time": ts,
+            "attendees": ["alice@example.com", "bob@example.com"],
+        },
+    )
 
 
 def _insert_diverse_mood_events(db, count: int = 15) -> None:
@@ -118,14 +148,23 @@ def _insert_diverse_mood_events(db, count: int = 15) -> None:
     for i in range(count):
         hours = i + 1
         if i % 4 == 0:
-            _email_received(db, f"mood-recv-{i}", "alice@example.com", hours,
-                            body="The project deadline is approaching, we need to finish this work soon.")
+            _email_received(
+                db,
+                f"mood-recv-{i}",
+                "alice@example.com",
+                hours,
+                body="The project deadline is approaching, we need to finish this work soon.",
+            )
         elif i % 4 == 1:
-            _email_sent(db, f"mood-sent-{i}", "alice@example.com", hours,
-                        body="I am working on the deliverables and will have them ready by tomorrow.")
+            _email_sent(
+                db,
+                f"mood-sent-{i}",
+                "alice@example.com",
+                hours,
+                body="I am working on the deliverables and will have them ready by tomorrow.",
+            )
         elif i % 4 == 2:
-            _message_received(db, f"mood-msg-recv-{i}", hours,
-                              body="Hey, can you review this when you get a chance?")
+            _message_received(db, f"mood-msg-recv-{i}", hours, body="Hey, can you review this when you get a chance?")
         else:
             _calendar_event(db, f"mood-cal-{i}", hours)
 
@@ -264,8 +303,13 @@ def test_mood_backfill_processes_communication_events(db, user_model_store):
     negative_language, circadian_energy, and communication_energy.
     """
     for i in range(10):
-        _email_sent(db, f"mood-esent-{i}", "alice@example.com", hours_ago=i + 1,
-                    body="I am working on the important project deliverables for the team meeting.")
+        _email_sent(
+            db,
+            f"mood-esent-{i}",
+            "alice@example.com",
+            hours_ago=i + 1,
+            body="I am working on the important project deliverables for the team meeting.",
+        )
 
     result = backfill_mood_profile(data_dir=db.data_dir)
 
@@ -350,8 +394,7 @@ async def test_startup_triggers_cadence_backfill_when_profile_empty(db):
         "events_processed": 15,
         "elapsed_seconds": 0.1,
     }
-    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile",
-               return_value=fake_stats):
+    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile", return_value=fake_stats):
         await life_os._backfill_cadence_profile_if_needed()
 
     # No exception = pass. The method completed successfully.
@@ -381,8 +424,7 @@ async def test_startup_skips_cadence_backfill_when_already_populated(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile", side_effect=_mock_backfill):
         await life_os._backfill_cadence_profile_if_needed()
 
     assert len(called) == 0, "Cadence backfill should be skipped when profile already has data"
@@ -411,8 +453,7 @@ async def test_startup_skips_cadence_backfill_on_insufficient_events(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile", side_effect=_mock_backfill):
         await life_os._backfill_cadence_profile_if_needed()
 
     assert len(called) == 0, "Cadence backfill should be skipped when event count < 10"
@@ -443,8 +484,7 @@ async def test_startup_triggers_mood_backfill_when_profile_empty(db):
         "events_processed": 15,
         "elapsed_seconds": 0.1,
     }
-    with patch("scripts.backfill_mood_profile.backfill_mood_profile",
-               return_value=fake_stats):
+    with patch("scripts.backfill_mood_profile.backfill_mood_profile", return_value=fake_stats):
         await life_os._backfill_mood_signals_profile_if_needed()
 
 
@@ -472,8 +512,7 @@ async def test_startup_skips_mood_backfill_when_already_populated(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_mood_profile.backfill_mood_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_mood_profile.backfill_mood_profile", side_effect=_mock_backfill):
         await life_os._backfill_mood_signals_profile_if_needed()
 
     assert len(called) == 0, "Mood backfill should be skipped when profile already has data"
@@ -502,8 +541,7 @@ async def test_startup_skips_mood_backfill_on_insufficient_events(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_mood_profile.backfill_mood_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_mood_profile.backfill_mood_profile", side_effect=_mock_backfill):
         await life_os._backfill_mood_signals_profile_if_needed()
 
     assert len(called) == 0, "Mood backfill should be skipped when event count < 10"
@@ -533,8 +571,7 @@ async def test_cadence_backfill_failure_does_not_crash_startup(db):
     def _crash(**kwargs):
         raise RuntimeError("Simulated cadence backfill crash")
 
-    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile",
-               side_effect=_crash):
+    with patch("scripts.backfill_cadence_profile.backfill_cadence_profile", side_effect=_crash):
         # Should NOT raise — fail-open design
         await life_os._backfill_cadence_profile_if_needed()
 
@@ -557,7 +594,6 @@ async def test_mood_backfill_failure_does_not_crash_startup(db):
     def _crash(**kwargs):
         raise RuntimeError("Simulated mood backfill crash")
 
-    with patch("scripts.backfill_mood_profile.backfill_mood_profile",
-               side_effect=_crash):
+    with patch("scripts.backfill_mood_profile.backfill_mood_profile", side_effect=_crash):
         # Should NOT raise — fail-open design
         await life_os._backfill_mood_signals_profile_if_needed()

@@ -30,71 +30,85 @@ async def test_backfill_finds_all_actionable_events(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     # Actionable events (should be processed)
-    event_store.store_event({
-        "id": "email-recv",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Please finish the report by Friday."},
-        "metadata": {}
-    })
-    event_store.store_event({
-        "id": "email-sent",
-        "type": "email.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "I finished the analysis report yesterday."},
-        "metadata": {}
-    })
-    event_store.store_event({
-        "id": "msg-recv",
-        "type": "message.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Don't forget to book the hotel for the conference."},
-        "metadata": {}
-    })
-    event_store.store_event({
-        "id": "msg-sent",
-        "type": "message.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Booked the hotel and sent confirmation."},
-        "metadata": {}
-    })
-    event_store.store_event({
-        "id": "cal-1",
-        "type": "calendar.event.created",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"description": "TODO: Prepare slides and handouts."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "email-recv",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Please finish the report by Friday."},
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": "email-sent",
+            "type": "email.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "I finished the analysis report yesterday."},
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": "msg-recv",
+            "type": "message.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Don't forget to book the hotel for the conference."},
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": "msg-sent",
+            "type": "message.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Booked the hotel and sent confirmation."},
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": "cal-1",
+            "type": "calendar.event.created",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"description": "TODO: Prepare slides and handouts."},
+            "metadata": {},
+        }
+    )
 
     # Non-actionable events (should be ignored)
-    event_store.store_event({
-        "id": "pred-1",
-        "type": "usermodel.prediction.generated",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {},
-        "metadata": {}
-    })
-    event_store.store_event({
-        "id": "notif-1",
-        "type": "notification.created",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "pred-1",
+            "type": "usermodel.prediction.generated",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {},
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": "notif-1",
+            "type": "notification.created",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {},
+            "metadata": {},
+        }
+    )
 
     # Mock AI engine that always finds one task
     class MockAIEngine:
@@ -123,29 +137,27 @@ async def test_backfill_extracts_tasks_from_emails(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     # Email with clear action item
-    event_store.store_event({
-        "id": "email-task-1",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {
-            "from_address": "boss@company.com",
-            "subject": "Q4 Planning",
-            "body": "Can you please prepare the budget proposal by end of week?"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "email-task-1",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {
+                "from_address": "boss@company.com",
+                "subject": "Q4 Planning",
+                "body": "Can you please prepare the budget proposal by end of week?",
+            },
+            "metadata": {},
+        }
+    )
 
     # Mock AI engine that extracts the task
     class MockAIEngine:
         async def extract_action_items(self, text, source):
             if "budget proposal" in text:
-                return [{
-                    "title": "Prepare budget proposal",
-                    "due_hint": "end of week",
-                    "priority": "high"
-                }]
+                return [{"title": "Prepare budget proposal", "due_hint": "end of week", "priority": "high"}]
             return []
 
     task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
@@ -169,17 +181,17 @@ async def test_backfill_handles_html_email_bodies(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     # Email with HTML body
-    event_store.store_event({
-        "id": "html-email-1",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {
-            "body": "<html><body><p>Please <b>review</b> the contract by Monday.</p></body></html>"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "html-email-1",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "<html><body><p>Please <b>review</b> the contract by Monday.</p></body></html>"},
+            "metadata": {},
+        }
+    )
 
     # Mock AI engine that checks for plain text (not HTML tags)
     class MockAIEngine:
@@ -209,26 +221,30 @@ async def test_backfill_skips_trivial_messages(db, event_store):
 
     # Short, trivial messages (should be skipped)
     for i, body in enumerate(["ok", "thanks", "got it", "👍"]):
-        event_store.store_event({
-            "id": f"trivial-{i}",
+        event_store.store_event(
+            {
+                "id": f"trivial-{i}",
+                "type": "message.received",
+                "source": "test",
+                "timestamp": now,
+                "priority": "normal",
+                "payload": {"body": body},
+                "metadata": {},
+            }
+        )
+
+    # One substantial message (should be processed)
+    event_store.store_event(
+        {
+            "id": "substantial-1",
             "type": "message.received",
             "source": "test",
             "timestamp": now,
             "priority": "normal",
-            "payload": {"body": body},
-            "metadata": {}
-        })
-
-    # One substantial message (should be processed)
-    event_store.store_event({
-        "id": "substantial-1",
-        "type": "message.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Can you send me the slides from yesterday's meeting?"},
-        "metadata": {}
-    })
+            "payload": {"body": "Can you send me the slides from yesterday's meeting?"},
+            "metadata": {},
+        }
+    )
 
     # Mock AI engine that tracks how many times it was called
     class MockAIEngine:
@@ -259,25 +275,27 @@ async def test_backfill_handles_calendar_descriptions(db, event_store):
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    event_store.store_event({
-        "id": "cal-with-todos",
-        "type": "calendar.event.created",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {
-            "summary": "Project Kickoff Meeting",
-            "description": "Agenda: Review timeline. TODO: Set up Slack channel. TODO: Book conference room."
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "cal-with-todos",
+            "type": "calendar.event.created",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {
+                "summary": "Project Kickoff Meeting",
+                "description": "Agenda: Review timeline. TODO: Set up Slack channel. TODO: Book conference room.",
+            },
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
             if "Set up Slack channel" in text and "Book conference room" in text:
                 return [
                     {"title": "Set up Slack channel", "due_hint": None, "priority": "normal"},
-                    {"title": "Book conference room", "due_hint": None, "priority": "normal"}
+                    {"title": "Book conference room", "due_hint": None, "priority": "normal"},
                 ]
             return []
 
@@ -301,18 +319,21 @@ async def test_backfill_limit_parameter(db, event_store):
 
     # Create 10 events
     for i in range(10):
-        event_store.store_event({
-            "id": f"email-{i}",
-            "type": "email.received",
-            "source": "test",
-            "timestamp": now,
-            "priority": "normal",
-            "payload": {"body": f"This is email number {i} with enough text to pass the threshold."},
-            "metadata": {}
-        })
+        event_store.store_event(
+            {
+                "id": f"email-{i}",
+                "type": "email.received",
+                "source": "test",
+                "timestamp": now,
+                "priority": "normal",
+                "payload": {"body": f"This is email number {i} with enough text to pass the threshold."},
+                "metadata": {},
+            }
+        )
 
     class MockAIEngine:
         """Returns a unique task title per call to avoid deduplication blocking."""
+
         def __init__(self):
             self._call = 0
 
@@ -340,15 +361,17 @@ async def test_backfill_dry_run_mode(db, event_store):
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    event_store.store_event({
-        "id": "email-dry-run",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "This email contains an action item."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "email-dry-run",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "This email contains an action item."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
@@ -381,15 +404,17 @@ async def test_backfill_error_handling(db, event_store):
 
     # Create 3 events
     for i in range(3):
-        event_store.store_event({
-            "id": f"email-error-{i}",
-            "type": "email.received",
-            "source": "test",
-            "timestamp": now,
-            "priority": "normal",
-            "payload": {"body": f"Email {i} with sufficient text for processing."},
-            "metadata": {}
-        })
+        event_store.store_event(
+            {
+                "id": f"email-error-{i}",
+                "type": "email.received",
+                "source": "test",
+                "timestamp": now,
+                "priority": "normal",
+                "payload": {"body": f"Email {i} with sufficient text for processing."},
+                "metadata": {},
+            }
+        )
 
     # Mock AI engine that fails on the second event
     class FailingAIEngine:
@@ -427,15 +452,17 @@ async def test_backfill_is_idempotent(db, event_store):
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    event_store.store_event({
-        "id": "email-idem-1",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Please complete the onboarding checklist."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "email-idem-1",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Please complete the onboarding checklist."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
@@ -473,26 +500,30 @@ async def test_backfill_processes_newest_first(db, event_store):
     # Create events with different timestamps
     base_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-    event_store.store_event({
-        "id": "old-email",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": base_time.isoformat(),
-        "priority": "normal",
-        "payload": {"body": "Old email from January."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "old-email",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": base_time.isoformat(),
+            "priority": "normal",
+            "payload": {"body": "Old email from January."},
+            "metadata": {},
+        }
+    )
 
     new_time = datetime(2026, 2, 15, 12, 0, 0, tzinfo=timezone.utc)
-    event_store.store_event({
-        "id": "new-email",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": new_time.isoformat(),
-        "priority": "normal",
-        "payload": {"body": "Recent email from February."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "new-email",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": new_time.isoformat(),
+            "priority": "normal",
+            "payload": {"body": "Recent email from February."},
+            "metadata": {},
+        }
+    )
 
     # Mock AI engine that tracks which event was processed first
     class OrderTrackingAIEngine:
@@ -527,15 +558,17 @@ async def test_backfill_links_tasks_to_source_events(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     event_id = "source-event-123"
-    event_store.store_event({
-        "id": event_id,
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Please review the quarterly report by Friday."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Please review the quarterly report by Friday."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
@@ -565,15 +598,17 @@ async def test_backfill_without_ai_engine(db, event_store):
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    event_store.store_event({
-        "id": "no-ai-1",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Email that would normally trigger extraction."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "no-ai-1",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Email that would normally trigger extraction."},
+            "metadata": {},
+        }
+    )
 
     # Task manager without AI engine
     task_manager = TaskManager(db, event_bus=None, ai_engine=None)
@@ -603,7 +638,7 @@ async def test_count_tasks_helper(db):
             conn.execute(
                 """INSERT INTO tasks (id, title, source, created_at)
                    VALUES (?, ?, ?, datetime('now'))""",
-                (f"task-{i}", f"Task {i}", "test")
+                (f"task-{i}", f"Task {i}", "test"),
             )
 
     assert _count_tasks(db) == 5
@@ -624,35 +659,41 @@ async def test_backfill_processes_sent_events(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     # Create both received and sent events
-    event_store.store_event({
-        "id": "email-received",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Can you please send the Q4 report by Friday?"},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "email-received",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Can you please send the Q4 report by Friday?"},
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id": "email-sent",
-        "type": "email.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "I finished the Q4 report and sent it yesterday."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "email-sent",
+            "type": "email.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "I finished the Q4 report and sent it yesterday."},
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id": "message-sent",
-        "type": "message.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Submitted the expense report this morning."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "message-sent",
+            "type": "message.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Submitted the expense report this morning."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
@@ -687,27 +728,23 @@ async def test_backfill_detects_completed_tasks(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     # Sent email reporting completion
-    event_store.store_event({
-        "id": "sent-completion",
-        "type": "email.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {
-            "body": "Hi team, I completed the security audit and sent the findings to IT."
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "sent-completion",
+            "type": "email.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Hi team, I completed the security audit and sent the findings to IT."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
             # AI detects this is a completed task
             if "completed the security audit" in text:
-                return [{
-                    "title": "Complete security audit",
-                    "priority": "high",
-                    "completed": True
-                }]
+                return [{"title": "Complete security audit", "priority": "high", "completed": True}]
             return []
 
     task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
@@ -722,10 +759,7 @@ async def test_backfill_detects_completed_tasks(db, event_store):
 
     # Verify the task was marked as completed
     with db.get_connection("state") as conn:
-        task = conn.execute(
-            "SELECT * FROM tasks WHERE source_event_id = ?",
-            ("sent-completion",)
-        ).fetchone()
+        task = conn.execute("SELECT * FROM tasks WHERE source_event_id = ?", ("sent-completion",)).fetchone()
 
     assert task is not None
     assert task["title"] == "Complete security audit"
@@ -744,41 +778,35 @@ async def test_backfill_generates_completion_events(db, event_store):
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    event_store.store_event({
-        "id": "completed-task-source",
-        "type": "message.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "I deployed the hotfix to production this morning."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "completed-task-source",
+            "type": "message.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "I deployed the hotfix to production this morning."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
             if "deployed the hotfix" in text:
-                return [{
-                    "title": "Deploy hotfix to production",
-                    "priority": "critical",
-                    "completed": True
-                }]
+                return [{"title": "Deploy hotfix to production", "priority": "critical", "completed": True}]
             return []
 
     task_manager = TaskManager(db, event_bus=None, ai_engine=MockAIEngine())
 
     # Count task.completed events before backfill
     with db.get_connection("events") as conn:
-        before_count = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE type = 'task.completed'"
-        ).fetchone()[0]
+        before_count = conn.execute("SELECT COUNT(*) FROM events WHERE type = 'task.completed'").fetchone()[0]
 
     await backfill_tasks(db, task_manager)
 
     # Count task.completed events after backfill
     with db.get_connection("events") as conn:
-        after_count = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE type = 'task.completed'"
-        ).fetchone()[0]
+        after_count = conn.execute("SELECT COUNT(*) FROM events WHERE type = 'task.completed'").fetchone()[0]
 
     # Should have published 1 task.completed event
     assert after_count == before_count + 1
@@ -808,26 +836,30 @@ async def test_backfill_mixed_pending_and_completed_tasks(db, event_store):
     now = datetime.now(timezone.utc).isoformat()
 
     # Pending task (received email)
-    event_store.store_event({
-        "id": "pending-task",
-        "type": "email.received",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "Please review the pull request when you get a chance."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "pending-task",
+            "type": "email.received",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "Please review the pull request when you get a chance."},
+            "metadata": {},
+        }
+    )
 
     # Completed task (sent email)
-    event_store.store_event({
-        "id": "completed-task",
-        "type": "email.sent",
-        "source": "test",
-        "timestamp": now,
-        "priority": "normal",
-        "payload": {"body": "I reviewed and approved the pull request."},
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": "completed-task",
+            "type": "email.sent",
+            "source": "test",
+            "timestamp": now,
+            "priority": "normal",
+            "payload": {"body": "I reviewed and approved the pull request."},
+            "metadata": {},
+        }
+    )
 
     class MockAIEngine:
         async def extract_action_items(self, text, source):
@@ -846,14 +878,8 @@ async def test_backfill_mixed_pending_and_completed_tasks(db, event_store):
 
     # Check statuses
     with db.get_connection("state") as conn:
-        pending_task = conn.execute(
-            "SELECT * FROM tasks WHERE source_event_id = ?",
-            ("pending-task",)
-        ).fetchone()
-        completed_task = conn.execute(
-            "SELECT * FROM tasks WHERE source_event_id = ?",
-            ("completed-task",)
-        ).fetchone()
+        pending_task = conn.execute("SELECT * FROM tasks WHERE source_event_id = ?", ("pending-task",)).fetchone()
+        completed_task = conn.execute("SELECT * FROM tasks WHERE source_event_id = ?", ("completed-task",)).fetchone()
 
     assert pending_task["status"] == "pending"
     assert pending_task["completed_at"] is None

@@ -15,6 +15,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_template(
     template_id: str,
     context: str = "user_to_contact",
@@ -54,6 +55,7 @@ def _make_template(
 # get_communication_template — single result
 # ---------------------------------------------------------------------------
 
+
 class TestGetCommunicationTemplate:
     """Tests for the single-template retrieval method."""
 
@@ -79,27 +81,27 @@ class TestGetCommunicationTemplate:
 
     def test_returns_none_when_no_match(self, user_model_store):
         """get_communication_template returns None when nothing matches."""
-        result = user_model_store.get_communication_template(
-            contact_id="nobody@example.com"
-        )
+        result = user_model_store.get_communication_template(contact_id="nobody@example.com")
         assert result is None
 
     def test_prefers_highest_samples_analyzed(self, user_model_store):
         """When multiple templates match, the one with the most samples wins."""
         tpl_low = _make_template(
-            "tpl-low", contact_id="carol@example.com", channel="email",
+            "tpl-low",
+            contact_id="carol@example.com",
+            channel="email",
             samples_analyzed=2,
         )
         tpl_high = _make_template(
-            "tpl-high", contact_id="carol@example.com", channel="slack",
+            "tpl-high",
+            contact_id="carol@example.com",
+            channel="slack",
             samples_analyzed=10,
         )
         user_model_store.store_communication_template(tpl_low)
         user_model_store.store_communication_template(tpl_high)
 
-        result = user_model_store.get_communication_template(
-            contact_id="carol@example.com"
-        )
+        result = user_model_store.get_communication_template(contact_id="carol@example.com")
         assert result is not None
         assert result["id"] == "tpl-high"
         assert result["samples_analyzed"] == 10
@@ -117,9 +119,7 @@ class TestGetCommunicationTemplate:
         )
         user_model_store.store_communication_template(tpl)
 
-        result = user_model_store.get_communication_template(
-            contact_id="dave@example.com"
-        )
+        result = user_model_store.get_communication_template(contact_id="dave@example.com")
         assert result is not None
         assert isinstance(result["common_phrases"], list)
         assert result["common_phrases"] == ["sounds good", "let me know"]
@@ -135,6 +135,7 @@ class TestGetCommunicationTemplate:
 # get_communication_templates — multi-result
 # ---------------------------------------------------------------------------
 
+
 class TestGetCommunicationTemplates:
     """Tests for the multi-template retrieval method."""
 
@@ -149,9 +150,7 @@ class TestGetCommunicationTemplates:
             )
             user_model_store.store_communication_template(tpl)
 
-        results = user_model_store.get_communication_templates(
-            contact_id="eve@example.com"
-        )
+        results = user_model_store.get_communication_templates(contact_id="eve@example.com")
         assert len(results) == 4
         # Verify descending order by samples_analyzed
         samples_list = [r["samples_analyzed"] for r in results]
@@ -164,9 +163,7 @@ class TestGetCommunicationTemplates:
         user_model_store.store_communication_template(tpl_match)
         user_model_store.store_communication_template(tpl_other)
 
-        results = user_model_store.get_communication_templates(
-            contact_id="frank@example.com"
-        )
+        results = user_model_store.get_communication_templates(contact_id="frank@example.com")
         assert len(results) == 1
         assert results[0]["contact_id"] == "frank@example.com"
 
@@ -184,21 +181,25 @@ class TestGetCommunicationTemplates:
     def test_both_filters_use_or(self, user_model_store):
         """Providing both contact_id and channel uses OR logic."""
         tpl_contact = _make_template(
-            "tpl-c", contact_id="joe@example.com", channel="email",
+            "tpl-c",
+            contact_id="joe@example.com",
+            channel="email",
         )
         tpl_channel = _make_template(
-            "tpl-ch", contact_id="other@example.com", channel="slack",
+            "tpl-ch",
+            contact_id="other@example.com",
+            channel="slack",
         )
         tpl_neither = _make_template(
-            "tpl-neither", contact_id="nobody@example.com", channel="sms",
+            "tpl-neither",
+            contact_id="nobody@example.com",
+            channel="sms",
         )
         user_model_store.store_communication_template(tpl_contact)
         user_model_store.store_communication_template(tpl_channel)
         user_model_store.store_communication_template(tpl_neither)
 
-        results = user_model_store.get_communication_templates(
-            contact_id="joe@example.com", channel="slack"
-        )
+        results = user_model_store.get_communication_templates(contact_id="joe@example.com", channel="slack")
         assert len(results) == 2
         result_ids = {r["id"] for r in results}
         assert result_ids == {"tpl-c", "tpl-ch"}
@@ -246,9 +247,7 @@ class TestGetCommunicationTemplates:
         )
         user_model_store.store_communication_template(tpl)
 
-        results = user_model_store.get_communication_templates(
-            contact_id="kate@example.com"
-        )
+        results = user_model_store.get_communication_templates(contact_id="kate@example.com")
         assert len(results) == 1
         r = results[0]
         assert isinstance(r["common_phrases"], list)

@@ -51,6 +51,7 @@ def life_os_instance(db, event_store, user_model_store):
 def _get_episodes(user_model_store, limit: int = 10) -> list[dict]:
     """Query episodes directly from the DB since UserModelStore has no get_episodes."""
     import json as json_mod
+
     with user_model_store.db.get_connection("user_model") as conn:
         rows = conn.execute(
             "SELECT id, timestamp, interaction_type FROM episodes ORDER BY rowid DESC LIMIT ?",
@@ -65,7 +66,7 @@ def _make_event(event_type: str, payload: dict, sync_ts: str = "2026-02-22T08:00
         "id": str(uuid.uuid4()),
         "type": event_type,
         "source": "google",
-        "timestamp": sync_ts,   # connector sync time — should NOT be used for timestamp
+        "timestamp": sync_ts,  # connector sync time — should NOT be used for timestamp
         "priority": "normal",
         "payload": payload,
         "metadata": {},
@@ -87,12 +88,16 @@ async def test_episode_uses_email_date_field(life_os_instance):
     actual_email_date = "2026-01-15T09:30:00+00:00"
     sync_ts = "2026-02-22T08:00:00+00:00"  # sync is 38 days later
 
-    event = _make_event("email.received", {
-        "subject": "Test email",
-        "from_address": "alice@example.com",
-        "email_date": actual_email_date,
-        # 'date' field NOT set — email_date should be preferred
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "email.received",
+        {
+            "subject": "Test email",
+            "from_address": "alice@example.com",
+            "email_date": actual_email_date,
+            # 'date' field NOT set — email_date should be preferred
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
@@ -100,8 +105,7 @@ async def test_episode_uses_email_date_field(life_os_instance):
     assert episodes, "Expected one episode to be stored"
     ep = episodes[0]
     assert ep["timestamp"] == actual_email_date, (
-        f"Episode timestamp should be email_date={actual_email_date!r}, "
-        f"got {ep['timestamp']!r} (sync_ts={sync_ts!r})"
+        f"Episode timestamp should be email_date={actual_email_date!r}, got {ep['timestamp']!r} (sync_ts={sync_ts!r})"
     )
 
 
@@ -111,11 +115,15 @@ async def test_episode_uses_sent_at_field(life_os_instance):
     sent_at = "2026-01-20T14:45:00+00:00"
     sync_ts = "2026-02-22T08:00:00+00:00"
 
-    event = _make_event("message.sent", {
-        "body": "Hey there",
-        "to_addresses": ["bob@example.com"],
-        "sent_at": sent_at,
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "message.sent",
+        {
+            "body": "Hey there",
+            "to_addresses": ["bob@example.com"],
+            "sent_at": sent_at,
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
@@ -130,11 +138,15 @@ async def test_episode_uses_received_at_field(life_os_instance):
     received_at = "2026-01-22T18:12:00+00:00"
     sync_ts = "2026-02-22T08:00:00+00:00"
 
-    event = _make_event("message.received", {
-        "body": "Hi",
-        "from_address": "carol@example.com",
-        "received_at": received_at,
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "message.received",
+        {
+            "body": "Hi",
+            "from_address": "carol@example.com",
+            "received_at": received_at,
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
@@ -149,12 +161,16 @@ async def test_episode_uses_date_field_as_fallback(life_os_instance):
     date_val = "2026-01-10T07:00:00+00:00"
     sync_ts = "2026-02-22T08:00:00+00:00"
 
-    event = _make_event("email.received", {
-        "subject": "Old style",
-        "from_address": "dave@example.com",
-        "date": date_val,
-        # No email_date, sent_at, received_at
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "email.received",
+        {
+            "subject": "Old style",
+            "from_address": "dave@example.com",
+            "date": date_val,
+            # No email_date, sent_at, received_at
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
@@ -169,11 +185,15 @@ async def test_episode_uses_start_time_for_calendar(life_os_instance):
     start_time = "2026-01-25T10:00:00+00:00"
     sync_ts = "2026-02-22T08:00:00+00:00"
 
-    event = _make_event("calendar.event.created", {
-        "title": "Team standup",
-        "start_time": start_time,
-        "end_time": "2026-01-25T10:30:00+00:00",
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "calendar.event.created",
+        {
+            "title": "Team standup",
+            "start_time": start_time,
+            "end_time": "2026-01-25T10:30:00+00:00",
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
@@ -187,11 +207,15 @@ async def test_episode_falls_back_to_sync_ts_when_no_actual_date(life_os_instanc
     """When no actual-date field exists, the sync timestamp is used as last resort."""
     sync_ts = "2026-02-22T08:00:00+00:00"
 
-    event = _make_event("email.received", {
-        "subject": "No date fields",
-        "from_address": "eve@example.com",
-        # No email_date, sent_at, received_at, date, or start_time
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "email.received",
+        {
+            "subject": "No date fields",
+            "from_address": "eve@example.com",
+            # No email_date, sent_at, received_at, date, or start_time
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
@@ -207,20 +231,22 @@ async def test_email_date_takes_priority_over_date(life_os_instance):
     generic_date = "2026-01-06T06:00:00+00:00"
     sync_ts = "2026-02-22T08:00:00+00:00"
 
-    event = _make_event("email.received", {
-        "subject": "Priority test",
-        "from_address": "frank@example.com",
-        "email_date": email_date,
-        "date": generic_date,  # should be ignored
-    }, sync_ts=sync_ts)
+    event = _make_event(
+        "email.received",
+        {
+            "subject": "Priority test",
+            "from_address": "frank@example.com",
+            "email_date": email_date,
+            "date": generic_date,  # should be ignored
+        },
+        sync_ts=sync_ts,
+    )
 
     await life_os_instance._create_episode(event)
 
     episodes = _get_episodes(life_os_instance.user_model_store, 1)
     assert episodes
-    assert episodes[0]["timestamp"] == email_date, (
-        "email_date should take priority over generic 'date' field"
-    )
+    assert episodes[0]["timestamp"] == email_date, "email_date should take priority over generic 'date' field"
 
 
 # ---------------------------------------------------------------------------
@@ -233,34 +259,49 @@ def test_backfill_script_extract_actual_timestamp():
     from scripts.backfill_episode_timestamps import _extract_actual_timestamp
 
     # email_date wins
-    assert _extract_actual_timestamp(
-        {"email_date": "2026-01-01", "sent_at": "2026-01-02", "date": "2026-01-03"},
-        "2026-02-22",
-    ) == "2026-01-01"
+    assert (
+        _extract_actual_timestamp(
+            {"email_date": "2026-01-01", "sent_at": "2026-01-02", "date": "2026-01-03"},
+            "2026-02-22",
+        )
+        == "2026-01-01"
+    )
 
     # sent_at used when no email_date
-    assert _extract_actual_timestamp(
-        {"sent_at": "2026-01-02", "date": "2026-01-03"},
-        "2026-02-22",
-    ) == "2026-01-02"
+    assert (
+        _extract_actual_timestamp(
+            {"sent_at": "2026-01-02", "date": "2026-01-03"},
+            "2026-02-22",
+        )
+        == "2026-01-02"
+    )
 
     # received_at used when no email_date or sent_at
-    assert _extract_actual_timestamp(
-        {"received_at": "2026-01-03", "date": "2026-01-04"},
-        "2026-02-22",
-    ) == "2026-01-03"
+    assert (
+        _extract_actual_timestamp(
+            {"received_at": "2026-01-03", "date": "2026-01-04"},
+            "2026-02-22",
+        )
+        == "2026-01-03"
+    )
 
     # date as last payload fallback
-    assert _extract_actual_timestamp(
-        {"date": "2026-01-04"},
-        "2026-02-22",
-    ) == "2026-01-04"
+    assert (
+        _extract_actual_timestamp(
+            {"date": "2026-01-04"},
+            "2026-02-22",
+        )
+        == "2026-01-04"
+    )
 
     # start_time for calendar
-    assert _extract_actual_timestamp(
-        {"start_time": "2026-01-05T09:00:00"},
-        "2026-02-22",
-    ) == "2026-01-05T09:00:00"
+    assert (
+        _extract_actual_timestamp(
+            {"start_time": "2026-01-05T09:00:00"},
+            "2026-02-22",
+        )
+        == "2026-01-05T09:00:00"
+    )
 
     # Returns None when nothing better than sync ts is available
     assert _extract_actual_timestamp({}, "2026-02-22") is None
@@ -402,6 +443,4 @@ def test_backfill_script_live_run(tmp_path):
     conn = sqlite3_direct.connect(um_db)
     row = conn.execute("SELECT timestamp FROM episodes WHERE id = ?", (ep_id,)).fetchone()
     conn.close()
-    assert row[0] == email_date, (
-        f"Episode timestamp should be updated to {email_date!r}, got {row[0]!r}"
-    )
+    assert row[0] == email_date, f"Episode timestamp should be updated to {email_date!r}, got {row[0]!r}"

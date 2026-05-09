@@ -43,9 +43,13 @@ def _insert_events(db, events: list[dict]) -> None:
             )
 
 
-def _email_sent(event_id: str, to_addr: str, timestamp: str,
-                subject: str = "Re: Discussion",
-                body: str = "I think this approach is solid. Let me know what you think.") -> dict:
+def _email_sent(
+    event_id: str,
+    to_addr: str,
+    timestamp: str,
+    subject: str = "Re: Discussion",
+    body: str = "I think this approach is solid. Let me know what you think.",
+) -> dict:
     """Build a minimal email.sent event dict for testing."""
     return {
         "id": event_id,
@@ -63,9 +67,13 @@ def _email_sent(event_id: str, to_addr: str, timestamp: str,
     }
 
 
-def _email_received(event_id: str, from_addr: str, timestamp: str,
-                    subject: str = "Hello",
-                    body: str = "Just checking in on the project status.") -> dict:
+def _email_received(
+    event_id: str,
+    from_addr: str,
+    timestamp: str,
+    subject: str = "Hello",
+    body: str = "Just checking in on the project status.",
+) -> dict:
     """Build a minimal email.received event dict for testing."""
     return {
         "id": event_id,
@@ -97,11 +105,15 @@ def test_backfill_linguistic_creates_profile_from_sent_emails(db, user_model_sto
     """
     events = [
         _email_sent(
-            "evt-sent-1", "alice@example.com", "2026-02-01T10:00:00Z",
+            "evt-sent-1",
+            "alice@example.com",
+            "2026-02-01T10:00:00Z",
             body="I think this approach is really solid! Let me know what you think.",
         ),
         _email_sent(
-            "evt-sent-2", "bob@example.com", "2026-02-08T10:00:00Z",
+            "evt-sent-2",
+            "bob@example.com",
+            "2026-02-08T10:00:00Z",
             body="Could you please review the implementation? I'm not sure about the edge cases.",
         ),
     ]
@@ -127,11 +139,15 @@ def test_backfill_linguistic_processes_inbound_emails(db, user_model_store):
     """
     events = [
         _email_received(
-            "evt-recv-1", "alice@example.com", "2026-02-01T09:00:00Z",
+            "evt-recv-1",
+            "alice@example.com",
+            "2026-02-01T09:00:00Z",
             body="Hi! Just wanted to check in. Let me know how the project is going.",
         ),
         _email_received(
-            "evt-recv-2", "bob@example.com", "2026-02-02T14:00:00Z",
+            "evt-recv-2",
+            "bob@example.com",
+            "2026-02-02T14:00:00Z",
             body="Please provide a status update on the aforementioned deliverables.",
         ),
     ]
@@ -154,7 +170,9 @@ def test_backfill_linguistic_dry_run_no_writes(db, user_model_store):
     """
     events = [
         _email_sent(
-            "evt-sent-1", "alice@example.com", "2026-02-01T10:00:00Z",
+            "evt-sent-1",
+            "alice@example.com",
+            "2026-02-01T10:00:00Z",
             body="Hello! I think this is a great idea and we should proceed!",
         ),
     ]
@@ -194,8 +212,12 @@ def test_backfill_linguistic_limit_parameter(db, user_model_store):
     without reprocessing all historical data.
     """
     events = [
-        _email_sent(f"evt-{i}", "alice@example.com", f"2026-02-{i+1:02d}T10:00:00Z",
-                    body=f"Message number {i}. This is a test of the linguistic extractor.")
+        _email_sent(
+            f"evt-{i}",
+            "alice@example.com",
+            f"2026-02-{i + 1:02d}T10:00:00Z",
+            body=f"Message number {i}. This is a test of the linguistic extractor.",
+        )
         for i in range(5)
     ]
     _insert_events(db, events)
@@ -236,10 +258,13 @@ def test_backfill_linguistic_auto_trigger_skips_when_profile_populated(db, user_
     if we pre-populate the profile with data, the threshold is correctly met.
     """
     # Pre-populate linguistic profile with 1+ samples
-    user_model_store.update_signal_profile("linguistic", {
-        "averages": {"formality": 0.3, "word_count": 45.0},
-        "samples_count": 1,
-    })
+    user_model_store.update_signal_profile(
+        "linguistic",
+        {
+            "averages": {"formality": 0.3, "word_count": 45.0},
+            "samples_count": 1,
+        },
+    )
 
     profile = user_model_store.get_signal_profile("linguistic")
     assert profile is not None
@@ -260,7 +285,9 @@ def test_backfill_linguistic_incremental_is_idempotent(db, user_model_store):
     """
     events = [
         _email_sent(
-            "evt-sent-1", "alice@example.com", "2026-02-01T10:00:00Z",
+            "evt-sent-1",
+            "alice@example.com",
+            "2026-02-01T10:00:00Z",
             body="I believe this approach is solid. Let me review further.",
         ),
     ]

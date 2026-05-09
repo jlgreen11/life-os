@@ -52,7 +52,7 @@ def test_cleanup_with_verbose_false_completes_quickly(tmp_path):
         conn.execute(
             """INSERT OR REPLACE INTO signal_profiles (profile_type, data, samples_count, updated_at)
                VALUES ('relationships', ?, 3, ?)""",
-            (json.dumps(profile_data), datetime.now(timezone.utc).isoformat())
+            (json.dumps(profile_data), datetime.now(timezone.utc).isoformat()),
         )
 
     # Time the cleanup with verbose=False
@@ -93,11 +93,12 @@ def test_cleanup_in_asyncio_thread_does_not_hang(tmp_path):
         conn.execute(
             """INSERT OR REPLACE INTO signal_profiles (profile_type, data, samples_count, updated_at)
                VALUES ('relationships', ?, 2, ?)""",
-            (json.dumps(profile_data), datetime.now(timezone.utc).isoformat())
+            (json.dumps(profile_data), datetime.now(timezone.utc).isoformat()),
         )
 
     async def run_cleanup_in_thread():
         """Mimic the exact pattern from main.py."""
+
         def _run_cleanup():
             return clean_relationship_profile(
                 db=db,
@@ -106,10 +107,7 @@ def test_cleanup_in_asyncio_thread_does_not_hang(tmp_path):
             )
 
         # Set a 2-second timeout - if it hangs, this will fail
-        stats = await asyncio.wait_for(
-            asyncio.to_thread(_run_cleanup),
-            timeout=2.0
-        )
+        stats = await asyncio.wait_for(asyncio.to_thread(_run_cleanup), timeout=2.0)
         return stats
 
     # Run and verify it completes without hanging
@@ -146,7 +144,7 @@ def test_cleanup_verbose_true_still_works(tmp_path):
         conn.execute(
             """INSERT OR REPLACE INTO signal_profiles (profile_type, data, samples_count, updated_at)
                VALUES ('relationships', ?, 1, ?)""",
-            (json.dumps(profile_data), datetime.now(timezone.utc).isoformat())
+            (json.dumps(profile_data), datetime.now(timezone.utc).isoformat()),
         )
 
     # Capture stdout

@@ -221,8 +221,13 @@ def test_contact_has_required_fields(client, seeded_contacts):
     contacts = response.json()["contacts"]
 
     required_fields = {
-        "id", "name", "emails", "is_priority",
-        "typical_response_time", "last_contact", "contact_frequency_days",
+        "id",
+        "name",
+        "emails",
+        "is_priority",
+        "typical_response_time",
+        "last_contact",
+        "contact_frequency_days",
     }
     for contact in contacts:
         missing = required_fields - set(contact.keys())
@@ -236,8 +241,7 @@ def test_emails_deserialized_as_list(client, seeded_contacts):
 
     for contact in contacts:
         assert isinstance(contact["emails"], list), (
-            f"Contact {contact['name']!r}: emails should be a list, "
-            f"got {type(contact['emails'])}"
+            f"Contact {contact['name']!r}: emails should be a list, got {type(contact['emails'])}"
         )
 
 
@@ -248,8 +252,7 @@ def test_is_priority_is_boolean(client, seeded_contacts):
 
     for contact in contacts:
         assert isinstance(contact["is_priority"], bool), (
-            f"Contact {contact['name']!r}: is_priority should be bool, "
-            f"got {type(contact['is_priority'])}"
+            f"Contact {contact['name']!r}: is_priority should be bool, got {type(contact['is_priority'])}"
         )
 
 
@@ -416,9 +419,7 @@ def test_ordering_priority_first(client, seeded_contacts):
 
     # The first two contacts should be priority (Alice and Bob).
     for i in range(2):
-        assert contacts[i]["is_priority"] is True, (
-            f"Expected is_priority=True at index {i}, got {contacts[i]}"
-        )
+        assert contacts[i]["is_priority"] is True, f"Expected is_priority=True at index {i}, got {contacts[i]}"
     # The last two should be non-priority.
     for i in range(2, 4):
         assert contacts[i]["is_priority"] is False
@@ -428,12 +429,18 @@ def test_ordering_recent_last_contact_first_within_priority(client, db):
     """Within the same priority group, contacts with more recent last_contact come first."""
     # Insert two priority contacts with different last_contact dates.
     _insert_contact(
-        db, name="Earlier Contact", is_priority=True,
-        last_contact="2026-01-01T00:00:00.000Z", contact_frequency_days=7.0,
+        db,
+        name="Earlier Contact",
+        is_priority=True,
+        last_contact="2026-01-01T00:00:00.000Z",
+        contact_frequency_days=7.0,
     )
     _insert_contact(
-        db, name="Later Contact", is_priority=True,
-        last_contact="2026-02-18T00:00:00.000Z", contact_frequency_days=7.0,
+        db,
+        name="Later Contact",
+        is_priority=True,
+        last_contact="2026-02-18T00:00:00.000Z",
+        contact_frequency_days=7.0,
     )
 
     response = client.get("/api/contacts?is_priority=true")

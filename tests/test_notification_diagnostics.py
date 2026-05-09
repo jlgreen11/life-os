@@ -201,9 +201,7 @@ class TestDiagnosticsHealthDegraded:
 
     def test_degraded_with_old_pending(self, notification_manager, db):
         """Health should be 'degraded' when oldest pending notification is >48h old."""
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime(
-            "%Y-%m-%dT%H:%M:%S.000Z"
-        )
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         _insert_notification(db, status="pending", created_at=old_time)
 
         diag = notification_manager.get_diagnostics()

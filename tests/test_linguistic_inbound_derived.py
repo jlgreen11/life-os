@@ -48,9 +48,7 @@ def _make_inbound_event(body: str, from_address: str = "alice@example.com") -> d
 
 def test_inbound_signal_includes_extended_metrics(linguistic_extractor):
     """Inbound signals should carry the same extended metric fields as outbound."""
-    event = _make_inbound_event(
-        "Haha that's hilarious! Yeah sure, thanks so much for the help."
-    )
+    event = _make_inbound_event("Haha that's hilarious! Yeah sure, thanks so much for the help.")
     signals = linguistic_extractor.extract(event)
     assert len(signals) == 1
     metrics = signals[0]["metrics"]

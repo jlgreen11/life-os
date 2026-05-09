@@ -26,6 +26,7 @@ from services.routine_detector.detector import RoutineDetector
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _ts_at(days_ago: int, hour: int = 8, minute: int = 0) -> str:
     """Return an ISO 8601 UTC timestamp for N days ago at the given hour/minute.
 
@@ -105,14 +106,10 @@ class TestRoutineConsistencyWithMixedTypes:
         )
 
         routine = morning_routines[0]
-        assert routine["consistency_score"] >= 0.6, (
-            f"Expected consistency >= 0.6, got {routine['consistency_score']}"
-        )
+        assert routine["consistency_score"] >= 0.6, f"Expected consistency >= 0.6, got {routine['consistency_score']}"
         # The dominant step should be email_received
         step_actions = [s["action"] for s in routine["steps"]]
-        assert "email_received" in step_actions, (
-            f"email_received should be a step in the routine; got {step_actions}"
-        )
+        assert "email_received" in step_actions, f"email_received should be a step in the routine; got {step_actions}"
 
     def test_base_case_single_type_detected(self, db, user_model_store):
         """Morning routine detected when only email_received episodes exist.

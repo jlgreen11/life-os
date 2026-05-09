@@ -39,28 +39,48 @@ PROFILE_EVENT_TYPES: dict[str, list[str]] = {
     "linguistic_inbound": ["email.received", "message.received"],
     "cadence": ["email.sent", "message.sent", "email.received", "message.received"],
     "mood_signals": [
-        "email.received", "email.sent", "message.received", "message.sent",
-        "health.metric.updated", "health.sleep.recorded",
-        "calendar.event.created", "finance.transaction.new",
-        "location.changed", "system.user.command",
+        "email.received",
+        "email.sent",
+        "message.received",
+        "message.sent",
+        "health.metric.updated",
+        "health.sleep.recorded",
+        "calendar.event.created",
+        "finance.transaction.new",
+        "location.changed",
+        "system.user.command",
     ],
     "relationships": ["email.received", "email.sent", "message.received", "message.sent"],
     "temporal": [
-        "email.sent", "message.sent",
-        "email.received", "message.received",
-        "calendar.event.created", "calendar.event.updated",
-        "task.created", "task.completed", "task.updated",
+        "email.sent",
+        "message.sent",
+        "email.received",
+        "message.received",
+        "calendar.event.created",
+        "calendar.event.updated",
+        "task.created",
+        "task.completed",
+        "task.updated",
         "system.user.command",
     ],
     "topics": ["email.received", "email.sent", "message.received", "message.sent", "system.user.command"],
     "spatial": [
-        "calendar.event.created", "calendar.event.updated",
-        "ios.context.update", "system.user.location_update", "email.received",
+        "calendar.event.created",
+        "calendar.event.updated",
+        "ios.context.update",
+        "system.user.location_update",
+        "email.received",
     ],
     "decision": [
-        "task.completed", "task.created", "email.sent", "message.sent",
-        "email.received", "message.received",
-        "calendar.event.created", "calendar.event.updated", "finance.transaction.new",
+        "task.completed",
+        "task.created",
+        "email.sent",
+        "message.sent",
+        "email.received",
+        "message.received",
+        "calendar.event.created",
+        "calendar.event.updated",
+        "finance.transaction.new",
     ],
 }
 
@@ -327,9 +347,7 @@ def analyze(data_dir: str = "./data") -> dict:
                 "user_acted_on": acted_on,
                 "user_dismissed": dismissed,
                 "auto_filtered": auto_filtered,
-                "filter_reasons": {r["reason_category"]: r["count"] for r in filter_reasons}
-                if filter_reasons
-                else {},
+                "filter_reasons": {r["reason_category"]: r["count"] for r in filter_reasons} if filter_reasons else {},
             }
         except Exception as e:
             report["sections"]["prediction_pipeline"] = {"error": str(e)}
@@ -352,7 +370,7 @@ def analyze(data_dir: str = "./data") -> dict:
                 [],
             )
             histogram = {}
-            for r in (confidence_buckets or []):
+            for r in confidence_buckets or []:
                 # Bucket 10 means confidence=1.0 exactly; merge into 0.9-1.0
                 b = min(r["bucket"] or 0, 9)
                 label = f"{b / 10:.1f}-{(b + 1) / 10:.1f}"
@@ -382,9 +400,7 @@ def analyze(data_dir: str = "./data") -> dict:
             )
 
             # 4. Dedup ratio context: compare generation events to stored predictions
-            stored_count = _query_one(
-                um_conn, "SELECT COUNT(*) as c FROM predictions"
-            )
+            stored_count = _query_one(um_conn, "SELECT COUNT(*) as c FROM predictions")
 
             pp_section["prediction_detail"] = {
                 "confidence_histogram": histogram,
@@ -429,9 +445,7 @@ def analyze(data_dir: str = "./data") -> dict:
                            ORDER BY count DESC""",
                         [],
                     )
-                    pp_section["event_activity"] = (
-                        {r["type"]: r["count"] for r in pred_events} if pred_events else {}
-                    )
+                    pp_section["event_activity"] = {r["type"]: r["count"] for r in pred_events} if pred_events else {}
 
                     last_pred = _query_one(
                         ev_conn,
@@ -675,7 +689,7 @@ def analyze(data_dir: str = "./data") -> dict:
             total_episodes = sum(r["c"] for r in interaction_types) if interaction_types else 0
             type_dist = {}
             null_unknown_comm = 0
-            for r in (interaction_types or []):
+            for r in interaction_types or []:
                 itype = r["interaction_type"]
                 type_dist[str(itype)] = r["c"]
                 if itype is None or itype in ("unknown", "communication"):
@@ -777,10 +791,7 @@ def analyze(data_dir: str = "./data") -> dict:
             # The context column was added after the initial schema — check column
             # existence via PRAGMA before running the granular query so older and
             # test databases degrade gracefully without polluting query_errors.
-            fl_cols = {
-                row[1]
-                for row in (pref_conn.execute("PRAGMA table_info(feedback_log)").fetchall() or [])
-            }
+            fl_cols = {row[1] for row in (pref_conn.execute("PRAGMA table_info(feedback_log)").fetchall() or [])}
             if "context" in fl_cols:
                 explicit_dismissal_rows = _query(
                     pref_conn,
@@ -859,17 +870,17 @@ def detect_anomalies(sections: dict) -> list[dict]:
     gen_events = event_activity.get("usermodel.prediction.generated", 0) if isinstance(event_activity, dict) else 0
 
     if total_generated == 0 and gen_events > 0:
-        anomalies.append({
-            "severity": "critical",
-            "category": "prediction_persistence",
-            "message": (
-                f"Predictions table has 0 rows but {gen_events} generation events exist "
-                "— predictions are being generated but not persisted"
-            ),
-            "recommendation": (
-                "Check store_prediction() errors in logs; possible schema mismatch after migration"
-            ),
-        })
+        anomalies.append(
+            {
+                "severity": "critical",
+                "category": "prediction_persistence",
+                "message": (
+                    f"Predictions table has 0 rows but {gen_events} generation events exist "
+                    "— predictions are being generated but not persisted"
+                ),
+                "recommendation": ("Check store_prediction() errors in logs; possible schema mismatch after migration"),
+            }
+        )
 
     # --- (a2) All predictions clustered below surfacing threshold ---
     pred_detail = pipeline.get("prediction_detail", {})
@@ -879,54 +890,61 @@ def detect_anomalies(sections: dict) -> list[dict]:
             total_preds = sum(histogram.values())
             # Count predictions in buckets below 0.3 (surfacing threshold)
             below_threshold = sum(
-                count for label, count in histogram.items()
+                count
+                for label, count in histogram.items()
                 if label < "0.3"  # "0.0-0.1", "0.1-0.2", "0.2-0.3" all sort before "0.3"
             )
             if total_preds > 5 and below_threshold == total_preds:
-                anomalies.append({
-                    "severity": "warning",
-                    "category": "prediction_low_confidence",
-                    "message": (
-                        f"All {total_preds} predictions have confidence below 0.3 "
-                        "(the surfacing threshold) — none can be surfaced to the user"
-                    ),
-                    "recommendation": (
-                        "Check prediction confidence calibration; accuracy multipliers "
-                        "may be too aggressive, or supporting signal data may be insufficient"
-                    ),
-                })
+                anomalies.append(
+                    {
+                        "severity": "warning",
+                        "category": "prediction_low_confidence",
+                        "message": (
+                            f"All {total_preds} predictions have confidence below 0.3 "
+                            "(the surfacing threshold) — none can be surfaced to the user"
+                        ),
+                        "recommendation": (
+                            "Check prediction confidence calibration; accuracy multipliers "
+                            "may be too aggressive, or supporting signal data may be insufficient"
+                        ),
+                    }
+                )
 
         # --- (a3) All predictions are the same type ---
         type_breakdown = pred_detail.get("type_breakdown", {})
         if len(type_breakdown) == 1 and total_generated > 5:
             single_type = next(iter(type_breakdown))
-            anomalies.append({
-                "severity": "warning",
-                "category": "prediction_type_monoculture",
-                "message": (
-                    f"All {total_generated} predictions are type '{single_type}' "
-                    "— prediction engine may be stuck on one signal source"
-                ),
-                "recommendation": (
-                    "Review prediction generation triggers; ensure multiple prediction "
-                    "types (NEED, RISK, OPPORTUNITY, REMINDER) are being considered"
-                ),
-            })
+            anomalies.append(
+                {
+                    "severity": "warning",
+                    "category": "prediction_type_monoculture",
+                    "message": (
+                        f"All {total_generated} predictions are type '{single_type}' "
+                        "— prediction engine may be stuck on one signal source"
+                    ),
+                    "recommendation": (
+                        "Review prediction generation triggers; ensure multiple prediction "
+                        "types (NEED, RISK, OPPORTUNITY, REMINDER) are being considered"
+                    ),
+                }
+            )
 
     # --- (b) High dedup ratio ---
     dedup_events = event_activity.get("usermodel.prediction.deduplicated", 0) if isinstance(event_activity, dict) else 0
     gen_events_for_ratio = gen_events if gen_events > 0 else 1
     if gen_events > 0 and dedup_events > 10 * gen_events:
         ratio = round(dedup_events / gen_events_for_ratio, 1)
-        anomalies.append({
-            "severity": "warning",
-            "category": "prediction_deduplication",
-            "message": f"Prediction deduplication rate is {ratio}x — most predictions are duplicates",
-            "recommendation": (
-                "Review prediction generation logic for duplicate triggers; "
-                "consider increasing dedup window or reducing generation frequency"
-            ),
-        })
+        anomalies.append(
+            {
+                "severity": "warning",
+                "category": "prediction_deduplication",
+                "message": f"Prediction deduplication rate is {ratio}x — most predictions are duplicates",
+                "recommendation": (
+                    "Review prediction generation logic for duplicate triggers; "
+                    "consider increasing dedup window or reducing generation frequency"
+                ),
+            }
+        )
 
     # --- (c) Zero routines with sufficient episodes ---
     user_model = sections.get("user_model", {})
@@ -934,22 +952,26 @@ def detect_anomalies(sections: dict) -> list[dict]:
     episodes = user_model.get("episodes", 0)
 
     if routines == 0 and episodes > 100:
-        anomalies.append({
-            "severity": "warning",
-            "category": "routine_detection",
-            "message": f"No routines detected despite {episodes} episodes",
-            "recommendation": "Check routine_detector diagnostics for interaction_type distribution",
-        })
+        anomalies.append(
+            {
+                "severity": "warning",
+                "category": "routine_detection",
+                "message": f"No routines detected despite {episodes} episodes",
+                "recommendation": "Check routine_detector diagnostics for interaction_type distribution",
+            }
+        )
 
     # --- (d) Zero workflows ---
     workflows = user_model.get("workflows", 0)
     if workflows == 0 and episodes > 100:
-        anomalies.append({
-            "severity": "warning",
-            "category": "workflow_detection",
-            "message": f"No workflows detected despite {episodes} episodes",
-            "recommendation": "Check workflow detection logic; ensure episodes have sufficient variety",
-        })
+        anomalies.append(
+            {
+                "severity": "warning",
+                "category": "workflow_detection",
+                "message": f"No workflows detected despite {episodes} episodes",
+                "recommendation": "Check workflow detection logic; ensure episodes have sufficient variety",
+            }
+        )
 
     # --- (d2) Workflow diagnostics anomalies ---
     wf_diag = sections.get("workflow_diagnostics", {})
@@ -959,18 +981,20 @@ def detect_anomalies(sections: dict) -> list[dict]:
             received = email_data.get("received_30d", 0)
             sent = email_data.get("sent_30d", 0)
             if received > 100 and sent < 5:
-                anomalies.append({
-                    "severity": "warning",
-                    "category": "workflow_email_imbalance",
-                    "message": (
-                        f"Low outbound email volume ({sent} sent vs {received} received in 30d) "
-                        "limits email workflow detection — workflows require send actions to complete"
-                    ),
-                    "recommendation": (
-                        "Verify email.sent events are being captured by the email connector; "
-                        "check connector sync for outbound mail"
-                    ),
-                })
+                anomalies.append(
+                    {
+                        "severity": "warning",
+                        "category": "workflow_email_imbalance",
+                        "message": (
+                            f"Low outbound email volume ({sent} sent vs {received} received in 30d) "
+                            "limits email workflow detection — workflows require send actions to complete"
+                        ),
+                        "recommendation": (
+                            "Verify email.sent events are being captured by the email connector; "
+                            "check connector sync for outbound mail"
+                        ),
+                    }
+                )
 
         ep_types = wf_diag.get("episode_interaction_types", {})
         if isinstance(ep_types, dict) and "error" not in ep_types:
@@ -978,18 +1002,20 @@ def detect_anomalies(sections: dict) -> list[dict]:
             if pct > 0.5:
                 count = ep_types.get("null_unknown_communication_count", 0)
                 total = ep_types.get("total_episodes", 0)
-                anomalies.append({
-                    "severity": "warning",
-                    "category": "workflow_stale_interaction_types",
-                    "message": (
-                        f"{count}/{total} episodes ({pct:.0%}) have NULL/unknown/communication "
-                        "interaction_type — stale types block interaction-based workflow detection"
-                    ),
-                    "recommendation": (
-                        "Run episode interaction_type backfill to reclassify episodes "
-                        "with specific types (email, task, calendar, etc.)"
-                    ),
-                })
+                anomalies.append(
+                    {
+                        "severity": "warning",
+                        "category": "workflow_stale_interaction_types",
+                        "message": (
+                            f"{count}/{total} episodes ({pct:.0%}) have NULL/unknown/communication "
+                            "interaction_type — stale types block interaction-based workflow detection"
+                        ),
+                        "recommendation": (
+                            "Run episode interaction_type backfill to reclassify episodes "
+                            "with specific types (email, task, calendar, etc.)"
+                        ),
+                    }
+                )
 
     # --- (e) Connector errors ---
     connectors = sections.get("connectors", {})
@@ -998,35 +1024,39 @@ def detect_anomalies(sections: dict) -> list[dict]:
             if isinstance(info, dict) and info.get("status") == "error":
                 error_msg = info.get("error", "unknown error")
                 last_sync = info.get("last_sync")
-                anomalies.append({
-                    "severity": "critical",
-                    "category": "connector_error",
-                    "message": (
-                        f"Connector '{connector_id}' is in error state: {error_msg}"
-                        f" (last_sync: {last_sync or 'never'})"
-                    ),
-                    "recommendation": f"Check connector '{connector_id}' configuration and credentials",
-                })
+                anomalies.append(
+                    {
+                        "severity": "critical",
+                        "category": "connector_error",
+                        "message": (
+                            f"Connector '{connector_id}' is in error state: {error_msg}"
+                            f" (last_sync: {last_sync or 'never'})"
+                        ),
+                        "recommendation": f"Check connector '{connector_id}' configuration and credentials",
+                    }
+                )
 
     # --- (f) Stale data sources ---
     # Only flag external user-facing data connectors as stale.  Internal system
     # event sources (rules engine, user model store, etc.) emit events only while
     # the process is running — flagging them as stale just adds noise when the
     # system is stopped.
-    _INTERNAL_EVENT_SOURCES = frozenset({
-        "user_model_store",
-        "rules_engine",
-        "system",
-        "notification_manager",
-        "routine_detector",
-        "connector_health_monitor",
-        "db_health_loop",
-        "feedback_collector",
-        "prediction_engine",
-        "signal_extractor",
-        "insight_engine",
-        "test-service",
-    })
+    _INTERNAL_EVENT_SOURCES = frozenset(
+        {
+            "user_model_store",
+            "rules_engine",
+            "system",
+            "notification_manager",
+            "routine_detector",
+            "connector_health_monitor",
+            "db_health_loop",
+            "feedback_collector",
+            "prediction_engine",
+            "signal_extractor",
+            "insight_engine",
+            "test-service",
+        }
+    )
     events = sections.get("events", {})
     sources = events.get("sources", {})
     if isinstance(sources, dict):
@@ -1045,43 +1075,47 @@ def detect_anomalies(sections: dict) -> list[dict]:
                             last_dt = last_dt.replace(tzinfo=UTC)
                         if last_dt < stale_threshold:
                             days_ago = (now - last_dt).days
-                            anomalies.append({
-                                "severity": "warning",
-                                "category": "stale_source",
-                                "message": (
-                                    f"Source '{source_name}' last produced data {days_ago} days ago"
-                                ),
-                                "recommendation": (
-                                    f"Check if connector for '{source_name}' is still running and authenticated"
-                                ),
-                            })
+                            anomalies.append(
+                                {
+                                    "severity": "warning",
+                                    "category": "stale_source",
+                                    "message": (f"Source '{source_name}' last produced data {days_ago} days ago"),
+                                    "recommendation": (
+                                        f"Check if connector for '{source_name}' is still running and authenticated"
+                                    ),
+                                }
+                            )
                     except (ValueError, TypeError):
                         pass  # Skip unparseable timestamps
 
     # --- (g) No prediction accuracy data ---
     pred_accuracy = sections.get("prediction_accuracy", {})
     if isinstance(pred_accuracy, dict) and not pred_accuracy:
-        anomalies.append({
-            "severity": "info",
-            "category": "prediction_accuracy",
-            "message": "No prediction accuracy data available — predictions may not have been resolved yet",
-            "recommendation": "Wait for predictions to be resolved through user interaction or time-based expiry",
-        })
+        anomalies.append(
+            {
+                "severity": "info",
+                "category": "prediction_accuracy",
+                "message": "No prediction accuracy data available — predictions may not have been resolved yet",
+                "recommendation": "Wait for predictions to be resolved through user interaction or time-based expiry",
+            }
+        )
 
     # --- (h) Pending notification backlog ---
     notifications = sections.get("notifications", {})
     if isinstance(notifications, dict) and "error" not in notifications:
         pending = notifications.get("pending", 0)
         if pending > 50:
-            anomalies.append({
-                "severity": "warning",
-                "category": "notification_backlog",
-                "message": f"Notification backlog has {pending} pending notifications",
-                "recommendation": (
-                    "Review notification generation rate; consider auto-expiring old notifications "
-                    "or adjusting notification thresholds"
-                ),
-            })
+            anomalies.append(
+                {
+                    "severity": "warning",
+                    "category": "notification_backlog",
+                    "message": f"Notification backlog has {pending} pending notifications",
+                    "recommendation": (
+                        "Review notification generation rate; consider auto-expiring old notifications "
+                        "or adjusting notification thresholds"
+                    ),
+                }
+            )
 
     # --- (i) Source weight learning activity ---
     sw_section = sections.get("source_weights", {})
@@ -1092,19 +1126,21 @@ def detect_anomalies(sections: dict) -> list[dict]:
         event_total = events.get("total", 0) if isinstance(events, dict) else 0
 
         if total_interactions == 0 and event_total > 100:
-            anomalies.append({
-                "severity": "warning",
-                "category": "source_weight_learning",
-                "message": (
-                    f"Source weights have 0 interactions despite {event_total} events "
-                    "— event classification may not be reaching source_weights"
-                ),
-                "recommendation": (
-                    "Check that SourceWeightManager.record_interaction() is being called "
-                    "in master_event_handler and that classify_event() returns keys "
-                    "matching source_weights table rows"
-                ),
-            })
+            anomalies.append(
+                {
+                    "severity": "warning",
+                    "category": "source_weight_learning",
+                    "message": (
+                        f"Source weights have 0 interactions despite {event_total} events "
+                        "— event classification may not be reaching source_weights"
+                    ),
+                    "recommendation": (
+                        "Check that SourceWeightManager.record_interaction() is being called "
+                        "in master_event_handler and that classify_event() returns keys "
+                        "matching source_weights table rows"
+                    ),
+                }
+            )
         elif total_interactions > 0 and total_dismissals == 0:
             # Count only explicit user dismissals — auto-resolved (timed-out) notifications
             # are recorded in feedback_log with auto_resolved=true in the context JSON but
@@ -1117,7 +1153,7 @@ def detect_anomalies(sections: dict) -> list[dict]:
                 # the context JSON, so we use the explicit_user_dismissals sub-key if
                 # the report was built with the granular query; otherwise fall back to
                 # the total which may be inflated by auto-resolved entries.
-                explicit_dismissals = sections.get("explicit_user_dismissals", None)
+                explicit_dismissals = sections.get("explicit_user_dismissals")
                 if explicit_dismissals is not None:
                     feedback_dismissals = explicit_dismissals
                 else:
@@ -1126,24 +1162,25 @@ def detect_anomalies(sections: dict) -> list[dict]:
                     # This prevents false positives when the system auto-expires stale
                     # prediction notifications that the user never saw.
                     feedback_dismissals = sum(
-                        f.get("count", 0) for f in feedback_list
-                        if f.get("feedback_type") == "dismissed"
+                        f.get("count", 0) for f in feedback_list if f.get("feedback_type") == "dismissed"
                     )
                 if feedback_dismissals > 5:
-                    anomalies.append({
-                        "severity": "warning",
-                        "category": "source_weight_feedback",
-                        "message": (
-                            f"Source weights recorded {total_interactions} interactions "
-                            f"but 0 dismissals despite {feedback_dismissals} explicit user "
-                            "notification dismissals — feedback-to-weight wiring may be broken"
-                        ),
-                        "recommendation": (
-                            "Check _classify_notification_source() in web/routes.py "
-                            "— dismissed notifications may lack source_event_id or "
-                            "map to unknown source_keys"
-                        ),
-                    })
+                    anomalies.append(
+                        {
+                            "severity": "warning",
+                            "category": "source_weight_feedback",
+                            "message": (
+                                f"Source weights recorded {total_interactions} interactions "
+                                f"but 0 dismissals despite {feedback_dismissals} explicit user "
+                                "notification dismissals — feedback-to-weight wiring may be broken"
+                            ),
+                            "recommendation": (
+                                "Check _classify_notification_source() in web/routes.py "
+                                "— dismissed notifications may lack source_event_id or "
+                                "map to unknown source_keys"
+                            ),
+                        }
+                    )
 
     # --- (j) Missing signal profiles — severity depends on qualifying event availability ---
     # A profile missing with qualifying events is a pipeline bug (warning).
@@ -1157,43 +1194,46 @@ def detect_anomalies(sections: dict) -> list[dict]:
             detail = missing_detail.get(profile_type, "unknown")
             if detail in ("no_qualifying_events", "no_qualifying_event_types_defined"):
                 # No qualifying events can populate this profile — informational only
-                anomalies.append({
-                    "severity": "info",
-                    "category": "missing_profile",
-                    "message": (
-                        f"Signal profile '{profile_type}' is missing — "
-                        "no qualifying events exist to populate it"
-                    ),
-                    "recommendation": (
-                        f"No action needed unless you expect {profile_type}-related "
-                        "data to be ingested (e.g., check connector status)"
-                    ),
-                })
+                anomalies.append(
+                    {
+                        "severity": "info",
+                        "category": "missing_profile",
+                        "message": (
+                            f"Signal profile '{profile_type}' is missing — no qualifying events exist to populate it"
+                        ),
+                        "recommendation": (
+                            f"No action needed unless you expect {profile_type}-related "
+                            "data to be ingested (e.g., check connector status)"
+                        ),
+                    }
+                )
             elif "qualifying_events_exist" in detail:
                 # Qualifying events exist but the profile was never written — pipeline issue
                 qualifying_count = detail.split("_qualifying_events_exist")[0]
-                anomalies.append({
-                    "severity": "warning",
-                    "category": "missing_profile",
-                    "message": (
-                        f"Signal profile '{profile_type}' is missing despite "
-                        f"{qualifying_count} qualifying events existing in events.db"
-                    ),
-                    "recommendation": (
-                        f"Check signal extractor pipeline for '{profile_type}'; "
-                        "run profile rebuild from /admin or check for extractor errors in logs"
-                    ),
-                })
+                anomalies.append(
+                    {
+                        "severity": "warning",
+                        "category": "missing_profile",
+                        "message": (
+                            f"Signal profile '{profile_type}' is missing despite "
+                            f"{qualifying_count} qualifying events existing in events.db"
+                        ),
+                        "recommendation": (
+                            f"Check signal extractor pipeline for '{profile_type}'; "
+                            "run profile rebuild from /admin or check for extractor errors in logs"
+                        ),
+                    }
+                )
             else:
                 # Unknown detail — report as warning to be safe
-                anomalies.append({
-                    "severity": "warning",
-                    "category": "missing_profile",
-                    "message": f"Signal profile '{profile_type}' is missing",
-                    "recommendation": (
-                        "Check signal extractor pipeline and run profile rebuild if needed"
-                    ),
-                })
+                anomalies.append(
+                    {
+                        "severity": "warning",
+                        "category": "missing_profile",
+                        "message": f"Signal profile '{profile_type}' is missing",
+                        "recommendation": ("Check signal extractor pipeline and run profile rebuild if needed"),
+                    }
+                )
 
     # --- (k) Root-cause annotation: link stale-data anomalies to connector errors ---
     # When a connector is in error state, many downstream anomalies are symptoms of that

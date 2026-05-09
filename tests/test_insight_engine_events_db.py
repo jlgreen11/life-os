@@ -19,6 +19,7 @@ from services.insight_engine.engine import InsightEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_event(event_store, event_type: str, timestamp: datetime, *, start_time: str | None = None):
     """Insert a minimal event into events.db via the EventStore.
 
@@ -31,15 +32,17 @@ def _insert_event(event_store, event_type: str, timestamp: datetime, *, start_ti
     payload: dict = {}
     if start_time is not None:
         payload["start_time"] = start_time
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": event_type,
-        "source": "test",
-        "timestamp": timestamp.isoformat(),
-        "priority": 2,
-        "payload": payload,
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "source": "test",
+            "timestamp": timestamp.isoformat(),
+            "priority": 2,
+            "payload": payload,
+            "metadata": {},
+        }
+    )
 
 
 # ===========================================================================
@@ -81,7 +84,8 @@ async def test_peak_hour_detected(db, user_model_store, event_store):
     # 50 emails in hour 10
     for i in range(50):
         _insert_event(
-            event_store, "email.received",
+            event_store,
+            "email.received",
             peak_anchor - timedelta(days=i % 25, minutes=i % 60),
         )
 
@@ -90,7 +94,8 @@ async def test_peak_hour_detected(db, user_model_store, event_store):
         hour_anchor = base.replace(hour=(10 + hour_offset) % 24, minute=15, second=0, microsecond=0)
         for j in range(5):
             _insert_event(
-                event_store, "email.received",
+                event_store,
+                "email.received",
                 hour_anchor - timedelta(days=j),
             )
 
@@ -113,7 +118,8 @@ async def test_peak_hour_no_dominant_hour_returns_empty(db, user_model_store, ev
         anchor = base.replace(hour=hour_offset, minute=30, second=0, microsecond=0)
         for j in range(5):
             _insert_event(
-                event_store, "email.received",
+                event_store,
+                "email.received",
                 anchor - timedelta(days=j),
             )
 
@@ -132,7 +138,8 @@ async def test_peak_hour_insight_has_correct_fields(db, user_model_store, event_
     # 60 emails at hour 14
     for i in range(60):
         _insert_event(
-            event_store, "email.received",
+            event_store,
+            "email.received",
             peak_anchor - timedelta(days=i % 28, minutes=i % 60),
         )
 
@@ -141,7 +148,8 @@ async def test_peak_hour_insight_has_correct_fields(db, user_model_store, event_
         anchor = base.replace(hour=(14 + hour_offset) % 24, minute=15, second=0, microsecond=0)
         for j in range(5):
             _insert_event(
-                event_store, "email.received",
+                event_store,
+                "email.received",
                 anchor - timedelta(days=j),
             )
 
@@ -200,7 +208,10 @@ async def test_meeting_density_peak_day_detected(db, user_model_store, event_sto
     if days_until_monday == 0 and base.weekday() != 0:
         days_until_monday = 7
     monday = (base - timedelta(days=base.weekday())).replace(
-        hour=12, minute=0, second=0, microsecond=0,
+        hour=12,
+        minute=0,
+        second=0,
+        microsecond=0,
     )
 
     # 12 meetings on Monday (spread across recent Mondays)
@@ -208,7 +219,9 @@ async def test_meeting_density_peak_day_detected(db, user_model_store, event_sto
         for i in range(3):
             ts = monday - timedelta(weeks=week, hours=i)
             _insert_event(
-                event_store, "calendar.event.created", ts,
+                event_store,
+                "calendar.event.created",
+                ts,
                 start_time=ts.isoformat(),
             )
 
@@ -217,7 +230,9 @@ async def test_meeting_density_peak_day_detected(db, user_model_store, event_sto
         for week in range(2):
             ts = monday - timedelta(weeks=week) + timedelta(days=day_offset)
             _insert_event(
-                event_store, "calendar.event.created", ts,
+                event_store,
+                "calendar.event.created",
+                ts,
                 start_time=ts.isoformat(),
             )
 
@@ -240,7 +255,9 @@ async def test_meeting_density_no_dominant_day_returns_empty(db, user_model_stor
         for j in range(2):
             ts = base - timedelta(days=day_offset, hours=j)
             _insert_event(
-                event_store, "calendar.event.created", ts,
+                event_store,
+                "calendar.event.created",
+                ts,
                 start_time=ts.isoformat(),
             )
 
@@ -256,7 +273,10 @@ async def test_meeting_density_insight_dedup_key_set(db, user_model_store, event
 
     # Anchor on a known Wednesday at noon UTC
     wednesday = (base - timedelta(days=(base.weekday() - 2) % 7)).replace(
-        hour=12, minute=0, second=0, microsecond=0,
+        hour=12,
+        minute=0,
+        second=0,
+        microsecond=0,
     )
 
     # 10 meetings on Wednesday
@@ -264,7 +284,9 @@ async def test_meeting_density_insight_dedup_key_set(db, user_model_store, event
         for i in range(4 if week < 2 else 2):
             ts = wednesday - timedelta(weeks=week, hours=i)
             _insert_event(
-                event_store, "calendar.event.created", ts,
+                event_store,
+                "calendar.event.created",
+                ts,
                 start_time=ts.isoformat(),
             )
 
@@ -272,7 +294,9 @@ async def test_meeting_density_insight_dedup_key_set(db, user_model_store, event
     for day_offset in [1, 2]:
         ts = wednesday + timedelta(days=day_offset)
         _insert_event(
-            event_store, "calendar.event.created", ts,
+            event_store,
+            "calendar.event.created",
+            ts,
             start_time=ts.isoformat(),
         )
 

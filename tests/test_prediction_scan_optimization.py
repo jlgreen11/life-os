@@ -48,12 +48,14 @@ async def test_scan_window_reduced_to_24_hours(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=12)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-12h",
-                    "from_address": "alice@example.com",
-                    "subject": "Test 12h",
-                    "body_plain": "Test message",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-12h",
+                        "from_address": "alice@example.com",
+                        "subject": "Test 12h",
+                        "body_plain": "Test message",
+                    }
+                ),
                 json.dumps({"related_contacts": ["alice@example.com"]}),  # Priority contact
             ),
         )
@@ -67,12 +69,14 @@ async def test_scan_window_reduced_to_24_hours(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=23)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-23h",
-                    "from_address": "bob@example.com",
-                    "subject": "Test 23h",
-                    "body_plain": "Test message",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-23h",
+                        "from_address": "bob@example.com",
+                        "subject": "Test 23h",
+                        "body_plain": "Test message",
+                    }
+                ),
                 json.dumps({"related_contacts": ["bob@example.com"]}),  # Priority contact
             ),
         )
@@ -86,12 +90,14 @@ async def test_scan_window_reduced_to_24_hours(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=36)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-36h",
-                    "from_address": "charlie@example.com",
-                    "subject": "Test 36h",
-                    "body_plain": "Test message",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-36h",
+                        "from_address": "charlie@example.com",
+                        "subject": "Test 36h",
+                        "body_plain": "Test message",
+                    }
+                ),
                 json.dumps({"related_contacts": ["charlie@example.com"]}),  # Priority contact
             ),
         )
@@ -101,11 +107,7 @@ async def test_scan_window_reduced_to_24_hours(db, user_model_store):
 
     # Should get predictions for 12h and 23h messages (both > 3h grace period)
     # Should NOT get prediction for 36h message (outside 24h scan window)
-    message_ids = [
-        p.supporting_signals.get("message_id")
-        for p in predictions
-        if p.prediction_type == "reminder"
-    ]
+    message_ids = [p.supporting_signals.get("message_id") for p in predictions if p.prediction_type == "reminder"]
 
     assert "msg-12h" in message_ids, "Should scan 12-hour-old email"
     assert "msg-23h" in message_ids, "Should scan 23-hour-old email"
@@ -129,12 +131,14 @@ async def test_deduplication_checks_wider_48h_window(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=12)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-test",
-                    "from_address": "alice@example.com",
-                    "subject": "Test",
-                    "body_plain": "Test message",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-test",
+                        "from_address": "alice@example.com",
+                        "subject": "Test",
+                        "body_plain": "Test message",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -192,12 +196,14 @@ async def test_performance_with_high_volume_emails(db, user_model_store):
                     "email.received",
                     "test",
                     (now - timedelta(hours=age_hours)).isoformat(),
-                    json.dumps({
-                        "message_id": f"msg-{i}",
-                        "from_address": email,
-                        "subject": f"Test {i}",
-                        "body_plain": "Test message",
-                    }),
+                    json.dumps(
+                        {
+                            "message_id": f"msg-{i}",
+                            "from_address": email,
+                            "subject": f"Test {i}",
+                            "body_plain": "Test message",
+                        }
+                    ),
                     json.dumps({"related_contacts": [email] if is_priority else []}),
                 ),
             )
@@ -231,12 +237,14 @@ async def test_no_duplicates_across_multiple_cycles(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=5)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-unique",
-                    "from_address": "alice@example.com",
-                    "subject": "Important",
-                    "body_plain": "Test message",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-unique",
+                        "from_address": "alice@example.com",
+                        "subject": "Important",
+                        "body_plain": "Test message",
+                    }
+                ),
                 json.dumps({"related_contacts": ["alice@example.com"]}),  # Priority contact for 0.7 confidence
             ),
         )
@@ -292,12 +300,14 @@ async def test_grace_period_still_respected(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=1)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-1h",
-                    "from_address": "alice@example.com",
-                    "subject": "Recent",
-                    "body_plain": "Test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-1h",
+                        "from_address": "alice@example.com",
+                        "subject": "Recent",
+                        "body_plain": "Test",
+                    }
+                ),
                 json.dumps({"related_contacts": ["alice@example.com"]}),  # Priority contact
             ),
         )
@@ -311,12 +321,14 @@ async def test_grace_period_still_respected(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=4)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-4h",
-                    "from_address": "bob@example.com",
-                    "subject": "Older",
-                    "body_plain": "Test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-4h",
+                        "from_address": "bob@example.com",
+                        "subject": "Older",
+                        "body_plain": "Test",
+                    }
+                ),
                 json.dumps({"related_contacts": ["bob@example.com"]}),  # Priority contact
             ),
         )
@@ -346,12 +358,14 @@ async def test_marketing_filter_still_applied(db, user_model_store):
                 "email.received",
                 "test",
                 (now - timedelta(hours=5)).isoformat(),
-                json.dumps({
-                    "message_id": "msg-marketing",
-                    "from_address": "noreply@example.com",
-                    "subject": "Special Offer",
-                    "body_plain": "Click here to unsubscribe",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-marketing",
+                        "from_address": "noreply@example.com",
+                        "subject": "Special Offer",
+                        "body_plain": "Click here to unsubscribe",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -387,12 +401,14 @@ async def test_scan_efficiency_metric(db, user_model_store):
                     "email.received",
                     "test",
                     (now - timedelta(hours=i * 24 / 100)).isoformat(),
-                    json.dumps({
-                        "message_id": f"msg-24h-{i}",
-                        "from_address": f"user{i}@example.com",
-                        "subject": f"Test {i}",
-                        "body_plain": "Test",
-                    }),
+                    json.dumps(
+                        {
+                            "message_id": f"msg-24h-{i}",
+                            "from_address": f"user{i}@example.com",
+                            "subject": f"Test {i}",
+                            "body_plain": "Test",
+                        }
+                    ),
                     json.dumps({"related_contacts": []}),
                 ),
             )
@@ -409,12 +425,14 @@ async def test_scan_efficiency_metric(db, user_model_store):
                     "email.received",
                     "test",
                     (now - timedelta(hours=age_hours)).isoformat(),
-                    json.dumps({
-                        "message_id": f"msg-48h-{i}",
-                        "from_address": f"user{i + 100}@example.com",
-                        "subject": f"Test {i + 100}",
-                        "body_plain": "Test",
-                    }),
+                    json.dumps(
+                        {
+                            "message_id": f"msg-48h-{i}",
+                            "from_address": f"user{i + 100}@example.com",
+                            "subject": f"Test {i + 100}",
+                            "body_plain": "Test",
+                        }
+                    ),
                     json.dumps({"related_contacts": []}),
                 ),
             )

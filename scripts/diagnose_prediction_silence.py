@@ -15,15 +15,14 @@ We know:
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from services.prediction_engine.engine import PredictionEngine
 from storage.database import DatabaseManager
 from storage.user_model_store import UserModelStore
-from services.prediction_engine.engine import PredictionEngine
 
 
 async def main():
@@ -35,11 +34,7 @@ async def main():
     print("=== Prediction Engine Diagnostics ===\n")
 
     # Create a minimal context
-    context = {
-        "current_location": None,
-        "current_activity": None,
-        "time_of_day": "afternoon"
-    }
+    context = {"current_location": None, "current_activity": None, "time_of_day": "afternoon"}
 
     # Test each prediction type individually
     print("1. Testing calendar conflicts...")
@@ -107,9 +102,9 @@ async def main():
 
     with db.get_connection("events") as conn:
         # Calendar events
-        total_cal = conn.execute(
-            "SELECT COUNT(*) as cnt FROM events WHERE type = 'calendar.event.created'"
-        ).fetchone()["cnt"]
+        total_cal = conn.execute("SELECT COUNT(*) as cnt FROM events WHERE type = 'calendar.event.created'").fetchone()[
+            "cnt"
+        ]
 
         future_cal = conn.execute(
             """SELECT COUNT(*) as cnt FROM events
@@ -120,16 +115,12 @@ async def main():
         print(f"Calendar events: {total_cal} total, {future_cal} future")
 
         # Email events
-        emails = conn.execute(
-            "SELECT COUNT(*) as cnt FROM events WHERE type = 'email.received'"
-        ).fetchone()["cnt"]
+        emails = conn.execute("SELECT COUNT(*) as cnt FROM events WHERE type = 'email.received'").fetchone()["cnt"]
         print(f"Email events: {emails}")
 
     with db.get_connection("user_model") as conn:
         # Routines
-        routines = conn.execute(
-            "SELECT COUNT(*) as cnt FROM routines"
-        ).fetchone()["cnt"]
+        routines = conn.execute("SELECT COUNT(*) as cnt FROM routines").fetchone()["cnt"]
         print(f"Routines: {routines}")
 
         # Relationships profile

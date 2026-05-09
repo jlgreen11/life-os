@@ -27,20 +27,24 @@ def _seed_morning_routine(user_model_store, days=10):
     base_date = datetime.now(timezone.utc) - timedelta(days=days)
     for day_offset in range(days):
         day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
-        user_model_store.store_episode({
-            "id": str(uuid.uuid4()),
-            "timestamp": day_start.isoformat(),
-            "event_id": str(uuid.uuid4()),
-            "interaction_type": "check_email",
-            "content_summary": "Check Email",
-        })
-        user_model_store.store_episode({
-            "id": str(uuid.uuid4()),
-            "timestamp": (day_start + timedelta(minutes=15)).isoformat(),
-            "event_id": str(uuid.uuid4()),
-            "interaction_type": "review_calendar",
-            "content_summary": "Review Calendar",
-        })
+        user_model_store.store_episode(
+            {
+                "id": str(uuid.uuid4()),
+                "timestamp": day_start.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "check_email",
+                "content_summary": "Check Email",
+            }
+        )
+        user_model_store.store_episode(
+            {
+                "id": str(uuid.uuid4()),
+                "timestamp": (day_start + timedelta(minutes=15)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "review_calendar",
+                "content_summary": "Review Calendar",
+            }
+        )
 
 
 def _seed_location_routine(user_model_store, days=10):
@@ -51,20 +55,24 @@ def _seed_location_routine(user_model_store, days=10):
     base_date = datetime.now(timezone.utc) - timedelta(days=days)
     for day_offset in range(days):
         arrive_time = base_date + timedelta(days=day_offset, hours=17)
-        user_model_store.store_episode({
-            "id": str(uuid.uuid4()),
-            "timestamp": arrive_time.isoformat(),
-            "event_id": str(uuid.uuid4()),
-            "interaction_type": "location",
-            "location": "Home",
-        })
-        user_model_store.store_episode({
-            "id": str(uuid.uuid4()),
-            "timestamp": (arrive_time + timedelta(minutes=5)).isoformat(),
-            "event_id": str(uuid.uuid4()),
-            "interaction_type": "smart_home",
-            "location": "Home",
-        })
+        user_model_store.store_episode(
+            {
+                "id": str(uuid.uuid4()),
+                "timestamp": arrive_time.isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "location",
+                "location": "Home",
+            }
+        )
+        user_model_store.store_episode(
+            {
+                "id": str(uuid.uuid4()),
+                "timestamp": (arrive_time + timedelta(minutes=5)).isoformat(),
+                "event_id": str(uuid.uuid4()),
+                "interaction_type": "smart_home",
+                "location": "Home",
+            }
+        )
 
 
 class TestDetectRoutinesSurvivesStrategyCrash:

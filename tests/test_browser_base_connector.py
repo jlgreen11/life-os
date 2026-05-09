@@ -51,9 +51,7 @@ def _make_test_connector_class():
         SYNC_INTERVAL_SECONDS = 60
 
         def __init__(self, event_bus, db, config, browser_engine=None, credential_vault=None):
-            super().__init__(event_bus, db, config,
-                             browser_engine=browser_engine,
-                             credential_vault=credential_vault)
+            super().__init__(event_bus, db, config, browser_engine=browser_engine, credential_vault=credential_vault)
             # Track calls for assertions
             self.api_authenticate_mock = AsyncMock(return_value=True)
             self.api_sync_mock = AsyncMock(return_value=5)
@@ -115,9 +113,7 @@ def browser_connector(event_bus, db, mock_browser_engine, mock_credential_vault)
     """Create a TestBrowserConnector with mocked browser dependencies."""
     cls = _make_test_connector_class()
     config = {"prefer_api": True}
-    connector = cls(event_bus, db, config,
-                    browser_engine=mock_browser_engine,
-                    credential_vault=mock_credential_vault)
+    connector = cls(event_bus, db, config, browser_engine=mock_browser_engine, credential_vault=mock_credential_vault)
     return connector
 
 
@@ -289,9 +285,7 @@ class TestSync:
     async def test_sync_browser_error_returns_zero(self, browser_connector):
         """When both API and browser fail, sync() returns 0."""
         browser_connector.api_sync_mock.side_effect = Exception("API error")
-        browser_connector._browser_sync_wrapper = AsyncMock(
-            side_effect=Exception("Browser error too")
-        )
+        browser_connector._browser_sync_wrapper = AsyncMock(side_effect=Exception("Browser error too"))
 
         count = await browser_connector.sync()
 
@@ -333,24 +327,18 @@ class TestStop:
     """Verify stop() saves session and cleans up browser context."""
 
     @pytest.mark.asyncio
-    async def test_stop_saves_session_and_closes_context(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_stop_saves_session_and_closes_context(self, browser_connector, mock_browser_engine):
         """Verify stop() calls save_session and context.close()."""
         mock_context = AsyncMock()
         browser_connector._context = mock_context
 
         await browser_connector.stop()
 
-        mock_browser_engine.save_session.assert_awaited_once_with(
-            mock_context, browser_connector.SITE_ID
-        )
+        mock_browser_engine.save_session.assert_awaited_once_with(mock_context, browser_connector.SITE_ID)
         mock_context.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_stop_handles_save_session_error(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_stop_handles_save_session_error(self, browser_connector, mock_browser_engine):
         """Verify stop() continues even if save_session raises."""
         mock_context = AsyncMock()
         browser_connector._context = mock_context
@@ -363,9 +351,7 @@ class TestStop:
         mock_context.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_stop_handles_context_close_error(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_stop_handles_context_close_error(self, browser_connector, mock_browser_engine):
         """Verify stop() continues even if context.close() raises."""
         mock_context = AsyncMock()
         mock_context.close.side_effect = Exception("Close failed")
@@ -477,9 +463,7 @@ class TestBrowserSyncWrapper:
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_browser_sync_wrapper_session_expiry_detection(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_sync_wrapper_session_expiry_detection(self, browser_connector, mock_browser_engine):
         """When browser_sync raises an error containing 'session', the wrapper
         clears session and retries after re-login."""
         browser_connector._page = MagicMock(name="page")
@@ -495,15 +479,11 @@ class TestBrowserSyncWrapper:
         count = await browser_connector._browser_sync_wrapper()
 
         assert count == 8
-        mock_browser_engine.session_manager.clear_session.assert_called_once_with(
-            browser_connector.SITE_ID
-        )
+        mock_browser_engine.session_manager.clear_session.assert_called_once_with(browser_connector.SITE_ID)
         browser_connector._browser_login.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_browser_sync_wrapper_login_keyword_detection(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_sync_wrapper_login_keyword_detection(self, browser_connector, mock_browser_engine):
         """When browser_sync raises an error containing 'login', the wrapper
         also treats it as session expiry."""
         browser_connector._page = MagicMock(name="page")
@@ -533,9 +513,7 @@ class TestBrowserSyncWrapper:
             await browser_connector._browser_sync_wrapper()
 
     @pytest.mark.asyncio
-    async def test_browser_sync_wrapper_saves_session_on_success(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_sync_wrapper_saves_session_on_success(self, browser_connector, mock_browser_engine):
         """After a successful browser_sync, session is saved."""
         browser_connector._page = MagicMock(name="page")
         browser_connector._context = MagicMock(name="context")
@@ -544,17 +522,17 @@ class TestBrowserSyncWrapper:
         count = await browser_connector._browser_sync_wrapper()
 
         assert count == 10
-        mock_browser_engine.save_session.assert_awaited_once_with(
-            browser_connector._context, browser_connector.SITE_ID
-        )
+        mock_browser_engine.save_session.assert_awaited_once_with(browser_connector._context, browser_connector.SITE_ID)
 
     @staticmethod
     def _set_page(connector):
         """Helper that simulates _browser_login setting _page and _context."""
+
         async def _side_effect():
             connector._page = MagicMock(name="page")
             connector._context = MagicMock(name="context")
             return True
+
         return _side_effect
 
 
@@ -616,9 +594,7 @@ class TestBrowserLogin:
     fresh login with form filling, 2FA handling, and error recovery."""
 
     @pytest.mark.asyncio
-    async def test_browser_login_no_credentials_returns_false(
-        self, browser_connector, mock_credential_vault
-    ):
+    async def test_browser_login_no_credentials_returns_false(self, browser_connector, mock_credential_vault):
         """When no credentials exist for the site, _browser_login() returns False."""
         mock_credential_vault.get_credential.return_value = None
 
@@ -629,9 +605,7 @@ class TestBrowserLogin:
         browser_connector._browser_engine.start.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_browser_login_reuses_valid_session(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_login_reuses_valid_session(self, browser_connector, mock_browser_engine):
         """When a saved session is still valid, _browser_login() returns True
         without performing a fresh login."""
         mock_browser_engine.session_manager.has_session.return_value = True
@@ -653,9 +627,7 @@ class TestBrowserLogin:
         mock_page.goto.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_browser_login_fresh_login_success(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_login_fresh_login_success(self, browser_connector, mock_browser_engine):
         """When no saved session exists, _browser_login() performs a fresh
         login flow and saves the session on success."""
         mock_browser_engine.session_manager.has_session.return_value = False
@@ -667,8 +639,10 @@ class TestBrowserLogin:
         # is_logged_in returns True after the login form is submitted
         browser_connector.is_logged_in = AsyncMock(return_value=True)
 
-        with patch.object(browser_connector, "_human") as mock_human, \
-             patch.object(browser_connector, "_interactor") as mock_interactor:
+        with (
+            patch.object(browser_connector, "_human") as mock_human,
+            patch.object(browser_connector, "_interactor") as mock_interactor,
+        ):
             mock_human.wait_human = AsyncMock()
             mock_interactor.login = AsyncMock()
 
@@ -679,9 +653,7 @@ class TestBrowserLogin:
         mock_browser_engine.save_session.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_browser_login_fresh_login_failure(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_login_fresh_login_failure(self, browser_connector, mock_browser_engine):
         """When login form submission doesn't result in a logged-in state,
         _browser_login() returns False."""
         mock_browser_engine.session_manager.has_session.return_value = False
@@ -693,8 +665,10 @@ class TestBrowserLogin:
         # is_logged_in returns False (login failed)
         browser_connector.is_logged_in = AsyncMock(return_value=False)
 
-        with patch.object(browser_connector, "_human") as mock_human, \
-             patch.object(browser_connector, "_interactor") as mock_interactor:
+        with (
+            patch.object(browser_connector, "_human") as mock_human,
+            patch.object(browser_connector, "_interactor") as mock_interactor,
+        ):
             mock_human.wait_human = AsyncMock()
             mock_interactor.login = AsyncMock()
 
@@ -705,9 +679,7 @@ class TestBrowserLogin:
         mock_browser_engine.save_session.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_browser_login_2fa_flow(
-        self, browser_connector, mock_browser_engine, mock_credential_vault
-    ):
+    async def test_browser_login_2fa_flow(self, browser_connector, mock_browser_engine, mock_credential_vault):
         """When REQUIRES_2FA is True and TOTP is available, _browser_login()
         enters the 2FA code after password submission."""
         browser_connector.REQUIRES_2FA = True
@@ -720,8 +692,10 @@ class TestBrowserLogin:
 
         browser_connector.is_logged_in = AsyncMock(return_value=True)
 
-        with patch.object(browser_connector, "_human") as mock_human, \
-             patch.object(browser_connector, "_interactor") as mock_interactor:
+        with (
+            patch.object(browser_connector, "_human") as mock_human,
+            patch.object(browser_connector, "_interactor") as mock_interactor,
+        ):
             mock_human.wait_human = AsyncMock()
             mock_interactor.login = AsyncMock()
             mock_interactor.handle_2fa = AsyncMock()
@@ -748,8 +722,10 @@ class TestBrowserLogin:
         mock_page.goto = AsyncMock()
         mock_browser_engine.new_page.return_value = mock_page
 
-        with patch.object(browser_connector, "_human") as mock_human, \
-             patch.object(browser_connector, "_interactor") as mock_interactor:
+        with (
+            patch.object(browser_connector, "_human") as mock_human,
+            patch.object(browser_connector, "_interactor") as mock_interactor,
+        ):
             mock_human.wait_human = AsyncMock()
             mock_interactor.login = AsyncMock()
 
@@ -758,9 +734,7 @@ class TestBrowserLogin:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_browser_login_exception_returns_false(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_login_exception_returns_false(self, browser_connector, mock_browser_engine):
         """When the browser login flow raises an exception,
         _browser_login() returns False (fail-open)."""
         mock_browser_engine.start.side_effect = Exception("Browser crashed")
@@ -770,9 +744,7 @@ class TestBrowserLogin:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_browser_login_sets_page_and_context(
-        self, browser_connector, mock_browser_engine
-    ):
+    async def test_browser_login_sets_page_and_context(self, browser_connector, mock_browser_engine):
         """After successful login, _page and _context are set on the connector."""
         mock_browser_engine.session_manager.has_session.return_value = False
 
@@ -784,8 +756,10 @@ class TestBrowserLogin:
 
         browser_connector.is_logged_in = AsyncMock(return_value=True)
 
-        with patch.object(browser_connector, "_human") as mock_human, \
-             patch.object(browser_connector, "_interactor") as mock_interactor:
+        with (
+            patch.object(browser_connector, "_human") as mock_human,
+            patch.object(browser_connector, "_interactor") as mock_interactor,
+        ):
             mock_human.wait_human = AsyncMock()
             mock_interactor.login = AsyncMock()
 
@@ -810,14 +784,10 @@ class TestNavigateWithRateLimit:
         mock_page.goto = AsyncMock()
         browser_connector.rate_limit_wait = AsyncMock()
 
-        await browser_connector.navigate_with_rate_limit(
-            mock_page, "https://example.com/page"
-        )
+        await browser_connector.navigate_with_rate_limit(mock_page, "https://example.com/page")
 
         browser_connector.rate_limit_wait.assert_awaited_once()
-        mock_page.goto.assert_awaited_once_with(
-            "https://example.com/page", wait_until="networkidle"
-        )
+        mock_page.goto.assert_awaited_once_with("https://example.com/page", wait_until="networkidle")
 
     @pytest.mark.asyncio
     async def test_navigate_passes_url_to_page(self, browser_connector):
@@ -858,9 +828,7 @@ class TestDefaultSubclassInterface:
         from connectors.browser.base_connector import BrowserBaseConnector
 
         # Access the base class default directly (not the test subclass override)
-        result = await BrowserBaseConnector.api_authenticate(
-            MagicMock(spec=BrowserBaseConnector)
-        )
+        result = await BrowserBaseConnector.api_authenticate(MagicMock(spec=BrowserBaseConnector))
         assert result is False
 
     @pytest.mark.asyncio
@@ -869,9 +837,7 @@ class TestDefaultSubclassInterface:
         from connectors.browser.base_connector import BrowserBaseConnector
 
         with pytest.raises(NotImplementedError):
-            await BrowserBaseConnector.api_sync(
-                MagicMock(spec=BrowserBaseConnector)
-            )
+            await BrowserBaseConnector.api_sync(MagicMock(spec=BrowserBaseConnector))
 
     @pytest.mark.asyncio
     async def test_browser_sync_default_raises(self, event_bus, db):
@@ -881,7 +847,9 @@ class TestDefaultSubclassInterface:
         with pytest.raises(NotImplementedError):
             await BrowserBaseConnector.browser_sync(
                 MagicMock(spec=BrowserBaseConnector),
-                MagicMock(), MagicMock(), MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
             )
 
 
@@ -894,9 +862,7 @@ class TestFailureProgression:
     """Verify the full failure progression from API to browser mode."""
 
     @pytest.mark.asyncio
-    async def test_three_consecutive_failures_switches_permanently(
-        self, browser_connector
-    ):
+    async def test_three_consecutive_failures_switches_permanently(self, browser_connector):
         """After exactly api_failure_threshold consecutive API failures,
         subsequent sync calls skip the API entirely."""
         browser_connector._api_failure_threshold = 3

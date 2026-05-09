@@ -31,27 +31,31 @@ def workflow_detector(db, user_model_store):
 def create_email_event(db, event_type, timestamp, email_from=None, email_to=None):
     """Helper to create an email event with denormalized columns."""
     import uuid
+
     event_id = f"evt_{event_type}_{timestamp.isoformat()}_{uuid.uuid4().hex[:8]}"
     payload = {}
     if email_from:
-        payload['from_address'] = email_from
+        payload["from_address"] = email_from
     if email_to:
-        payload['to_address'] = email_to
+        payload["to_address"] = email_to
 
     with db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, email_from, email_to)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event_id,
-            event_type,
-            'test',
-            timestamp.isoformat(),
-            'normal',
-            f'{{"from_address":"{email_from}","to_address":"{email_to}"}}' if email_from or email_to else '{}',
-            email_from,
-            email_to
-        ))
+        """,
+            (
+                event_id,
+                event_type,
+                "test",
+                timestamp.isoformat(),
+                "normal",
+                f'{{"from_address":"{email_from}","to_address":"{email_to}"}}' if email_from or email_to else "{}",
+                email_from,
+                email_to,
+            ),
+        )
         conn.commit()
 
     return event_id
@@ -60,24 +64,28 @@ def create_email_event(db, event_type, timestamp, email_from=None, email_to=None
 def create_task_event(db, event_type, timestamp, task_id=None):
     """Helper to create a task event with denormalized columns."""
     import uuid
+
     event_id = f"evt_{event_type}_{timestamp.isoformat()}_{uuid.uuid4().hex[:8]}"
     payload = {}
     if task_id:
-        payload['task_id'] = task_id
+        payload["task_id"] = task_id
 
     with db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, task_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event_id,
-            event_type,
-            'test',
-            timestamp.isoformat(),
-            'normal',
-            f'{{"task_id":"{task_id}"}}' if task_id else '{}',
-            task_id
-        ))
+        """,
+            (
+                event_id,
+                event_type,
+                "test",
+                timestamp.isoformat(),
+                "normal",
+                f'{{"task_id":"{task_id}"}}' if task_id else "{}",
+                task_id,
+            ),
+        )
         conn.commit()
 
     return event_id
@@ -86,24 +94,28 @@ def create_task_event(db, event_type, timestamp, task_id=None):
 def create_calendar_event(db, event_type, timestamp, calendar_event_id=None):
     """Helper to create a calendar event with denormalized columns."""
     import uuid
+
     event_id = f"evt_{event_type}_{timestamp.isoformat()}_{uuid.uuid4().hex[:8]}"
     payload = {}
     if calendar_event_id:
-        payload['event_id'] = calendar_event_id
+        payload["event_id"] = calendar_event_id
 
     with db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, calendar_event_id)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            event_id,
-            event_type,
-            'test',
-            timestamp.isoformat(),
-            'normal',
-            f'{{"event_id":"{calendar_event_id}"}}' if calendar_event_id else '{}',
-            calendar_event_id
-        ))
+        """,
+            (
+                event_id,
+                event_type,
+                "test",
+                timestamp.isoformat(),
+                "normal",
+                f'{{"event_id":"{calendar_event_id}"}}' if calendar_event_id else "{}",
+                calendar_event_id,
+            ),
+        )
         conn.commit()
 
     return event_id
@@ -112,26 +124,30 @@ def create_calendar_event(db, event_type, timestamp, calendar_event_id=None):
 def create_episode(db, interaction_type, timestamp):
     """Helper to create an episode in the user_model database."""
     import uuid
+
     episode_id = f"ep_{interaction_type}_{timestamp.isoformat()}_{uuid.uuid4().hex[:8]}"
     event_id = f"evt_{interaction_type}_{timestamp.isoformat()}_{uuid.uuid4().hex[:8]}"
 
     with db.get_connection("user_model") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO episodes (
                 id, timestamp, event_id, interaction_type, content_summary,
                 contacts_involved, topics, entities
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            episode_id,
-            timestamp.isoformat(),
-            event_id,
-            interaction_type,
-            f"Test {interaction_type} episode",
-            "[]",
-            "[]",
-            "[]"
-        ))
+        """,
+            (
+                episode_id,
+                timestamp.isoformat(),
+                event_id,
+                interaction_type,
+                f"Test {interaction_type} episode",
+                "[]",
+                "[]",
+                "[]",
+            ),
+        )
         conn.commit()
 
     return episode_id
@@ -157,10 +173,10 @@ class TestEmailWorkflowDetection:
 
         assert len(workflows) == 1
         workflow = workflows[0]
-        assert sender in workflow['name']
-        assert workflow['times_observed'] == 5
-        assert 'sent' in workflow['steps']
-        assert workflow['success_rate'] == 1.0  # 100% response rate
+        assert sender in workflow["name"]
+        assert workflow["times_observed"] == 5
+        assert "sent" in workflow["steps"]
+        assert workflow["success_rate"] == 1.0  # 100% response rate
 
     def test_multi_sender_workflows(self, db, workflow_detector):
         """Detects workflows from multiple senders independently."""
@@ -178,7 +194,7 @@ class TestEmailWorkflowDetection:
         workflows = workflow_detector._detect_email_workflows(lookback_days=30)
 
         assert len(workflows) == 3
-        detected_senders = {w['name'] for w in workflows}
+        detected_senders = {w["name"] for w in workflows}
         for sender in senders:
             assert any(sender in name for name in detected_senders)
 
@@ -201,9 +217,9 @@ class TestEmailWorkflowDetection:
 
         assert len(workflows) == 1
         workflow = workflows[0]
-        assert 'created' in workflow['steps']
-        assert 'sent' in workflow['steps']
-        assert 'task' in workflow['tools_used']
+        assert "created" in workflow["steps"]
+        assert "sent" in workflow["steps"]
+        assert "task" in workflow["tools_used"]
 
     def test_filters_low_volume_senders(self, db, workflow_detector):
         """Ignores senders with fewer than min_occurrences emails."""
@@ -261,7 +277,7 @@ class TestEmailWorkflowDetection:
         # multiple received emails (6h apart), so success rate will be higher
         assert len(workflows) == 1
         workflow = workflows[0]
-        assert 0.3 <= workflow['success_rate'] <= 0.6
+        assert 0.3 <= workflow["success_rate"] <= 0.6
 
 
 class TestTaskWorkflowDetection:
@@ -285,9 +301,9 @@ class TestTaskWorkflowDetection:
 
         assert len(workflows) == 1
         workflow = workflows[0]
-        assert workflow['name'] == "Task completion workflow"
-        assert 'sent' in workflow['steps']
-        assert 'completed' in workflow['steps']
+        assert workflow["name"] == "Task completion workflow"
+        assert "sent" in workflow["steps"]
+        assert "completed" in workflow["steps"]
 
     def test_insufficient_tasks(self, db, workflow_detector):
         """Does not detect workflow with too few tasks."""
@@ -432,7 +448,9 @@ class TestWorkflowStorage:
         # Verify it's in the database
         with db.get_connection("user_model") as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name, success_rate, times_observed FROM workflows WHERE name = ?", ("Test workflow",))
+            cursor.execute(
+                "SELECT name, success_rate, times_observed FROM workflows WHERE name = ?", ("Test workflow",)
+            )
             row = cursor.fetchone()
 
             assert row is not None
@@ -509,6 +527,6 @@ class TestIntegration:
 
         # Should detect workflows from multiple types
         assert len(workflows) >= 2  # At minimum email and task workflows
-        workflow_names = {w['name'] for w in workflows}
-        assert any('boss@company.com' in name for name in workflow_names)  # Email workflow
-        assert any('Task completion' in name for name in workflow_names)  # Task workflow
+        workflow_names = {w["name"] for w in workflows}
+        assert any("boss@company.com" in name for name in workflow_names)  # Email workflow
+        assert any("Task completion" in name for name in workflow_names)  # Task workflow

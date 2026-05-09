@@ -25,6 +25,7 @@ from services.signal_extractor.decision import DecisionExtractor
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_sent_event(content: str, recipient: str, hour: int = 14) -> dict:
     """Build a MESSAGE_SENT event with the given content and recipient."""
     now = datetime.now(timezone.utc).replace(hour=hour, minute=0, second=0, microsecond=0)
@@ -54,6 +55,7 @@ def _make_email_sent(body: str, to: str, hour: int = 10) -> dict:
 # ---------------------------------------------------------------------------
 # delegation_comfort
 # ---------------------------------------------------------------------------
+
 
 def test_delegation_comfort_increases_on_full_delegation(db, user_model_store):
     """delegation_comfort should rise when a 'you decide' message is sent."""
@@ -161,6 +163,7 @@ def test_nondelegation_increments_only_total_counter(db, user_model_store):
 # delegation_by_domain
 # ---------------------------------------------------------------------------
 
+
 def test_delegation_by_domain_populated_for_recipient(db, user_model_store):
     """delegation_by_domain should record delegation tendency per recipient."""
     extractor = DecisionExtractor(db, user_model_store)
@@ -179,7 +182,7 @@ def test_delegation_by_domain_ema_on_repeat_delegation(db, user_model_store):
     extractor = DecisionExtractor(db, user_model_store)
 
     extractor.extract(_make_sent_event("You decide.", "partner"))  # score = 1.0
-    extractor.extract(_make_sent_event("Up to you.", "partner"))   # EMA: 0.7*1.0 + 0.3*1.0 = 1.0
+    extractor.extract(_make_sent_event("Up to you.", "partner"))  # EMA: 0.7*1.0 + 0.3*1.0 = 1.0
 
     profile = user_model_store.get_signal_profile("decision")
     by_domain = profile["data"]["delegation_by_domain"]
@@ -192,9 +195,7 @@ def test_delegation_by_domain_tracks_multiple_recipients(db, user_model_store):
     extractor = DecisionExtractor(db, user_model_store)
 
     extractor.extract(_make_sent_event("You decide on dinner.", "partner"))
-    extractor.extract(
-        _make_email_sent("Any thoughts on the proposal?", "boss@work.com", hour=10)
-    )
+    extractor.extract(_make_email_sent("Any thoughts on the proposal?", "boss@work.com", hour=10))
 
     profile = user_model_store.get_signal_profile("decision")
     by_domain = profile["data"]["delegation_by_domain"]
@@ -205,6 +206,7 @@ def test_delegation_by_domain_tracks_multiple_recipients(db, user_model_store):
 # ---------------------------------------------------------------------------
 # defers_to
 # ---------------------------------------------------------------------------
+
 
 def test_defers_to_populated_evening_full_delegation(db, user_model_store):
     """Full delegation in the evening should add recipient to 'personal' category."""
@@ -248,6 +250,7 @@ def test_defers_to_no_duplicate_entries(db, user_model_store):
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_empty_recipient_does_not_crash(db, user_model_store):
     """Delegation with no recipient should update comfort but skip per-contact tracking."""

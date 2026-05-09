@@ -72,9 +72,7 @@ class TestSupplementaryFallbackTriggered:
         result = inferrer.infer_from_relationship_profile()
 
         assert result["processed"] is True
-        assert result.get("facts_written", 0) > 0, (
-            "Should have produced facts via supplementary inbound-only fallback"
-        )
+        assert result.get("facts_written", 0) > 0, "Should have produced facts via supplementary inbound-only fallback"
 
         facts = _get_semantic_facts(user_model_store)
         # Should have at least a communication_volume_category fact
@@ -303,7 +301,8 @@ class TestSupplementaryFallbackLogging:
             inferrer.infer_from_relationship_profile()
 
         fallback_msgs = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if "supplementary" in r.message.lower() and "inbound-only fallback" in r.message.lower()
         ]
         assert len(fallback_msgs) >= 1, "Should log supplementary fallback message"

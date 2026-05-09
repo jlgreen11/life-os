@@ -174,9 +174,7 @@ def test_get_events_no_filters(event_store):
     # Store events with different timestamps
     now = datetime.now(timezone.utc)
     for i in range(5):
-        event = create_test_event(
-            timestamp=(now - timedelta(minutes=i)).isoformat()
-        )
+        event = create_test_event(timestamp=(now - timedelta(minutes=i)).isoformat())
         event_store.store_event(event)
 
     events = event_store.get_events(limit=3)
@@ -285,9 +283,7 @@ def test_get_events_combined_filters(event_store):
     )
     assert len(filtered) >= 1
     assert all(
-        e["type"] == "email.received"
-        and e["source"] == "proton-mail"
-        and e["timestamp"] > cutoff.isoformat()
+        e["type"] == "email.received" and e["source"] == "proton-mail" and e["timestamp"] > cutoff.isoformat()
         for e in filtered
     )
 

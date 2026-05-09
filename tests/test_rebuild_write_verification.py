@@ -22,15 +22,17 @@ def _store_test_event(db, event_id, event_type, source, payload, metadata=None, 
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
     es = EventStore(db)
-    es.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": source,
-        "timestamp": timestamp,
-        "priority": "normal",
-        "payload": payload,
-        "metadata": metadata or {},
-    })
+    es.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": source,
+            "timestamp": timestamp,
+            "priority": "normal",
+            "payload": payload,
+            "metadata": metadata or {},
+        }
+    )
 
 
 def _populate_test_events(db, count=10):
@@ -39,7 +41,10 @@ def _populate_test_events(db, count=10):
         # Alternate between received and sent so both linguistic and linguistic_inbound get data.
         event_type = "email.received" if i % 2 == 0 else "email.sent"
         _store_test_event(
-            db, f"write-verify-{i}", event_type, "proton_mail",
+            db,
+            f"write-verify-{i}",
+            event_type,
+            "proton_mail",
             {
                 "subject": f"Test email {i}",
                 "body": f"This is email number {i} discussing project updates and quarterly goals.",

@@ -12,6 +12,7 @@ services/signal_extractor/marketing_filter.py.  These tests confirm:
      embedded notification patterns, ESP platform domains, brand self-mailers).
   3. Personal human emails are still not filtered (no regression).
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -100,9 +101,7 @@ class TestNewPatternsCaughtBySharedFilter:
         ]
         for from_addr in financial_senders:
             payload = {"from_address": from_addr}
-            assert TaskManager._is_marketing_email(payload) is True, (
-                f"Should filter financial sender {from_addr}"
-            )
+            assert TaskManager._is_marketing_email(payload) is True, f"Should filter financial sender {from_addr}"
 
     def test_filters_retail_hospitality_senders(self):
         """Retail/hospitality automated senders should be filtered.
@@ -130,10 +129,10 @@ class TestNewPatternsCaughtBySharedFilter:
         for embedded patterns like '-notification', 'news', 'no.reply'.
         """
         embedded_patterns = [
-            "hoa-notifications@homeowners.org",   # '-notifications' embedded
-            "user-alert@service.com",              # '-alert' embedded
-            "morningnews@company.com",             # 'news' embedded
-            "team-updates@corp.com",               # '-updates' embedded
+            "hoa-notifications@homeowners.org",  # '-notifications' embedded
+            "user-alert@service.com",  # '-alert' embedded
+            "morningnews@company.com",  # 'news' embedded
+            "team-updates@corp.com",  # '-updates' embedded
         ]
         for from_addr in embedded_patterns:
             payload = {"from_address": from_addr}
@@ -148,16 +147,14 @@ class TestNewPatternsCaughtBySharedFilter:
         The old filter only had @em., @mg., @mail., @mailing., etc.
         """
         esp_senders = [
-            "brand@em.brand.com",           # @em. ESP pattern
-            "brand@mg.brand.com",           # @mg. ESP pattern
-            "brand@engage.platform.com",    # @engage. ESP pattern
-            "brand@e2.retailer.com",        # @e2. ESP pattern
+            "brand@em.brand.com",  # @em. ESP pattern
+            "brand@mg.brand.com",  # @mg. ESP pattern
+            "brand@engage.platform.com",  # @engage. ESP pattern
+            "brand@e2.retailer.com",  # @e2. ESP pattern
         ]
         for from_addr in esp_senders:
             payload = {"from_address": from_addr}
-            assert TaskManager._is_marketing_email(payload) is True, (
-                f"Should filter ESP platform sender {from_addr}"
-            )
+            assert TaskManager._is_marketing_email(payload) is True, f"Should filter ESP platform sender {from_addr}"
 
     def test_filters_loyalty_reward_senders(self):
         """Loyalty and reward programme senders should be filtered."""
@@ -167,9 +164,7 @@ class TestNewPatternsCaughtBySharedFilter:
         ]
         for from_addr in loyalty_senders:
             payload = {"from_address": from_addr}
-            assert TaskManager._is_marketing_email(payload) is True, (
-                f"Should filter loyalty sender {from_addr}"
-            )
+            assert TaskManager._is_marketing_email(payload) is True, f"Should filter loyalty sender {from_addr}"
 
     def test_still_allows_human_business_contacts(self):
         """Human business contacts that happen to work at financial/retail firms.
@@ -209,6 +204,7 @@ class TestProcessEventFilterIntegration:
     def task_manager(self, db):
         """Create a TaskManager with a mock AI engine."""
         from unittest.mock import AsyncMock
+
         mock_ai = AsyncMock()
         mock_ai.extract_action_items = AsyncMock(return_value=[])
         return TaskManager(db, ai_engine=mock_ai)

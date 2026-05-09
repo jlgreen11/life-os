@@ -162,8 +162,8 @@ class TestTopicExtractionWithHTML:
                     </table>
                 </body>
                 </html>
-                """
-            }
+                """,
+            },
         }
 
         signals = topic_extractor.extract(event)
@@ -176,9 +176,20 @@ class TestTopicExtractionWithHTML:
 
         # Should NOT extract HTML/CSS tokens that caused the pollution
         html_css_tokens = {
-            "html", "head", "body", "table", "tbody", "border",
-            "cellpadding", "width", "style", "header", "color",
-            "padding", "blue", "nbsp"
+            "html",
+            "head",
+            "body",
+            "table",
+            "tbody",
+            "border",
+            "cellpadding",
+            "width",
+            "style",
+            "header",
+            "color",
+            "padding",
+            "blue",
+            "nbsp",
         }
         extracted_tokens = set(t.lower() for t in topics)
         pollution = extracted_tokens & html_css_tokens
@@ -194,8 +205,8 @@ class TestTopicExtractionWithHTML:
             "payload": {
                 "subject": "Project Update",
                 "body": "The project milestone has been completed successfully. "
-                        "We implemented the feature using Python and tested thoroughly."
-            }
+                "We implemented the feature using Python and tested thoroughly.",
+            },
         }
 
         signals = topic_extractor.extract(event)
@@ -232,8 +243,8 @@ class TestTopicExtractionWithHTML:
                     </table>
                 </body>
                 </html>
-                """
-            }
+                """,
+            },
         }
 
         signals = topic_extractor.extract(event)
@@ -243,8 +254,17 @@ class TestTopicExtractionWithHTML:
 
             # Should NOT include formatting tokens
             formatting_tokens = {
-                "arial", "font", "size", "weight", "bold", "color",
-                "align", "center", "valign", "cellpadding", "cellspacing"
+                "arial",
+                "font",
+                "size",
+                "weight",
+                "bold",
+                "color",
+                "align",
+                "center",
+                "valign",
+                "cellpadding",
+                "cellspacing",
             }
             extracted_tokens = set(t.lower() for t in topics)
             pollution = extracted_tokens & formatting_tokens
@@ -259,8 +279,8 @@ class TestTopicExtractionWithHTML:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "subject": "Invoice",
-                "body": "<p>Order total: $500&nbsp;USD.</p><p>Payment&nbsp;due&nbsp;immediately.</p>"
-            }
+                "body": "<p>Order total: $500&nbsp;USD.</p><p>Payment&nbsp;due&nbsp;immediately.</p>",
+            },
         }
 
         signals = topic_extractor.extract(event)
@@ -285,10 +305,7 @@ class TestBackwardsCompatibility:
             "id": "evt_plain_body",
             "type": EventType.EMAIL_RECEIVED.value,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {
-                "subject": "Meeting",
-                "body_plain": "Let's discuss the Python project tomorrow."
-            }
+            "payload": {"subject": "Meeting", "body_plain": "Let's discuss the Python project tomorrow."},
         }
 
         signals = topic_extractor.extract(event)
@@ -303,10 +320,7 @@ class TestBackwardsCompatibility:
             "id": "evt_subject_only",
             "type": EventType.EMAIL_RECEIVED.value,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {
-                "subject": "Python conference registration confirmation",
-                "body": ""
-            }
+            "payload": {"subject": "Python conference registration confirmation", "body": ""},
         }
 
         signals = topic_extractor.extract(event)
@@ -321,10 +335,7 @@ class TestBackwardsCompatibility:
             "id": "evt_short",
             "type": EventType.EMAIL_RECEIVED.value,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {
-                "subject": "",
-                "body": "OK"
-            }
+            "payload": {"subject": "", "body": "OK"},
         }
 
         signals = topic_extractor.extract(event)

@@ -268,7 +268,7 @@ def test_get_workflows_response_structure(client, test_workflows):
     assert data["count"] == len(data["workflows"])
 
     # Verify generated_at is a valid ISO timestamp
-    generated_at = datetime.fromisoformat(data["generated_at"].replace('Z', '+00:00'))
+    generated_at = datetime.fromisoformat(data["generated_at"].replace("Z", "+00:00"))
     assert isinstance(generated_at, datetime)
     assert generated_at.tzinfo is not None
 

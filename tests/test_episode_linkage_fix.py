@@ -109,9 +109,7 @@ class TestEpisodeLinkageFix:
 
         # Manually set samples_count to 100 to meet threshold
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 100 WHERE profile_type = 'topics'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 100 WHERE profile_type = 'topics'")
 
         # Run topic inference
         inferrer.infer_from_topic_profile()
@@ -130,8 +128,7 @@ class TestEpisodeLinkageFix:
         # migration), so the linked episode may be any recent episode type.
         assert "source_episodes" in python_fact
         assert isinstance(python_fact["source_episodes"], list)
-        assert len(python_fact["source_episodes"]) > 0, \
-            "Topic facts must link to source episodes for audit trail"
+        assert len(python_fact["source_episodes"]) > 0, "Topic facts must link to source episodes for audit trail"
 
     def test_cadence_inference_links_episodes(self, inferrer, user_model_store, sample_episodes):
         """
@@ -145,19 +142,26 @@ class TestEpisodeLinkageFix:
             # The cadence extractor stores data under "hourly_activity", not "hourly_distribution".
             "hourly_activity": {
                 # 95% of messages during business hours (9-17)
-                "9": 10, "10": 12, "11": 15, "12": 10,
-                "13": 14, "14": 16, "15": 13, "16": 10,
+                "9": 10,
+                "10": 12,
+                "11": 15,
+                "12": 10,
+                "13": 14,
+                "14": 16,
+                "15": 13,
+                "16": 10,
                 # 5% outside business hours
-                "18": 2, "19": 1, "20": 1, "21": 1,
+                "18": 2,
+                "19": 1,
+                "20": 1,
+                "21": 1,
             }
         }
         user_model_store.update_signal_profile("cadence", cadence_data)
 
         # Manually set samples_count to 100 to meet threshold
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 100 WHERE profile_type = 'cadence'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 100 WHERE profile_type = 'cadence'")
 
         # Run cadence inference
         inferrer.infer_from_cadence_profile()
@@ -175,8 +179,7 @@ class TestEpisodeLinkageFix:
         # qualifies as source evidence.
         assert "source_episodes" in boundary_fact
         assert isinstance(boundary_fact["source_episodes"], list)
-        assert len(boundary_fact["source_episodes"]) > 0, \
-            "Cadence facts must link to source episodes for audit trail"
+        assert len(boundary_fact["source_episodes"]) > 0, "Cadence facts must link to source episodes for audit trail"
 
     def test_mood_inference_links_episodes(self, inferrer, user_model_store, sample_episodes):
         """
@@ -213,9 +216,7 @@ class TestEpisodeLinkageFix:
 
         # Manually set samples_count to 150 to meet threshold
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 150 WHERE profile_type = 'mood_signals'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 150 WHERE profile_type = 'mood_signals'")
 
         # Run mood inference
         inferrer.infer_from_mood_profile()
@@ -234,8 +235,7 @@ class TestEpisodeLinkageFix:
         # qualifies as source evidence for mood patterns.
         assert "source_episodes" in baseline_fact
         assert isinstance(baseline_fact["source_episodes"], list)
-        assert len(baseline_fact["source_episodes"]) > 0, \
-            "Mood facts must link to source episodes for audit trail"
+        assert len(baseline_fact["source_episodes"]) > 0, "Mood facts must link to source episodes for audit trail"
 
     def test_all_fact_types_have_episode_linkage(self, inferrer, user_model_store, sample_episodes):
         """
@@ -275,7 +275,10 @@ class TestEpisodeLinkageFix:
             "cadence": {
                 # The inferrer reads "hourly_activity", not "hourly_distribution"
                 "hourly_activity": {
-                    "10": 30, "11": 25, "14": 20, "15": 5,  # Peak at 10am (37.5%)
+                    "10": 30,
+                    "11": 25,
+                    "14": 20,
+                    "15": 5,  # Peak at 10am (37.5%)
                 }
             },
             "mood_signals": {
@@ -307,7 +310,7 @@ class TestEpisodeLinkageFix:
             with user_model_store.db.get_connection("user_model") as conn:
                 conn.execute(
                     "UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?",
-                    (samples_required[profile_type], profile_type)
+                    (samples_required[profile_type], profile_type),
                 )
 
         # Run all inference
@@ -322,8 +325,9 @@ class TestEpisodeLinkageFix:
             if not fact.get("source_episodes") or len(fact["source_episodes"]) == 0:
                 facts_without_episodes.append(fact["key"])
 
-        assert len(facts_without_episodes) == 0, \
+        assert len(facts_without_episodes) == 0, (
             f"All facts must have episode linkage. Missing: {facts_without_episodes}"
+        )
 
     def test_confidence_growth_loop_works_with_episodes(self, inferrer, user_model_store, sample_episodes):
         """
@@ -339,9 +343,7 @@ class TestEpisodeLinkageFix:
 
         # Manually set samples_count to 50 to meet threshold
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 50 WHERE profile_type = 'topics'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 50 WHERE profile_type = 'topics'")
 
         # First inference run
         inferrer.infer_from_topic_profile()
@@ -377,14 +379,15 @@ class TestEpisodeLinkageFix:
         updated_times_confirmed = updated_fact["times_confirmed"]
 
         # Verify confidence grew by +0.05
-        assert updated_confidence > initial_confidence, \
-            "Confidence should increase on re-confirmation"
-        assert abs(updated_confidence - (initial_confidence + 0.05)) < 0.01, \
+        assert updated_confidence > initial_confidence, "Confidence should increase on re-confirmation"
+        assert abs(updated_confidence - (initial_confidence + 0.05)) < 0.01, (
             "Confidence should grow by exactly +0.05 per re-confirmation"
+        )
 
         # Verify times_confirmed incremented
-        assert updated_times_confirmed == initial_times_confirmed + 1, \
+        assert updated_times_confirmed == initial_times_confirmed + 1, (
             "times_confirmed should increment on each re-confirmation"
+        )
 
     def test_no_episodes_graceful_degradation(self, inferrer, user_model_store, db):
         """
@@ -402,9 +405,7 @@ class TestEpisodeLinkageFix:
 
         # Manually set samples_count to 40 to meet threshold
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 40 WHERE profile_type = 'topics'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 40 WHERE profile_type = 'topics'")
 
         # Run inference
         inferrer.infer_from_topic_profile()

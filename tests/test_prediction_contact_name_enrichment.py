@@ -20,6 +20,7 @@ from services.prediction_engine.engine import PredictionEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_contact(db, name: str, emails: list[str]) -> str:
     """Insert a contact into entities.db and return its ID."""
     contact_id = str(uuid.uuid4())
@@ -33,8 +34,9 @@ def _insert_contact(db, name: str, emails: list[str]) -> str:
     return contact_id
 
 
-def _insert_email_event(db, event_type: str, from_address: str, to_addresses: list[str],
-                        timestamp: datetime, message_id: str | None = None) -> None:
+def _insert_email_event(
+    db, event_type: str, from_address: str, to_addresses: list[str], timestamp: datetime, message_id: str | None = None
+) -> None:
     """Insert an email event directly into events.db."""
     eid = str(uuid.uuid4())
     payload = {
@@ -48,8 +50,7 @@ def _insert_email_event(db, event_type: str, from_address: str, to_addresses: li
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (eid, event_type, "google", timestamp.isoformat(), "normal",
-             json.dumps(payload), json.dumps({})),
+            (eid, event_type, "google", timestamp.isoformat(), "normal", json.dumps(payload), json.dumps({})),
         )
 
 
@@ -192,8 +193,12 @@ class TestFollowUpPredictionContactName:
         msg_time = datetime.now(timezone.utc) - timedelta(hours=6)
         msg_id = "msg-test-followup-001"
         _insert_email_event(
-            db, "email.received", "jsmith@company.com", ["me@example.com"],
-            msg_time, message_id=msg_id,
+            db,
+            "email.received",
+            "jsmith@company.com",
+            ["me@example.com"],
+            msg_time,
+            message_id=msg_id,
         )
 
         predictions = await engine._check_follow_up_needs({})
@@ -221,8 +226,12 @@ class TestFollowUpPredictionContactName:
         # Insert an inbound email from an unknown sender
         msg_time = datetime.now(timezone.utc) - timedelta(hours=6)
         _insert_email_event(
-            db, "email.received", "stranger@unknown.org", ["me@example.com"],
-            msg_time, message_id="msg-test-followup-002",
+            db,
+            "email.received",
+            "stranger@unknown.org",
+            ["me@example.com"],
+            msg_time,
+            message_id="msg-test-followup-002",
         )
 
         predictions = await engine._check_follow_up_needs({})

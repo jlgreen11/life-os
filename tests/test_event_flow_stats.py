@@ -20,6 +20,7 @@ from web.app import create_web_app
 # Helpers
 # -------------------------------------------------------------------
 
+
 def _make_event(source: str, timestamp: str, event_type: str = "test.event") -> dict:
     """Build a minimal event dict suitable for EventStore.store_event()."""
     return {
@@ -162,23 +163,27 @@ def mock_life_os_with_flow_stats():
     """Minimal mock LifeOS with get_event_flow_stats wired up."""
     life_os = Mock()
     life_os.db = Mock()
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+    )
     life_os.event_bus = Mock()
     life_os.event_bus.is_connected = True
     life_os.event_store = Mock()
     life_os.event_store.get_event_count = Mock(return_value=42)
-    life_os.event_store.get_event_flow_stats = Mock(return_value={
-        "sources": {"google": {"count_24h": 10, "last_event": "2026-03-03T12:00:00+00:00"}},
-        "stale_sources": [],
-        "total_24h": 10,
-        "events_per_hour": 0.4,
-    })
+    life_os.event_store.get_event_flow_stats = Mock(
+        return_value={
+            "sources": {"google": {"count_24h": 10, "last_event": "2026-03-03T12:00:00+00:00"}},
+            "stale_sources": [],
+            "total_24h": 10,
+            "events_per_hour": 0.4,
+        }
+    )
     life_os.vector_store = Mock()
     life_os.vector_store.get_stats = Mock(return_value={"total": 50, "dimensions": 384})
     life_os.connectors = []
@@ -201,9 +206,7 @@ def test_health_endpoint_includes_data_flow(mock_life_os_with_flow_stats):
 
 def test_health_data_flow_graceful_on_error(mock_life_os_with_flow_stats):
     """If get_event_flow_stats raises, /health should still return with data_flow=None."""
-    mock_life_os_with_flow_stats.event_store.get_event_flow_stats = Mock(
-        side_effect=RuntimeError("DB locked")
-    )
+    mock_life_os_with_flow_stats.event_store.get_event_flow_stats = Mock(side_effect=RuntimeError("DB locked"))
     app = create_web_app(mock_life_os_with_flow_stats)
     client = TestClient(app)
 

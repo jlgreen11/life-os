@@ -209,9 +209,7 @@ class TestEventTriggeredFilter:
         routines = detector._detect_event_triggered_routines(lookback_days=30)
 
         for r in routines:
-            assert "system_" not in r.get("trigger", ""), (
-                "system_ types should not be routine triggers"
-            )
+            assert "system_" not in r.get("trigger", ""), "system_ types should not be routine triggers"
 
 
 class TestLocationRoutineFilter:
@@ -233,8 +231,7 @@ class TestLocationRoutineFilter:
                        (id, timestamp, event_id, interaction_type, content_summary,
                         active_domain, location)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (eid, ts.isoformat(), evid, "usermodel_signal_profile_updated",
-                     "test", "test", "home"),
+                    (eid, ts.isoformat(), evid, "usermodel_signal_profile_updated", "test", "test", "home"),
                 )
 
         routines = detector._detect_location_routines(lookback_days=30)

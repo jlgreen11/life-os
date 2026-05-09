@@ -29,6 +29,7 @@ from services.notification_manager.manager import NotificationManager
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_event_bus():
     """Mock event bus with is_connected and publish."""
@@ -47,6 +48,7 @@ def notification_manager(db, mock_event_bus):
 @pytest.fixture
 def create_prediction(db):
     """Helper to create a prediction in the user_model database."""
+
     def _create(prediction_id: str, was_surfaced: int = 0):
         with db.get_connection("user_model") as conn:
             conn.execute(
@@ -63,23 +65,24 @@ def create_prediction(db):
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+
     return _create
 
 
 @pytest.fixture
 def create_prediction_notification(db):
     """Helper to create a prediction-linked notification in the state database."""
-    def _create(notif_id: str, prediction_id: str, status: str = "delivered",
-                delivered_at: str | None = None):
+
+    def _create(notif_id: str, prediction_id: str, status: str = "delivered", delivered_at: str | None = None):
         now = delivered_at or datetime.now(timezone.utc).isoformat()
         with db.get_connection("state") as conn:
             conn.execute(
                 """INSERT INTO notifications
                    (id, title, body, priority, source_event_id, domain, status, delivered_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (notif_id, "Test notification", "body", "normal",
-                 prediction_id, "prediction", status, now),
+                (notif_id, "Test notification", "body", "normal", prediction_id, "prediction", status, now),
             )
+
     return _create
 
 
@@ -107,6 +110,7 @@ def corrupt_user_model(db):
 # Test: _mark_prediction_surfaced() fail-open
 # ---------------------------------------------------------------------------
 
+
 class TestMarkPredictionSurfacedCorruption:
     """Verify _mark_prediction_surfaced() handles DB corruption gracefully."""
 
@@ -119,8 +123,7 @@ class TestMarkPredictionSurfacedCorruption:
                 """INSERT INTO predictions
                    (id, prediction_type, description, confidence, confidence_gate, was_surfaced, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                ("pred-surf-1", "reminder", "test", 0.75, "SUGGEST", 0,
-                 datetime.now(timezone.utc).isoformat()),
+                ("pred-surf-1", "reminder", "test", 0.75, "SUGGEST", 0, datetime.now(timezone.utc).isoformat()),
             )
 
         # Now corrupt the user_model DB
@@ -154,8 +157,7 @@ class TestMarkPredictionSurfacedCorruption:
                 """INSERT INTO predictions
                    (id, prediction_type, description, confidence, confidence_gate, was_surfaced, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                ("pred-deliver-1", "reminder", "test", 0.75, "SUGGEST", 0,
-                 datetime.now(timezone.utc).isoformat()),
+                ("pred-deliver-1", "reminder", "test", 0.75, "SUGGEST", 0, datetime.now(timezone.utc).isoformat()),
             )
 
         # Now corrupt user_model DB
@@ -176,12 +178,12 @@ class TestMarkPredictionSurfacedCorruption:
 # Test: _update_linked_prediction() fail-open
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateLinkedPredictionCorruption:
     """Verify _update_linked_prediction() handles DB corruption gracefully."""
 
     def test_logs_warning_but_does_not_raise(
-        self, notification_manager, db, create_prediction,
-        create_prediction_notification, corrupt_user_model, caplog
+        self, notification_manager, db, create_prediction, create_prediction_notification, corrupt_user_model, caplog
     ):
         """_update_linked_prediction() should log a warning but not raise
         when user_model.db is corrupt."""
@@ -201,8 +203,7 @@ class TestUpdateLinkedPredictionCorruption:
         assert "notif-link-1" in warning_records[0].message
 
     async def test_mark_acted_on_succeeds_with_corrupt_user_model(
-        self, notification_manager, db, create_prediction,
-        create_prediction_notification, corrupt_user_model
+        self, notification_manager, db, create_prediction, create_prediction_notification, corrupt_user_model
     ):
         """mark_acted_on() should complete successfully even when
         _update_linked_prediction fails due to user_model.db corruption.
@@ -221,14 +222,11 @@ class TestUpdateLinkedPredictionCorruption:
 
         # Verify notification status was updated in state DB (which is not corrupt)
         with db.get_connection("state") as conn:
-            row = conn.execute(
-                "SELECT status FROM notifications WHERE id = ?", ("notif-act-1",)
-            ).fetchone()
+            row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("notif-act-1",)).fetchone()
         assert row["status"] == "acted_on"
 
     async def test_dismiss_succeeds_with_corrupt_user_model(
-        self, notification_manager, db, create_prediction,
-        create_prediction_notification, corrupt_user_model
+        self, notification_manager, db, create_prediction, create_prediction_notification, corrupt_user_model
     ):
         """dismiss() should complete successfully even when
         _update_linked_prediction fails due to user_model.db corruption.
@@ -247,15 +245,14 @@ class TestUpdateLinkedPredictionCorruption:
 
         # Verify notification status was updated in state DB
         with db.get_connection("state") as conn:
-            row = conn.execute(
-                "SELECT status FROM notifications WHERE id = ?", ("notif-dis-1",)
-            ).fetchone()
+            row = conn.execute("SELECT status FROM notifications WHERE id = ?", ("notif-dis-1",)).fetchone()
         assert row["status"] == "dismissed"
 
 
 # ---------------------------------------------------------------------------
 # Test: auto_resolve_stale_predictions() fail-open
 # ---------------------------------------------------------------------------
+
 
 class TestAutoResolveStaleCorruption:
     """Verify auto_resolve_stale_predictions() handles DB corruption gracefully."""
@@ -280,8 +277,7 @@ class TestAutoResolveStaleCorruption:
                     """INSERT INTO notifications
                        (id, title, body, priority, source_event_id, domain, status, delivered_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (notif_id, "Stale prediction", "body", "normal",
-                     pred_id, "prediction", "delivered", old_time),
+                    (notif_id, "Stale prediction", "body", "normal", pred_id, "prediction", "delivered", old_time),
                 )
 
         # Corrupt user_model DB
@@ -296,7 +292,8 @@ class TestAutoResolveStaleCorruption:
 
         # Should have logged warnings for each failed prediction
         warning_records = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelno >= logging.WARNING and "Failed to auto-resolve stale prediction" in r.message
         ]
         assert len(warning_records) == 3
@@ -327,8 +324,7 @@ class TestAutoResolveStaleCorruption:
                 """INSERT INTO notifications
                    (id, title, body, priority, source_event_id, domain, status, delivered_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                ("notif-fb-1", "Stale", "body", "normal",
-                 "pred-fb-1", "prediction", "delivered", old_time),
+                ("notif-fb-1", "Stale", "body", "normal", "pred-fb-1", "prediction", "delivered", old_time),
             )
 
         # Corrupt user_model DB
@@ -350,6 +346,7 @@ class TestAutoResolveStaleCorruption:
 # Test: auto_resolve_filtered_predictions() fail-open
 # ---------------------------------------------------------------------------
 
+
 class TestAutoResolveFilteredCorruption:
     """Verify auto_resolve_filtered_predictions() handles DB corruption gracefully."""
 
@@ -370,14 +367,13 @@ class TestAutoResolveFilteredCorruption:
         assert result == 0
 
         warning_records = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelno >= logging.WARNING and "Failed to auto-resolve filtered predictions" in r.message
         ]
         assert len(warning_records) == 1
 
-    def test_does_not_raise_with_database_error(
-        self, notification_manager, db, create_prediction
-    ):
+    def test_does_not_raise_with_database_error(self, notification_manager, db, create_prediction):
         """auto_resolve_filtered_predictions() should handle sqlite3.DatabaseError
         (parent class of OperationalError) without raising."""
         create_prediction("pred-filt-2", was_surfaced=0)
@@ -402,12 +398,11 @@ class TestAutoResolveFilteredCorruption:
 # Test: error logging includes traceback info
 # ---------------------------------------------------------------------------
 
+
 class TestCorruptionErrorLogging:
     """Verify that corruption errors are logged with exc_info for debugging."""
 
-    def test_mark_prediction_surfaced_logs_with_exc_info(
-        self, notification_manager, corrupt_user_model, caplog
-    ):
+    def test_mark_prediction_surfaced_logs_with_exc_info(self, notification_manager, corrupt_user_model, caplog):
         """_mark_prediction_surfaced should log with exc_info=True for traceback."""
         notification_manager.db.get_connection = corrupt_user_model
 
@@ -418,13 +413,10 @@ class TestCorruptionErrorLogging:
         assert len(warning_records) >= 1
         # logger.warning with exc_info=True sets exc_info on the record
         records_with_traceback = [r for r in warning_records if r.exc_info]
-        assert len(records_with_traceback) >= 1, (
-            "Expected warning record with exc_info for post-incident diagnosis"
-        )
+        assert len(records_with_traceback) >= 1, "Expected warning record with exc_info for post-incident diagnosis"
 
     def test_update_linked_prediction_logs_with_exc_info(
-        self, notification_manager, db, create_prediction,
-        create_prediction_notification, corrupt_user_model, caplog
+        self, notification_manager, db, create_prediction, create_prediction_notification, corrupt_user_model, caplog
     ):
         """_update_linked_prediction should log with exc_info=True for traceback."""
         create_prediction("pred-trace-2")

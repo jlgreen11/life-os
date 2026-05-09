@@ -216,12 +216,8 @@ class TestConditionalCheckType:
         db_manager._check_and_recover_db("state")
 
         pragma_calls = [s for s in tracked_sql if "integrity_check" in s or "quick_check" in s]
-        assert any("quick_check" in p for p in pragma_calls), (
-            f"Expected quick_check for state, got: {pragma_calls}"
-        )
-        assert not any("integrity_check" in p for p in pragma_calls), (
-            "state should NOT use integrity_check"
-        )
+        assert any("quick_check" in p for p in pragma_calls), f"Expected quick_check for state, got: {pragma_calls}"
+        assert not any("integrity_check" in p for p in pragma_calls), "state should NOT use integrity_check"
 
     def test_health_check_uses_integrity_for_user_model(self, db_manager, monkeypatch):
         """get_database_health should use integrity_check for user_model."""
@@ -244,9 +240,5 @@ class TestConditionalCheckType:
 
         # We expect at least one integrity_check (for user_model) and
         # at least one quick_check (for the other four databases).
-        assert len(integrity_calls) >= 1, (
-            f"Expected at least 1 integrity_check call, got: {integrity_calls}"
-        )
-        assert len(quick_calls) >= 1, (
-            f"Expected at least 1 quick_check call, got: {quick_calls}"
-        )
+        assert len(integrity_calls) >= 1, f"Expected at least 1 integrity_check call, got: {integrity_calls}"
+        assert len(quick_calls) >= 1, f"Expected at least 1 quick_check call, got: {quick_calls}"

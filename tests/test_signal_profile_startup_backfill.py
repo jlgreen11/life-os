@@ -31,8 +31,9 @@ from storage.user_model_store import UserModelStore
 # ---------------------------------------------------------------------------
 
 
-def _insert_email(db: DatabaseManager, *, event_type: str, from_addr: str,
-                  to_addr: str, body: str = "Hello!", hours_ago: int = 1) -> None:
+def _insert_email(
+    db: DatabaseManager, *, event_type: str, from_addr: str, to_addr: str, body: str = "Hello!", hours_ago: int = 1
+) -> None:
     """Insert a synthetic email event into events.db.
 
     Args:
@@ -44,14 +45,16 @@ def _insert_email(db: DatabaseManager, *, event_type: str, from_addr: str,
         hours_ago: Timestamp offset from now (hours ago).
     """
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    payload = json.dumps({
-        "from_address": from_addr,
-        "to_addresses": [to_addr],
-        "subject": "Test subject",
-        "body": body,
-        "body_plain": body,
-        "message_id": f"msg-{from_addr}-{hours_ago}",
-    })
+    payload = json.dumps(
+        {
+            "from_address": from_addr,
+            "to_addresses": [to_addr],
+            "subject": "Test subject",
+            "body": body,
+            "body_plain": body,
+            "message_id": f"msg-{from_addr}-{hours_ago}",
+        }
+    )
     with db.get_connection("events") as conn:
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
@@ -68,11 +71,13 @@ def _insert_calendar_event(db: DatabaseManager, *, hours_ago: int = 2) -> None:
         hours_ago: How many hours ago the event was created.
     """
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    payload = json.dumps({
-        "title": "Team meeting",
-        "start_time": ts,
-        "end_time": (datetime.now(timezone.utc) - timedelta(hours=hours_ago - 1)).isoformat(),
-    })
+    payload = json.dumps(
+        {
+            "title": "Team meeting",
+            "start_time": ts,
+            "end_time": (datetime.now(timezone.utc) - timedelta(hours=hours_ago - 1)).isoformat(),
+        }
+    )
     with db.get_connection("events") as conn:
         conn.execute(
             """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
@@ -95,14 +100,17 @@ def test_relationship_backfill_populates_profile_when_empty(db, user_model_store
     """
     # Arrange: insert emails between two contacts with no existing profile
     for i in range(5):
-        _insert_email(db, event_type="email.received", from_addr="alice@example.com",
-                      to_addr="user@example.com", hours_ago=i + 1)
+        _insert_email(
+            db, event_type="email.received", from_addr="alice@example.com", to_addr="user@example.com", hours_ago=i + 1
+        )
     for i in range(5):
-        _insert_email(db, event_type="email.sent", from_addr="user@example.com",
-                      to_addr="alice@example.com", hours_ago=i + 6)
+        _insert_email(
+            db, event_type="email.sent", from_addr="user@example.com", to_addr="alice@example.com", hours_ago=i + 6
+        )
     for i in range(5):
-        _insert_email(db, event_type="email.received", from_addr="bob@example.com",
-                      to_addr="user@example.com", hours_ago=i + 11)
+        _insert_email(
+            db, event_type="email.received", from_addr="bob@example.com", to_addr="user@example.com", hours_ago=i + 11
+        )
 
     # Act: run the relationship backfill
     result = backfill_relationship_profile(data_dir=db.data_dir)
@@ -138,8 +146,7 @@ def test_relationship_backfill_skipped_when_already_populated(db, user_model_sto
     assert profile_before["samples_count"] == 15
 
     # Insert some emails that would be processed if the backfill ran
-    _insert_email(db, event_type="email.received", from_addr="bob@example.com",
-                  to_addr="user@example.com")
+    _insert_email(db, event_type="email.received", from_addr="bob@example.com", to_addr="user@example.com")
 
     # Act: the startup trigger checks samples_count >= 10 and should skip
     # We test the backfill_relationship_profile function directly (the startup
@@ -149,9 +156,7 @@ def test_relationship_backfill_skipped_when_already_populated(db, user_model_sto
     # The function itself doesn't have the guard (that's in main.py), so we
     # verify the guard behavior indirectly by checking that the profile state
     # is what main.py would use to skip the call.
-    assert profile_before["samples_count"] >= 10, (
-        "Guard condition: samples_count >= 10 means startup skips backfill"
-    )
+    assert profile_before["samples_count"] >= 10, "Guard condition: samples_count >= 10 means startup skips backfill"
 
 
 def test_relationship_backfill_skipped_on_insufficient_events(db, user_model_store):
@@ -162,8 +167,9 @@ def test_relationship_backfill_skipped_on_insufficient_events(db, user_model_sto
     """
     # Arrange: insert only 5 emails (below the 10-event threshold in main.py)
     for i in range(5):
-        _insert_email(db, event_type="email.received", from_addr="alice@example.com",
-                      to_addr="user@example.com", hours_ago=i + 1)
+        _insert_email(
+            db, event_type="email.received", from_addr="alice@example.com", to_addr="user@example.com", hours_ago=i + 1
+        )
 
     # Act: run backfill
     result = backfill_relationship_profile(data_dir=db.data_dir)
@@ -181,14 +187,16 @@ def test_relationship_backfill_respects_marketing_filter(db, user_model_store):
     so automated senders should not appear as discovered contacts.
     """
     # Arrange: mix of real humans and marketing senders
-    _insert_email(db, event_type="email.received", from_addr="alice@example.com",
-                  to_addr="user@example.com", hours_ago=1)
-    _insert_email(db, event_type="email.sent", from_addr="user@example.com",
-                  to_addr="alice@example.com", hours_ago=2)
-    _insert_email(db, event_type="email.received", from_addr="noreply@amazon.com",
-                  to_addr="user@example.com", hours_ago=3)
-    _insert_email(db, event_type="email.received", from_addr="newsletter@company.com",
-                  to_addr="user@example.com", hours_ago=4)
+    _insert_email(
+        db, event_type="email.received", from_addr="alice@example.com", to_addr="user@example.com", hours_ago=1
+    )
+    _insert_email(db, event_type="email.sent", from_addr="user@example.com", to_addr="alice@example.com", hours_ago=2)
+    _insert_email(
+        db, event_type="email.received", from_addr="noreply@amazon.com", to_addr="user@example.com", hours_ago=3
+    )
+    _insert_email(
+        db, event_type="email.received", from_addr="newsletter@company.com", to_addr="user@example.com", hours_ago=4
+    )
 
     # Act
     backfill_relationship_profile(data_dir=db.data_dir)
@@ -233,8 +241,9 @@ def test_temporal_backfill_processes_sent_emails(db, user_model_store):
     """
     # Arrange: sent emails at different hours
     for i in range(8):
-        _insert_email(db, event_type="email.sent", from_addr="user@example.com",
-                      to_addr="alice@example.com", hours_ago=i * 4 + 1)
+        _insert_email(
+            db, event_type="email.sent", from_addr="user@example.com", to_addr="alice@example.com", hours_ago=i * 4 + 1
+        )
 
     # Act
     result = backfill_temporal_profile(data_dir=db.data_dir)
@@ -259,9 +268,7 @@ def test_temporal_backfill_guard_samples_count(db, user_model_store):
     assert profile["samples_count"] == 6
 
     # Assert: guard condition satisfied (startup wrapper would skip)
-    assert profile["samples_count"] >= 5, (
-        "Guard condition: samples_count >= 5 means startup skips temporal backfill"
-    )
+    assert profile["samples_count"] >= 5, "Guard condition: samples_count >= 5 means startup skips temporal backfill"
 
 
 # ---------------------------------------------------------------------------
@@ -280,8 +287,9 @@ async def test_startup_triggers_relationship_backfill_when_profile_empty(db):
 
     # Insert enough emails to pass the 10-event threshold
     for i in range(15):
-        _insert_email(db, event_type="email.received", from_addr="alice@example.com",
-                      to_addr="user@example.com", hours_ago=i + 1)
+        _insert_email(
+            db, event_type="email.received", from_addr="alice@example.com", to_addr="user@example.com", hours_ago=i + 1
+        )
 
     life_os = LifeOS.__new__(LifeOS)
     life_os.db = db
@@ -293,8 +301,7 @@ async def test_startup_triggers_relationship_backfill_when_profile_empty(db):
         "events_processed": 15,
         "elapsed_seconds": 0.1,
     }
-    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile",
-               return_value=fake_stats):
+    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile", return_value=fake_stats):
         # Run the startup trigger
         await life_os._backfill_relationship_profile_if_needed()
 
@@ -326,8 +333,7 @@ async def test_startup_skips_relationship_backfill_when_already_populated(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile", side_effect=_mock_backfill):
         await life_os._backfill_relationship_profile_if_needed()
 
     # Guard triggered — backfill function should NOT have been called
@@ -345,8 +351,9 @@ async def test_startup_skips_relationship_backfill_on_insufficient_events(db):
 
     # Insert only 5 emails (below the 10-event threshold)
     for i in range(5):
-        _insert_email(db, event_type="email.received", from_addr="alice@example.com",
-                      to_addr="user@example.com", hours_ago=i + 1)
+        _insert_email(
+            db, event_type="email.received", from_addr="alice@example.com", to_addr="user@example.com", hours_ago=i + 1
+        )
 
     life_os = LifeOS.__new__(LifeOS)
     life_os.db = db
@@ -358,8 +365,7 @@ async def test_startup_skips_relationship_backfill_on_insufficient_events(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile", side_effect=_mock_backfill):
         await life_os._backfill_relationship_profile_if_needed()
 
     # With only 5 events, the startup trigger should skip
@@ -387,8 +393,7 @@ async def test_startup_triggers_temporal_backfill_when_profile_empty(db):
         "events_processed": 10,
         "elapsed_seconds": 0.05,
     }
-    with patch("scripts.backfill_temporal_profile.backfill_temporal_profile",
-               return_value=fake_stats):
+    with patch("scripts.backfill_temporal_profile.backfill_temporal_profile", return_value=fake_stats):
         # Should complete without error
         await life_os._backfill_temporal_profile_if_needed()
 
@@ -415,8 +420,7 @@ async def test_startup_skips_temporal_backfill_when_already_populated(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_temporal_profile.backfill_temporal_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_temporal_profile.backfill_temporal_profile", side_effect=_mock_backfill):
         await life_os._backfill_temporal_profile_if_needed()
 
     assert len(called) == 0, "Temporal backfill should be skipped when already populated"
@@ -433,8 +437,9 @@ async def test_startup_backfill_failure_does_not_crash_startup(db):
 
     # Insert events so the guard passes
     for i in range(15):
-        _insert_email(db, event_type="email.received", from_addr="alice@example.com",
-                      to_addr="user@example.com", hours_ago=i + 1)
+        _insert_email(
+            db, event_type="email.received", from_addr="alice@example.com", to_addr="user@example.com", hours_ago=i + 1
+        )
 
     life_os = LifeOS.__new__(LifeOS)
     life_os.db = db
@@ -443,8 +448,7 @@ async def test_startup_backfill_failure_does_not_crash_startup(db):
     def _crash(**kwargs):
         raise RuntimeError("Simulated backfill crash")
 
-    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile",
-               side_effect=_crash):
+    with patch("scripts.backfill_relationship_profile.backfill_relationship_profile", side_effect=_crash):
         # Should NOT raise — fail-open design
         await life_os._backfill_relationship_profile_if_needed()
         # If we get here, the exception was swallowed correctly

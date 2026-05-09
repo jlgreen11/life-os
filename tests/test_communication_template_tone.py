@@ -120,10 +120,7 @@ class TestAnalyzeTone:
         """Output should never exceed 5 entries, even with many existing + new."""
         existing = ["note-a", "note-b", "note-c", "note-d"]
         # This text is short (concise) and has positive keywords and action phrases
-        text = (
-            "Great, thanks! Please send the report. "
-            "Can you also check the numbers? Awesome work, I appreciate it."
-        )
+        text = "Great, thanks! Please send the report. Can you also check the numbers? Awesome work, I appreciate it."
         notes = extractor._analyze_tone(text, existing)
         assert len(notes) <= 5
 
@@ -234,10 +231,7 @@ class TestCommunicationTemplateToneIntegration:
             "timestamp": "2026-02-20T11:00:00Z",
             "payload": {
                 "to_addresses": ["accumulate@example.com"],
-                "body_plain": (
-                    "What do you think? When is the deadline? "
-                    "Should we reschedule? Is it confirmed?"
-                ),
+                "body_plain": ("What do you think? When is the deadline? Should we reschedule? Is it confirmed?"),
                 "channel": "email",
             },
         }

@@ -40,7 +40,7 @@ python scripts/backfill_orphaned_predictions.py [--dry-run]
 import argparse
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
@@ -77,7 +77,7 @@ def backfill_orphaned_predictions(db_path: Path, dry_run: bool = False) -> dict:
     state_conn = sqlite3.connect(state_db)
     state_conn.row_factory = sqlite3.Row
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_24h = (now - timedelta(hours=24)).isoformat()
     cutoff_48h = (now - timedelta(hours=48)).isoformat()
 
@@ -162,9 +162,7 @@ def backfill_orphaned_predictions(db_path: Path, dry_run: bool = False) -> dict:
             print(f"✓ Resolved {stats['resolved']} orphaned predictions")
         else:
             # Dry run — count what would be resolved
-            stats["resolved"] = sum(
-                1 for pred in orphaned_predictions if pred["created_at"] < cutoff_24h
-            )
+            stats["resolved"] = sum(1 for pred in orphaned_predictions if pred["created_at"] < cutoff_24h)
             print(f"[DRY RUN] Would resolve {stats['resolved']} orphaned predictions")
 
         return stats
@@ -176,9 +174,7 @@ def backfill_orphaned_predictions(db_path: Path, dry_run: bool = False) -> dict:
 
 def main():
     """CLI entry point for the backfill script."""
-    parser = argparse.ArgumentParser(
-        description="Resolve orphaned predictions (surfaced but no notification)"
-    )
+    parser = argparse.ArgumentParser(description="Resolve orphaned predictions (surfaced but no notification)")
     parser.add_argument(
         "--dry-run",
         action="store_true",

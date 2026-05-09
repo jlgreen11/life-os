@@ -16,6 +16,7 @@ def test_workflow_detection_completes_instantly(db, user_model_store):
     detector = WorkflowDetector(db, user_model_store)
 
     import time
+
     start = time.time()
     workflows = detector.detect_workflows(lookback_days=30)
     elapsed = time.time() - start
@@ -69,10 +70,10 @@ def test_individual_detection_methods_still_exist(db, user_model_store):
     detector = WorkflowDetector(db, user_model_store)
 
     # These methods should still exist even though they're not called
-    assert hasattr(detector, '_detect_email_workflows'), "Email workflow method should exist"
-    assert hasattr(detector, '_detect_task_workflows'), "Task workflow method should exist"
-    assert hasattr(detector, '_detect_calendar_workflows'), "Calendar workflow method should exist"
-    assert hasattr(detector, '_detect_interaction_workflows'), "Interaction workflow method should exist"
+    assert hasattr(detector, "_detect_email_workflows"), "Email workflow method should exist"
+    assert hasattr(detector, "_detect_task_workflows"), "Task workflow method should exist"
+    assert hasattr(detector, "_detect_calendar_workflows"), "Calendar workflow method should exist"
+    assert hasattr(detector, "_detect_interaction_workflows"), "Interaction workflow method should exist"
 
 
 def test_workflow_detector_initialization(db, user_model_store):
@@ -95,19 +96,22 @@ def test_workflow_detection_with_large_event_volume(db, user_model_store, event_
     # Add 1000 test events
     for i in range(1000):
         timestamp = cutoff + timedelta(hours=i)
-        event_store.store_event({
-            "id": f"test-{i}",
-            "type": "email.received",
-            "source": "test",
-            "timestamp": timestamp.isoformat(),
-            "priority": "normal",
-            "payload": {"from_address": f"sender{i % 10}@example.com", "subject": f"Test {i}"},
-            "metadata": {}
-        })
+        event_store.store_event(
+            {
+                "id": f"test-{i}",
+                "type": "email.received",
+                "source": "test",
+                "timestamp": timestamp.isoformat(),
+                "priority": "normal",
+                "payload": {"from_address": f"sender{i % 10}@example.com", "subject": f"Test {i}"},
+                "metadata": {},
+            }
+        )
 
     detector = WorkflowDetector(db, user_model_store)
 
     import time
+
     start = time.time()
     workflows = detector.detect_workflows(lookback_days=30)
     elapsed = time.time() - start
@@ -126,13 +130,16 @@ def test_workflow_detection_logging(db, user_model_store, caplog):
     workflows were detected rather than 'disabled'.
     """
     import logging
+
     caplog.set_level(logging.INFO)
 
     detector = WorkflowDetector(db, user_model_store)
     workflows = detector.detect_workflows(lookback_days=30)
 
     # Should log the number of detected workflows (active detection, not disabled)
-    assert any("detected" in record.message.lower() for record in caplog.records), \
+    assert any("detected" in record.message.lower() for record in caplog.records), (
         "Should log 'Detected N workflows …' at INFO level"
-    assert any("workflows" in record.message.lower() for record in caplog.records), \
+    )
+    assert any("workflows" in record.message.lower() for record in caplog.records), (
         "Log message should mention 'workflows'"
+    )

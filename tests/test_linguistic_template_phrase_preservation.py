@@ -13,16 +13,12 @@ import pytest
 
 def _relationship_template_id(address: str, channel: str, direction: str = "out") -> str:
     """Compute template ID the same way the relationship extractor does."""
-    return hashlib.sha256(
-        f"{address}:{channel}:{direction}".encode()
-    ).hexdigest()[:16]
+    return hashlib.sha256(f"{address}:{channel}:{direction}".encode()).hexdigest()[:16]
 
 
 def _linguistic_template_id(contact_id: str) -> str:
     """Compute template ID the same way the linguistic extractor does."""
-    return hashlib.sha256(
-        f"linguistic:{contact_id}:outbound".encode()
-    ).hexdigest()[:16]
+    return hashlib.sha256(f"linguistic:{contact_id}:outbound".encode()).hexdigest()[:16]
 
 
 class TestLinguisticTemplatePhrasePreservation:
@@ -62,9 +58,7 @@ class TestLinguisticTemplatePhrasePreservation:
         # Simulate the linguistic extractor storing its template (uses _get_existing_phrase_data)
         # First, get phrase data the way the linguistic extractor would
         existing_phrases = {"common_phrases": [], "avoids_phrases": []}
-        existing_templates = user_model_store.get_communication_templates(
-            contact_id=contact, limit=10
-        )
+        existing_templates = user_model_store.get_communication_templates(contact_id=contact, limit=10)
         for tmpl in existing_templates:
             if tmpl.get("common_phrases") and not existing_phrases["common_phrases"]:
                 existing_phrases["common_phrases"] = tmpl["common_phrases"]
@@ -108,9 +102,7 @@ class TestLinguisticTemplatePhrasePreservation:
         channel = "slack"
 
         # No prior templates exist — phrase lookup returns empty
-        existing_templates = user_model_store.get_communication_templates(
-            contact_id=contact, limit=10
-        )
+        existing_templates = user_model_store.get_communication_templates(contact_id=contact, limit=10)
         assert len(existing_templates) == 0
 
         ling_template = {
@@ -179,9 +171,7 @@ class TestLinguisticTemplatePhrasePreservation:
         rel_id = _relationship_template_id(contact, channel)
 
         # They must differ — different hash inputs
-        assert ling_id != rel_id, (
-            "Linguistic and relationship template IDs should not collide"
-        )
+        assert ling_id != rel_id, "Linguistic and relationship template IDs should not collide"
 
     def test_repeated_linguistic_stores_preserve_phrases(self, user_model_store):
         """Multiple linguistic template stores don't lose phrase data over time."""
@@ -210,9 +200,7 @@ class TestLinguisticTemplatePhrasePreservation:
         # Simulate multiple rounds of the linguistic extractor storing
         for i in range(3):
             existing_phrases = {"common_phrases": [], "avoids_phrases": []}
-            existing_templates = user_model_store.get_communication_templates(
-                contact_id=contact, limit=10
-            )
+            existing_templates = user_model_store.get_communication_templates(contact_id=contact, limit=10)
             for tmpl in existing_templates:
                 if tmpl.get("common_phrases") and not existing_phrases["common_phrases"]:
                     existing_phrases["common_phrases"] = tmpl["common_phrases"]

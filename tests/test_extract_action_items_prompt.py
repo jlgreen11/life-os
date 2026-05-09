@@ -42,6 +42,7 @@ from services.ai_engine.engine import AIEngine
 def _capture_system_prompt(db, user_model_store, llm_response: str = "[]") -> str:
     """Run extract_action_items and capture the system prompt passed to _query_local."""
     import asyncio
+
     engine = AIEngine(db, user_model_store, {})
     captured = {}
 
@@ -73,8 +74,9 @@ async def test_prompt_contains_ownership_filter(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "owner" in prompt_lower or "personally" in prompt_lower or "recipient" in prompt_lower, \
+    assert "owner" in prompt_lower or "personally" in prompt_lower or "recipient" in prompt_lower, (
         "Prompt must filter to tasks owned by / assigned to the user personally"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +95,9 @@ async def test_prompt_contains_skip_criteria_for_marketing(db, user_model_store)
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "marketing" in prompt_lower or "promotional" in prompt_lower or "newsletter" in prompt_lower, \
+    assert "marketing" in prompt_lower or "promotional" in prompt_lower or "newsletter" in prompt_lower, (
         "Prompt must explicitly list marketing/promotional as a skip criterion"
+    )
 
 
 @pytest.mark.asyncio
@@ -108,8 +111,9 @@ async def test_prompt_contains_skip_criteria_for_automated_notifications(db, use
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "automated" in prompt_lower or "notification" in prompt_lower or "system" in prompt_lower, \
+    assert "automated" in prompt_lower or "notification" in prompt_lower or "system" in prompt_lower, (
         "Prompt must list automated system notifications as a skip criterion"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +132,10 @@ async def test_prompt_instructs_completed_task_detection(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "completed" in prompt_lower, \
-        "Prompt must reference the 'completed' field for past-tense task detection"
-    assert "past" in prompt_lower or "tense" in prompt_lower or "already" in prompt_lower or \
-           "future" in prompt_lower, \
+    assert "completed" in prompt_lower, "Prompt must reference the 'completed' field for past-tense task detection"
+    assert "past" in prompt_lower or "tense" in prompt_lower or "already" in prompt_lower or "future" in prompt_lower, (
         "Prompt must contrast future obligations vs already-completed work"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,11 +154,12 @@ async def test_prompt_contains_priority_inference_rules(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "urgent" in prompt_lower or "asap" in prompt_lower or "deadline" in prompt_lower, \
+    assert "urgent" in prompt_lower or "asap" in prompt_lower or "deadline" in prompt_lower, (
         "Prompt must list urgency keywords that elevate to high priority"
-    assert "no rush" in prompt_lower or "when you get a chance" in prompt_lower or \
-           "eventually" in prompt_lower, \
+    )
+    assert "no rush" in prompt_lower or "when you get a chance" in prompt_lower or "eventually" in prompt_lower, (
         "Prompt must list low-priority signals"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,10 +178,10 @@ async def test_prompt_instructs_due_hint_preservation(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "due_hint" in prompt_lower or "due hint" in prompt_lower, \
-        "Prompt must reference the due_hint field"
-    assert "phrasing" in prompt_lower or "original" in prompt_lower or "preserve" in prompt_lower, \
+    assert "due_hint" in prompt_lower or "due hint" in prompt_lower, "Prompt must reference the due_hint field"
+    assert "phrasing" in prompt_lower or "original" in prompt_lower or "preserve" in prompt_lower, (
         "Prompt must instruct preservation of original date language"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +200,9 @@ async def test_prompt_requires_verb_first_actionable_titles(db, user_model_store
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "verb" in prompt_lower or "actionable" in prompt_lower, \
+    assert "verb" in prompt_lower or "actionable" in prompt_lower, (
         "Prompt must require verb-first, actionable task titles"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +221,9 @@ async def test_prompt_enforces_volume_constraint(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "fewer" in prompt_lower or "quality" in prompt_lower or "duplicate" in prompt_lower, \
+    assert "fewer" in prompt_lower or "quality" in prompt_lower or "duplicate" in prompt_lower, (
         "Prompt must enforce a volume constraint favouring quality over quantity"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -236,14 +242,14 @@ async def test_prompt_specifies_json_schema_with_all_keys(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     # All four output keys must be documented
-    assert '"title"' in prompt or "'title'" in prompt or "title" in prompt.lower(), \
+    assert '"title"' in prompt or "'title'" in prompt or "title" in prompt.lower(), (
         "Prompt must include 'title' in the output schema"
-    assert '"due_hint"' in prompt or "due_hint" in prompt, \
-        "Prompt must include 'due_hint' in the output schema"
-    assert '"priority"' in prompt or "priority" in prompt.lower(), \
-        "Prompt must include 'priority' in the output schema"
-    assert '"completed"' in prompt or "completed" in prompt.lower(), \
+    )
+    assert '"due_hint"' in prompt or "due_hint" in prompt, "Prompt must include 'due_hint' in the output schema"
+    assert '"priority"' in prompt or "priority" in prompt.lower(), "Prompt must include 'priority' in the output schema"
+    assert '"completed"' in prompt or "completed" in prompt.lower(), (
         "Prompt must include 'completed' in the output schema"
+    )
 
 
 @pytest.mark.asyncio
@@ -257,9 +263,12 @@ async def test_prompt_contains_no_prose_output_constraint(db, user_model_store):
 
     prompt = mock_local.call_args[0][0]
     prompt_lower = prompt.lower()
-    assert "only json" in prompt_lower or "only valid json" in prompt_lower or \
-           "no prose" in prompt_lower or "no markdown" in prompt_lower, \
-        "Prompt must forbid prose or markdown in the output"
+    assert (
+        "only json" in prompt_lower
+        or "only valid json" in prompt_lower
+        or "no prose" in prompt_lower
+        or "no markdown" in prompt_lower
+    ), "Prompt must forbid prose or markdown in the output"
 
 
 @pytest.mark.asyncio
@@ -274,8 +283,7 @@ async def test_prompt_contains_worked_examples(db, user_model_store):
     prompt = mock_local.call_args[0][0]
     # Count examples by looking for "Input:" markers (or equivalent patterns)
     example_count = prompt.lower().count("input:")
-    assert example_count >= 2, \
-        f"Prompt must include ≥2 worked examples; found {example_count}"
+    assert example_count >= 2, f"Prompt must include ≥2 worked examples; found {example_count}"
 
 
 # ---------------------------------------------------------------------------

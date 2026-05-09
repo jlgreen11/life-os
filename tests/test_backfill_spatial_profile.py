@@ -191,13 +191,13 @@ def test_backfill_spatial_profile_tracks_visit_counts(db, user_model_store):
             "id": f"evt-{i}",
             "type": EventType.CALENDAR_EVENT_CREATED.value,
             "source": "caldav",
-            "timestamp": f"2026-02-{10+i:02d}T10:00:00Z",
+            "timestamp": f"2026-02-{10 + i:02d}T10:00:00Z",
             "priority": "normal",
             "payload": {
                 "summary": f"Meeting {i}",
                 "location": "Office Building A",
-                "start_time": f"2026-02-{15+i:02d}T10:00:00Z",
-                "end_time": f"2026-02-{15+i:02d}T11:00:00Z",
+                "start_time": f"2026-02-{15 + i:02d}T10:00:00Z",
+                "end_time": f"2026-02-{15 + i:02d}T11:00:00Z",
             },
             "metadata": {},
         }
@@ -623,13 +623,13 @@ def test_backfill_spatial_profile_respects_limit(db, user_model_store):
             "id": f"evt-{i}",
             "type": EventType.CALENDAR_EVENT_CREATED.value,
             "source": "caldav",
-            "timestamp": f"2026-02-{10+i:02d}T10:00:00Z",
+            "timestamp": f"2026-02-{10 + i:02d}T10:00:00Z",
             "priority": "normal",
             "payload": {
                 "summary": f"Meeting {i}",
                 "location": "Office",
-                "start_time": f"2026-02-{15+i:02d}T10:00:00Z",
-                "end_time": f"2026-02-{15+i:02d}T11:00:00Z",
+                "start_time": f"2026-02-{15 + i:02d}T10:00:00Z",
+                "end_time": f"2026-02-{15 + i:02d}T11:00:00Z",
             },
             "metadata": {},
         }

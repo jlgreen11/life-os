@@ -53,14 +53,16 @@ async def test_prediction_engine_runs_when_new_events_exist(db, event_store, use
     await engine.generate_predictions({})
 
     # Add a new event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "boss@company.com", "subject": "Urgent", "message_id": "msg-1"},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "boss@company.com", "subject": "Urgent", "message_id": "msg-1"},
+            "metadata": {},
+        }
+    )
 
     # Engine should detect new events and run (not skip)
     assert engine._has_new_events() is True, "Should detect the new event"
@@ -80,32 +82,36 @@ async def test_calendar_conflicts_detects_overlaps(db, event_store, user_model_s
     now = datetime.now(timezone.utc)
 
     # Event 1: 2:00 PM - 3:00 PM
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Team meeting",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Team meeting",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Event 2: 2:30 PM - 3:30 PM (overlaps with Event 1 by 30 minutes)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
-        "payload": {
-            "title": "Client call",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
+            "payload": {
+                "title": "Client call",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_calendar_conflicts({})
     assert len(predictions) >= 1
@@ -123,32 +129,36 @@ async def test_calendar_conflicts_detects_tight_transitions(db, event_store, use
     now = datetime.now(timezone.utc)
 
     # Event 1: 2:00 PM - 3:00 PM
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Team standup",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Team standup",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Event 2: 3:10 PM - 4:00 PM (only 10 min gap)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=3, minutes=10)).isoformat(),
-        "payload": {
-            "title": "Design review",
-            "start_time": (now + timedelta(hours=3, minutes=10)).isoformat(),
-            "end_time": (now + timedelta(hours=4)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=3, minutes=10)).isoformat(),
+            "payload": {
+                "title": "Design review",
+                "start_time": (now + timedelta(hours=3, minutes=10)).isoformat(),
+                "end_time": (now + timedelta(hours=4)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_calendar_conflicts({})
     assert len(predictions) >= 1
@@ -165,32 +175,36 @@ async def test_calendar_conflicts_skips_well_spaced_events(db, event_store, user
     now = datetime.now(timezone.utc)
 
     # Event 1: 2:00 PM - 3:00 PM
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Morning meeting",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Morning meeting",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Event 2: 4:00 PM - 5:00 PM (1 hour gap — plenty of time)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=4)).isoformat(),
-        "payload": {
-            "title": "Afternoon sync",
-            "start_time": (now + timedelta(hours=4)).isoformat(),
-            "end_time": (now + timedelta(hours=5)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=4)).isoformat(),
+            "payload": {
+                "title": "Afternoon sync",
+                "start_time": (now + timedelta(hours=4)).isoformat(),
+                "end_time": (now + timedelta(hours=5)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_calendar_conflicts({})
     assert len(predictions) == 0
@@ -208,50 +222,56 @@ async def test_follow_up_skips_marketing_emails(db, event_store, user_model_stor
     now = datetime.now(timezone.utc)
 
     # Insert a no-reply sender
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "no-reply@marketing.example.com",
-            "subject": "50% off today!",
-            "snippet": "Big sale happening now",
-            "body_plain": "Click here for deals. Unsubscribe: example.com/unsub",
-            "message_id": "msg-marketing-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "no-reply@marketing.example.com",
+                "subject": "50% off today!",
+                "snippet": "Big sale happening now",
+                "body_plain": "Click here for deals. Unsubscribe: example.com/unsub",
+                "message_id": "msg-marketing-1",
+            },
+            "metadata": {},
+        }
+    )
 
     # Insert a noreply variant
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=5)).isoformat(),
-        "payload": {
-            "from_address": "noreply@accounts.google.com",
-            "subject": "Security alert",
-            "snippet": "New sign-in detected",
-            "message_id": "msg-noreply-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=5)).isoformat(),
+            "payload": {
+                "from_address": "noreply@accounts.google.com",
+                "subject": "Security alert",
+                "snippet": "New sign-in detected",
+                "message_id": "msg-noreply-1",
+            },
+            "metadata": {},
+        }
+    )
 
     # Insert a newsletter sender
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=4)).isoformat(),
-        "payload": {
-            "from_address": "newsletter@techcrunch.com",
-            "subject": "Daily digest",
-            "snippet": "Top stories today",
-            "message_id": "msg-newsletter-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=4)).isoformat(),
+            "payload": {
+                "from_address": "newsletter@techcrunch.com",
+                "subject": "Daily digest",
+                "snippet": "Top stories today",
+                "message_id": "msg-newsletter-1",
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_follow_up_needs({})
     # None of these should produce predictions
@@ -265,20 +285,22 @@ async def test_follow_up_keeps_real_emails(db, event_store, user_model_store):
     now = datetime.now(timezone.utc)
 
     # Insert a real email from a real person, old enough to need follow-up
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "boss@company.com",
-            "subject": "Project update needed",
-            "snippet": "Can you send me the latest numbers?",
-            "body_plain": "Hi, can you send me the latest numbers? Thanks.",
-            "message_id": "msg-real-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "boss@company.com",
+                "subject": "Project update needed",
+                "snippet": "Can you send me the latest numbers?",
+                "body_plain": "Hi, can you send me the latest numbers? Thanks.",
+                "message_id": "msg-real-1",
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_follow_up_needs({})
     assert len(predictions) >= 1
@@ -293,32 +315,36 @@ async def test_follow_up_skips_already_replied_threads(db, event_store, user_mod
     now = datetime.now(timezone.utc)
 
     # Inbound message
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "colleague@company.com",
-            "subject": "Re: Project update",
-            "message_id": "msg-inbound-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "colleague@company.com",
+                "subject": "Re: Project update",
+                "message_id": "msg-inbound-1",
+            },
+            "metadata": {},
+        }
+    )
 
     # Our reply to that thread
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.sent",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=4)).isoformat(),
-        "payload": {
-            "to_address": "colleague@company.com",
-            "subject": "Re: Project update",
-            "in_reply_to": "msg-inbound-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.sent",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=4)).isoformat(),
+            "payload": {
+                "to_address": "colleague@company.com",
+                "subject": "Re: Project update",
+                "in_reply_to": "msg-inbound-1",
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_follow_up_needs({})
     # Should be empty — we already replied
@@ -473,19 +499,21 @@ async def test_preparation_detects_travel_events(db, event_store, user_model_sto
     now = datetime.now(timezone.utc)
 
     # Flight in 24 hours (within the 12-48 hour prep window)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=24)).isoformat(),
-        "payload": {
-            "title": "Flight to NYC",
-            "start_time": (now + timedelta(hours=24)).isoformat(),
-            "end_time": (now + timedelta(hours=27)).isoformat(),
-            "location": "JFK Airport",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=24)).isoformat(),
+            "payload": {
+                "title": "Flight to NYC",
+                "start_time": (now + timedelta(hours=24)).isoformat(),
+                "end_time": (now + timedelta(hours=27)).isoformat(),
+                "location": "JFK Airport",
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_preparation_needs({})
     assert len(predictions) >= 1
@@ -503,19 +531,21 @@ async def test_preparation_detects_large_meetings(db, event_store, user_model_st
     now = datetime.now(timezone.utc)
 
     # Big meeting tomorrow
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=30)).isoformat(),
-        "payload": {
-            "title": "Quarterly planning session",
-            "start_time": (now + timedelta(hours=30)).isoformat(),
-            "end_time": (now + timedelta(hours=32)).isoformat(),
-            "attendees": ["alice@co.com", "bob@co.com", "carol@co.com", "dan@co.com"],
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=30)).isoformat(),
+            "payload": {
+                "title": "Quarterly planning session",
+                "start_time": (now + timedelta(hours=30)).isoformat(),
+                "end_time": (now + timedelta(hours=32)).isoformat(),
+                "attendees": ["alice@co.com", "bob@co.com", "carol@co.com", "dan@co.com"],
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_preparation_needs({})
     assert len(predictions) >= 1
@@ -532,30 +562,34 @@ async def test_preparation_skips_events_outside_window(db, event_store, user_mod
     now = datetime.now(timezone.utc)
 
     # Event too soon (in 6 hours — before the 12-hour window starts)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=6)).isoformat(),
-        "payload": {
-            "title": "Flight to LA",
-            "start_time": (now + timedelta(hours=6)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=6)).isoformat(),
+            "payload": {
+                "title": "Flight to LA",
+                "start_time": (now + timedelta(hours=6)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Event too far (in 60 hours — after the 48-hour window ends)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=60)).isoformat(),
-        "payload": {
-            "title": "Flight to SF",
-            "start_time": (now + timedelta(hours=60)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=60)).isoformat(),
+            "payload": {
+                "title": "Flight to SF",
+                "start_time": (now + timedelta(hours=60)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_preparation_needs({})
     assert len(predictions) == 0
@@ -574,25 +608,29 @@ async def test_spending_patterns_detects_anomalies(db, event_store, user_model_s
 
     # $600 on dining (60% of $1000 total — well over threshold)
     for i in range(6):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "finance.transaction.new",
-            "source": "plaid",
-            "timestamp": (now - timedelta(days=i * 3)).isoformat(),
-            "payload": {"category": "dining", "amount": -100},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "finance.transaction.new",
+                "source": "plaid",
+                "timestamp": (now - timedelta(days=i * 3)).isoformat(),
+                "payload": {"category": "dining", "amount": -100},
+                "metadata": {},
+            }
+        )
 
     # $400 on other categories
     for i in range(4):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "finance.transaction.new",
-            "source": "plaid",
-            "timestamp": (now - timedelta(days=i * 5)).isoformat(),
-            "payload": {"category": "groceries", "amount": -100},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "finance.transaction.new",
+                "source": "plaid",
+                "timestamp": (now - timedelta(days=i * 5)).isoformat(),
+                "payload": {"category": "groceries", "amount": -100},
+                "metadata": {},
+            }
+        )
 
     predictions = await engine._check_spending_patterns({})
     assert len(predictions) >= 1
@@ -610,24 +648,28 @@ async def test_spending_patterns_skips_low_absolute_spend(db, event_store, user_
     now = datetime.now(timezone.utc)
 
     # $150 on subscriptions (75% of $200 total) — high % but low absolute
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "finance.transaction.new",
-        "source": "plaid",
-        "timestamp": (now - timedelta(days=5)).isoformat(),
-        "payload": {"category": "subscriptions", "amount": -150},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "finance.transaction.new",
+            "source": "plaid",
+            "timestamp": (now - timedelta(days=5)).isoformat(),
+            "payload": {"category": "subscriptions", "amount": -150},
+            "metadata": {},
+        }
+    )
 
     # $50 on other
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "finance.transaction.new",
-        "source": "plaid",
-        "timestamp": (now - timedelta(days=10)).isoformat(),
-        "payload": {"category": "entertainment", "amount": -50},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "finance.transaction.new",
+            "source": "plaid",
+            "timestamp": (now - timedelta(days=10)).isoformat(),
+            "payload": {"category": "entertainment", "amount": -50},
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_spending_patterns({})
     # Should be empty — $150 is below the $200 absolute threshold
@@ -642,14 +684,16 @@ async def test_spending_patterns_requires_sufficient_data(db, event_store, user_
 
     # Only 3 transactions — not enough for pattern detection
     for i in range(3):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "finance.transaction.new",
-            "source": "plaid",
-            "timestamp": (now - timedelta(days=i * 2)).isoformat(),
-            "payload": {"category": "travel", "amount": -300},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "finance.transaction.new",
+                "source": "plaid",
+                "timestamp": (now - timedelta(days=i * 2)).isoformat(),
+                "payload": {"category": "travel", "amount": -300},
+                "metadata": {},
+            }
+        )
 
     predictions = await engine._check_spending_patterns({})
     assert len(predictions) == 0
@@ -854,27 +898,27 @@ async def test_predictions_stored_with_surfaced_flag(db, event_store, user_model
     now = datetime.now(timezone.utc)
 
     # Create conditions that generate a prediction
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=6)).isoformat(),
-        "payload": {
-            "from_address": "important@company.com",
-            "subject": "Action needed",
-            "message_id": "msg-1",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=6)).isoformat(),
+            "payload": {
+                "from_address": "important@company.com",
+                "subject": "Action needed",
+                "message_id": "msg-1",
+            },
+            "metadata": {},
+        }
+    )
 
     engine._last_event_cursor = 0
     predictions = await engine.generate_predictions({})
 
     # Check that predictions were stored in the DB
     with db.get_connection("user_model") as conn:
-        rows = conn.execute(
-            "SELECT id, was_surfaced FROM predictions ORDER BY created_at DESC"
-        ).fetchall()
+        rows = conn.execute("SELECT id, was_surfaced FROM predictions ORDER BY created_at DESC").fetchall()
 
     # At least one prediction should have been stored
     assert len(rows) >= 1
@@ -903,19 +947,23 @@ async def test_calendar_reminder_dedup_includes_filtered_predictions(db, event_s
 
     # Insert a calendar event starting in 6 hours (within the 2-24h reminder window)
     cal_event_id = str(uuid.uuid4())
-    event_store.store_event({
-        "id": cal_event_id,
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "title": "Team standup",
-            "start_time": (now + timedelta(hours=6)).isoformat(),
-            "end_time": (now + timedelta(hours=7)).isoformat(),
-            "event_id": cal_event_id,
-        }),
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": cal_event_id,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "title": "Team standup",
+                    "start_time": (now + timedelta(hours=6)).isoformat(),
+                    "end_time": (now + timedelta(hours=7)).isoformat(),
+                    "event_id": cal_event_id,
+                }
+            ),
+            "metadata": {},
+        }
+    )
 
     # Simulate a previously filtered prediction for this calendar event.
     # This mimics what generate_predictions does when a prediction fails the
@@ -961,19 +1009,23 @@ async def test_calendar_reminder_dedup_allows_new_events(db, event_store, user_m
 
     # Insert two calendar events in the 2-24h window
     for eid, title, hours_ahead in [(event_a_id, "Event A", 6), (event_b_id, "Event B", 10)]:
-        event_store.store_event({
-            "id": eid,
-            "type": "calendar.event.created",
-            "source": "caldav",
-            "timestamp": now.isoformat(),
-            "payload": json.dumps({
-                "title": title,
-                "start_time": (now + timedelta(hours=hours_ahead)).isoformat(),
-                "end_time": (now + timedelta(hours=hours_ahead + 1)).isoformat(),
-                "event_id": eid,
-            }),
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": eid,
+                "type": "calendar.event.created",
+                "source": "caldav",
+                "timestamp": now.isoformat(),
+                "payload": json.dumps(
+                    {
+                        "title": title,
+                        "start_time": (now + timedelta(hours=hours_ahead)).isoformat(),
+                        "end_time": (now + timedelta(hours=hours_ahead + 1)).isoformat(),
+                        "event_id": eid,
+                    }
+                ),
+                "metadata": {},
+            }
+        )
 
     # Create a filtered prediction for event A only
     with db.get_connection("user_model") as conn:
@@ -1000,9 +1052,7 @@ async def test_calendar_reminder_dedup_allows_new_events(db, event_store, user_m
 
     # Run — event A should be deduped, event B should get a new prediction
     predictions = await engine._check_calendar_event_reminders({})
-    assert len(predictions) == 1, (
-        f"Expected exactly 1 new prediction (for event B), got {len(predictions)}"
-    )
+    assert len(predictions) == 1, f"Expected exactly 1 new prediction (for event B), got {len(predictions)}"
     assert predictions[0].supporting_signals["calendar_event_id"] == event_b_id
 
 
@@ -1022,19 +1072,23 @@ async def test_no_accumulation_storm_on_repeated_runs(db, event_store, user_mode
     for i in range(2):
         eid = str(uuid.uuid4())
         event_ids.append(eid)
-        event_store.store_event({
-            "id": eid,
-            "type": "calendar.event.created",
-            "source": "caldav",
-            "timestamp": now.isoformat(),
-            "payload": json.dumps({
-                "title": f"Meeting {i + 1}",
-                "start_time": (now + timedelta(hours=4 + i * 3)).isoformat(),
-                "end_time": (now + timedelta(hours=5 + i * 3)).isoformat(),
-                "event_id": eid,
-            }),
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": eid,
+                "type": "calendar.event.created",
+                "source": "caldav",
+                "timestamp": now.isoformat(),
+                "payload": json.dumps(
+                    {
+                        "title": f"Meeting {i + 1}",
+                        "start_time": (now + timedelta(hours=4 + i * 3)).isoformat(),
+                        "end_time": (now + timedelta(hours=5 + i * 3)).isoformat(),
+                        "event_id": eid,
+                    }
+                ),
+                "metadata": {},
+            }
+        )
 
     # Run generate_predictions 5 times — simulates 5 consecutive 15-min cycles
     for cycle in range(5):

@@ -48,9 +48,7 @@ def test_supporting_signals_stored_as_dict(user_model_store):
     stored_signals = json.loads(row["supporting_signals"])
 
     # CRITICAL: Must be a dict, not a list
-    assert isinstance(stored_signals, dict), (
-        f"supporting_signals must be stored as dict, got {type(stored_signals)}"
-    )
+    assert isinstance(stored_signals, dict), f"supporting_signals must be stored as dict, got {type(stored_signals)}"
 
     # Verify all fields are preserved
     assert stored_signals["contact_email"] == "test@example.com"

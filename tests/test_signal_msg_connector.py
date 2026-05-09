@@ -67,9 +67,7 @@ def _mock_unix_connection(response_data: dict | list | None = None):
     else:
         rpc_response["result"] = None
 
-    mock_reader.readline = AsyncMock(
-        return_value=(json.dumps(rpc_response) + "\n").encode()
-    )
+    mock_reader.readline = AsyncMock(return_value=(json.dumps(rpc_response) + "\n").encode())
 
     return mock_reader, mock_writer
 
@@ -451,10 +449,7 @@ class TestExecute:
         # Two RPC calls: send + publish_event (which also calls _rpc?  No, publish_event goes to event_bus)
         # Actually, two publish calls: first the send RPC, then publish_event
         # The event_bus.publish should have been called for message.sent
-        sent_calls = [
-            c for c in event_bus.publish.call_args_list
-            if c[0][0] == "message.sent"
-        ]
+        sent_calls = [c for c in event_bus.publish.call_args_list if c[0][0] == "message.sent"]
         assert len(sent_calls) == 1
         payload = sent_calls[0][0][1]
         assert payload["channel"] == "signal"
@@ -482,9 +477,7 @@ class TestExecute:
             mock_writer.write = capture_write
 
             rpc_response = {"jsonrpc": "2.0", "id": 1, "result": None}
-            mock_reader.readline = AsyncMock(
-                return_value=(json.dumps(rpc_response) + "\n").encode()
-            )
+            mock_reader.readline = AsyncMock(return_value=(json.dumps(rpc_response) + "\n").encode())
             return mock_reader, mock_writer
 
         with patch("asyncio.open_unix_connection", side_effect=capture_rpc):
@@ -516,9 +509,7 @@ class TestExecute:
             mock_writer.write = capture_write
 
             rpc_response = {"jsonrpc": "2.0", "id": 1, "result": None}
-            mock_reader.readline = AsyncMock(
-                return_value=(json.dumps(rpc_response) + "\n").encode()
-            )
+            mock_reader.readline = AsyncMock(return_value=(json.dumps(rpc_response) + "\n").encode())
             return mock_reader, mock_writer
 
         with patch("asyncio.open_unix_connection", side_effect=capture_rpc):
@@ -542,10 +533,7 @@ class TestExecute:
                 {"to": "+15559876543", "message": "Outbound test"},
             )
 
-        sent_calls = [
-            c for c in event_bus.publish.call_args_list
-            if c[0][0] == "message.sent"
-        ]
+        sent_calls = [c for c in event_bus.publish.call_args_list if c[0][0] == "message.sent"]
         assert len(sent_calls) == 1
         payload = sent_calls[0][0][1]
         assert payload["from_address"] == "+15551234567"
@@ -572,10 +560,7 @@ class TestExecute:
                 {"to": "+15559876543", "message": long_message},
             )
 
-        sent_calls = [
-            c for c in event_bus.publish.call_args_list
-            if c[0][0] == "message.sent"
-        ]
+        sent_calls = [c for c in event_bus.publish.call_args_list if c[0][0] == "message.sent"]
         payload = sent_calls[0][0][1]
         assert len(payload["snippet"]) == 150
 
@@ -627,9 +612,7 @@ class TestHealthCheck:
             "id": 1,
             "error": {"code": -32600, "message": "Invalid Request"},
         }
-        mock_reader.readline = AsyncMock(
-            return_value=(json.dumps(error_response) + "\n").encode()
-        )
+        mock_reader.readline = AsyncMock(return_value=(json.dumps(error_response) + "\n").encode())
 
         with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
             result = await connector.health_check()
@@ -698,9 +681,7 @@ class TestRpcCall:
         mock_writer.wait_closed = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
-        mock_reader.readline = AsyncMock(
-            return_value=(json.dumps(response) + "\n").encode()
-        )
+        mock_reader.readline = AsyncMock(return_value=(json.dumps(response) + "\n").encode())
 
         with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
             result = await connector._rpc_call("listGroups")
@@ -721,9 +702,7 @@ class TestRpcCall:
         mock_writer.wait_closed = AsyncMock()
         mock_writer.write = MagicMock()
         mock_writer.drain = AsyncMock()
-        mock_reader.readline = AsyncMock(
-            return_value=(json.dumps(error_response) + "\n").encode()
-        )
+        mock_reader.readline = AsyncMock(return_value=(json.dumps(error_response) + "\n").encode())
 
         with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
             with pytest.raises(Exception, match="Signal RPC error"):
@@ -762,9 +741,7 @@ class TestRpcCall:
             mock_writer.write = capture
 
             response = {"jsonrpc": "2.0", "id": 1, "result": None}
-            mock_reader.readline = AsyncMock(
-                return_value=(json.dumps(response) + "\n").encode()
-            )
+            mock_reader.readline = AsyncMock(return_value=(json.dumps(response) + "\n").encode())
             return mock_reader, mock_writer
 
         with patch("asyncio.open_unix_connection", side_effect=mock_open):
@@ -794,9 +771,7 @@ class TestRpcCall:
             mock_writer.write = capture
 
             response = {"jsonrpc": "2.0", "id": 1, "result": None}
-            mock_reader.readline = AsyncMock(
-                return_value=(json.dumps(response) + "\n").encode()
-            )
+            mock_reader.readline = AsyncMock(return_value=(json.dumps(response) + "\n").encode())
             return mock_reader, mock_writer
 
         with patch("asyncio.open_unix_connection", side_effect=mock_open):
@@ -823,9 +798,7 @@ class TestRpcCall:
             mock_writer.write = capture
 
             response = {"jsonrpc": "2.0", "id": 1, "result": None}
-            mock_reader.readline = AsyncMock(
-                return_value=(json.dumps(response) + "\n").encode()
-            )
+            mock_reader.readline = AsyncMock(return_value=(json.dumps(response) + "\n").encode())
             return mock_reader, mock_writer
 
         with patch("asyncio.open_unix_connection", side_effect=mock_open):
@@ -844,9 +817,7 @@ class TestRpcCall:
         mock_writer.drain = AsyncMock()
 
         response = {"jsonrpc": "2.0", "id": 1, "result": []}
-        mock_reader.readline = AsyncMock(
-            return_value=(json.dumps(response) + "\n").encode()
-        )
+        mock_reader.readline = AsyncMock(return_value=(json.dumps(response) + "\n").encode())
 
         with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
             await connector._rpc_call("listGroups")
@@ -865,9 +836,7 @@ class TestRpcCall:
         mock_writer.drain = AsyncMock()
 
         error_response = {"jsonrpc": "2.0", "id": 1, "error": {"code": -1, "message": "fail"}}
-        mock_reader.readline = AsyncMock(
-            return_value=(json.dumps(error_response) + "\n").encode()
-        )
+        mock_reader.readline = AsyncMock(return_value=(json.dumps(error_response) + "\n").encode())
 
         with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
             with pytest.raises(Exception):
@@ -994,8 +963,7 @@ class TestSyncContacts:
             conn.execute(
                 """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                    VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
-                ("existing-id", "Old Name", json.dumps(["+15559876543"]),
-                 json.dumps({}), now, now),
+                ("existing-id", "Old Name", json.dumps(["+15559876543"]), json.dumps({}), now, now),
             )
             conn.execute(
                 """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
@@ -1057,8 +1025,7 @@ class TestSyncContacts:
                 conn.execute(
                     """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                        VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
-                    (cid, f"Contact {cid}", json.dumps([number]),
-                     json.dumps({"signal": number}), now, now),
+                    (cid, f"Contact {cid}", json.dumps([number]), json.dumps({"signal": number}), now, now),
                 )
                 conn.execute(
                     """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
@@ -1111,8 +1078,7 @@ class TestSyncContacts:
                 conn.execute(
                     """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                        VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
-                    (cid, f"Contact {i}", json.dumps([number]),
-                     json.dumps({"signal": number}), now, now),
+                    (cid, f"Contact {i}", json.dumps([number]), json.dumps({"signal": number}), now, now),
                 )
                 conn.execute(
                     """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
@@ -1162,8 +1128,7 @@ class TestSyncContacts:
                 conn.execute(
                     """INSERT INTO contacts (id, name, phones, channels, domains, created_at, updated_at)
                        VALUES (?, ?, ?, ?, '["personal"]', ?, ?)""",
-                    (cid, f"Contact {i}", json.dumps([number]),
-                     json.dumps({"signal": number}), now, now),
+                    (cid, f"Contact {i}", json.dumps([number]), json.dumps({"signal": number}), now, now),
                 )
                 conn.execute(
                     """INSERT INTO contact_identifiers (identifier, identifier_type, contact_id)
@@ -1202,6 +1167,7 @@ class TestSyncContacts:
     @pytest.mark.asyncio
     async def test_empty_contacts_and_groups(self, connector, db):
         """sync_contacts() handles empty responses gracefully."""
+
         async def multi_rpc(method, params=None):
             return []
 
@@ -1212,6 +1178,7 @@ class TestSyncContacts:
     @pytest.mark.asyncio
     async def test_null_contacts_response(self, connector, db):
         """sync_contacts() handles None responses from _rpc_call."""
+
         async def multi_rpc(method, params=None):
             return None
 

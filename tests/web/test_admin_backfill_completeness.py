@@ -27,14 +27,26 @@ from web.routes import register_routes
 # The canonical list of all signal profiles in the system.
 # Must match main.py's profile_backfill_map (lines ~1764-1771).
 ALL_PROFILE_NAMES = [
-    "relationships", "temporal", "topics", "linguistic",
-    "cadence", "mood_signals", "spatial", "decision",
+    "relationships",
+    "temporal",
+    "topics",
+    "linguistic",
+    "cadence",
+    "mood_signals",
+    "spatial",
+    "decision",
 ]
 
 # The canonical list of backfill type names returned in trigger responses.
 ALL_BACKFILL_TYPES = [
-    "relationship", "temporal", "topic", "linguistic",
-    "cadence", "mood_signals", "spatial", "decision",
+    "relationship",
+    "temporal",
+    "topic",
+    "linguistic",
+    "cadence",
+    "mood_signals",
+    "spatial",
+    "decision",
 ]
 
 
@@ -64,9 +76,12 @@ def _make_app(db, profile_data: dict | None = None) -> TestClient:
     life_os.connectors = []
     life_os.event_bus.is_connected = True
     life_os.vector_store.get_stats.return_value = {"document_count": 0}
-    life_os.prediction_engine.get_diagnostics = AsyncMock(return_value={
-        "prediction_types": {}, "overall": {"health": "unknown"},
-    })
+    life_os.prediction_engine.get_diagnostics = AsyncMock(
+        return_value={
+            "prediction_types": {},
+            "overall": {"health": "unknown"},
+        }
+    )
     life_os.semantic_fact_inferrer.run_all_inference.return_value = None
 
     # Wire ALL backfill methods as no-op async callables.
@@ -150,18 +165,14 @@ def test_status_ok_requires_all_eight_populated(db):
     client = _make_app(db, profile_data=six_only)
     data = client.get("/api/admin/backfills/status").json()
 
-    assert data["status"] == "needs_backfill", (
-        "Status should be 'needs_backfill' when spatial and decision are empty"
-    )
+    assert data["status"] == "needs_backfill", "Status should be 'needs_backfill' when spatial and decision are empty"
 
     # Now populate all 8 — should be ok.
     all_eight = {name: _populated_profile(50) for name in ALL_PROFILE_NAMES}
     client = _make_app(db, profile_data=all_eight)
     data = client.get("/api/admin/backfills/status").json()
 
-    assert data["status"] == "ok", (
-        "Status should be 'ok' when all 8 profiles are populated"
-    )
+    assert data["status"] == "ok", "Status should be 'ok' when all 8 profiles are populated"
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +201,7 @@ def test_trigger_lists_all_eight_backfill_types(db):
     client = _make_app(db)
     data = client.post("/api/admin/backfills/trigger").json()
 
-    assert len(data["backfills"]) == 8, (
-        f"Expected 8 backfill types, got {len(data['backfills'])}: {data['backfills']}"
-    )
+    assert len(data["backfills"]) == 8, f"Expected 8 backfill types, got {len(data['backfills'])}: {data['backfills']}"
     for expected in ALL_BACKFILL_TYPES:
         assert expected in data["backfills"], f"Missing backfill type: {expected}"
 

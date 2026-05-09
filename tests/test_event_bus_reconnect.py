@@ -52,9 +52,7 @@ async def test_connect_configures_infinite_reconnect(bus):
 
         mock_connect.assert_called_once()
         call_kwargs = mock_connect.call_args.kwargs
-        assert call_kwargs["max_reconnect_attempts"] == -1, (
-            "EventBus must retry indefinitely (-1) for a 24/7 server"
-        )
+        assert call_kwargs["max_reconnect_attempts"] == -1, "EventBus must retry indefinitely (-1) for a 24/7 server"
 
 
 @pytest.mark.asyncio

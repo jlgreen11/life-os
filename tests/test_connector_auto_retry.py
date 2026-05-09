@@ -57,9 +57,11 @@ class TestConnectorAutoRetry:
     async def test_retry_calls_start_after_backoff(self):
         """A connector in error state should get start() called after the backoff period."""
         connector = _make_mock_connector(running=False)
+
         # Simulate that start() succeeds and sets _running = True
         async def start_success():
             connector._running = True
+
         connector.start = AsyncMock(side_effect=start_success)
 
         stub = _make_lifeos_stub(connector_map={"google": connector})
@@ -133,8 +135,10 @@ class TestConnectorAutoRetry:
     async def test_recovered_connector_resets_retry_state(self):
         """When start() succeeds and connector is running, retry state should be cleared."""
         connector = _make_mock_connector(running=False)
+
         async def start_success():
             connector._running = True
+
         connector.start = AsyncMock(side_effect=start_success)
 
         stub = _make_lifeos_stub(connector_map={"google": connector})
@@ -251,6 +255,7 @@ class TestHealthMonitorRetryIntegration:
 
         # Use tmp_path equivalent
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             db = DatabaseManager(data_dir=tmp)
             db.initialize_all()

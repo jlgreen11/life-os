@@ -14,7 +14,7 @@ Architecture:
     SessionManager      — Persistent cookies, storage, and auth state
     CredentialVault     — Reads credentials from Proton Pass CLI export
     PageInteractor      — High-level page interaction primitives
-    
+
 Design Principles:
     1. Stealth-first: fingerprint randomization, realistic timing, no detectable automation signals
     2. Session persistence: log in once, reuse sessions until they expire
@@ -47,6 +47,7 @@ try:
         Page,
         Playwright,
     )
+
     HAS_PLAYWRIGHT = True
 except ImportError:
     HAS_PLAYWRIGHT = False
@@ -56,6 +57,7 @@ except ImportError:
 # HUMAN EMULATOR — Make the browser behave like a real person
 # ===========================================================================
 
+
 class HumanEmulator:
     """
     Generates human-like interaction patterns. Real humans don't:
@@ -63,7 +65,7 @@ class HumanEmulator:
         - Type at a constant speed
         - Scroll in perfect increments
         - Navigate without pause between actions
-    
+
     This class adds the organic imperfection that makes automation
     indistinguishable from a real user.
     """
@@ -95,8 +97,8 @@ class HumanEmulator:
         for i in range(steps):
             t = i / steps
             # Quadratic Bézier curve
-            px = (1 - t) ** 2 * cx + 2 * (1 - t) * t * ctrl_x + t ** 2 * x
-            py = (1 - t) ** 2 * cy + 2 * (1 - t) * t * ctrl_y + t ** 2 * y
+            px = (1 - t) ** 2 * cx + 2 * (1 - t) * t * ctrl_x + t**2 * x
+            py = (1 - t) ** 2 * cy + 2 * (1 - t) * t * ctrl_y + t**2 * y
 
             # Add micro-jitter (hand tremor)
             px += random.gauss(0, 1.5)
@@ -135,8 +137,7 @@ class HumanEmulator:
         # Brief pause after clicking (processing time)
         await asyncio.sleep(random.uniform(0.1, 0.4) * self.speed_factor)
 
-    async def type_text(self, page: Any, selector: str, text: str,
-                        clear_first: bool = True):
+    async def type_text(self, page: Any, selector: str, text: str, clear_first: bool = True):
         """
         Type text with human-like keystroke timing.
         Real typing has variable speed, occasional pauses, and rhythm.
@@ -164,13 +165,12 @@ class HumanEmulator:
                 delay += random.uniform(0.3, 0.8) * self.speed_factor
 
             # Speed up for common sequences (the, and, etc.)
-            if i > 0 and text[i - 1:i + 1] in ["th", "he", "in", "er", "an"]:
+            if i > 0 and text[i - 1 : i + 1] in ["th", "he", "in", "er", "an"]:
                 delay *= 0.7
 
             await page.keyboard.type(char, delay=int(delay * 1000))
 
-    async def scroll(self, page: Any, direction: str = "down",
-                     amount: Optional[int] = None):
+    async def scroll(self, page: Any, direction: str = "down", amount: Optional[int] = None):
         """
         Scroll with human-like behavior — variable speed, slight pauses,
         sometimes overshooting and correcting.
@@ -218,6 +218,7 @@ class HumanEmulator:
 # SESSION MANAGER — Persistent browser sessions
 # ===========================================================================
 
+
 class SessionManager:
     """
     Manages persistent browser sessions so you don't have to log in
@@ -257,14 +258,15 @@ class SessionManager:
 # CREDENTIAL VAULT — Read credentials from Proton Pass
 # ===========================================================================
 
+
 class CredentialVault:
     """
     Reads credentials from a Proton Pass export or a local encrypted vault.
-    
+
     Supported formats:
         - Proton Pass JSON export
         - Simple encrypted JSON vault (for manual entries)
-    
+
     NEVER stores credentials in plaintext outside the vault.
     Credentials are held in memory only during active use.
     """
@@ -277,7 +279,7 @@ class CredentialVault:
     def load_proton_pass_export(self, export_path: str):
         """
         Load credentials from a Proton Pass JSON export.
-        
+
         Proton Pass export format:
         {
             "vaults": {
@@ -351,6 +353,7 @@ class CredentialVault:
 
         try:
             import pyotp
+
             totp = pyotp.parse_uri(cred["totp_uri"])
             return totp.now()
         except ImportError:
@@ -364,6 +367,7 @@ class CredentialVault:
     def _url_to_site_id(url: str) -> str:
         """Convert a URL to a simple site identifier."""
         from urllib.parse import urlparse
+
         parsed = urlparse(url)
         domain = parsed.netloc or parsed.path
         # Remove www. and TLD
@@ -375,10 +379,11 @@ class CredentialVault:
 # BROWSER ENGINE — Core browser management with stealth
 # ===========================================================================
 
+
 class BrowserEngine:
     """
     Manages stealth Playwright browser instances.
-    
+
     Stealth techniques:
         - Randomized viewport, user agent, and platform
         - WebDriver flag removal
@@ -418,9 +423,7 @@ class BrowserEngine:
     async def start(self):
         """Start the Playwright browser engine."""
         if not HAS_PLAYWRIGHT:
-            raise RuntimeError(
-                "Playwright not installed. Run: pip install playwright && playwright install chromium"
-            )
+            raise RuntimeError("Playwright not installed. Run: pip install playwright && playwright install chromium")
 
         # Launch a single headless Chromium with stealth flags that disable
         # common automation-detection signals (AutomationControlled, infobars).
@@ -448,9 +451,7 @@ class BrowserEngine:
         if self._playwright:
             await self._playwright.stop()
 
-    async def create_context(self, site_id: str,
-                             locale: str = "en-US",
-                             timezone_id: str = "America/Chicago") -> Any:
+    async def create_context(self, site_id: str, locale: str = "en-US", timezone_id: str = "America/Chicago") -> Any:
         """
         Create a stealth browser context for a specific site.
         Reuses stored session if available.
@@ -554,6 +555,7 @@ class BrowserEngine:
 # PAGE INTERACTOR — High-level page interaction primitives
 # ===========================================================================
 
+
 class PageInteractor:
     """
     High-level interaction methods that combine the human emulator
@@ -563,10 +565,14 @@ class PageInteractor:
     def __init__(self, human: HumanEmulator):
         self.human = human
 
-    async def login(self, page: Any, creds: dict,
-                    username_selector: str = "input[type='email'], input[name='username'], input[name='email'], #email, #username",
-                    password_selector: str = "input[type='password'], #password",
-                    submit_selector: str = "button[type='submit'], input[type='submit'], .login-button, #login-button"):
+    async def login(
+        self,
+        page: Any,
+        creds: dict,
+        username_selector: str = "input[type='email'], input[name='username'], input[name='email'], #email, #username",
+        password_selector: str = "input[type='password'], #password",
+        submit_selector: str = "button[type='submit'], input[type='submit'], .login-button, #login-button",
+    ):
         """
         Perform a login with human-like behavior.
         Tries common selectors, fills in credentials, submits.
@@ -615,8 +621,12 @@ class PageInteractor:
         await page.wait_for_load_state("networkidle")
         await self.human.wait_human(1.0, 3.0)
 
-    async def handle_2fa(self, page: Any, totp_code: str,
-                         code_selector: str = "input[name='code'], input[name='otp'], input[type='tel'], .otp-input"):
+    async def handle_2fa(
+        self,
+        page: Any,
+        totp_code: str,
+        code_selector: str = "input[name='code'], input[name='otp'], input[type='tel'], .otp-input",
+    ):
         """Enter a 2FA/TOTP code."""
         await self.human.wait_human(1.0, 2.0)
         await self.human.type_text(page, code_selector, totp_code)
@@ -653,8 +663,7 @@ class PageInteractor:
             }}
         """)
 
-    async def wait_for_content(self, page: Any, selector: str,
-                                timeout: int = 30000) -> bool:
+    async def wait_for_content(self, page: Any, selector: str, timeout: int = 30000) -> bool:
         """Wait for specific content to appear on the page."""
         try:
             await page.wait_for_selector(selector, timeout=timeout)

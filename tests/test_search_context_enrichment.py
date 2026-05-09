@@ -31,6 +31,7 @@ from services.ai_engine.context import ContextAssembler
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_assembler(db, user_model_store) -> ContextAssembler:
     """Return a ContextAssembler wired to real temporary databases."""
     return ContextAssembler(db, user_model_store)
@@ -39,6 +40,7 @@ def _make_assembler(db, user_model_store) -> ContextAssembler:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def assembler(db, user_model_store) -> ContextAssembler:
@@ -101,6 +103,7 @@ def assembler_with_mood(db, user_model_store) -> ContextAssembler:
 # Tests: always-present sections
 # ---------------------------------------------------------------------------
 
+
 class TestSearchContextCore:
     """The search intent and timestamp must always appear in the output."""
 
@@ -146,6 +149,7 @@ class TestSearchContextCore:
 # Tests: preferences section
 # ---------------------------------------------------------------------------
 
+
 class TestSearchContextPreferences:
     """User preferences are included in the search context."""
 
@@ -165,6 +169,7 @@ class TestSearchContextPreferences:
 # ---------------------------------------------------------------------------
 # Tests: semantic facts section
 # ---------------------------------------------------------------------------
+
 
 class TestSearchContextSemanticFacts:
     """High-confidence semantic facts are injected for disambiguation."""
@@ -214,6 +219,7 @@ class TestSearchContextSemanticFacts:
 # Tests: mood context section
 # ---------------------------------------------------------------------------
 
+
 class TestSearchContextMoodSignals:
     """Recent mood signals are appended for tone calibration."""
 
@@ -245,12 +251,14 @@ class TestSearchContextMoodSignals:
 # Tests: fail-open / resilience
 # ---------------------------------------------------------------------------
 
+
 class TestSearchContextFailOpen:
     """The method must degrade gracefully when data sources fail."""
 
     def test_facts_exception_does_not_crash(self, db, event_bus):
         """If get_semantic_facts() raises, the method still returns a context string."""
         from unittest.mock import MagicMock
+
         ums = MagicMock()
         ums.get_semantic_facts.side_effect = RuntimeError("DB unavailable")
         ums.get_signal_profile.return_value = None
@@ -264,6 +272,7 @@ class TestSearchContextFailOpen:
     def test_mood_exception_does_not_crash(self, db, event_bus):
         """If get_signal_profile() raises for mood, the method still returns context."""
         from unittest.mock import MagicMock
+
         ums = MagicMock()
         ums.get_semantic_facts.return_value = []
         ums.get_signal_profile.side_effect = RuntimeError("profile read failed")
@@ -279,6 +288,5 @@ class TestSearchContextFailOpen:
         old_stub = f"User is searching across their entire digital life for: {query}"
         new_ctx = assembler_with_facts.assemble_search_context(query)
         assert len(new_ctx) > len(old_stub), (
-            f"Enriched context ({len(new_ctx)} chars) must exceed "
-            f"old stub ({len(old_stub)} chars)"
+            f"Enriched context ({len(new_ctx)} chars) must exceed old stub ({len(old_stub)} chars)"
         )

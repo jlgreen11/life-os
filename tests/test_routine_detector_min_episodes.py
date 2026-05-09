@@ -27,6 +27,7 @@ from storage.event_store import EventStore
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_event(event_store: EventStore, *, event_type: str, timestamp: datetime) -> str:
     """Insert a test event into the events database and return its ID."""
     event_id = str(uuid.uuid4())
@@ -66,6 +67,7 @@ def _create_episode(
 # ---------------------------------------------------------------------------
 # Unit tests for _effective_min_episodes()
 # ---------------------------------------------------------------------------
+
 
 class TestEffectiveMinEpisodes:
     """Unit tests for the _effective_min_episodes() method threshold tiers."""
@@ -137,6 +139,7 @@ class TestEffectiveMinEpisodes:
 # Integration tests — 5-day-old system with 15 typed episodes
 # ---------------------------------------------------------------------------
 
+
 class TestColdStartDetection:
     """Verify that a 5-day-old system with only 15 typed episodes can detect routines."""
 
@@ -176,9 +179,7 @@ class TestColdStartDetection:
             mock_fallback.assert_not_called()
 
         # Should still detect a morning routine
-        assert len(routines) >= 1, (
-            f"Expected at least 1 routine on 5-day system with 15 episodes, got {routines}"
-        )
+        assert len(routines) >= 1, f"Expected at least 1 routine on 5-day system with 15 episodes, got {routines}"
         triggers = {r["trigger"] for r in routines}
         assert "morning" in triggers, f"Expected 'morning' routine, got triggers: {triggers}"
 
@@ -234,6 +235,7 @@ class TestColdStartDetection:
 # ---------------------------------------------------------------------------
 # Integration tests — 30+ day mature system keeps threshold at 50
 # ---------------------------------------------------------------------------
+
 
 class TestMatureSystemThreshold:
     """Verify that the threshold stays at 50 for a 30+ day system."""
@@ -296,9 +298,7 @@ class TestMatureSystemThreshold:
 
         import unittest.mock as mock
 
-        with mock.patch.object(
-            detector, "_fallback_temporal_episodes", return_value=[]
-        ) as mock_fallback:
+        with mock.patch.object(detector, "_fallback_temporal_episodes", return_value=[]) as mock_fallback:
             detector._detect_temporal_routines(lookback_days=60)
             # 49 < 50 → fallback is called
             mock_fallback.assert_called_once()
@@ -307,6 +307,7 @@ class TestMatureSystemThreshold:
 # ---------------------------------------------------------------------------
 # Edge case — 0 episodes returns early without error
 # ---------------------------------------------------------------------------
+
 
 class TestZeroEpisodesEdgeCase:
     """Verify that 0 episodes results in early return without error."""

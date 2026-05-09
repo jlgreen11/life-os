@@ -12,9 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from services.prediction_engine.engine import PredictionEngine
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
-from services.prediction_engine.engine import PredictionEngine
 
 
 async def test_filtering():
@@ -72,7 +72,7 @@ async def test_filtering():
                 elif reaction.predicted_reaction not in ("helpful", "neutral"):
                     print(f"    ✗ FILTERED: Reaction {reaction.predicted_reaction}")
                 else:
-                    print(f"    ✓ WOULD SURFACE")
+                    print("    ✓ WOULD SURFACE")
 
 
 if __name__ == "__main__":

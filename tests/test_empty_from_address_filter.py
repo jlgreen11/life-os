@@ -31,12 +31,14 @@ async def test_skip_message_with_empty_from_address(db, user_model_store):
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-empty-from-123",
-                    "from_address": "",  # Empty string
-                    "subject": "Test Message",
-                    "snippet": "This is a test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-empty-from-123",
+                        "from_address": "",  # Empty string
+                        "subject": "Test Message",
+                        "snippet": "This is a test",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -65,12 +67,14 @@ async def test_skip_message_with_missing_from_address(db, user_model_store):
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-missing-from-456",
-                    # from_address field is completely missing
-                    "subject": "Test Message",
-                    "snippet": "This is a test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-missing-from-456",
+                        # from_address field is completely missing
+                        "subject": "Test Message",
+                        "snippet": "This is a test",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -99,12 +103,14 @@ async def test_skip_message_with_whitespace_only_from_address(db, user_model_sto
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-whitespace-from-789",
-                    "from_address": "   ",  # Only whitespace
-                    "subject": "Test Message",
-                    "snippet": "This is a test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-whitespace-from-789",
+                        "from_address": "   ",  # Only whitespace
+                        "subject": "Test Message",
+                        "snippet": "This is a test",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -133,12 +139,14 @@ async def test_valid_from_address_still_creates_prediction(db, user_model_store)
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-valid-from-abc",
-                    "from_address": "friend@example.com",  # Valid email
-                    "subject": "Let's catch up",
-                    "snippet": "Hey, how have you been?",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-valid-from-abc",
+                        "from_address": "friend@example.com",  # Valid email
+                        "subject": "Let's catch up",
+                        "snippet": "Hey, how have you been?",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -177,13 +185,15 @@ async def test_empty_from_address_before_marketing_filter(db, user_model_store):
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-empty-marketing-xyz",
-                    "from_address": "",  # Empty (malformed)
-                    "subject": "Amazing Deals Inside!",
-                    "snippet": "Click here to unsubscribe",  # Would trigger marketing filter
-                    "body_plain": "unsubscribe unsubscribe",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-empty-marketing-xyz",
+                        "from_address": "",  # Empty (malformed)
+                        "subject": "Amazing Deals Inside!",
+                        "snippet": "Click here to unsubscribe",  # Would trigger marketing filter
+                        "body_plain": "unsubscribe unsubscribe",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -212,12 +222,14 @@ async def test_null_from_address_json(db, user_model_store):
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-null-from-def",
-                    "from_address": None,  # JSON null
-                    "subject": "Test Message",
-                    "snippet": "This is a test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-null-from-def",
+                        "from_address": None,  # JSON null
+                        "subject": "Test Message",
+                        "snippet": "This is a test",
+                    }
+                ),
                 json.dumps({}),
             ),
         )
@@ -247,12 +259,14 @@ async def test_supporting_signals_populated_correctly(db, user_model_store):
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": "msg-colleague-ghi",
-                    "from_address": from_addr,
-                    "subject": "Project update",
-                    "snippet": "Here's the latest status",
-                }),
+                json.dumps(
+                    {
+                        "message_id": "msg-colleague-ghi",
+                        "from_address": from_addr,
+                        "subject": "Project update",
+                        "snippet": "Here's the latest status",
+                    }
+                ),
                 json.dumps({"related_contacts": []}),
             ),
         )
@@ -275,12 +289,15 @@ async def test_supporting_signals_populated_correctly(db, user_model_store):
     assert signals.get("is_priority_contact") is False, "Should set is_priority_contact"
 
 
-@pytest.mark.parametrize("invalid_addr", [
-    "",           # Empty string
-    "   ",        # Whitespace only
-    "\t\n",       # Tabs and newlines
-    None,         # Will be converted to "" by .get()
-])
+@pytest.mark.parametrize(
+    "invalid_addr",
+    [
+        "",  # Empty string
+        "   ",  # Whitespace only
+        "\t\n",  # Tabs and newlines
+        None,  # Will be converted to "" by .get()
+    ],
+)
 async def test_various_invalid_from_addresses(db, user_model_store, invalid_addr):
     """Test that various forms of invalid from_address are all rejected."""
     engine = PredictionEngine(db, user_model_store)
@@ -296,12 +313,14 @@ async def test_various_invalid_from_addresses(db, user_model_store, invalid_addr
                 "proton_mail",
                 event_time.isoformat(),
                 "normal",
-                json.dumps({
-                    "message_id": f"msg-invalid-{hash(str(invalid_addr))}",
-                    "from_address": invalid_addr,
-                    "subject": "Test",
-                    "snippet": "Test",
-                }),
+                json.dumps(
+                    {
+                        "message_id": f"msg-invalid-{hash(str(invalid_addr))}",
+                        "from_address": invalid_addr,
+                        "subject": "Test",
+                        "snippet": "Test",
+                    }
+                ),
                 json.dumps({}),
             ),
         )

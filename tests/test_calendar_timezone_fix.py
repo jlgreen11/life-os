@@ -35,46 +35,50 @@ async def test_calendar_conflicts_with_allday_events(db, event_store, user_model
     day_after = (now + timedelta(days=2)).date().isoformat()
 
     # All-day event 1
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "event1",
-            "calendar_id": "primary",
-            "title": "All-Day Event 1",
-            "description": "",
-            "location": "",
-            "start_time": tomorrow,  # Date-only format
-            "end_time": day_after,   # Date-only format
-            "is_all_day": True,
-            "attendees": [],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "event1",
+                "calendar_id": "primary",
+                "title": "All-Day Event 1",
+                "description": "",
+                "location": "",
+                "start_time": tomorrow,  # Date-only format
+                "end_time": day_after,  # Date-only format
+                "is_all_day": True,
+                "attendees": [],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     # All-day event 2 (overlapping)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "event2",
-            "calendar_id": "primary",
-            "title": "All-Day Event 2",
-            "description": "",
-            "location": "",
-            "start_time": tomorrow,  # Same date — should be filtered out as all-day
-            "end_time": day_after,
-            "is_all_day": True,
-            "attendees": [],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "event2",
+                "calendar_id": "primary",
+                "title": "All-Day Event 2",
+                "description": "",
+                "location": "",
+                "start_time": tomorrow,  # Same date — should be filtered out as all-day
+                "end_time": day_after,
+                "is_all_day": True,
+                "attendees": [],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     context = {"timestamp": now.isoformat(), "location": None}
 
@@ -109,45 +113,49 @@ async def test_calendar_conflicts_with_timed_events(db, event_store, user_model_
     event2_start = (now + timedelta(hours=2.5)).isoformat()
     event2_end = (now + timedelta(hours=4)).isoformat()
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "event1",
-            "calendar_id": "primary",
-            "title": "Meeting 1",
-            "description": "",
-            "location": "Office",
-            "start_time": event1_start,
-            "end_time": event1_end,
-            "is_all_day": False,
-            "attendees": ["alice@example.com"],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "event1",
+                "calendar_id": "primary",
+                "title": "Meeting 1",
+                "description": "",
+                "location": "Office",
+                "start_time": event1_start,
+                "end_time": event1_end,
+                "is_all_day": False,
+                "attendees": ["alice@example.com"],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "event2",
-            "calendar_id": "primary",
-            "title": "Meeting 2",
-            "description": "",
-            "location": "Office",
-            "start_time": event2_start,
-            "end_time": event2_end,
-            "is_all_day": False,
-            "attendees": ["bob@example.com"],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "event2",
+                "calendar_id": "primary",
+                "title": "Meeting 2",
+                "description": "",
+                "location": "Office",
+                "start_time": event2_start,
+                "end_time": event2_end,
+                "is_all_day": False,
+                "attendees": ["bob@example.com"],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     context = {"timestamp": now.isoformat(), "location": None}
 
@@ -172,25 +180,27 @@ async def test_preparation_needs_with_allday_events(db, event_store, user_model_
     day_after = (now + timedelta(days=2)).date().isoformat()
 
     # All-day event with travel keyword
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "trip",
-            "calendar_id": "primary",
-            "title": "Flight to NYC",  # Travel keyword
-            "description": "Prepare luggage",
-            "location": "Airport",
-            "start_time": tomorrow,  # Date-only format
-            "end_time": day_after,
-            "is_all_day": True,
-            "attendees": [],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "trip",
+                "calendar_id": "primary",
+                "title": "Flight to NYC",  # Travel keyword
+                "description": "Prepare luggage",
+                "location": "Airport",
+                "start_time": tomorrow,  # Date-only format
+                "end_time": day_after,
+                "is_all_day": True,
+                "attendees": [],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     context = {"timestamp": now.isoformat(), "location": None}
 
@@ -220,25 +230,27 @@ async def test_preparation_needs_with_timed_flight(db, event_store, user_model_s
     flight_start = (now + timedelta(hours=24)).isoformat()
     flight_end = (now + timedelta(hours=27)).isoformat()
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "flight",
-            "calendar_id": "primary",
-            "title": "Flight to San Francisco",  # Travel keyword
-            "description": "SFO departure",
-            "location": "Airport",
-            "start_time": flight_start,
-            "end_time": flight_end,
-            "is_all_day": False,
-            "attendees": [],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "flight",
+                "calendar_id": "primary",
+                "title": "Flight to San Francisco",  # Travel keyword
+                "description": "SFO departure",
+                "location": "Airport",
+                "start_time": flight_start,
+                "end_time": flight_end,
+                "is_all_day": False,
+                "attendees": [],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     context = {"timestamp": now.isoformat(), "location": None}
 
@@ -264,49 +276,53 @@ async def test_mixed_allday_and_timed_events(db, event_store, user_model_store):
     day_after = (now + timedelta(days=2)).date().isoformat()
 
     # All-day event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "allday",
-            "calendar_id": "primary",
-            "title": "Birthday",
-            "description": "",
-            "location": "",
-            "start_time": tomorrow,
-            "end_time": day_after,
-            "is_all_day": True,
-            "attendees": [],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "allday",
+                "calendar_id": "primary",
+                "title": "Birthday",
+                "description": "",
+                "location": "",
+                "start_time": tomorrow,
+                "end_time": day_after,
+                "is_all_day": True,
+                "attendees": [],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     # Timed event on the same day
     timed_start = (now + timedelta(hours=26)).isoformat()
     timed_end = (now + timedelta(hours=27)).isoformat()
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "meeting",
-            "calendar_id": "primary",
-            "title": "Team Sync",
-            "description": "",
-            "location": "Zoom",
-            "start_time": timed_start,
-            "end_time": timed_end,
-            "is_all_day": False,
-            "attendees": ["team@example.com"],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "meeting",
+                "calendar_id": "primary",
+                "title": "Team Sync",
+                "description": "",
+                "location": "Zoom",
+                "start_time": timed_start,
+                "end_time": timed_end,
+                "is_all_day": False,
+                "attendees": ["team@example.com"],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     context = {"timestamp": now.isoformat(), "location": None}
 
@@ -331,25 +347,27 @@ async def test_unparseable_dates_are_skipped(db, event_store, user_model_store):
     now = datetime.now(timezone.utc)
 
     # Event with malformed date
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "bad",
-            "calendar_id": "primary",
-            "title": "Bad Event",
-            "description": "",
-            "location": "",
-            "start_time": "not-a-date",  # Invalid
-            "end_time": "also-invalid",
-            "is_all_day": False,
-            "attendees": [],
-            "organizer": "user@example.com"
-        },
-        "metadata": {}
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "bad",
+                "calendar_id": "primary",
+                "title": "Bad Event",
+                "description": "",
+                "location": "",
+                "start_time": "not-a-date",  # Invalid
+                "end_time": "also-invalid",
+                "is_all_day": False,
+                "attendees": [],
+                "organizer": "user@example.com",
+            },
+            "metadata": {},
+        }
+    )
 
     context = {"timestamp": now.isoformat(), "location": None}
 

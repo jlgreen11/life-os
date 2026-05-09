@@ -13,9 +13,9 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from services.prediction_engine.engine import PredictionEngine
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
-from services.prediction_engine.engine import PredictionEngine
 
 
 async def diagnose():
@@ -74,9 +74,7 @@ async def diagnose():
 
     with db.get_connection("user_model") as conn:
         # Routine stats
-        routine_count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM routines"
-        ).fetchone()["cnt"]
+        routine_count = conn.execute("SELECT COUNT(*) as cnt FROM routines").fetchone()["cnt"]
         print(f"Total routines: {routine_count}")
 
         # Signal profile stats

@@ -277,15 +277,17 @@ def test_get_routines_empty_database(client):
 
 def test_get_routines_steps_deserialized(client, user_model_store):
     """Steps list is returned as a parsed Python list, not a JSON string."""
-    user_model_store.store_routine({
-        "name": "test_steps",
-        "trigger": "morning",
-        "steps": ["step_a", "step_b", "step_c"],
-        "typical_duration_minutes": 10.0,
-        "consistency_score": 0.8,
-        "times_observed": 5,
-        "variations": [],
-    })
+    user_model_store.store_routine(
+        {
+            "name": "test_steps",
+            "trigger": "morning",
+            "steps": ["step_a", "step_b", "step_c"],
+            "typical_duration_minutes": 10.0,
+            "consistency_score": 0.8,
+            "times_observed": 5,
+            "variations": [],
+        }
+    )
 
     response = client.get("/api/user-model/routines")
     assert response.status_code == 200
@@ -297,18 +299,20 @@ def test_get_routines_steps_deserialized(client, user_model_store):
 
 def test_get_routines_variations_deserialized(client, user_model_store):
     """Variations list with nested dicts is returned as a parsed Python list."""
-    user_model_store.store_routine({
-        "name": "test_variations",
-        "trigger": "evening",
-        "steps": ["step_x"],
-        "typical_duration_minutes": 5.0,
-        "consistency_score": 0.6,
-        "times_observed": 10,
-        "variations": [
-            {"step": "step_x", "alt": "step_y", "frequency": 0.3},
-            {"step": "step_x", "alt": "step_z", "frequency": 0.1},
-        ],
-    })
+    user_model_store.store_routine(
+        {
+            "name": "test_variations",
+            "trigger": "evening",
+            "steps": ["step_x"],
+            "typical_duration_minutes": 5.0,
+            "consistency_score": 0.6,
+            "times_observed": 10,
+            "variations": [
+                {"step": "step_x", "alt": "step_y", "frequency": 0.3},
+                {"step": "step_x", "alt": "step_z", "frequency": 0.1},
+            ],
+        }
+    )
 
     response = client.get("/api/user-model/routines")
     assert response.status_code == 200

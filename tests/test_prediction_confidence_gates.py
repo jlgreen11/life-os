@@ -536,8 +536,16 @@ class TestAccuracyMultiplier:
                         time_horizon, created_at, was_surfaced, resolved_at, was_accurate)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "reminder", "Test", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "reminder",
+                        "Test",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                     ),
                 )
 
@@ -557,8 +565,16 @@ class TestAccuracyMultiplier:
                         time_horizon, created_at, was_surfaced, resolved_at, was_accurate)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "reminder", "Test", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(), 0,
+                        str(uuid.uuid4()),
+                        "reminder",
+                        "Test",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        0,
                     ),
                 )
 
@@ -578,8 +594,15 @@ class TestAccuracyMultiplier:
                         time_horizon, created_at, was_surfaced, resolved_at, was_accurate)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "reminder", "Test", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(),
+                        str(uuid.uuid4()),
+                        "reminder",
+                        "Test",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
                         1 if i < 5 else 0,
                     ),
                 )
@@ -600,8 +623,16 @@ class TestAccuracyMultiplier:
                         time_horizon, created_at, was_surfaced, resolved_at, was_accurate)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "reminder", "Test", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "reminder",
+                        "Test",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                     ),
                 )
 
@@ -627,8 +658,16 @@ class TestAccuracyMultiplier:
                         resolution_reason)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Real prediction", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Real prediction",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                         None,  # No special resolution reason
                     ),
                 )
@@ -642,8 +681,16 @@ class TestAccuracyMultiplier:
                         resolution_reason)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Marketing sender", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(), 0,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Marketing sender",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        0,
                         "automated_sender_fast_path",
                     ),
                 )
@@ -670,8 +717,16 @@ class TestAccuracyMultiplier:
                         time_horizon, created_at, was_surfaced, resolved_at, was_accurate)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "reminder", "Test", 0.7, "suggest",
-                        "24_hours", now.isoformat(), 1, now.isoformat(), 0,
+                        str(uuid.uuid4()),
+                        "reminder",
+                        "Test",
+                        0.7,
+                        "suggest",
+                        "24_hours",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        0,
                     ),
                 )
 
@@ -715,8 +770,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Alice", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Alice",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                         json.dumps({"contact_email": "alice@example.com"}),
                     ),
                 )
@@ -738,8 +801,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Bob", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 0,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Bob",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        0,
                         json.dumps({"contact_email": "bob@example.com"}),
                     ),
                 )
@@ -761,8 +832,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Carol", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Carol",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                         json.dumps({"contact_email": "carol@example.com"}),
                     ),
                 )
@@ -785,8 +864,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Alice", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 0,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Alice",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        0,
                         json.dumps({"contact_email": "alice@example.com"}),
                     ),
                 )
@@ -800,8 +887,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Bob", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Bob",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                         json.dumps({"contact_email": "bob@example.com"}),
                     ),
                 )
@@ -829,8 +924,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals, resolution_reason)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Dave", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 1,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Dave",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        1,
                         json.dumps({"contact_email": "dave@example.com"}),
                         None,
                     ),
@@ -845,8 +948,16 @@ class TestContactAccuracyMultiplier:
                         supporting_signals, resolution_reason)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        str(uuid.uuid4()), "opportunity", "Reach out to Dave", 0.5, "suggest",
-                        "this_week", now.isoformat(), 1, now.isoformat(), 0,
+                        str(uuid.uuid4()),
+                        "opportunity",
+                        "Reach out to Dave",
+                        0.5,
+                        "suggest",
+                        "this_week",
+                        now.isoformat(),
+                        1,
+                        now.isoformat(),
+                        0,
                         json.dumps({"contact_email": "dave@example.com"}),
                         "automated_sender_fast_path",
                     ),
@@ -998,10 +1109,12 @@ class TestIsQuietHours:
         """Multiple quiet hour ranges are supported (e.g., different weekday/weekend times)."""
         engine = PredictionEngine(db, user_model_store, timezone="UTC")
 
-        quiet_config = json.dumps([
-            {"start": "22:00", "end": "07:00", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"]},
-            {"start": "23:00", "end": "09:00", "days": ["saturday", "sunday"]},
-        ])
+        quiet_config = json.dumps(
+            [
+                {"start": "22:00", "end": "07:00", "days": ["monday", "tuesday", "wednesday", "thursday", "friday"]},
+                {"start": "23:00", "end": "09:00", "days": ["saturday", "sunday"]},
+            ]
+        )
         with db.get_connection("preferences") as conn:
             conn.execute(
                 "INSERT INTO user_preferences (key, value) VALUES ('quiet_hours', ?)",

@@ -31,16 +31,16 @@ def mock_life_os():
     life_os.db = Mock()
     mock_conn = Mock()
     mock_conn.execute = Mock()
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
 
     # Mock event bus
     life_os.event_bus = Mock()
@@ -61,10 +61,17 @@ def mock_life_os():
     # Mock signal extractor
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable"
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
 
     # Mock notification manager
     life_os.notification_manager = Mock()
@@ -93,9 +100,9 @@ def mock_life_os():
     life_os.task_manager.create_task = AsyncMock(return_value="task-123")
     life_os.task_manager.update_task = AsyncMock()
     life_os.task_manager.complete_task = AsyncMock()
-    life_os.task_manager.get_task_stats = Mock(return_value={
-        "pending": 3, "completed_today": 1, "overdue": 0, "by_domain": {}
-    })
+    life_os.task_manager.get_task_stats = Mock(
+        return_value={"pending": 3, "completed_today": 1, "overdue": 0, "by_domain": {}}
+    )
 
     # Mock rules engine
     life_os.rules_engine = Mock()
@@ -217,9 +224,7 @@ def test_diagnostics_notifications_uses_actionable_status(client, mock_life_os):
 
 def test_user_model_returns_error_on_service_failure(client, mock_life_os):
     """GET /api/user-model returns JSON error (not 500 crash) when signal extractor fails."""
-    mock_life_os.signal_extractor.get_user_summary = Mock(
-        side_effect=Exception("user_model.db is corrupted")
-    )
+    mock_life_os.signal_extractor.get_user_summary = Mock(side_effect=Exception("user_model.db is corrupted"))
 
     response = client.get("/api/user-model")
     assert response.status_code == 500
@@ -230,9 +235,7 @@ def test_user_model_returns_error_on_service_failure(client, mock_life_os):
 
 def test_user_model_facts_returns_error_on_failure(client, mock_life_os):
     """GET /api/user-model/facts returns empty list + error on DB failure."""
-    mock_life_os.user_model_store.get_semantic_facts = Mock(
-        side_effect=Exception("database disk image is malformed")
-    )
+    mock_life_os.user_model_store.get_semantic_facts = Mock(side_effect=Exception("database disk image is malformed"))
 
     response = client.get("/api/user-model/facts")
     assert response.status_code == 500
@@ -266,9 +269,7 @@ def test_delete_fact_returns_error_on_failure(client, mock_life_os):
 
 def test_task_stats_returns_error_on_failure(client, mock_life_os):
     """GET /api/tasks/stats returns error JSON when task manager fails."""
-    mock_life_os.task_manager.get_task_stats = Mock(
-        side_effect=Exception("state.db is corrupted")
-    )
+    mock_life_os.task_manager.get_task_stats = Mock(side_effect=Exception("state.db is corrupted"))
 
     response = client.get("/api/tasks/stats")
     assert response.status_code == 500
@@ -279,9 +280,7 @@ def test_task_stats_returns_error_on_failure(client, mock_life_os):
 
 def test_update_task_returns_error_on_failure(client, mock_life_os):
     """PATCH /api/tasks/{task_id} returns error JSON when update fails."""
-    mock_life_os.task_manager.update_task = AsyncMock(
-        side_effect=Exception("database disk image is malformed")
-    )
+    mock_life_os.task_manager.update_task = AsyncMock(side_effect=Exception("database disk image is malformed"))
 
     response = client.patch("/api/tasks/task-123", json={"status": "completed"})
     assert response.status_code == 500
@@ -291,9 +290,7 @@ def test_update_task_returns_error_on_failure(client, mock_life_os):
 
 def test_complete_task_returns_error_on_failure(client, mock_life_os):
     """POST /api/tasks/{task_id}/complete returns error JSON when completion fails."""
-    mock_life_os.task_manager.complete_task = AsyncMock(
-        side_effect=Exception("task not found")
-    )
+    mock_life_os.task_manager.complete_task = AsyncMock(side_effect=Exception("task not found"))
 
     response = client.post("/api/tasks/task-999/complete")
     assert response.status_code == 500
@@ -308,9 +305,7 @@ def test_complete_task_returns_error_on_failure(client, mock_life_os):
 
 def test_list_notifications_returns_error_on_failure(client, mock_life_os):
     """GET /api/notifications returns empty list + error on service failure."""
-    mock_life_os.notification_manager.get_pending = Mock(
-        side_effect=Exception("state.db is corrupted")
-    )
+    mock_life_os.notification_manager.get_pending = Mock(side_effect=Exception("state.db is corrupted"))
 
     response = client.get("/api/notifications")
     assert response.status_code == 500
@@ -321,9 +316,7 @@ def test_list_notifications_returns_error_on_failure(client, mock_life_os):
 
 def test_mark_read_returns_error_on_failure(client, mock_life_os):
     """POST /api/notifications/{id}/read returns error JSON on failure."""
-    mock_life_os.notification_manager.mark_read = AsyncMock(
-        side_effect=Exception("notification not found")
-    )
+    mock_life_os.notification_manager.mark_read = AsyncMock(side_effect=Exception("notification not found"))
 
     response = client.post("/api/notifications/notif-123/read")
     assert response.status_code == 500
@@ -333,9 +326,7 @@ def test_mark_read_returns_error_on_failure(client, mock_life_os):
 
 def test_notification_digest_returns_error_on_failure(client, mock_life_os):
     """GET /api/notifications/digest returns error JSON on failure."""
-    mock_life_os.notification_manager.get_digest = AsyncMock(
-        side_effect=Exception("digest generation failed")
-    )
+    mock_life_os.notification_manager.get_digest = AsyncMock(side_effect=Exception("digest generation failed"))
 
     response = client.get("/api/notifications/digest")
     assert response.status_code == 500
@@ -435,9 +426,7 @@ def test_preferences_works_normally(client, mock_life_os):
     """GET /api/preferences still works when service is healthy."""
     mock_conn = Mock()
     mock_conn.execute = Mock(return_value=Mock(fetchall=Mock(return_value=[])))
-    mock_life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
-    )
+    mock_life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
 
     response = client.get("/api/preferences")
     assert response.status_code == 200

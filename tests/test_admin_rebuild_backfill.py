@@ -28,9 +28,7 @@ def mock_life_os():
     # Database mock — health check returns corrupted so rebuild proceeds
     life_os.db = Mock()
     life_os.db.data_dir = "/tmp/test-data"
-    life_os.db.get_database_health = Mock(
-        return_value={"user_model": {"status": "corrupted", "errors": ["malformed"]}}
-    )
+    life_os.db.get_database_health = Mock(return_value={"user_model": {"status": "corrupted", "errors": ["malformed"]}})
     life_os.db._check_and_recover_db = Mock(return_value=True)
     life_os.db._init_user_model_db = Mock()
     mock_conn = Mock()
@@ -71,8 +69,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable",
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -223,9 +226,7 @@ class TestRebuildBackfillFailOpen:
 
     def test_episode_failure_does_not_block_template_backfill(self, mock_life_os):
         """If episode backfill raises, communication template backfill still runs."""
-        mock_life_os._backfill_episodes_from_events_if_needed = AsyncMock(
-            side_effect=RuntimeError("Episode DB error")
-        )
+        mock_life_os._backfill_episodes_from_events_if_needed = AsyncMock(side_effect=RuntimeError("Episode DB error"))
 
         _trigger_rebuild_and_drain(mock_life_os)
 

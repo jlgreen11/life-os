@@ -50,9 +50,7 @@ def _insert_notification(
         The notification ID string.
     """
     notif_id = notif_id or str(uuid.uuid4())
-    created_at = (
-        datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
-    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    created_at = (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications
@@ -66,9 +64,7 @@ def _insert_notification(
 def _get_status(db, notif_id):
     """Return the current status of a notification from the DB."""
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT status FROM notifications WHERE id = ?", (notif_id,)
-        ).fetchone()
+        row = conn.execute("SELECT status FROM notifications WHERE id = ?", (notif_id,)).fetchone()
     return row["status"] if row else None
 
 
@@ -91,13 +87,9 @@ async def test_high_priority_delivered_after_35_minutes(db, event_bus):
     """
     mgr = _make_mgr(db, event_bus)
 
-    notif_id = _insert_notification(
-        db, title="Urgent alert", priority="high", minutes_ago=35
-    )
+    notif_id = _insert_notification(db, title="Urgent alert", priority="high", minutes_ago=35)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 1, "High-priority 35min-old notification should be auto-delivered"
     assert _get_status(db, notif_id) == "delivered"
@@ -111,13 +103,9 @@ async def test_critical_priority_delivered_after_35_minutes(db, event_bus):
     """
     mgr = _make_mgr(db, event_bus)
 
-    notif_id = _insert_notification(
-        db, title="Critical system alert", priority="critical", minutes_ago=35
-    )
+    notif_id = _insert_notification(db, title="Critical system alert", priority="critical", minutes_ago=35)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 1, "Critical-priority 35min-old notification should be auto-delivered"
     assert _get_status(db, notif_id) == "delivered"
@@ -136,13 +124,9 @@ async def test_normal_priority_delivered_after_65_minutes(db, event_bus):
     """
     mgr = _make_mgr(db, event_bus)
 
-    notif_id = _insert_notification(
-        db, title="Normal notification", priority="normal", minutes_ago=65
-    )
+    notif_id = _insert_notification(db, title="Normal notification", priority="normal", minutes_ago=65)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 1, "Normal-priority 65min-old notification should be auto-delivered"
     assert _get_status(db, notif_id) == "delivered"
@@ -156,13 +140,9 @@ async def test_low_priority_delivered_after_65_minutes(db, event_bus):
     """
     mgr = _make_mgr(db, event_bus)
 
-    notif_id = _insert_notification(
-        db, title="Low priority note", priority="low", minutes_ago=65
-    )
+    notif_id = _insert_notification(db, title="Low priority note", priority="low", minutes_ago=65)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 1, "Low-priority 65min-old notification should be auto-delivered"
     assert _get_status(db, notif_id) == "delivered"
@@ -184,16 +164,10 @@ async def test_fresh_notification_not_delivered_after_20_minutes(db, event_bus):
 
     # Even a high-priority notification that's only 20 min old should NOT be
     # auto-delivered — it hasn't reached either threshold yet.
-    high_id = _insert_notification(
-        db, title="Very recent high", priority="high", minutes_ago=20
-    )
-    normal_id = _insert_notification(
-        db, title="Very recent normal", priority="normal", minutes_ago=20
-    )
+    high_id = _insert_notification(db, title="Very recent high", priority="high", minutes_ago=20)
+    normal_id = _insert_notification(db, title="Very recent normal", priority="normal", minutes_ago=20)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 0, "20-min-old notifications should NOT be auto-delivered"
     assert _get_status(db, high_id) == "pending", "High-priority 20min notification should stay pending"
@@ -208,16 +182,10 @@ async def test_high_priority_not_delivered_if_within_high_threshold(db, event_bu
     """
     mgr = _make_mgr(db, event_bus)
 
-    old_id = _insert_notification(
-        db, title="Old high", priority="high", minutes_ago=35
-    )
-    fresh_id = _insert_notification(
-        db, title="Fresh high", priority="high", minutes_ago=25
-    )
+    old_id = _insert_notification(db, title="Old high", priority="high", minutes_ago=35)
+    fresh_id = _insert_notification(db, title="Fresh high", priority="high", minutes_ago=25)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 1, "Only the 35-min-old notification should be delivered"
     assert _get_status(db, old_id) == "delivered"
@@ -233,13 +201,9 @@ async def test_normal_not_delivered_between_30_and_60_minutes(db, event_bus):
     """
     mgr = _make_mgr(db, event_bus)
 
-    notif_id = _insert_notification(
-        db, title="Normal in window", priority="normal", minutes_ago=45
-    )
+    notif_id = _insert_notification(db, title="Normal in window", priority="normal", minutes_ago=45)
 
-    delivered = await mgr.auto_deliver_stale_batch(
-        max_pending_hours=1, high_priority_hours=0.5
-    )
+    delivered = await mgr.auto_deliver_stale_batch(max_pending_hours=1, high_priority_hours=0.5)
 
     assert delivered == 0, "Normal 45min notification should NOT be delivered (needs 60min)"
     assert _get_status(db, notif_id) == "pending"

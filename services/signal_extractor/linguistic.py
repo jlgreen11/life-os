@@ -812,15 +812,10 @@ class LinguisticExtractor(BaseExtractor):
                 )
                 keep = set(sorted_contacts[: self._MAX_INBOUND_CONTACTS])
                 data["per_contact"] = {c: v for c, v in data["per_contact"].items() if c in keep}
-                data["per_contact_averages"] = {
-                    c: v for c, v in data["per_contact_averages"].items() if c in keep
-                }
-                data["per_contact_updated_at"] = {
-                    c: v for c, v in updated_at.items() if c in keep
-                }
+                data["per_contact_averages"] = {c: v for c, v in data["per_contact_averages"].items() if c in keep}
+                data["per_contact_updated_at"] = {c: v for c, v in updated_at.items() if c in keep}
                 logger.debug(
-                    "LinguisticExtractor: compacted linguistic_inbound from %d contacts "
-                    "down to %d (cap=%d)",
+                    "LinguisticExtractor: compacted linguistic_inbound from %d contacts down to %d (cap=%d)",
                     len(sorted_contacts),
                     len(data["per_contact"]),
                     self._MAX_INBOUND_CONTACTS,
@@ -907,8 +902,7 @@ class LinguisticExtractor(BaseExtractor):
             data_size = len(data_json)
             contact_count = len(data["per_contact"])
             logger.debug(
-                "LinguisticExtractor: writing linguistic_inbound profile "
-                "(size=%d bytes, contacts=%d)",
+                "LinguisticExtractor: writing linguistic_inbound profile (size=%d bytes, contacts=%d)",
                 data_size,
                 contact_count,
             )
@@ -938,8 +932,7 @@ class LinguisticExtractor(BaseExtractor):
             # real exception inside the pipeline's generic handler.  The contact
             # field helps identify whether the failure is contact-specific.
             logger.error(
-                "LinguisticExtractor._update_inbound_profile raised unexpectedly "
-                "(contact=%r): %s",
+                "LinguisticExtractor._update_inbound_profile raised unexpectedly (contact=%r): %s",
                 signal.get("contact_id"),
                 exc,
                 exc_info=True,
@@ -989,9 +982,7 @@ class LinguisticExtractor(BaseExtractor):
 
             # Deterministic template ID — distinct from RelationshipExtractor
             # templates (which use "{address}:{channel}:{direction}" hashes)
-            template_id = hashlib.sha256(
-                f"linguistic:{contact_id}:outbound".encode()
-            ).hexdigest()[:16]
+            template_id = hashlib.sha256(f"linguistic:{contact_id}:outbound".encode()).hexdigest()[:16]
 
             # Derive tone notes from linguistic feature averages
             tone_notes = []
@@ -1051,9 +1042,7 @@ class LinguisticExtractor(BaseExtractor):
         """
         result: dict = {"common_phrases": [], "avoids_phrases": []}
         try:
-            templates = self.ums.get_communication_templates(
-                contact_id=contact_id, limit=10
-            )
+            templates = self.ums.get_communication_templates(contact_id=contact_id, limit=10)
             for tmpl in templates:
                 # Prefer the first template with non-empty phrase data
                 if tmpl.get("common_phrases") and not result["common_phrases"]:

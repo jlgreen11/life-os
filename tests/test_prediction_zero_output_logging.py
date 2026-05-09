@@ -80,30 +80,34 @@ async def test_successful_generation_logs_summary(db, event_store, user_model_st
     now = datetime.now(timezone.utc)
 
     # Create two overlapping calendar events to trigger a conflict prediction
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2)).isoformat(),
-        "payload": {
-            "title": "Team meeting",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-        },
-        "metadata": {},
-    })
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
-        "payload": {
-            "title": "Client call",
-            "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2)).isoformat(),
+            "payload": {
+                "title": "Team meeting",
+                "start_time": (now + timedelta(hours=2)).isoformat(),
+                "end_time": (now + timedelta(hours=3)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": (now + timedelta(hours=2, minutes=30)).isoformat(),
+            "payload": {
+                "title": "Client call",
+                "start_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                "end_time": (now + timedelta(hours=3, minutes=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Force time-based trigger
     engine._last_time_based_run = None

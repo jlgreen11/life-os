@@ -14,6 +14,7 @@ from services.conflict_detector import ConflictDetector
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _future_iso(hours_from_now: float) -> str:
     """Return an ISO 8601 UTC timestamp *hours_from_now* in the future."""
     return (datetime.now(timezone.utc) + timedelta(hours=hours_from_now)).isoformat()
@@ -69,6 +70,7 @@ def _insert_calendar_event(
 # ---------------------------------------------------------------------------
 # detect_conflicts() tests
 # ---------------------------------------------------------------------------
+
 
 class TestDetectConflicts:
     """Tests for ConflictDetector.detect_conflicts()."""
@@ -352,6 +354,7 @@ class TestDetectConflicts:
 # Forward-looking window tests (regression tests for the query strategy fix)
 # ---------------------------------------------------------------------------
 
+
 class TestForwardLookingWindow:
     """Tests verifying the forward-looking query strategy works correctly.
 
@@ -538,6 +541,7 @@ class TestForwardLookingWindow:
 # check_and_publish() tests
 # ---------------------------------------------------------------------------
 
+
 class TestCheckAndPublish:
     """Tests for ConflictDetector.check_and_publish()."""
 
@@ -647,6 +651,7 @@ class TestCheckAndPublish:
 # ---------------------------------------------------------------------------
 # _parse_datetime() tests
 # ---------------------------------------------------------------------------
+
 
 class TestParseDatetime:
     """Tests for the datetime parsing helper."""

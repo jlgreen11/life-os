@@ -141,9 +141,7 @@ async def test_relationship_description_stable_across_days(db, user_model_store)
     desc_17 = preds_day17[0].description
     desc_18 = preds_day18[0].description
     assert desc_17 == desc_18, (
-        f"Descriptions should be stable across days but differ:\n"
-        f"  day 17: {desc_17}\n"
-        f"  day 18: {desc_18}"
+        f"Descriptions should be stable across days but differ:\n  day 17: {desc_17}\n  day 18: {desc_18}"
     )
     assert "about 2 weeks" in desc_17, f"Expected 'about 2 weeks' in description: {desc_17}"
 
@@ -236,8 +234,6 @@ async def test_connector_health_description_stable_across_days(db, user_model_st
     desc_10 = preds_day10[0].description
     desc_11 = preds_day11[0].description
     assert desc_10 == desc_11, (
-        f"Connector health descriptions should be stable:\n"
-        f"  day 10: {desc_10}\n"
-        f"  day 11: {desc_11}"
+        f"Connector health descriptions should be stable:\n  day 10: {desc_10}\n  day 11: {desc_11}"
     )
     assert "about a week" in desc_10, f"Expected 'about a week' in: {desc_10}"

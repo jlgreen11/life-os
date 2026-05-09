@@ -38,12 +38,12 @@ class TestSemanticFactSchemaCompatibility:
         # Store a cadence profile with the ACTUAL schema from CadenceExtractor
         cadence_data = {
             "hourly_activity": {
-                "9": 50,   # 50 messages at 9am
+                "9": 50,  # 50 messages at 9am
                 "10": 45,
                 "11": 40,
                 "14": 30,
                 "15": 35,
-                "22": 5,   # Very few messages late at night
+                "22": 5,  # Very few messages late at night
             },
             "daily_activity": {
                 "monday": 80,
@@ -56,9 +56,7 @@ class TestSemanticFactSchemaCompatibility:
 
         # Update samples count to meet threshold (50+)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 200 WHERE profile_type = 'cadence'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 200 WHERE profile_type = 'cadence'")
 
         # Run inference
         inferrer = SemanticFactInferrer(user_model_store)
@@ -86,11 +84,11 @@ class TestSemanticFactSchemaCompatibility:
         # Store a topic profile with the ACTUAL schema from TopicExtractor
         topic_data = {
             "topic_counts": {
-                "python": 45,      # Frequently discussed → expertise
+                "python": 45,  # Frequently discussed → expertise
                 "docker": 38,
-                "testing": 15,     # Moderately discussed → interest
+                "testing": 15,  # Moderately discussed → interest
                 "api": 12,
-                "weekend": 3,      # Rarely discussed → skip
+                "weekend": 3,  # Rarely discussed → skip
             },
             "recent_topics": ["python", "docker", "testing"],
         }
@@ -98,9 +96,7 @@ class TestSemanticFactSchemaCompatibility:
 
         # Update samples count to meet threshold (30+)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 100 WHERE profile_type = 'topics'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 100 WHERE profile_type = 'topics'")
 
         # Run inference
         inferrer = SemanticFactInferrer(user_model_store)
@@ -128,7 +124,7 @@ class TestSemanticFactSchemaCompatibility:
         # Verify api becomes interest (12/100 = 12% > 10% but want to test interest path, so check it exists as either)
         api_expertise = user_model_store.get_semantic_fact("expertise_api")
         api_interest = user_model_store.get_semantic_fact("interest_api")
-        assert (api_expertise is not None or api_interest is not None), "Should infer api fact from topic_counts"
+        assert api_expertise is not None or api_interest is not None, "Should infer api fact from topic_counts"
 
         # Verify rare topics are skipped (3/100 = 3% < 5% threshold)
         weekend_fact = user_model_store.get_semantic_fact("interest_weekend")
@@ -158,7 +154,7 @@ class TestSemanticFactSchemaCompatibility:
                     "last_interaction": "2026-02-16T10:00:00Z",
                 },
                 "bob@example.com": {
-                    "interaction_count": 5,   # Below average, skip
+                    "interaction_count": 5,  # Below average, skip
                     "inbound_count": 2,
                     "outbound_count": 3,
                     "channels_used": ["email"],
@@ -168,7 +164,7 @@ class TestSemanticFactSchemaCompatibility:
                 "charlie@example.com": {
                     "interaction_count": 25,  # Average
                     "inbound_count": 8,
-                    "outbound_count": 17,     # User-initiated (17/25 = 68%)
+                    "outbound_count": 17,  # User-initiated (17/25 = 68%)
                     "channels_used": ["email"],
                     "avg_message_length": 200,
                     "last_interaction": "2026-02-16T09:00:00Z",
@@ -179,9 +175,7 @@ class TestSemanticFactSchemaCompatibility:
 
         # Update samples count to meet threshold (10+)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 80 WHERE profile_type = 'relationships'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 80 WHERE profile_type = 'relationships'")
 
         # Run inference
         inferrer = SemanticFactInferrer(user_model_store)
@@ -246,9 +240,7 @@ class TestSemanticFactSchemaCompatibility:
 
         # Update samples count to meet threshold (5+)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 20 WHERE profile_type = 'mood_signals'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 20 WHERE profile_type = 'mood_signals'")
 
         # Run inference
         inferrer = SemanticFactInferrer(user_model_store)
@@ -280,10 +272,10 @@ class TestSemanticFactSchemaCompatibility:
         # Store a linguistic profile with existing schema
         linguistic_data = {
             "averages": {
-                "formality": 0.2,         # Very casual → should infer casual preference
-                "emoji_rate": 0.08,       # 8% emoji usage → should infer expressive
+                "formality": 0.2,  # Very casual → should infer casual preference
+                "emoji_rate": 0.08,  # 8% emoji usage → should infer expressive
                 "exclamation_rate": 0.4,  # High exclamation → should infer enthusiastic
-                "hedge_rate": 0.02,       # Very low hedge rate → should infer direct
+                "hedge_rate": 0.02,  # Very low hedge rate → should infer direct
             },
             "samples": 10,
             "per_contact": {},
@@ -294,9 +286,7 @@ class TestSemanticFactSchemaCompatibility:
 
         # Update samples count to meet threshold (1+)
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = 'linguistic'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = 'linguistic'")
 
         # Run inference
         inferrer = SemanticFactInferrer(user_model_store)
@@ -330,46 +320,62 @@ class TestSemanticFactSchemaCompatibility:
         contribute semantic facts.
         """
         # Populate all 5 signal profiles with realistic data
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.25, "emoji_rate": 0.06},
-            "samples": 5,
-            "per_contact": {},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.25, "emoji_rate": 0.06},
+                "samples": 5,
+                "per_contact": {},
+            },
+        )
 
-        user_model_store.update_signal_profile("cadence", {
-            "hourly_activity": {"9": 40, "10": 50, "11": 45, "14": 30, "15": 35},
-            "daily_activity": {},
-            "response_times": [],
-        })
+        user_model_store.update_signal_profile(
+            "cadence",
+            {
+                "hourly_activity": {"9": 40, "10": 50, "11": 45, "14": 30, "15": 35},
+                "daily_activity": {},
+                "response_times": [],
+            },
+        )
 
-        user_model_store.update_signal_profile("topics", {
-            "topic_counts": {"python": 30, "docker": 25, "testing": 8},
-            "recent_topics": [],
-        })
+        user_model_store.update_signal_profile(
+            "topics",
+            {
+                "topic_counts": {"python": 30, "docker": 25, "testing": 8},
+                "recent_topics": [],
+            },
+        )
 
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {
-                "alice@example.com": {
-                    "interaction_count": 60,
-                    "inbound_count": 25,
-                    "outbound_count": 35,
-                    "channels_used": ["email", "signal", "imessage"],
-                },
-                "bob@example.com": {
-                    "interaction_count": 8,
-                    "inbound_count": 3,
-                    "outbound_count": 5,
-                    "channels_used": ["email"],
-                },
-            }
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 60,
+                        "inbound_count": 25,
+                        "outbound_count": 35,
+                        "channels_used": ["email", "signal", "imessage"],
+                    },
+                    "bob@example.com": {
+                        "interaction_count": 8,
+                        "inbound_count": 3,
+                        "outbound_count": 5,
+                        "channels_used": ["email"],
+                    },
+                }
+            },
+        )
 
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": [
-                {"signal_type": "negative_language", "value": 0.2, "weight": 0.6},
-                {"signal_type": "incoming_pressure", "value": 4.0, "weight": 0.3},
-            ] * 3  # 6 signals total
-        })
+        user_model_store.update_signal_profile(
+            "mood_signals",
+            {
+                "recent_signals": [
+                    {"signal_type": "negative_language", "value": 0.2, "weight": 0.6},
+                    {"signal_type": "incoming_pressure", "value": 4.0, "weight": 0.3},
+                ]
+                * 3  # 6 signals total
+            },
+        )
 
         # Set samples counts to meet thresholds
         with user_model_store.db.get_connection("user_model") as conn:
@@ -409,10 +415,13 @@ class TestSemanticFactInferenceThresholds:
 
     def test_linguistic_threshold_1_sample(self, user_model_store):
         """Linguistic inference requires 1+ sample (minimal threshold)."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.2},
-            "samples": 1,
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.2},
+                "samples": 1,
+            },
+        )
 
         with user_model_store.db.get_connection("user_model") as conn:
             conn.execute("UPDATE signal_profiles SET samples_count = 1 WHERE profile_type = 'linguistic'")
@@ -426,18 +435,21 @@ class TestSemanticFactInferenceThresholds:
 
     def test_relationship_threshold_5_samples(self, user_model_store):
         """Relationship inference requires 5+ samples."""
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {
-                # outbound_count must be >0 or the inferrer skips this contact as a
-                # one-way/marketing relationship (added in inbound-only filter, PR #204).
-                "alice@example.com": {
-                    "interaction_count": 50,
-                    "inbound_count": 20,
-                    "outbound_count": 30,
-                    "channels_used": ["email", "signal"],
-                },
-            }
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {
+                    # outbound_count must be >0 or the inferrer skips this contact as a
+                    # one-way/marketing relationship (added in inbound-only filter, PR #204).
+                    "alice@example.com": {
+                        "interaction_count": 50,
+                        "inbound_count": 20,
+                        "outbound_count": 30,
+                        "channels_used": ["email", "signal"],
+                    },
+                }
+            },
+        )
 
         # Test with 4 samples (below threshold)
         with user_model_store.db.get_connection("user_model") as conn:

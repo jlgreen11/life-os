@@ -32,6 +32,7 @@ from models.core import EventType
 # Fixtures (reused from test_master_event_handler_pipeline.py pattern)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def lifeos_config():
     """Minimal config dict for LifeOS in test mode."""
@@ -97,6 +98,7 @@ def _make_event(event_type: str, **payload_overrides) -> dict:
 # Helper: instrument signal_extractor to detect whether it was called
 # ---------------------------------------------------------------------------
 
+
 def _track_signal_extractor(lifeos):
     """Wrap signal_extractor.process_event to record which event IDs it sees.
 
@@ -119,6 +121,7 @@ def _track_signal_extractor(lifeos):
 # Test 1: notification.created events are skipped by stages 2-6
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_notification_created_skips_signal_extraction(lifeos, db):
     """Events with type 'notification.created' should be stored (stage 1)
@@ -136,9 +139,7 @@ async def test_notification_created_skips_signal_extraction(lifeos, db):
 
     # Stage 1: event should be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "notification.created event should be stored in events.db"
 
     # Stage 2: signal extractor should NOT have been called
@@ -149,15 +150,14 @@ async def test_notification_created_skips_signal_extraction(lifeos, db):
 
     # No episode should be created (stage 6 is also skipped)
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 0, "notification.created should NOT create an episode"
 
 
 # ---------------------------------------------------------------------------
 # Test 2: task.created events are skipped by stages 2-6
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_task_created_skips_signal_extraction(lifeos, db):
@@ -176,9 +176,7 @@ async def test_task_created_skips_signal_extraction(lifeos, db):
 
     # Stage 1: event should be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "task.created event should be stored in events.db"
 
     # Stage 2: signal extractor should NOT be called
@@ -189,15 +187,14 @@ async def test_task_created_skips_signal_extraction(lifeos, db):
 
     # No episode should be created
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 0, "task.created should NOT create an episode"
 
 
 # ---------------------------------------------------------------------------
 # Test 3: usermodel.signal_profile.updated events are skipped
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_usermodel_signal_profile_updated_skips_pipeline(lifeos, db):
@@ -216,9 +213,7 @@ async def test_usermodel_signal_profile_updated_skips_pipeline(lifeos, db):
 
     # Stage 1: event should be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "usermodel.* event should be stored in events.db"
 
     # Stage 2: signal extractor should NOT be called
@@ -229,15 +224,14 @@ async def test_usermodel_signal_profile_updated_skips_pipeline(lifeos, db):
 
     # No episode should be created
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 0, "usermodel.* events should NOT create an episode"
 
 
 # ---------------------------------------------------------------------------
 # Test 4: email.received still passes through all stages normally
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_email_received_passes_through_full_pipeline(lifeos, db):
@@ -259,9 +253,7 @@ async def test_email_received_passes_through_full_pipeline(lifeos, db):
 
     # Stage 1: event should be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "email.received event should be stored"
 
     # Stage 2: signal extractor SHOULD be called for user content events
@@ -272,15 +264,14 @@ async def test_email_received_passes_through_full_pipeline(lifeos, db):
 
     # Stage 6: episode should be created for user content events
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 1, "email.received should create an episode"
 
 
 # ---------------------------------------------------------------------------
 # Test 5: system.connector.sync_complete is still skipped (existing behavior)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_system_connector_sync_complete_still_skipped(lifeos, db):
@@ -299,9 +290,7 @@ async def test_system_connector_sync_complete_still_skipped(lifeos, db):
 
     # Stage 1: event should be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "system.connector.sync_complete should be stored"
 
     # Stage 2: signal extractor should NOT be called
@@ -312,7 +301,5 @@ async def test_system_connector_sync_complete_still_skipped(lifeos, db):
 
     # No episode should be created
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 0, "system.connector.sync_complete should NOT create an episode"

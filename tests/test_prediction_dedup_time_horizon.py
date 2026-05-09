@@ -123,16 +123,18 @@ class TestPreFilterWithTimeHorizon:
         """Verify that a prediction with a new time_horizon passes the pre-filter."""
         ums = user_model_store
 
-        ums.store_prediction({
-            "id": "pred-pf-1",
-            "prediction_type": "conflict",
-            "description": "Meeting overlap detected",
-            "confidence": 0.80,
-            "confidence_gate": "DEFAULT",
-            "time_horizon": "2_hours",
-            "supporting_signals": {},
-            "was_surfaced": True,
-        })
+        ums.store_prediction(
+            {
+                "id": "pred-pf-1",
+                "prediction_type": "conflict",
+                "description": "Meeting overlap detected",
+                "confidence": 0.80,
+                "confidence_gate": "DEFAULT",
+                "time_horizon": "2_hours",
+                "supporting_signals": {},
+                "was_surfaced": True,
+            }
+        )
 
         with ums.db.get_connection("user_model") as conn:
             rows = conn.execute(

@@ -13,10 +13,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 def _set_samples(ums, profile_type, count):
     """Helper to manually set samples_count for a profile."""
     with ums.db.get_connection("user_model") as conn:
-        conn.execute(
-            "UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?",
-            (count, profile_type)
-        )
+        conn.execute("UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?", (count, profile_type))
 
 
 class TestSemanticHTMLFiltering:
@@ -29,15 +26,15 @@ class TestSemanticHTMLFiltering:
         # Populate topic profile with HTML entity tokens (50+ samples to trigger inference)
         topic_data = {
             "topic_counts": {
-                "nbsp": 150,      # Very common HTML entity
-                "zwnj": 100,      # Zero-width non-joiner
-                "mdash": 80,      # Em dash entity
-                "python": 120,    # Legitimate topic (should NOT be filtered)
-                "database": 60,   # Legitimate topic (should NOT be filtered)
+                "nbsp": 150,  # Very common HTML entity
+                "zwnj": 100,  # Zero-width non-joiner
+                "mdash": 80,  # Em dash entity
+                "python": 120,  # Legitimate topic (should NOT be filtered)
+                "database": 60,  # Legitimate topic (should NOT be filtered)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",500)
+        _set_samples(user_model_store, "topics", 500)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -69,11 +66,11 @@ class TestSemanticHTMLFiltering:
                 "color": 120,
                 "font": 110,
                 "javascript": 100,  # Legitimate topic
-                "react": 80,        # Legitimate topic
+                "react": 80,  # Legitimate topic
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",600)
+        _set_samples(user_model_store, "topics", 600)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -109,11 +106,11 @@ class TestSemanticHTMLFiltering:
                 "href": 120,
                 "class": 110,
                 "kubernetes": 130,  # Legitimate topic
-                "docker": 90,       # Legitimate topic
+                "docker": 90,  # Legitimate topic
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",700)
+        _set_samples(user_model_store, "topics", 700)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -151,7 +148,7 @@ class TestSemanticHTMLFiltering:
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",500)
+        _set_samples(user_model_store, "topics", 500)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -188,7 +185,7 @@ class TestSemanticHTMLFiltering:
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",800)
+        _set_samples(user_model_store, "topics", 800)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -226,7 +223,7 @@ class TestSemanticHTMLFiltering:
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",600)
+        _set_samples(user_model_store, "topics", 600)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -253,14 +250,14 @@ class TestSemanticHTMLFiltering:
         # Populate topic profile with mixed-case HTML/CSS tokens
         topic_data = {
             "topic_counts": {
-                "NBSP": 150,      # Uppercase
-                "Padding": 140,   # Title case
-                "TABLE": 130,     # Uppercase
-                "Python": 120,    # Legitimate topic with capital
+                "NBSP": 150,  # Uppercase
+                "Padding": 140,  # Title case
+                "TABLE": 130,  # Uppercase
+                "Python": 120,  # Legitimate topic with capital
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",400)
+        _set_samples(user_model_store, "topics", 400)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -285,10 +282,10 @@ class TestSemanticHTMLFiltering:
         # (3+ count, 3%+ frequency but <5 count or <8% frequency)
         topic_data = {
             "topic_counts": {
-                "align": 4,       # HTML/CSS token (should be filtered)
-                "style": 4,       # HTML/CSS token (should be filtered)
+                "align": 4,  # HTML/CSS token (should be filtered)
+                "style": 4,  # HTML/CSS token (should be filtered)
                 "blockchain": 4,  # Legitimate topic (should create interest fact)
-                "webdev": 4,      # Legitimate topic (should create interest fact)
+                "webdev": 4,  # Legitimate topic (should create interest fact)
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
@@ -316,30 +313,54 @@ class TestSemanticHTMLFiltering:
         topic_data = {
             "topic_counts": {
                 # HTML entities (8 examples)
-                "nbsp": 150, "zwnj": 140, "zwj": 130, "mdash": 120,
-                "ndash": 110, "hellip": 100, "quot": 90, "amp": 80,
-
+                "nbsp": 150,
+                "zwnj": 140,
+                "zwj": 130,
+                "mdash": 120,
+                "ndash": 110,
+                "hellip": 100,
+                "quot": 90,
+                "amp": 80,
                 # CSS properties (10 examples)
-                "padding": 200, "margin": 190, "border": 180, "width": 170,
-                "height": 160, "color": 150, "font": 140, "align": 130,
-                "text": 120, "display": 110,
-
+                "padding": 200,
+                "margin": 190,
+                "border": 180,
+                "width": 170,
+                "height": 160,
+                "color": 150,
+                "font": 140,
+                "align": 130,
+                "text": 120,
+                "display": 110,
                 # HTML tags (10 examples)
-                "table": 250, "tbody": 240, "div": 230, "span": 220,
-                "img": 210, "href": 200, "class": 190, "id": 180,
-                "meta": 170, "link": 160,
-
+                "table": 250,
+                "tbody": 240,
+                "div": 230,
+                "span": 220,
+                "img": 210,
+                "href": 200,
+                "class": 190,
+                "id": 180,
+                "meta": 170,
+                "link": 160,
                 # CSS keywords (5 examples)
-                "important": 180, "center": 170, "inherit": 160,
-                "auto": 150, "hidden": 140,
-
+                "important": 180,
+                "center": 170,
+                "inherit": 160,
+                "auto": 150,
+                "hidden": 140,
                 # URL fragments (5 examples)
-                "https": 300, "http": 290, "www": 280, "com": 270, "html": 260,
-
+                "https": 300,
+                "http": 290,
+                "www": 280,
+                "com": 270,
+                "html": 260,
                 # Email artifacts (5 examples)
-                "unsubscribe": 220, "pixel": 210, "tracker": 200,
-                "campaign": 190, "utm": 180,
-
+                "unsubscribe": 220,
+                "pixel": 210,
+                "tracker": 200,
+                "campaign": 190,
+                "utm": 180,
                 # Legitimate topics (should NOT be filtered)
                 "python": 500,
                 "javascript": 400,
@@ -349,7 +370,7 @@ class TestSemanticHTMLFiltering:
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",1000)
+        _set_samples(user_model_store, "topics", 1000)
 
         # Run inference
         inferrer.infer_from_topic_profile()
@@ -380,7 +401,7 @@ class TestSemanticHTMLFiltering:
         # Empty topic profile
         topic_data = {"topic_counts": {}}
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",100)
+        _set_samples(user_model_store, "topics", 100)
 
         # Should not crash
         inferrer.infer_from_topic_profile()
@@ -403,22 +424,20 @@ class TestSemanticHTMLFiltering:
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",400)
+        _set_samples(user_model_store, "topics", 400)
 
         # Should not crash
         inferrer.infer_from_topic_profile()
 
         # No expertise/interest facts should be created
         facts = user_model_store.get_semantic_facts()
-        expertise_interest_facts = [
-            f for f in facts
-            if f["category"] in ("expertise", "implicit_preference")
-        ]
+        expertise_interest_facts = [f for f in facts if f["category"] in ("expertise", "implicit_preference")]
         assert len(expertise_interest_facts) == 0
 
     def test_logging_reports_filtered_count(self, user_model_store, caplog):
         """Verify that filtering events are logged for visibility."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -433,7 +452,7 @@ class TestSemanticHTMLFiltering:
             }
         }
         user_model_store.update_signal_profile("topics", topic_data)
-        _set_samples(user_model_store, "topics",400)
+        _set_samples(user_model_store, "topics", 400)
 
         # Run inference
         inferrer.infer_from_topic_profile()

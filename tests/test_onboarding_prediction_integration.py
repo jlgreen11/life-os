@@ -207,9 +207,7 @@ class TestOnboardingDefaultsWithoutQuietHours:
         prediction = _make_prediction("reminder", confidence=0.7)
         reaction = await engine.predict_reaction(prediction, {})
 
-        assert "quiet_hours=False" in reaction.reasoning, (
-            f"No quiet hours configured but got: {reaction.reasoning}"
-        )
+        assert "quiet_hours=False" in reaction.reasoning, f"No quiet hours configured but got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_no_quiet_hours_no_suppression_at_any_hour(
@@ -252,8 +250,7 @@ class TestOnboardingDefaultsWithoutQuietHours:
         reaction = await engine.predict_reaction(prediction, {})
 
         assert "quiet_hours=True" in reaction.reasoning, (
-            f"Default quiet hours (22:00-07:00) should suppress at 23:00, "
-            f"got: {reaction.reasoning}"
+            f"Default quiet hours (22:00-07:00) should suppress at 23:00, got: {reaction.reasoning}"
         )
 
 
@@ -285,8 +282,7 @@ class TestOnboardingQuietHoursUrgentBypass:
 
         # Conflict should still surface as helpful/neutral even during quiet hours
         assert reaction.predicted_reaction in ("helpful", "neutral"), (
-            f"Conflict prediction was suppressed during onboarding quiet hours: "
-            f"{reaction.predicted_reaction}"
+            f"Conflict prediction was suppressed during onboarding quiet hours: {reaction.predicted_reaction}"
         )
 
     @pytest.mark.asyncio
@@ -307,8 +303,7 @@ class TestOnboardingQuietHoursUrgentBypass:
         reaction = await engine.predict_reaction(prediction, {})
 
         assert reaction.predicted_reaction in ("helpful", "neutral"), (
-            f"Risk prediction was suppressed during onboarding quiet hours: "
-            f"{reaction.predicted_reaction}"
+            f"Risk prediction was suppressed during onboarding quiet hours: {reaction.predicted_reaction}"
         )
 
 
@@ -333,9 +328,7 @@ class TestPreferenceKeyFormatContract:
 
         # Read back exactly what finalize() wrote
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         assert row is not None, (
             "OnboardingManager.finalize() did not write a 'quiet_hours' key — "
@@ -349,14 +342,10 @@ class TestPreferenceKeyFormatContract:
         _complete_onboarding(onboarding, overrides={"quiet_hours": "10pm to 7am"})
 
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         parsed = json.loads(row["value"])
-        assert isinstance(parsed, list), (
-            f"quiet_hours must be a JSON list, got {type(parsed).__name__}: {parsed}"
-        )
+        assert isinstance(parsed, list), f"quiet_hours must be a JSON list, got {type(parsed).__name__}: {parsed}"
 
     def test_quiet_hours_entries_have_required_fields(self, db: DatabaseManager):
         """Each quiet_hours entry must have 'start', 'end', and 'days' fields,
@@ -365,9 +354,7 @@ class TestPreferenceKeyFormatContract:
         _complete_onboarding(onboarding, overrides={"quiet_hours": "10pm to 7am"})
 
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         quiet_hours = json.loads(row["value"])
         assert len(quiet_hours) > 0, "Expected at least one quiet hours entry"
@@ -387,9 +374,7 @@ class TestPreferenceKeyFormatContract:
         _complete_onboarding(onboarding, overrides={"quiet_hours": "10pm to 7am"})
 
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         quiet_hours = json.loads(row["value"])
         for qh in quiet_hours:
@@ -406,9 +391,7 @@ class TestPreferenceKeyFormatContract:
         _complete_onboarding(onboarding, overrides={"quiet_hours": "10pm to 7am"})
 
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         quiet_hours = json.loads(row["value"])
         valid_days = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
@@ -428,17 +411,11 @@ class TestPreferenceKeyFormatContract:
         )
 
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'priority_contacts'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'priority_contacts'").fetchone()
 
-        assert row is not None, (
-            "OnboardingManager.finalize() did not write a 'priority_contacts' key"
-        )
+        assert row is not None, "OnboardingManager.finalize() did not write a 'priority_contacts' key"
         parsed = json.loads(row["value"])
-        assert isinstance(parsed, list), (
-            f"priority_contacts must be a JSON list, got {type(parsed).__name__}"
-        )
+        assert isinstance(parsed, list), f"priority_contacts must be a JSON list, got {type(parsed).__name__}"
         assert len(parsed) == 2
 
     def test_declined_quiet_hours_writes_empty_list(self, db: DatabaseManager):
@@ -450,9 +427,7 @@ class TestPreferenceKeyFormatContract:
         _complete_onboarding(onboarding, overrides={"quiet_hours": "no"})
 
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         assert row is not None, "Expected quiet_hours key to exist even when declined"
         parsed = json.loads(row["value"])
@@ -479,16 +454,12 @@ class TestEndToEndPreferenceRoundtrip:
 
         # What's in the database
         with db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'quiet_hours'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'quiet_hours'").fetchone()
 
         db_qh = json.loads(row["value"])
 
         # They should be identical
-        assert in_memory_qh == db_qh, (
-            f"Mismatch between finalize() return and DB: {in_memory_qh} != {db_qh}"
-        )
+        assert in_memory_qh == db_qh, f"Mismatch between finalize() return and DB: {in_memory_qh} != {db_qh}"
 
         # Verify the parsed times match what we expect
         assert db_qh[0]["start"] == "23:00"
@@ -527,8 +498,7 @@ class TestEndToEndPreferenceRoundtrip:
         active_score = float(active_reaction.reasoning.split("score=")[1].split(",")[0])
 
         assert quiet_score < active_score, (
-            f"Quiet-hours score ({quiet_score}) should be lower than "
-            f"active-hours score ({active_score})"
+            f"Quiet-hours score ({quiet_score}) should be lower than active-hours score ({active_score})"
         )
         assert "quiet_hours=True" in quiet_reaction.reasoning
         assert "quiet_hours=False" in active_reaction.reasoning

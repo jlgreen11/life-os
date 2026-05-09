@@ -24,6 +24,7 @@ from web.app import create_web_app
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def mock_life_os(db, user_model_store, event_bus):
     """Create a LifeOS-like object with real DB/stores and mocked services."""
@@ -54,17 +55,15 @@ def client(mock_life_os):
     return TestClient(app)
 
 
-def _seed_fact(user_model_store, key="test_fact", category="preference",
-               value="blue", confidence=0.8):
+def _seed_fact(user_model_store, key="test_fact", category="preference", value="blue", confidence=0.8):
     """Insert a semantic fact via the store for test setup."""
-    user_model_store.update_semantic_fact(
-        key=key, category=category, value=value, confidence=confidence
-    )
+    user_model_store.update_semantic_fact(key=key, category=category, value=value, confidence=confidence)
 
 
 # ---------------------------------------------------------------------------
 # POST /api/user-model/facts/{key}/confirm — Fact Confirmation
 # ---------------------------------------------------------------------------
+
 
 class TestConfirmFact:
     """Tests for the POST /api/user-model/facts/{key}/confirm endpoint."""
@@ -168,6 +167,7 @@ class TestConfirmFact:
 # ---------------------------------------------------------------------------
 # PATCH /api/user-model/facts/{key} — Degraded DB path
 # ---------------------------------------------------------------------------
+
 
 class TestCorrectFactDegradedDB:
     """Test the degraded-DB error path for PATCH /api/user-model/facts/{key}."""

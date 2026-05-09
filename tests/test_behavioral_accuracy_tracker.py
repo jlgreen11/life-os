@@ -61,8 +61,8 @@ async def test_reminder_prediction_accurate_when_user_replies(db, user_model_sto
     # Run inference
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 1
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 1
+    assert stats["marked_inaccurate"] == 0
 
     # Verify prediction was marked accurate
     with db.get_connection("user_model") as conn:
@@ -109,8 +109,8 @@ async def test_reminder_prediction_inaccurate_when_user_ignores(db, user_model_s
     # Run inference
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 1
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 1
 
     # Verify prediction was marked inaccurate
     with db.get_connection("user_model") as conn:
@@ -157,8 +157,8 @@ async def test_reminder_prediction_pending_within_window(db, user_model_store):
     # Run inference
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 0
 
     # Verify prediction is still unresolved
     with db.get_connection("user_model") as conn:
@@ -219,8 +219,8 @@ async def test_conflict_prediction_accurate_when_event_rescheduled(db, user_mode
     # Run inference
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 1
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 1
+    assert stats["marked_inaccurate"] == 0
 
     # Verify prediction was marked accurate
     with db.get_connection("user_model") as conn:
@@ -267,8 +267,8 @@ async def test_conflict_prediction_accurate_even_if_ignored(db, user_model_store
     # Run inference
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 1
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 1
+    assert stats["marked_inaccurate"] == 0
 
     # Verify: conflict was real even if user didn't fix it
     with db.get_connection("user_model") as conn:
@@ -319,8 +319,8 @@ async def test_ignores_already_resolved_predictions(db, user_model_store):
     stats = await tracker.run_inference_cycle()
 
     # Should not modify the already-resolved prediction
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 0
 
     # Verify prediction unchanged
     with db.get_connection("user_model") as conn:
@@ -365,8 +365,8 @@ async def test_ignores_predictions_older_than_7_days(db, user_model_store):
     stats = await tracker.run_inference_cycle()
 
     # Should not process predictions older than 7 days
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 0
 
 
 @pytest.mark.asyncio
@@ -402,8 +402,8 @@ async def test_only_processes_surfaced_predictions(db, user_model_store):
     stats = await tracker.run_inference_cycle()
 
     # Should not process unsurfaced predictions
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 0
 
 
 @pytest.mark.asyncio
@@ -439,8 +439,8 @@ async def test_handles_missing_contact_info_gracefully(db, user_model_store):
     stats = await tracker.run_inference_cycle()
 
     # Can't infer without contact info
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 0
 
 
 @pytest.mark.asyncio
@@ -489,8 +489,8 @@ async def test_extracts_contact_from_description_pattern(db, user_model_store):
     # Run inference (should extract "Grace" from description)
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 1
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 1
+    assert stats["marked_inaccurate"] == 0
 
 
 @pytest.mark.asyncio
@@ -526,8 +526,8 @@ async def test_handles_malformed_signals_json(db, user_model_store):
     stats = await tracker.run_inference_cycle()
 
     # Should not crash, but also can't infer without valid signals
-    assert stats['marked_accurate'] == 0
-    assert stats['marked_inaccurate'] == 0
+    assert stats["marked_accurate"] == 0
+    assert stats["marked_inaccurate"] == 0
 
 
 @pytest.mark.asyncio
@@ -621,24 +621,18 @@ async def test_multiple_predictions_processed_in_batch(db, user_model_store):
     # Run inference
     stats = await tracker.run_inference_cycle()
 
-    assert stats['marked_accurate'] == 1  # Prediction 1
-    assert stats['marked_inaccurate'] == 1  # Prediction 2
+    assert stats["marked_accurate"] == 1  # Prediction 1
+    assert stats["marked_inaccurate"] == 1  # Prediction 2
 
     # Verify each prediction
     with db.get_connection("user_model") as conn:
-        pred1 = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred1_id,)
-        ).fetchone()
+        pred1 = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred1_id,)).fetchone()
         assert pred1["was_accurate"] == 1
 
-        pred2 = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred2_id,)
-        ).fetchone()
+        pred2 = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred2_id,)).fetchone()
         assert pred2["was_accurate"] == 0
 
-        pred3 = conn.execute(
-            "SELECT was_accurate FROM predictions WHERE id = ?", (pred3_id,)
-        ).fetchone()
+        pred3 = conn.execute("SELECT was_accurate FROM predictions WHERE id = ?", (pred3_id,)).fetchone()
         assert pred3["was_accurate"] is None  # Still unresolved
 
 
@@ -687,11 +681,11 @@ async def test_idempotent_on_repeated_runs(db, user_model_store):
 
     # Run inference first time
     stats1 = await tracker.run_inference_cycle()
-    assert stats1['marked_accurate'] == 1
+    assert stats1["marked_accurate"] == 1
 
     # Run inference second time (should not re-process)
     stats2 = await tracker.run_inference_cycle()
-    assert stats2['marked_accurate'] == 0  # Already processed
+    assert stats2["marked_accurate"] == 0  # Already processed
 
     # Verify prediction still marked as accurate with original response
     with db.get_connection("user_model") as conn:

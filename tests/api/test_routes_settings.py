@@ -427,9 +427,7 @@ def test_edit_connector_404_when_unknown():
 
 
 def test_edit_connector_503_when_repo_not_wired():
-    resp = _client(DummyLifeOS(connector_repo=None)).get(
-        "/settings/connectors/proton_mail/edit"
-    )
+    resp = _client(DummyLifeOS(connector_repo=None)).get("/settings/connectors/proton_mail/edit")
     assert resp.status_code == 503
 
 
@@ -462,16 +460,12 @@ def test_post_test_connector_html_returns_failure_partial():
 
 
 def test_post_test_connector_html_404_when_unknown():
-    resp = _client(DummyLifeOS(StubConnectorRepo())).post(
-        "/settings/connectors/does_not_exist/test"
-    )
+    resp = _client(DummyLifeOS(StubConnectorRepo())).post("/settings/connectors/does_not_exist/test")
     assert resp.status_code == 404
 
 
 def test_post_test_connector_html_503_when_repo_not_wired():
-    resp = _client(DummyLifeOS(connector_repo=None)).post(
-        "/settings/connectors/proton_mail/test"
-    )
+    resp = _client(DummyLifeOS(connector_repo=None)).post("/settings/connectors/proton_mail/test")
     assert resp.status_code == 503
 
 

@@ -35,6 +35,7 @@ from web.app import create_web_app
 # in test_web_routes.py are not available to tests in this file.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_life_os():
     """Minimal mock LifeOS instance sufficient for the task route tests."""
@@ -67,10 +68,17 @@ def mock_life_os():
 
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
 
     life_os.notification_manager = Mock()
     life_os.notification_manager.get_stats = Mock(return_value={"pending": 0, "delivered": 0})
@@ -143,9 +151,16 @@ def client(app):
 # TaskManager unit-test helpers
 # ---------------------------------------------------------------------------
 
-def _make_task(db, *, status: str = "pending", domain: str = "work",
-               priority: str = "normal", title: str | None = None,
-               completed_at: str | None = None) -> str:
+
+def _make_task(
+    db,
+    *,
+    status: str = "pending",
+    domain: str = "work",
+    priority: str = "normal",
+    title: str | None = None,
+    completed_at: str | None = None,
+) -> str:
     """Insert a task row into the temp DB and return its ID.
 
     Bypasses the async TaskManager.create_task() coroutine so we can seed
@@ -176,6 +191,7 @@ def manager(db, event_bus):
 # TaskManager.get_tasks() — default behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestGetTasksDefaultsToPending:
     """get_tasks() with no arguments returns only pending tasks."""
 
@@ -200,6 +216,7 @@ class TestGetTasksDefaultsToPending:
 # ---------------------------------------------------------------------------
 # TaskManager.get_tasks() — status filtering
 # ---------------------------------------------------------------------------
+
 
 class TestGetTasksByStatus:
     """get_tasks(status=X) returns only tasks with that exact status."""
@@ -251,10 +268,10 @@ class TestGetTasksByStatus:
     def test_each_status_returns_correct_subset(self, manager, db):
         """Multiple statuses in DB — only the requested ones come back."""
         ids = {
-            "pending":     _make_task(db, status="pending"),
-            "completed":   _make_task(db, status="completed"),
+            "pending": _make_task(db, status="pending"),
+            "completed": _make_task(db, status="completed"),
             "in_progress": _make_task(db, status="in_progress"),
-            "archived":    _make_task(db, status="archived"),
+            "archived": _make_task(db, status="archived"),
         }
 
         for status, expected_id in ids.items():
@@ -264,14 +281,13 @@ class TestGetTasksByStatus:
             # No other statuses should leak through
             for other_status, other_id in ids.items():
                 if other_status != status:
-                    assert other_id not in returned_ids, (
-                        f"{other_status} task leaked into {status} query results"
-                    )
+                    assert other_id not in returned_ids, f"{other_status} task leaked into {status} query results"
 
 
 # ---------------------------------------------------------------------------
 # TaskManager.get_tasks() — unknown status normalisation
 # ---------------------------------------------------------------------------
+
 
 class TestGetTasksUnknownStatus:
     """Unknown status values are safely normalised to 'pending'."""
@@ -304,12 +320,13 @@ class TestGetTasksUnknownStatus:
 # TaskManager.get_tasks() — optional filters
 # ---------------------------------------------------------------------------
 
+
 class TestGetTasksFilters:
     """domain, priority, and limit filters narrow the result set correctly."""
 
     def test_domain_filter(self, manager, db):
         """Only tasks matching the requested domain are returned."""
-        work_id   = _make_task(db, status="pending", domain="work")
+        work_id = _make_task(db, status="pending", domain="work")
         health_id = _make_task(db, status="pending", domain="health")
 
         results = manager.get_tasks(status="pending", domain="work")
@@ -320,7 +337,7 @@ class TestGetTasksFilters:
 
     def test_priority_filter(self, manager, db):
         """Only tasks matching the requested priority are returned."""
-        high_id   = _make_task(db, status="pending", priority="high")
+        high_id = _make_task(db, status="pending", priority="high")
         normal_id = _make_task(db, status="pending", priority="normal")
 
         results = manager.get_tasks(status="pending", priority="high")
@@ -331,9 +348,9 @@ class TestGetTasksFilters:
 
     def test_domain_and_priority_combined(self, manager, db):
         """Domain + priority filters are ANDed together."""
-        match_id   = _make_task(db, status="pending", domain="work",   priority="high")
-        wrong_prio = _make_task(db, status="pending", domain="work",   priority="normal")
-        wrong_dom  = _make_task(db, status="pending", domain="health", priority="high")
+        match_id = _make_task(db, status="pending", domain="work", priority="high")
+        wrong_prio = _make_task(db, status="pending", domain="work", priority="normal")
+        wrong_dom = _make_task(db, status="pending", domain="health", priority="high")
 
         results = manager.get_tasks(status="pending", domain="work", priority="high")
         ids = [r["id"] for r in results]
@@ -352,7 +369,7 @@ class TestGetTasksFilters:
 
     def test_completed_domain_filter(self, manager, db):
         """Domain filter works correctly for non-pending statuses too."""
-        work_done   = _make_task(db, status="completed", domain="work")
+        work_done = _make_task(db, status="completed", domain="work")
         health_done = _make_task(db, status="completed", domain="health")
 
         results = manager.get_tasks(status="completed", domain="work")
@@ -366,14 +383,15 @@ class TestGetTasksFilters:
 # TaskManager.get_tasks() — sort ordering
 # ---------------------------------------------------------------------------
 
+
 class TestGetTasksSorting:
     """Result ordering is correct for each status type."""
 
     def test_pending_sorted_by_priority_then_due_date(self, manager, db):
         """Pending tasks: critical > high > normal > low."""
-        low_id    = _make_task(db, status="pending", priority="low")
-        high_id   = _make_task(db, status="pending", priority="high")
-        crit_id   = _make_task(db, status="pending", priority="critical")
+        low_id = _make_task(db, status="pending", priority="low")
+        high_id = _make_task(db, status="pending", priority="high")
+        crit_id = _make_task(db, status="pending", priority="critical")
         normal_id = _make_task(db, status="pending", priority="normal")
 
         results = manager.get_tasks(status="pending")
@@ -385,12 +403,9 @@ class TestGetTasksSorting:
 
     def test_completed_sorted_most_recent_first(self, manager, db):
         """Completed tasks: most-recently completed appears first."""
-        old_id   = _make_task(db, status="completed",
-                               completed_at="2026-01-01T00:00:00+00:00")
-        new_id   = _make_task(db, status="completed",
-                               completed_at="2026-02-15T12:00:00+00:00")
-        newer_id = _make_task(db, status="completed",
-                               completed_at="2026-02-18T08:00:00+00:00")
+        old_id = _make_task(db, status="completed", completed_at="2026-01-01T00:00:00+00:00")
+        new_id = _make_task(db, status="completed", completed_at="2026-02-15T12:00:00+00:00")
+        newer_id = _make_task(db, status="completed", completed_at="2026-02-18T08:00:00+00:00")
 
         results = manager.get_tasks(status="completed")
         ids = [r["id"] for r in results]
@@ -401,6 +416,7 @@ class TestGetTasksSorting:
 # ---------------------------------------------------------------------------
 # get_pending_tasks() backward-compat shim
 # ---------------------------------------------------------------------------
+
 
 class TestGetPendingTasksBackwardCompat:
     """get_pending_tasks() still works as a thin shim over get_tasks('pending')."""
@@ -418,7 +434,7 @@ class TestGetPendingTasksBackwardCompat:
 
     def test_domain_filter_passes_through(self, manager, db):
         """get_pending_tasks(domain=X) still filters correctly."""
-        work_id   = _make_task(db, status="pending", domain="work")
+        work_id = _make_task(db, status="pending", domain="work")
         health_id = _make_task(db, status="pending", domain="health")
 
         results = manager.get_pending_tasks(domain="work")
@@ -432,27 +448,22 @@ class TestGetPendingTasksBackwardCompat:
 # /api/tasks route integration tests
 # ---------------------------------------------------------------------------
 
+
 class TestListTasksRoute:
     """GET /api/tasks now delegates to get_tasks() and honours the status param."""
 
     def test_default_calls_get_tasks_with_pending(self, client, mock_life_os):
         """GET /api/tasks with no params calls get_tasks(status='pending')."""
-        mock_life_os.task_manager.get_tasks.return_value = [
-            {"id": "t1", "title": "Pending task"}
-        ]
+        mock_life_os.task_manager.get_tasks.return_value = [{"id": "t1", "title": "Pending task"}]
 
         response = client.get("/api/tasks")
 
         assert response.status_code == 200
-        mock_life_os.task_manager.get_tasks.assert_called_once_with(
-            status="pending", limit=50
-        )
+        mock_life_os.task_manager.get_tasks.assert_called_once_with(status="pending", limit=50)
 
     def test_status_completed_is_passed_through(self, client, mock_life_os):
         """GET /api/tasks?status=completed calls get_tasks(status='completed')."""
-        mock_life_os.task_manager.get_tasks.return_value = [
-            {"id": "c1", "title": "Done task", "status": "completed"}
-        ]
+        mock_life_os.task_manager.get_tasks.return_value = [{"id": "c1", "title": "Done task", "status": "completed"}]
 
         response = client.get("/api/tasks?status=completed")
 
@@ -460,24 +471,18 @@ class TestListTasksRoute:
         data = response.json()
         assert data["count"] == 1
         assert data["tasks"][0]["id"] == "c1"
-        mock_life_os.task_manager.get_tasks.assert_called_once_with(
-            status="completed", limit=50
-        )
+        mock_life_os.task_manager.get_tasks.assert_called_once_with(status="completed", limit=50)
 
     def test_status_in_progress_is_passed_through(self, client, mock_life_os):
         """GET /api/tasks?status=in_progress calls get_tasks(status='in_progress')."""
-        mock_life_os.task_manager.get_tasks.return_value = [
-            {"id": "w1", "title": "WIP task", "status": "in_progress"}
-        ]
+        mock_life_os.task_manager.get_tasks.return_value = [{"id": "w1", "title": "WIP task", "status": "in_progress"}]
 
         response = client.get("/api/tasks?status=in_progress")
 
         assert response.status_code == 200
         data = response.json()
         assert data["count"] == 1
-        mock_life_os.task_manager.get_tasks.assert_called_once_with(
-            status="in_progress", limit=50
-        )
+        mock_life_os.task_manager.get_tasks.assert_called_once_with(status="in_progress", limit=50)
 
     def test_limit_parameter_forwarded(self, client, mock_life_os):
         """GET /api/tasks?limit=5 forwards limit=5 to get_tasks()."""
@@ -485,15 +490,11 @@ class TestListTasksRoute:
 
         client.get("/api/tasks?limit=5")
 
-        mock_life_os.task_manager.get_tasks.assert_called_once_with(
-            status="pending", limit=5
-        )
+        mock_life_os.task_manager.get_tasks.assert_called_once_with(status="pending", limit=5)
 
     def test_count_matches_returned_tasks(self, client, mock_life_os):
         """The count field always matches the number of task objects in the response."""
-        mock_life_os.task_manager.get_tasks.return_value = [
-            {"id": f"t{i}", "title": f"Task {i}"} for i in range(3)
-        ]
+        mock_life_os.task_manager.get_tasks.return_value = [{"id": f"t{i}", "title": f"Task {i}"} for i in range(3)]
 
         response = client.get("/api/tasks")
 
@@ -518,6 +519,4 @@ class TestListTasksRoute:
 
         client.get("/api/tasks?status=completed&limit=10")
 
-        mock_life_os.task_manager.get_tasks.assert_called_once_with(
-            status="completed", limit=10
-        )
+        mock_life_os.task_manager.get_tasks.assert_called_once_with(status="completed", limit=10)

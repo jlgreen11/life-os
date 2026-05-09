@@ -31,6 +31,7 @@ from web.app import create_web_app
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_life_os(db, connector_map=None):
     """Build a minimal mock LifeOS with the attributes create_web_app needs.
 

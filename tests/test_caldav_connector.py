@@ -221,6 +221,7 @@ async def test_sync_all_day_event(event_bus, db, caldav_config):
 
     # Create an all-day event (date object has no 'hour' attribute)
     from datetime import date
+
     vevent = Mock()
     vevent.uid.value = "allday-123"
     vevent.summary.value = "Birthday"
@@ -344,7 +345,7 @@ async def test_sync_naive_datetime_timezone_normalization(event_bus, db, caldav_
     vevent.uid.value = "naive-tz-123"
     vevent.summary.value = "Naive Time Event"
     vevent.dtstart.value = datetime(2026, 2, 15, 10, 0)  # No tzinfo
-    vevent.dtend.value = datetime(2026, 2, 15, 11, 0)    # No tzinfo
+    vevent.dtend.value = datetime(2026, 2, 15, 11, 0)  # No tzinfo
 
     vobj = Mock()
     vobj.vevent = vevent
@@ -709,6 +710,7 @@ async def test_detect_conflicts_basic(event_bus, db, caldav_config):
     # Create two overlapping events in the database.
     # Use tomorrow's date so events are always within the 48-hour window.
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -726,13 +728,15 @@ async def test_detect_conflicts_basic(event_bus, db, caldav_config):
         "is_all_day": False,
         "calendar_id": "Personal",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload1,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload1,
+        }
+    )
 
     # Event 2: base+0:30 to base+1:30 (overlaps with Event 1)
     start2 = base + timedelta(minutes=30)
@@ -745,13 +749,15 @@ async def test_detect_conflicts_basic(event_bus, db, caldav_config):
         "is_all_day": False,
         "calendar_id": "Work",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload2,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload2,
+        }
+    )
 
     await connector._detect_conflicts()
 
@@ -782,6 +788,7 @@ async def test_detect_conflicts_no_overlap(event_bus, db, caldav_config):
     connector.publish_event = AsyncMock()
 
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -795,13 +802,15 @@ async def test_detect_conflicts_no_overlap(event_bus, db, caldav_config):
         "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload1,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload1,
+        }
+    )
 
     # Event 2: base+1:00 to base+2:00 (adjacent, no overlap — touching end to start)
     payload2 = {
@@ -811,13 +820,15 @@ async def test_detect_conflicts_no_overlap(event_bus, db, caldav_config):
         "end_time": (base + timedelta(hours=2)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload2,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload2,
+        }
+    )
 
     await connector._detect_conflicts()
 
@@ -838,6 +849,7 @@ async def test_detect_conflicts_all_day_ignored(event_bus, db, caldav_config):
     connector.publish_event = AsyncMock()
 
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -853,13 +865,15 @@ async def test_detect_conflicts_all_day_ignored(event_bus, db, caldav_config):
         "end_time": day_after.isoformat(),
         "is_all_day": True,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload1,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload1,
+        }
+    )
 
     # Timed event on the same day as the all-day event
     payload2 = {
@@ -869,13 +883,15 @@ async def test_detect_conflicts_all_day_ignored(event_bus, db, caldav_config):
         "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload2,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload2,
+        }
+    )
 
     await connector._detect_conflicts()
 
@@ -899,6 +915,7 @@ async def test_detect_conflicts_multiple_overlaps(event_bus, db, caldav_config):
     connector.publish_event = AsyncMock()
 
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -912,13 +929,15 @@ async def test_detect_conflicts_multiple_overlaps(event_bus, db, caldav_config):
         "end_time": (base + timedelta(hours=2)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload1,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload1,
+        }
+    )
 
     # Event 2: base+0:30 to base+1:00 (overlaps with Event 1)
     payload2 = {
@@ -928,13 +947,15 @@ async def test_detect_conflicts_multiple_overlaps(event_bus, db, caldav_config):
         "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload2,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload2,
+        }
+    )
 
     # Event 3: base+1:30 to base+2:30 (overlaps with Event 1's tail end)
     payload3 = {
@@ -944,13 +965,15 @@ async def test_detect_conflicts_multiple_overlaps(event_bus, db, caldav_config):
         "end_time": (base + timedelta(hours=2, minutes=30)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload3,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload3,
+        }
+    )
 
     await connector._detect_conflicts()
 
@@ -976,6 +999,7 @@ async def test_detect_conflicts_no_duplicate_pairs(event_bus, db, caldav_config)
     connector.publish_event = AsyncMock()
 
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -995,13 +1019,15 @@ async def test_detect_conflicts_no_duplicate_pairs(event_bus, db, caldav_config)
             "end_time": (base + timedelta(hours=1)).isoformat(),
             "is_all_day": False,
         }
-        event_store.store_event({
-            "id": row_id,
-            "type": "calendar.event.created",
-            "source": "caldav",
-            "timestamp": now.isoformat(),
-            "payload": payload,
-        })
+        event_store.store_event(
+            {
+                "id": row_id,
+                "type": "calendar.event.created",
+                "source": "caldav",
+                "timestamp": now.isoformat(),
+                "payload": payload,
+            }
+        )
 
     await connector._detect_conflicts()
 
@@ -1024,6 +1050,7 @@ async def test_detect_conflicts_less_than_two_events(event_bus, db, caldav_confi
     connector.publish_event = AsyncMock()
 
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -1037,13 +1064,15 @@ async def test_detect_conflicts_less_than_two_events(event_bus, db, caldav_confi
         "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload,
+        }
+    )
 
     await connector._detect_conflicts()
 
@@ -1066,6 +1095,7 @@ async def test_detect_conflicts_malformed_event_skipped(event_bus, db, caldav_co
     connector.publish_event = AsyncMock()
 
     from storage.event_store import EventStore
+
     event_store = EventStore(db)
 
     now = datetime.now(timezone.utc)
@@ -1078,13 +1108,15 @@ async def test_detect_conflicts_malformed_event_skipped(event_bus, db, caldav_co
         "end_time": (base + timedelta(hours=1)).isoformat(),
         # Missing start_time intentionally — exercises the parse-error handler
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload1,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload1,
+        }
+    )
 
     # Valid future event
     payload2 = {
@@ -1094,13 +1126,15 @@ async def test_detect_conflicts_malformed_event_skipped(event_bus, db, caldav_co
         "end_time": (base + timedelta(hours=1)).isoformat(),
         "is_all_day": False,
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload2,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload2,
+        }
+    )
 
     # Should not crash — malformed event is skipped, leaving only one valid event
     await connector._detect_conflicts()
@@ -1158,13 +1192,15 @@ async def test_conflict_detection_dedup_across_sync_cycles(event_bus, db, caldav
         "is_all_day": False,
         "calendar_id": "Personal",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload_a,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload_a,
+        }
+    )
 
     # Event B: base+0:30 to base+1:30 (overlaps with A)
     payload_b = {
@@ -1175,13 +1211,15 @@ async def test_conflict_detection_dedup_across_sync_cycles(event_bus, db, caldav
         "is_all_day": False,
         "calendar_id": "Work",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload_b,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload_b,
+        }
+    )
 
     # First call: should detect and publish the A-B conflict
     await connector._detect_conflicts()
@@ -1228,13 +1266,15 @@ async def test_conflict_detection_new_conflict_published_after_dedup(event_bus, 
         "is_all_day": False,
         "calendar_id": "Personal",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload_a,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload_a,
+        }
+    )
 
     # Event B: base+0:30 to base+1:00 (overlaps with A)
     payload_b = {
@@ -1245,13 +1285,15 @@ async def test_conflict_detection_new_conflict_published_after_dedup(event_bus, 
         "is_all_day": False,
         "calendar_id": "Work",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload_b,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload_b,
+        }
+    )
 
     # First call: should detect A-B conflict only
     await connector._detect_conflicts()
@@ -1270,13 +1312,15 @@ async def test_conflict_detection_new_conflict_published_after_dedup(event_bus, 
         "is_all_day": False,
         "calendar_id": "Personal",
     }
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": payload_c,
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": payload_c,
+        }
+    )
 
     # Second call: should publish only the NEW A-C conflict (B-C don't overlap)
     await connector._detect_conflicts()

@@ -25,34 +25,41 @@ def test_email_workflow_detection_with_large_dataset(db, user_model_store):
     with db.get_connection("events") as conn:
         for i in range(1000):
             event_time = base_time + timedelta(hours=i)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, payload)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f"email-{i}",
-                "email.received",
-                "email",
-                event_time.isoformat(),
-                f'{{"from_address": "boss@company.com", "subject": "Task {i}"}}'
-            ))
+            """,
+                (
+                    f"email-{i}",
+                    "email.received",
+                    "email",
+                    event_time.isoformat(),
+                    f'{{"from_address": "boss@company.com", "subject": "Task {i}"}}',
+                ),
+            )
 
         # Simulate 50 email.sent responses within 4 hours of some received emails
         for i in range(50):
             # Respond to every 20th email
-            response_time = base_time + timedelta(hours=i*20) + timedelta(hours=2)
-            conn.execute("""
+            response_time = base_time + timedelta(hours=i * 20) + timedelta(hours=2)
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, payload)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f"response-{i}",
-                "email.sent",
-                "email",
-                response_time.isoformat(),
-                '{"to_addresses": ["boss@company.com"]}'
-            ))
+            """,
+                (
+                    f"response-{i}",
+                    "email.sent",
+                    "email",
+                    response_time.isoformat(),
+                    '{"to_addresses": ["boss@company.com"]}',
+                ),
+            )
 
     # The workflow detector should complete quickly (not timeout)
     import time
+
     start = time.time()
     workflows = detector._detect_email_workflows(lookback_days=30)
     duration = time.time() - start
@@ -89,7 +96,7 @@ def test_email_workflow_detection_multiple_senders(db, user_model_store):
         "boss@work.com",
         "client@business.net",
         "newsletter@news.org",
-        "support@service.io"
+        "support@service.io",
     ]
 
     with db.get_connection("events") as conn:
@@ -97,32 +104,38 @@ def test_email_workflow_detection_multiple_senders(db, user_model_store):
         for sender_idx, sender in enumerate(senders):
             # Each sender gets 100 emails
             for i in range(100):
-                event_time = base_time + timedelta(hours=sender_idx*100 + i)
-                conn.execute("""
+                event_time = base_time + timedelta(hours=sender_idx * 100 + i)
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, payload)
                     VALUES (?, ?, ?, ?, ?)
-                """, (
-                    f"email-{event_id}",
-                    "email.received",
-                    "email",
-                    event_time.isoformat(),
-                    f'{{"from_address": "{sender}", "subject": "Email {i}"}}'
-                ))
+                """,
+                    (
+                        f"email-{event_id}",
+                        "email.received",
+                        "email",
+                        event_time.isoformat(),
+                        f'{{"from_address": "{sender}", "subject": "Email {i}"}}',
+                    ),
+                )
                 event_id += 1
 
                 # Respond to 10% of emails from this sender
                 if i % 10 == 0:
                     response_time = event_time + timedelta(hours=1)
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT INTO events (id, type, source, timestamp, payload)
                         VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        f"response-{event_id}",
-                        "email.sent",
-                        "email",
-                        response_time.isoformat(),
-                        f'{{"to_addresses": ["{sender}"]}}'
-                    ))
+                    """,
+                        (
+                            f"response-{event_id}",
+                            "email.sent",
+                            "email",
+                            response_time.isoformat(),
+                            f'{{"to_addresses": ["{sender}"]}}',
+                        ),
+                    )
                     event_id += 1
 
     # Detect workflows
@@ -134,8 +147,9 @@ def test_email_workflow_detection_multiple_senders(db, user_model_store):
     # Each workflow should have a valid success rate (10 responses, but each can
     # match multiple emails within the 12-hour time window)
     for workflow in workflows:
-        assert 0.05 <= workflow["success_rate"] <= 1.0, \
+        assert 0.05 <= workflow["success_rate"] <= 1.0, (
             f"Workflow {workflow['name']} has unexpected success rate: {workflow['success_rate']}"
+        )
 
 
 def test_email_workflow_detection_no_responses(db, user_model_store):
@@ -148,16 +162,19 @@ def test_email_workflow_detection_no_responses(db, user_model_store):
     with db.get_connection("events") as conn:
         for i in range(500):
             event_time = base_time + timedelta(hours=i)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, payload)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f"marketing-{i}",
-                "email.received",
-                "email",
-                event_time.isoformat(),
-                '{"from_address": "marketing@spam.com", "subject": "Buy now!"}'
-            ))
+            """,
+                (
+                    f"marketing-{i}",
+                    "email.received",
+                    "email",
+                    event_time.isoformat(),
+                    '{"from_address": "marketing@spam.com", "subject": "Buy now!"}',
+                ),
+            )
 
     # Detect workflows - should find none because:
     # - success_threshold is 1%
@@ -178,45 +195,54 @@ def test_email_workflow_detection_timing_precision(db, user_model_store):
     with db.get_connection("events") as conn:
         # 50 emails from boss
         for i in range(50):
-            event_time = base_time + timedelta(hours=i*6)
-            conn.execute("""
+            event_time = base_time + timedelta(hours=i * 6)
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, payload)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f"email-{i}",
-                "email.received",
-                "email",
-                event_time.isoformat(),
-                '{"from_address": "boss@company.com", "subject": "Urgent task"}'
-            ))
+            """,
+                (
+                    f"email-{i}",
+                    "email.received",
+                    "email",
+                    event_time.isoformat(),
+                    '{"from_address": "boss@company.com", "subject": "Urgent task"}',
+                ),
+            )
 
             # Respond within 1 hour (should be included)
             if i < 10:
                 response_time = event_time + timedelta(hours=1)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, payload)
                     VALUES (?, ?, ?, ?, ?)
-                """, (
-                    f"response-1h-{i}",
-                    "email.sent",
-                    "email",
-                    response_time.isoformat(),
-                    '{"to_addresses": ["boss@company.com"]}'
-                ))
+                """,
+                    (
+                        f"response-1h-{i}",
+                        "email.sent",
+                        "email",
+                        response_time.isoformat(),
+                        '{"to_addresses": ["boss@company.com"]}',
+                    ),
+                )
 
             # Respond after 5 hours (should NOT be included)
             if 10 <= i < 20:
                 response_time = event_time + timedelta(hours=5)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, payload)
                     VALUES (?, ?, ?, ?, ?)
-                """, (
-                    f"response-5h-{i}",
-                    "email.sent",
-                    "email",
-                    response_time.isoformat(),
-                    '{"to_addresses": ["boss@company.com"]}'
-                ))
+                """,
+                    (
+                        f"response-5h-{i}",
+                        "email.sent",
+                        "email",
+                        response_time.isoformat(),
+                        '{"to_addresses": ["boss@company.com"]}',
+                    ),
+                )
 
     workflows = detector._detect_email_workflows(lookback_days=30)
 
@@ -243,8 +269,9 @@ def test_composite_index_exists(db):
         indexes = [row[0] for row in cursor.fetchall()]
 
     # The composite index should exist
-    assert "idx_events_type_timestamp" in indexes, \
+    assert "idx_events_type_timestamp" in indexes, (
         "Missing critical index idx_events_type_timestamp for workflow detection"
+    )
 
 
 def test_workflow_detection_returns_top_20_senders(db, user_model_store):
@@ -263,31 +290,37 @@ def test_workflow_detection_returns_top_20_senders(db, user_model_store):
 
             for i in range(num_emails):
                 event_time = base_time + timedelta(hours=event_id)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, payload)
                     VALUES (?, ?, ?, ?, ?)
-                """, (
-                    f"email-{event_id}",
-                    "email.received",
-                    "email",
-                    event_time.isoformat(),
-                    f'{{"from_address": "{sender}", "subject": "Email {i}"}}'
-                ))
+                """,
+                    (
+                        f"email-{event_id}",
+                        "email.received",
+                        "email",
+                        event_time.isoformat(),
+                        f'{{"from_address": "{sender}", "subject": "Email {i}"}}',
+                    ),
+                )
                 event_id += 1
 
                 # Every 5th email gets a response
                 if i % 5 == 0:
                     response_time = event_time + timedelta(hours=1)
-                    conn.execute("""
+                    conn.execute(
+                        """
                         INSERT INTO events (id, type, source, timestamp, payload)
                         VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        f"response-{event_id}",
-                        "email.sent",
-                        "email",
-                        response_time.isoformat(),
-                        f'{{"to_addresses": ["{sender}"]}}'
-                    ))
+                    """,
+                        (
+                            f"response-{event_id}",
+                            "email.sent",
+                            "email",
+                            response_time.isoformat(),
+                            f'{{"to_addresses": ["{sender}"]}}',
+                        ),
+                    )
                     event_id += 1
 
     workflows = detector._detect_email_workflows(lookback_days=30)
@@ -299,8 +332,9 @@ def test_workflow_detection_returns_top_20_senders(db, user_model_store):
     workflow_triggers = [w["trigger_conditions"][0] for w in workflows]
 
     # Top sender should be included
-    assert any("sender-29@example.com" in t for t in workflow_triggers), \
+    assert any("sender-29@example.com" in t for t in workflow_triggers), (
         f"Top sender (sender-29) should be in results. Got: {workflow_triggers[:5]}"
+    )
 
 
 def test_workflow_storage_integration(db, user_model_store):
@@ -313,30 +347,36 @@ def test_workflow_storage_integration(db, user_model_store):
     with db.get_connection("events") as conn:
         for i in range(20):
             # Received email
-            event_time = base_time + timedelta(hours=i*12)
-            conn.execute("""
+            event_time = base_time + timedelta(hours=i * 12)
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, payload)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f"email-{i}",
-                "email.received",
-                "email",
-                event_time.isoformat(),
-                '{"from_address": "boss@work.com", "subject": "Weekly report"}'
-            ))
+            """,
+                (
+                    f"email-{i}",
+                    "email.received",
+                    "email",
+                    event_time.isoformat(),
+                    '{"from_address": "boss@work.com", "subject": "Weekly report"}',
+                ),
+            )
 
             # Response within 2 hours
             response_time = event_time + timedelta(hours=1.5)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, payload)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f"response-{i}",
-                "email.sent",
-                "email",
-                response_time.isoformat(),
-                '{"to_addresses": ["boss@work.com"]}'
-            ))
+            """,
+                (
+                    f"response-{i}",
+                    "email.sent",
+                    "email",
+                    response_time.isoformat(),
+                    '{"to_addresses": ["boss@work.com"]}',
+                ),
+            )
 
     # Detect and store workflows
     workflows = detector._detect_email_workflows(lookback_days=30)

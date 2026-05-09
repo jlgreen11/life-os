@@ -31,11 +31,13 @@ def sample_routine():
     return {
         "name": "Morning routine",
         "trigger_condition": "morning",
-        "steps": json.dumps([
-            {"order": 0, "action": "email_received", "typical_duration_minutes": 5.0},
-            {"order": 1, "action": "task_created", "typical_duration_minutes": 3.0},
-            {"order": 2, "action": "email_sent", "typical_duration_minutes": 5.0},
-        ]),
+        "steps": json.dumps(
+            [
+                {"order": 0, "action": "email_received", "typical_duration_minutes": 5.0},
+                {"order": 1, "action": "task_created", "typical_duration_minutes": 3.0},
+                {"order": 2, "action": "email_sent", "typical_duration_minutes": 5.0},
+            ]
+        ),
         "typical_duration_minutes": 65.0,
         "consistency_score": 0.85,
         "times_completed": 100,
@@ -45,7 +47,9 @@ def sample_routine():
 
 
 @pytest.mark.asyncio
-async def test_routine_deviation_detected_when_routine_not_completed(db: DatabaseManager, user_model_store: UserModelStore):
+async def test_routine_deviation_detected_when_routine_not_completed(
+    db: DatabaseManager, user_model_store: UserModelStore
+):
     """Test that routine deviation prediction is created when routine hasn't been completed today."""
     engine = PredictionEngine(db, user_model_store)
 
@@ -58,10 +62,12 @@ async def test_routine_deviation_detected_when_routine_not_completed(db: Databas
             (
                 "Morning routine",
                 "morning",
-                json.dumps([
-                    {"order": 0, "action": "email_received"},
-                    {"order": 1, "action": "task_created"},
-                ]),
+                json.dumps(
+                    [
+                        {"order": 0, "action": "email_received"},
+                        {"order": 1, "action": "task_created"},
+                    ]
+                ),
                 30.0,
                 0.8,
                 50,
@@ -96,10 +102,12 @@ async def test_no_deviation_when_routine_completed_today(db: DatabaseManager, us
             (
                 "Morning routine",
                 "morning",
-                json.dumps([
-                    {"order": 0, "action": "email_received"},
-                    {"order": 1, "action": "task_created"},
-                ]),
+                json.dumps(
+                    [
+                        {"order": 0, "action": "email_received"},
+                        {"order": 1, "action": "task_created"},
+                    ]
+                ),
                 30.0,
                 0.8,
                 50,
@@ -222,11 +230,13 @@ async def test_action_to_event_type_mapping(db: DatabaseManager, user_model_stor
             (
                 "Multi-action routine",
                 "morning",
-                json.dumps([
-                    {"order": 0, "action": "message_sent"},
-                    {"order": 1, "action": "task_completed"},
-                    {"order": 2, "action": "calendar_event_created"},
-                ]),
+                json.dumps(
+                    [
+                        {"order": 0, "action": "message_sent"},
+                        {"order": 1, "action": "task_completed"},
+                        {"order": 2, "action": "calendar_event_created"},
+                    ]
+                ),
                 30.0,
                 0.8,
                 50,
@@ -375,7 +385,9 @@ async def test_confidence_calculation_based_on_consistency(db: DatabaseManager, 
 
 
 @pytest.mark.asyncio
-async def test_prediction_only_created_if_above_suggest_threshold(db: DatabaseManager, user_model_store: UserModelStore):
+async def test_prediction_only_created_if_above_suggest_threshold(
+    db: DatabaseManager, user_model_store: UserModelStore
+):
     """Test that predictions are only created if confidence meets SUGGEST threshold (0.3+)."""
     engine = PredictionEngine(db, user_model_store)
 

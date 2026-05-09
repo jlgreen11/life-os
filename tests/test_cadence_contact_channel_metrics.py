@@ -26,6 +26,7 @@ from services.signal_extractor.cadence import CadenceExtractor
 # Fixture helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def extractor(db, user_model_store):
     """CadenceExtractor wired to test databases."""
@@ -60,10 +61,12 @@ class TestAvgResponseTimeByContact:
 
     def test_avg_response_time_by_contact_computed(self, extractor):
         """Contacts with 3+ samples should have their average computed."""
-        data = _base_data(per_contact_response_times={
-            "alice@gmail.com": [300.0, 600.0, 900.0],  # avg = 600
-            "bob@work.com": [1200.0, 2400.0, 3600.0],  # avg = 2400
-        })
+        data = _base_data(
+            per_contact_response_times={
+                "alice@gmail.com": [300.0, 600.0, 900.0],  # avg = 600
+                "bob@work.com": [1200.0, 2400.0, 3600.0],  # avg = 2400
+            }
+        )
 
         extractor._compute_contact_response_times(data)
 
@@ -74,10 +77,12 @@ class TestAvgResponseTimeByContact:
 
     def test_min_sample_threshold_contact(self, extractor):
         """Contacts with fewer than 3 samples should be excluded."""
-        data = _base_data(per_contact_response_times={
-            "alice@gmail.com": [300.0, 600.0],  # Only 2 — excluded
-            "bob@work.com": [100.0, 200.0, 300.0],  # 3 — included
-        })
+        data = _base_data(
+            per_contact_response_times={
+                "alice@gmail.com": [300.0, 600.0],  # Only 2 — excluded
+                "bob@work.com": [100.0, 200.0, 300.0],  # 3 — included
+            }
+        )
 
         extractor._compute_contact_response_times(data)
 
@@ -95,10 +100,12 @@ class TestAvgResponseTimeByContact:
 
     def test_all_contacts_below_threshold(self, extractor):
         """When every contact has <3 samples, the derived field is not set."""
-        data = _base_data(per_contact_response_times={
-            "alice@gmail.com": [300.0],
-            "bob@work.com": [100.0, 200.0],
-        })
+        data = _base_data(
+            per_contact_response_times={
+                "alice@gmail.com": [300.0],
+                "bob@work.com": [100.0, 200.0],
+            }
+        )
 
         extractor._compute_contact_response_times(data)
 
@@ -106,9 +113,11 @@ class TestAvgResponseTimeByContact:
 
     def test_phone_number_contacts_included(self, extractor):
         """Phone number contacts should still get averages (unlike domain grouping)."""
-        data = _base_data(per_contact_response_times={
-            "+15551234567": [60.0, 90.0, 120.0],  # avg = 90
-        })
+        data = _base_data(
+            per_contact_response_times={
+                "+15551234567": [60.0, 90.0, 120.0],  # avg = 90
+            }
+        )
 
         extractor._compute_contact_response_times(data)
 
@@ -127,10 +136,12 @@ class TestAvgResponseTimeByChannel:
 
     def test_avg_response_time_by_channel_computed(self, extractor):
         """Channels with 3+ samples should have their average computed."""
-        data = _base_data(per_channel_response_times={
-            "email": [3600.0, 7200.0, 1800.0],  # avg = 4200
-            "signal": [60.0, 120.0, 180.0],     # avg = 120
-        })
+        data = _base_data(
+            per_channel_response_times={
+                "email": [3600.0, 7200.0, 1800.0],  # avg = 4200
+                "signal": [60.0, 120.0, 180.0],  # avg = 120
+            }
+        )
 
         extractor._compute_channel_response_times(data)
 
@@ -141,10 +152,12 @@ class TestAvgResponseTimeByChannel:
 
     def test_min_sample_threshold_channel(self, extractor):
         """Channels with fewer than 3 samples should be excluded."""
-        data = _base_data(per_channel_response_times={
-            "email": [3600.0, 7200.0],           # 2 — excluded
-            "signal": [60.0, 120.0, 180.0],      # 3 — included
-        })
+        data = _base_data(
+            per_channel_response_times={
+                "email": [3600.0, 7200.0],  # 2 — excluded
+                "signal": [60.0, 120.0, 180.0],  # 3 — included
+            }
+        )
 
         extractor._compute_channel_response_times(data)
 
@@ -171,10 +184,12 @@ class TestInitiatesRatioByContact:
 
     def test_initiates_ratio_computation(self, extractor):
         """Ratio should be user_count / (user_count + contact_count)."""
-        data = _base_data(per_contact_initiations={
-            "alice@gmail.com": {"user": 3, "contact": 1},  # ratio = 0.75
-            "bob@work.com": {"user": 1, "contact": 3},     # ratio = 0.25
-        })
+        data = _base_data(
+            per_contact_initiations={
+                "alice@gmail.com": {"user": 3, "contact": 1},  # ratio = 0.75
+                "bob@work.com": {"user": 1, "contact": 3},  # ratio = 0.25
+            }
+        )
 
         extractor._compute_initiates_ratio(data)
 
@@ -185,10 +200,12 @@ class TestInitiatesRatioByContact:
 
     def test_initiates_ratio_min_threshold(self, extractor):
         """Contacts with fewer than 3 total initiations should be excluded."""
-        data = _base_data(per_contact_initiations={
-            "alice@gmail.com": {"user": 1, "contact": 1},  # total 2 — excluded
-            "bob@work.com": {"user": 2, "contact": 1},     # total 3 — included
-        })
+        data = _base_data(
+            per_contact_initiations={
+                "alice@gmail.com": {"user": 1, "contact": 1},  # total 2 — excluded
+                "bob@work.com": {"user": 2, "contact": 1},  # total 3 — included
+            }
+        )
 
         extractor._compute_initiates_ratio(data)
 
@@ -206,9 +223,11 @@ class TestInitiatesRatioByContact:
 
     def test_all_user_initiated(self, extractor):
         """If the user always initiates, ratio should be 1.0."""
-        data = _base_data(per_contact_initiations={
-            "alice@gmail.com": {"user": 5, "contact": 0},
-        })
+        data = _base_data(
+            per_contact_initiations={
+                "alice@gmail.com": {"user": 5, "contact": 0},
+            }
+        )
 
         extractor._compute_initiates_ratio(data)
 
@@ -217,9 +236,11 @@ class TestInitiatesRatioByContact:
 
     def test_all_contact_initiated(self, extractor):
         """If the contact always initiates, ratio should be 0.0."""
-        data = _base_data(per_contact_initiations={
-            "alice@gmail.com": {"user": 0, "contact": 4},
-        })
+        data = _base_data(
+            per_contact_initiations={
+                "alice@gmail.com": {"user": 0, "contact": 4},
+            }
+        )
 
         extractor._compute_initiates_ratio(data)
 
@@ -228,10 +249,12 @@ class TestInitiatesRatioByContact:
 
     def test_all_contacts_below_threshold(self, extractor):
         """When every contact has <3 total initiations, field is not set."""
-        data = _base_data(per_contact_initiations={
-            "alice@gmail.com": {"user": 1, "contact": 0},
-            "bob@work.com": {"user": 0, "contact": 1},
-        })
+        data = _base_data(
+            per_contact_initiations={
+                "alice@gmail.com": {"user": 1, "contact": 0},
+                "bob@work.com": {"user": 0, "contact": 1},
+            }
+        )
 
         extractor._compute_initiates_ratio(data)
 
@@ -334,31 +357,35 @@ class TestInitiationTrackingExtract:
         """Initiation counts should accumulate in the stored profile."""
         # Send 3 user-initiated messages to alice
         for i in range(3):
-            extractor.extract({
-                "id": f"user-init-{i}",
-                "type": EventType.EMAIL_SENT.value,
-                "source": "email",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "payload": {
-                    "to_addresses": ["alice@gmail.com"],
-                    "body": f"Starting conversation {i}",
-                },
-                "metadata": {},
-            })
+            extractor.extract(
+                {
+                    "id": f"user-init-{i}",
+                    "type": EventType.EMAIL_SENT.value,
+                    "source": "email",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "payload": {
+                        "to_addresses": ["alice@gmail.com"],
+                        "body": f"Starting conversation {i}",
+                    },
+                    "metadata": {},
+                }
+            )
 
         # Receive 2 contact-initiated messages from alice
         for i in range(2):
-            extractor.extract({
-                "id": f"contact-init-{i}",
-                "type": EventType.EMAIL_RECEIVED.value,
-                "source": "email",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "payload": {
-                    "sender": "alice@gmail.com",
-                    "body": f"Alice starts conversation {i}",
-                },
-                "metadata": {},
-            })
+            extractor.extract(
+                {
+                    "id": f"contact-init-{i}",
+                    "type": EventType.EMAIL_RECEIVED.value,
+                    "source": "email",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "payload": {
+                        "sender": "alice@gmail.com",
+                        "body": f"Alice starts conversation {i}",
+                    },
+                    "metadata": {},
+                }
+            )
 
         profile = user_model_store.get_signal_profile("cadence")
         initiations = profile["data"]["per_contact_initiations"]
@@ -407,9 +434,11 @@ class TestEmptyDataEdgeCases:
 
     def test_initiations_with_zero_counts(self, extractor):
         """Contacts with zero counts should be handled gracefully."""
-        data = _base_data(per_contact_initiations={
-            "alice@gmail.com": {"user": 0, "contact": 0},
-        })
+        data = _base_data(
+            per_contact_initiations={
+                "alice@gmail.com": {"user": 0, "contact": 0},
+            }
+        )
 
         extractor._compute_initiates_ratio(data)
 

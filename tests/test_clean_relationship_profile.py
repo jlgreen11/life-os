@@ -152,9 +152,7 @@ class TestRelationshipProfileCleanup:
 
         # Verify database was NOT modified
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-            ).fetchone()
+            row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
             data = json.loads(row["data"])
             assert len(data["contacts"]) == 3  # All contacts still present
 
@@ -234,9 +232,7 @@ class TestRelationshipProfileCleanup:
 
         # Verify the database was updated correctly
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-            ).fetchone()
+            row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
             data = json.loads(row["data"])
             contacts = data["contacts"]
 
@@ -283,9 +279,7 @@ class TestRelationshipProfileCleanup:
 
         # Verify profile is now empty
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-            ).fetchone()
+            row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
             data = json.loads(row["data"])
             assert len(data["contacts"]) == 0
 
@@ -320,9 +314,7 @@ class TestRelationshipProfileCleanup:
 
         # Verify all contacts are still present
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-            ).fetchone()
+            row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
             data = json.loads(row["data"])
             assert len(data["contacts"]) == 3
             assert "john@example.com" in data["contacts"]
@@ -352,9 +344,7 @@ class TestRelationshipProfileCleanup:
 
         # Verify timestamp was updated
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT updated_at FROM signal_profiles WHERE profile_type = 'relationships'"
-            ).fetchone()
+            row = conn.execute("SELECT updated_at FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
             new_timestamp = row["updated_at"]
 
             # New timestamp should be different (and more recent)

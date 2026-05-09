@@ -26,9 +26,7 @@ def mock_life_os():
     life_os.db = Mock()
     mock_conn = Mock()
     mock_conn.execute = Mock()
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
-    )
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
     life_os.db.get_database_health = Mock(
         return_value={
             "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
@@ -122,9 +120,7 @@ def test_health_connector_entry_has_required_fields(client, mock_life_os):
     """Each connector entry should have 'connector' and 'status' fields."""
     healthy = Mock()
     healthy.CONNECTOR_ID = "caldav"
-    healthy.health_check = AsyncMock(
-        return_value={"connector": "caldav", "status": "ok", "details": "synced"}
-    )
+    healthy.health_check = AsyncMock(return_value={"connector": "caldav", "status": "ok", "details": "synced"})
     mock_life_os.connectors = [healthy]
 
     data = client.get("/health").json()

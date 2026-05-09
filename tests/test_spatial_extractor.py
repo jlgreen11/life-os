@@ -78,8 +78,7 @@ def test_location_normalization(db, user_model_store):
         ("Conference Room A, Building 3", "conference room a building 3"),
         ("123 Main St., Austin, TX", "123 main st austin tx"),
         ("  Home  ", "home"),
-        ("Residence Inn by Marriott St. Louis Clayton, Clayton",
-         "residence inn by marriott st louis clayton clayton"),
+        ("Residence Inn by Marriott St. Louis Clayton, Clayton", "residence inn by marriott st louis clayton clayton"),
     ]
 
     for raw, expected in test_cases:
@@ -99,7 +98,7 @@ def test_spatial_profile_accumulates_visits(db, user_model_store):
             "type": "calendar.event.created",
             "timestamp": (base_time + timedelta(days=i)).isoformat(),
             "payload": {
-                "title": f"Meeting {i+1}",
+                "title": f"Meeting {i + 1}",
                 "location": "Office Building 5",
                 "start_time": (base_time + timedelta(days=i)).isoformat(),
                 "end_time": (base_time + timedelta(days=i, hours=1)).isoformat(),

@@ -43,69 +43,73 @@ async def test_conflict_detection_uses_start_time_not_sync_time(db, event_store,
     upcoming_start = (now + timedelta(hours=12)).isoformat()
     upcoming_end = (now + timedelta(hours=13)).isoformat()
 
-    event_store.store_event({
-        "id": "evt-old-sync-upcoming-start",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-1",
-            "title": "Morning Meeting",
-            "start_time": upcoming_start,
-            "end_time": upcoming_end,
-            "is_all_day": False,
-        },
-        "timestamp": old_sync_time,
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-old-sync-upcoming-start",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-1",
+                "title": "Morning Meeting",
+                "start_time": upcoming_start,
+                "end_time": upcoming_end,
+                "is_all_day": False,
+            },
+            "timestamp": old_sync_time,
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Event 2: Synced 1 minute ago, starts in 12.5 hours (SHOULD be included, overlaps event 1)
     recent_sync_time = (now - timedelta(minutes=1)).isoformat()
     overlapping_start = (now + timedelta(hours=12, minutes=30)).isoformat()
     overlapping_end = (now + timedelta(hours=13, minutes=30)).isoformat()
 
-    event_store.store_event({
-        "id": "evt-recent-sync-overlapping",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-2",
-            "title": "Overlapping Meeting",
-            "start_time": overlapping_start,
-            "end_time": overlapping_end,
-            "is_all_day": False,
-        },
-        "timestamp": recent_sync_time,
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-recent-sync-overlapping",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-2",
+                "title": "Overlapping Meeting",
+                "start_time": overlapping_start,
+                "end_time": overlapping_end,
+                "is_all_day": False,
+            },
+            "timestamp": recent_sync_time,
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Event 3: Synced 1 minute ago, starts in 60 hours (SHOULD be excluded - beyond 48h window)
     far_future_start = (now + timedelta(hours=60)).isoformat()
     far_future_end = (now + timedelta(hours=61)).isoformat()
 
-    event_store.store_event({
-        "id": "evt-far-future",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-3",
-            "title": "Far Future Meeting",
-            "start_time": far_future_start,
-            "end_time": far_future_end,
-            "is_all_day": False,
-        },
-        "timestamp": recent_sync_time,
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-far-future",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-3",
+                "title": "Far Future Meeting",
+                "start_time": far_future_start,
+                "end_time": far_future_end,
+                "is_all_day": False,
+            },
+            "timestamp": recent_sync_time,
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Create connector and run conflict detection
-    connector = CalDAVConnector(event_bus, db, {
-        "url": "https://test.example.com",
-        "username": "test",
-        "password": "test"
-    })
+    connector = CalDAVConnector(
+        event_bus, db, {"url": "https://test.example.com", "username": "test", "password": "test"}
+    )
 
     # Run conflict detection
     await connector._detect_conflicts()
@@ -114,8 +118,7 @@ async def test_conflict_detection_uses_start_time_not_sync_time(db, event_store,
     conflict_events = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
 
     # Should detect exactly 1 conflict (event 1 overlapping event 2)
-    assert len(conflict_events) == 1, \
-        f"Expected 1 conflict, got {len(conflict_events)}"
+    assert len(conflict_events) == 1, f"Expected 1 conflict, got {len(conflict_events)}"
 
     # Verify conflict payload structure
     conflict = conflict_events[0]
@@ -144,45 +147,47 @@ async def test_conflict_detection_excludes_all_day_events(db, event_store, event
     day_after = (now + timedelta(days=2)).date().isoformat()
 
     # All-day event 1
-    event_store.store_event({
-        "id":"evt-all-day-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-all-day-1",
-            "title": "Birthday",
-            "start_time": tomorrow,
-            "end_time": day_after,
-            "is_all_day": True,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-all-day-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-all-day-1",
+                "title": "Birthday",
+                "start_time": tomorrow,
+                "end_time": day_after,
+                "is_all_day": True,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # All-day event 2 (same day as event 1)
-    event_store.store_event({
-        "id":"evt-all-day-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-all-day-2",
-            "title": "Anniversary",
-            "start_time": tomorrow,
-            "end_time": day_after,
-            "is_all_day": True,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-all-day-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-all-day-2",
+                "title": "Anniversary",
+                "start_time": tomorrow,
+                "end_time": day_after,
+                "is_all_day": True,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Create connector and run conflict detection
-    connector = CalDAVConnector(event_bus, db, {
-        "url": "https://test.example.com",
-        "username": "test",
-        "password": "test"
-    })
+    connector = CalDAVConnector(
+        event_bus, db, {"url": "https://test.example.com", "username": "test", "password": "test"}
+    )
 
     await connector._detect_conflicts()
 
@@ -190,8 +195,7 @@ async def test_conflict_detection_excludes_all_day_events(db, event_store, event
     conflict_events = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
 
     # Should detect 0 conflicts (all-day events are excluded)
-    assert len(conflict_events) == 0, \
-        f"Expected 0 conflicts from all-day events, got {len(conflict_events)}"
+    assert len(conflict_events) == 0, f"Expected 0 conflicts from all-day events, got {len(conflict_events)}"
 
 
 @pytest.mark.asyncio
@@ -207,48 +211,50 @@ async def test_conflict_detection_excludes_past_events(db, event_store, event_bu
     past_start = (now - timedelta(hours=3)).isoformat()
     past_end = (now - timedelta(hours=2)).isoformat()
 
-    event_store.store_event({
-        "id":"evt-past-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-past-1",
-            "title": "Past Meeting 1",
-            "start_time": past_start,
-            "end_time": past_end,
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-past-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-past-1",
+                "title": "Past Meeting 1",
+                "start_time": past_start,
+                "end_time": past_end,
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Past event 2 (overlapped with event 1, but both are in the past)
     past_overlapping_start = (now - timedelta(hours=2, minutes=30)).isoformat()
     past_overlapping_end = (now - timedelta(hours=1, minutes=30)).isoformat()
 
-    event_store.store_event({
-        "id":"evt-past-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-past-2",
-            "title": "Past Meeting 2",
-            "start_time": past_overlapping_start,
-            "end_time": past_overlapping_end,
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-past-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-past-2",
+                "title": "Past Meeting 2",
+                "start_time": past_overlapping_start,
+                "end_time": past_overlapping_end,
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Create connector and run conflict detection
-    connector = CalDAVConnector(event_bus, db, {
-        "url": "https://test.example.com",
-        "username": "test",
-        "password": "test"
-    })
+    connector = CalDAVConnector(
+        event_bus, db, {"url": "https://test.example.com", "username": "test", "password": "test"}
+    )
 
     await connector._detect_conflicts()
 
@@ -256,8 +262,7 @@ async def test_conflict_detection_excludes_past_events(db, event_store, event_bu
     conflict_events = [e for e in event_bus._published_events if e["type"] == "calendar.conflict.detected"]
 
     # Should detect 0 conflicts (past events are excluded)
-    assert len(conflict_events) == 0, \
-        f"Expected 0 conflicts from past events, got {len(conflict_events)}"
+    assert len(conflict_events) == 0, f"Expected 0 conflicts from past events, got {len(conflict_events)}"
 
 
 @pytest.mark.asyncio
@@ -273,67 +278,71 @@ async def test_conflict_detection_handles_multiple_conflicts(db, event_store, ev
     tomorrow_10am = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     tomorrow_11am = tomorrow_10am + timedelta(hours=1)
 
-    event_store.store_event({
-        "id":"evt-1",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-1",
-            "title": "Event 1",
-            "start_time": tomorrow_10am.isoformat(),
-            "end_time": tomorrow_11am.isoformat(),
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-1",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-1",
+                "title": "Event 1",
+                "start_time": tomorrow_10am.isoformat(),
+                "end_time": tomorrow_11am.isoformat(),
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Event 2: 10:30am - 11:30am tomorrow (overlaps with event 1)
     tomorrow_1030am = tomorrow_10am + timedelta(minutes=30)
     tomorrow_1130am = tomorrow_10am + timedelta(hours=1, minutes=30)
 
-    event_store.store_event({
-        "id":"evt-2",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-2",
-            "title": "Event 2",
-            "start_time": tomorrow_1030am.isoformat(),
-            "end_time": tomorrow_1130am.isoformat(),
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-2",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-2",
+                "title": "Event 2",
+                "start_time": tomorrow_1030am.isoformat(),
+                "end_time": tomorrow_1130am.isoformat(),
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Event 3: 11am - 12pm tomorrow (overlaps with event 2, touches event 1)
     tomorrow_12pm = tomorrow_10am + timedelta(hours=2)
 
-    event_store.store_event({
-        "id":"evt-3",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-3",
-            "title": "Event 3",
-            "start_time": tomorrow_11am.isoformat(),
-            "end_time": tomorrow_12pm.isoformat(),
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-3",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-3",
+                "title": "Event 3",
+                "start_time": tomorrow_11am.isoformat(),
+                "end_time": tomorrow_12pm.isoformat(),
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
     # Create connector and run conflict detection
-    connector = CalDAVConnector(event_bus, db, {
-        "url": "https://test.example.com",
-        "username": "test",
-        "password": "test"
-    })
+    connector = CalDAVConnector(
+        event_bus, db, {"url": "https://test.example.com", "username": "test", "password": "test"}
+    )
 
     await connector._detect_conflicts()
 
@@ -344,8 +353,7 @@ async def test_conflict_detection_handles_multiple_conflicts(db, event_store, ev
     # - Event 1 overlaps Event 2
     # - Event 2 overlaps Event 3
     # (Event 1 touches Event 3 at 11am but doesn't overlap, so no conflict)
-    assert len(conflict_events) == 2, \
-        f"Expected 2 conflicts, got {len(conflict_events)}"
+    assert len(conflict_events) == 2, f"Expected 2 conflicts, got {len(conflict_events)}"
 
 
 @pytest.mark.asyncio
@@ -360,47 +368,49 @@ async def test_conflict_event_payload_structure(db, event_store, event_bus):
     start2 = (now + timedelta(hours=2, minutes=30)).isoformat()
     end2 = (now + timedelta(hours=3, minutes=30)).isoformat()
 
-    event_store.store_event({
-        "id":"evt-a",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-a",
-            "title": "Client Call",
-            "start_time": start1,
-            "end_time": end1,
-            "location": "Conference Room A",
-            "calendar_id": "work",
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-a",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-a",
+                "title": "Client Call",
+                "start_time": start1,
+                "end_time": end1,
+                "location": "Conference Room A",
+                "calendar_id": "work",
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id":"evt-b",
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "payload": {
-            "event_id": "cal-b",
-            "title": "Team Sync",
-            "start_time": start2,
-            "end_time": end2,
-            "location": "Zoom",
-            "calendar_id": "work",
-            "is_all_day": False,
-        },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "priority": "normal",
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": "evt-b",
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "payload": {
+                "event_id": "cal-b",
+                "title": "Team Sync",
+                "start_time": start2,
+                "end_time": end2,
+                "location": "Zoom",
+                "calendar_id": "work",
+                "is_all_day": False,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "priority": "normal",
+            "metadata": {},
+        }
+    )
 
-    connector = CalDAVConnector(event_bus, db, {
-        "url": "https://test.example.com",
-        "username": "test",
-        "password": "test"
-    })
+    connector = CalDAVConnector(
+        event_bus, db, {"url": "https://test.example.com", "username": "test", "password": "test"}
+    )
 
     await connector._detect_conflicts()
 

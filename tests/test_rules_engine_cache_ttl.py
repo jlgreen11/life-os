@@ -98,8 +98,7 @@ async def test_cache_reload_at_hour_boundary(db):
     # evaluate() should reload — this would FAIL with the .seconds bug
     actions = await engine.evaluate(DUMMY_EVENT)
     assert len(actions) == 1, (
-        "Cache should have reloaded after 1 hour — "
-        "timedelta(hours=1).total_seconds() == 3600 > 60"
+        "Cache should have reloaded after 1 hour — timedelta(hours=1).total_seconds() == 3600 > 60"
     )
     assert actions[0]["value"] == "Hour Rule"
 
@@ -126,7 +125,6 @@ async def test_cache_reload_at_multi_hour_boundary(db):
     # evaluate() should reload
     actions = await engine.evaluate(DUMMY_EVENT)
     assert len(actions) == 1, (
-        "Cache should have reloaded after 2 hours — "
-        "timedelta(hours=2).total_seconds() == 7200 > 60"
+        "Cache should have reloaded after 2 hours — timedelta(hours=2).total_seconds() == 7200 > 60"
     )
     assert actions[0]["value"] == "Multi Hour Rule"

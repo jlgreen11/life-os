@@ -59,40 +59,44 @@ async def test_calendar_conflicts_with_past_sync_timestamps(db, user_model_store
     tomorrow_2pm = datetime.now(timezone.utc) + timedelta(days=1, hours=2)
     tomorrow_3pm = tomorrow_2pm + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),  # PAST: when synced
-        "payload": {
-            "event_id": "evt_001",
-            "title": "Team meeting",
-            "start_time": tomorrow_2pm.isoformat(),  # FUTURE: actual event
-            "end_time": tomorrow_3pm.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),  # PAST: when synced
+            "payload": {
+                "event_id": "evt_001",
+                "title": "Team meeting",
+                "start_time": tomorrow_2pm.isoformat(),  # FUTURE: actual event
+                "end_time": tomorrow_3pm.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Event 2: Starts tomorrow at 2:30 PM, ends at 3:30 PM
     # This OVERLAPS with Event 1 by 30 minutes
     tomorrow_230pm = tomorrow_2pm + timedelta(minutes=30)
     tomorrow_330pm = tomorrow_230pm + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),  # PAST: when synced
-        "payload": {
-            "event_id": "evt_002",
-            "title": "Client call",
-            "start_time": tomorrow_230pm.isoformat(),  # FUTURE: actual event
-            "end_time": tomorrow_330pm.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),  # PAST: when synced
+            "payload": {
+                "event_id": "evt_002",
+                "title": "Client call",
+                "start_time": tomorrow_230pm.isoformat(),  # FUTURE: actual event
+                "end_time": tomorrow_330pm.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # BEFORE THE FIX: This would return [] because both events have
     # timestamp < now, so they don't match the WHERE clause
@@ -102,12 +106,10 @@ async def test_calendar_conflicts_with_past_sync_timestamps(db, user_model_store
     predictions = await engine._check_calendar_conflicts({})
 
     # Assert: Conflict detected
-    assert len(predictions) >= 1, \
-        "Should detect conflict even when sync timestamps are in the past"
+    assert len(predictions) >= 1, "Should detect conflict even when sync timestamps are in the past"
 
     conflict = predictions[0]
-    assert conflict.prediction_type == "conflict", \
-        f"Expected conflict, got {conflict.prediction_type}"
+    assert conflict.prediction_type == "conflict", f"Expected conflict, got {conflict.prediction_type}"
     assert conflict.confidence == 0.95
     assert "overlap" in conflict.description.lower()
     assert "30 minutes" in conflict.description
@@ -133,39 +135,42 @@ async def test_calendar_conflicts_ignores_past_events(db, user_model_store):
     yesterday_230pm = yesterday_2pm + timedelta(minutes=30)
     yesterday_330pm = yesterday_230pm + timedelta(hours=1)
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "payload": {
-            "title": "Past meeting 1",
-            "start_time": yesterday_2pm.isoformat(),
-            "end_time": yesterday_3pm.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "payload": {
+                "title": "Past meeting 1",
+                "start_time": yesterday_2pm.isoformat(),
+                "end_time": yesterday_3pm.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "payload": {
-            "title": "Past meeting 2",
-            "start_time": yesterday_230pm.isoformat(),
-            "end_time": yesterday_330pm.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "payload": {
+                "title": "Past meeting 2",
+                "start_time": yesterday_230pm.isoformat(),
+                "end_time": yesterday_330pm.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_calendar_conflicts({})
 
     # Assert: No predictions for past events
-    assert len(predictions) == 0, \
-        "Should not create conflict predictions for events in the past"
+    assert len(predictions) == 0, "Should not create conflict predictions for events in the past"
 
 
 @pytest.mark.asyncio
@@ -183,46 +188,47 @@ async def test_calendar_conflicts_ignores_all_day_events(db, user_model_store):
     tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date()
 
     # All-day event 1
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "payload": {
-            "title": "Birthday",
-            "start_time": str(tomorrow),  # Date-only format
-            "end_time": str(tomorrow),
-            "is_all_day": True,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "payload": {
+                "title": "Birthday",
+                "start_time": str(tomorrow),  # Date-only format
+                "end_time": str(tomorrow),
+                "is_all_day": True,
+            },
+            "metadata": {},
+        }
+    )
 
     # All-day event 2 (same day)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "payload": {
-            "title": "Holiday",
-            "start_time": str(tomorrow),
-            "end_time": str(tomorrow),
-            "is_all_day": True,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "payload": {
+                "title": "Holiday",
+                "start_time": str(tomorrow),
+                "end_time": str(tomorrow),
+                "is_all_day": True,
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_calendar_conflicts({})
 
     # Assert: No conflict for all-day events
-    assert len(predictions) == 0, \
-        "Should not create conflict predictions for all-day events"
+    assert len(predictions) == 0, "Should not create conflict predictions for all-day events"
 
 
 @pytest.mark.asyncio
-async def test_calendar_conflicts_detects_tight_transitions_with_past_sync(
-    db, user_model_store
-):
+async def test_calendar_conflicts_detects_tight_transitions_with_past_sync(db, user_model_store):
     """
     Tight transitions (gap < 15 min) should be detected even when sync
     timestamps are in the past.
@@ -239,40 +245,43 @@ async def test_calendar_conflicts_detects_tight_transitions_with_past_sync(
     tomorrow_4pm = tomorrow_310pm + timedelta(minutes=50)
 
     # Event 1: 2:00 PM - 3:00 PM
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "payload": {
-            "title": "Team standup",
-            "start_time": tomorrow_2pm.isoformat(),
-            "end_time": tomorrow_3pm.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "payload": {
+                "title": "Team standup",
+                "start_time": tomorrow_2pm.isoformat(),
+                "end_time": tomorrow_3pm.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     # Event 2: 3:10 PM - 4:00 PM (only 10 min gap)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": sync_time.isoformat(),
-        "payload": {
-            "title": "Design review",
-            "start_time": tomorrow_310pm.isoformat(),
-            "end_time": tomorrow_4pm.isoformat(),
-            "is_all_day": False,
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": sync_time.isoformat(),
+            "payload": {
+                "title": "Design review",
+                "start_time": tomorrow_310pm.isoformat(),
+                "end_time": tomorrow_4pm.isoformat(),
+                "is_all_day": False,
+            },
+            "metadata": {},
+        }
+    )
 
     predictions = await engine._check_calendar_conflicts({})
 
     # Assert: Risk prediction for tight transition
-    assert len(predictions) >= 1, \
-        "Should detect tight transition even with past sync timestamp"
+    assert len(predictions) >= 1, "Should detect tight transition even with past sync timestamp"
 
     risk = predictions[0]
     assert risk.prediction_type == "risk"

@@ -51,9 +51,9 @@ class SemanticFactInferrer:
         self._last_inference_time: str | None = None
         self._total_facts_written_last_cycle: int = 0
 
-    def _get_recent_episodes(self, interaction_type: Optional[str] = None,
-                            contact: Optional[str] = None,
-                            limit: int = 10) -> list[str]:
+    def _get_recent_episodes(
+        self, interaction_type: Optional[str] = None, contact: Optional[str] = None, limit: int = 10
+    ) -> list[str]:
         """
         Query recent episode IDs to link as evidence for inferred facts.
 
@@ -350,14 +350,8 @@ class SemanticFactInferrer:
         # --- Per-contact formality distribution analysis ---
         # Count how many contacts skew formal vs. casual to reinforce the
         # environment fact with stronger confidence.
-        formal_contacts = sum(
-            1 for avgs in per_contact_avgs.values()
-            if avgs.get("formality", 0.5) > 0.7
-        )
-        casual_contacts = sum(
-            1 for avgs in per_contact_avgs.values()
-            if avgs.get("formality", 0.5) < 0.3
-        )
+        formal_contacts = sum(1 for avgs in per_contact_avgs.values() if avgs.get("formality", 0.5) > 0.7)
+        casual_contacts = sum(1 for avgs in per_contact_avgs.values() if avgs.get("formality", 0.5) < 0.3)
         total_contacts = len(per_contact_avgs)
 
         if total_contacts > 0 and formal_contacts / total_contacts > 0.7:
@@ -371,9 +365,10 @@ class SemanticFactInferrer:
             )
 
         logger.info(
-            "Inferred semantic facts from inbound linguistic profile "
-            "(samples=%s, contacts=%s, avg_formality=%.2f)",
-            samples, total_contacts, avg_formality,
+            "Inferred semantic facts from inbound linguistic profile (samples=%s, contacts=%s, avg_formality=%.2f)",
+            samples,
+            total_contacts,
+            avg_formality,
         )
         return {"type": "inbound_linguistic", "processed": True, "reason": None}
 
@@ -437,7 +432,8 @@ class SemanticFactInferrer:
         }
         logger.info(
             "Bidirectional contacts (outbound > 0): %d out of %d",
-            len(bidirectional_contacts), len(contacts),
+            len(bidirectional_contacts),
+            len(contacts),
         )
 
         # Filter 2: Apply the shared marketing filter to remove automated/commercial
@@ -455,7 +451,8 @@ class SemanticFactInferrer:
         }
         logger.info(
             "Human contacts after marketing filter: %d out of %d bidirectional",
-            len(human_contacts), len(bidirectional_contacts),
+            len(human_contacts),
+            len(bidirectional_contacts),
         )
 
         # Log the complete filter funnel for zero-fact diagnosis
@@ -466,8 +463,7 @@ class SemanticFactInferrer:
             len(contacts),
             len(bidirectional_contacts),
             len(human_contacts),
-            sum(1 for c in contacts.values()
-                if isinstance(c, dict) and c.get("outbound_count", 0) == 0),
+            sum(1 for c in contacts.values() if isinstance(c, dict) and c.get("outbound_count", 0) == 0),
         )
 
         if not human_contacts:
@@ -501,11 +497,16 @@ class SemanticFactInferrer:
 
         avg_interactions = sum(interaction_counts) / len(interaction_counts)
         high_priority_threshold = avg_interactions * 2  # 2x average = high priority
-        high_priority_count = sum(1 for c in human_contacts.values()
-                                 if isinstance(c, dict) and c.get("interaction_count", 0) >= high_priority_threshold)
+        high_priority_count = sum(
+            1
+            for c in human_contacts.values()
+            if isinstance(c, dict) and c.get("interaction_count", 0) >= high_priority_threshold
+        )
         logger.info(
             "Relationship threshold: avg=%.1f, high_priority_threshold=%.1f, contacts_exceeding=%d",
-            avg_interactions, high_priority_threshold, high_priority_count,
+            avg_interactions,
+            high_priority_threshold,
+            high_priority_count,
         )
 
         facts_written = 0
@@ -524,7 +525,9 @@ class SemanticFactInferrer:
                     key=f"relationship_priority_{contact_id}",
                     category="implicit_preference",
                     value="high_priority",
-                    confidence=min(0.9, base_confidence + 0.1 + min(0.3, (interaction_count / avg_interactions - 2) * 0.1)),
+                    confidence=min(
+                        0.9, base_confidence + 0.1 + min(0.3, (interaction_count / avg_interactions - 2) * 0.1)
+                    ),
                     episode_id=episode_id,
                 )
                 facts_written += 1
@@ -589,7 +592,8 @@ class SemanticFactInferrer:
         # are generated from the much larger pool of inbound-only contacts.
         if facts_written == 0:
             inbound_only_contacts = {
-                cid: cdata for cid, cdata in contacts.items()
+                cid: cdata
+                for cid, cdata in contacts.items()
                 if isinstance(cdata, dict) and cdata.get("outbound_count", 0) == 0
             }
             if len(inbound_only_contacts) >= 2:
@@ -603,7 +607,8 @@ class SemanticFactInferrer:
 
         logger.info(
             "Inferred %d semantic facts from relationship profile (samples=%s)",
-            facts_written, profile.get("samples_count"),
+            facts_written,
+            profile.get("samples_count"),
         )
         return {"type": "relationship", "processed": True, "reason": None, "facts_written": facts_written}
 
@@ -635,11 +640,9 @@ class SemanticFactInferrer:
 
         # Log the filter funnel for diagnostics
         logger.info(
-            "Inbound-only inference: total_contacts=%d, inbound_only_raw=%d, "
-            "after_marketing_filter=%d, threshold=2",
+            "Inbound-only inference: total_contacts=%d, inbound_only_raw=%d, after_marketing_filter=%d, threshold=2",
             len(contacts),
-            sum(1 for c in contacts.values()
-                if isinstance(c, dict) and c.get("outbound_count", 0) == 0),
+            sum(1 for c in contacts.values() if isinstance(c, dict) and c.get("outbound_count", 0) == 0),
             len(inbound_only),
         )
 
@@ -699,7 +702,8 @@ class SemanticFactInferrer:
 
         logger.info(
             "Inferred %d facts from %d inbound-only human contacts (fallback path)",
-            facts_written, len(inbound_only),
+            facts_written,
+            len(inbound_only),
         )
         return {
             "type": "relationship",
@@ -805,9 +809,7 @@ class SemanticFactInferrer:
         # whether the user is a high-volume communicator or more selective.
         if human_contacts:
             total_interactions = sum(
-                cdata.get("interaction_count", 0)
-                for cdata in human_contacts.values()
-                if isinstance(cdata, dict)
+                cdata.get("interaction_count", 0) for cdata in human_contacts.values() if isinstance(cdata, dict)
             )
             avg_per_contact = total_interactions / len(human_contacts)
 
@@ -864,9 +866,10 @@ class SemanticFactInferrer:
             facts_written += 1
 
         logger.info(
-            "Aggregate relationship facts: regular_count=%d, domains=%d, "
-            "facts_written=%d",
-            regular_count, domain_count, facts_written,
+            "Aggregate relationship facts: regular_count=%d, domains=%d, facts_written=%d",
+            regular_count,
+            domain_count,
+            facts_written,
         )
         return facts_written
 
@@ -913,10 +916,7 @@ class SemanticFactInferrer:
                 # Extract the topic word from the key (everything after the first "_")
                 prefix, _, topic_word = key.partition("_")
                 if topic_word.lower() in noise_blocklist:
-                    conn.execute(
-                        "DELETE FROM semantic_facts WHERE key = ? AND is_user_corrected = 0",
-                        (key,)
-                    )
+                    conn.execute("DELETE FROM semantic_facts WHERE key = ? AND is_user_corrected = 0", (key,))
                     deleted += 1
 
         if deleted > 0:
@@ -979,10 +979,7 @@ class SemanticFactInferrer:
                 contact_id = parts[2]
 
                 if is_marketing_or_noreply(contact_id):
-                    conn.execute(
-                        "DELETE FROM semantic_facts WHERE key = ? AND is_user_corrected = 0",
-                        (key,)
-                    )
+                    conn.execute("DELETE FROM semantic_facts WHERE key = ? AND is_user_corrected = 0", (key,))
                     deleted += 1
 
         if deleted > 0:
@@ -1020,7 +1017,8 @@ class SemanticFactInferrer:
         topic_counts = data.get("topic_counts", {})
         logger.info(
             "Topic profile loaded: samples_count=%d, topic_counts_size=%d",
-            samples, len(topic_counts),
+            samples,
+            len(topic_counts),
         )
 
         # Get recent episodes to link as source evidence for topic-based facts.
@@ -1049,63 +1047,344 @@ class SemanticFactInferrer:
         # get crowded out.
         TOPIC_NOISE_BLOCKLIST = {
             # HTML entities
-            'nbsp', 'zwnj', 'zwj', 'lrm', 'rlm', 'mdash', 'ndash', 'hellip',
-            'quot', 'apos', 'amp', 'lt', 'gt', 'copy', 'reg', 'trade',
+            "nbsp",
+            "zwnj",
+            "zwj",
+            "lrm",
+            "rlm",
+            "mdash",
+            "ndash",
+            "hellip",
+            "quot",
+            "apos",
+            "amp",
+            "lt",
+            "gt",
+            "copy",
+            "reg",
+            "trade",
             # Common CSS properties
-            'padding', 'margin', 'border', 'width', 'height', 'color', 'background',
-            'font', 'size', 'weight', 'style', 'family', 'align', 'text', 'display',
-            'position', 'top', 'left', 'right', 'bottom', 'flex', 'grid', 'float',
+            "padding",
+            "margin",
+            "border",
+            "width",
+            "height",
+            "color",
+            "background",
+            "font",
+            "size",
+            "weight",
+            "style",
+            "family",
+            "align",
+            "text",
+            "display",
+            "position",
+            "top",
+            "left",
+            "right",
+            "bottom",
+            "flex",
+            "grid",
+            "float",
             # HTML tags
-            'div', 'span', 'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
-            'img', 'href', 'src', 'alt', 'class', 'id', 'name', 'value', 'type',
-            'meta', 'link', 'script', 'noscript', 'iframe', 'embed', 'object',
+            "div",
+            "span",
+            "table",
+            "tbody",
+            "thead",
+            "tfoot",
+            "tr",
+            "td",
+            "th",
+            "img",
+            "href",
+            "src",
+            "alt",
+            "class",
+            "id",
+            "name",
+            "value",
+            "type",
+            "meta",
+            "link",
+            "script",
+            "noscript",
+            "iframe",
+            "embed",
+            "object",
             # CSS/HTML keywords
-            'important', 'inherit', 'auto', 'none', 'block', 'inline', 'hidden',
-            'visible', 'absolute', 'relative', 'fixed', 'sticky', 'center',
+            "important",
+            "inherit",
+            "auto",
+            "none",
+            "block",
+            "inline",
+            "hidden",
+            "visible",
+            "absolute",
+            "relative",
+            "fixed",
+            "sticky",
+            "center",
             # Protocol/URL fragments
-            'http', 'https', 'www', 'com', 'html', 'css', 'js', 'png', 'jpg', 'gif',
+            "http",
+            "https",
+            "www",
+            "com",
+            "html",
+            "css",
+            "js",
+            "png",
+            "jpg",
+            "gif",
             # Common email template artifacts
-            'unsubscribe', 'pixel', 'tracker', 'analytics', 'campaign', 'utm',
+            "unsubscribe",
+            "pixel",
+            "tracker",
+            "analytics",
+            "campaign",
+            "utm",
             # Generic English stopwords that appear in nearly every email
-            'more', 'here', 'please', 'free', 'valid', 'view', 'just', 'also',
-            'like', 'get', 'this', 'that', 'have', 'with', 'from', 'your', 'our',
-            'all', 'new', 'now', 'one', 'not', 'use', 'can', 'will', 'has', 'are',
-            'was', 'its', 'for', 'but', 'you', 'the', 'and', 'any', 'are', 'be',
-            'by', 'do', 'he', 'in', 'it', 'me', 'my', 'no', 'of', 'on', 'or',
-            'so', 'to', 'up', 'us', 'we',
+            "more",
+            "here",
+            "please",
+            "free",
+            "valid",
+            "view",
+            "just",
+            "also",
+            "like",
+            "get",
+            "this",
+            "that",
+            "have",
+            "with",
+            "from",
+            "your",
+            "our",
+            "all",
+            "new",
+            "now",
+            "one",
+            "not",
+            "use",
+            "can",
+            "will",
+            "has",
+            "are",
+            "was",
+            "its",
+            "for",
+            "but",
+            "you",
+            "the",
+            "and",
+            "any",
+            "are",
+            "be",
+            "by",
+            "do",
+            "he",
+            "in",
+            "it",
+            "me",
+            "my",
+            "no",
+            "of",
+            "on",
+            "or",
+            "so",
+            "to",
+            "up",
+            "us",
+            "we",
             # Generic email/communication vocabulary (not expertise signals)
-            'email', 'message', 'update', 'offer', 'shop', 'account', 'click',
-            'order', 'store', 'today', 'week', 'month', 'year', 'time', 'day',
-            'news', 'info', 'read', 'send', 'reply', 'forward', 'contact', 'team',
-            'support', 'help', 'check', 'confirm', 'verify', 'access', 'open',
-            'save', 'sale', 'deal', 'discount', 'reward', 'point', 'earn',
-            'subscribe', 'newsletter', 'notification', 'alert', 'reminder',
-            'manage', 'setting', 'preference', 'privacy', 'policy', 'term',
-            'service', 'product', 'item', 'price', 'cost', 'amount', 'total',
-            'customer', 'member', 'user', 'account', 'profile', 'password',
-            'review', 'rating', 'comment', 'share', 'follow', 'like', 'post',
+            "email",
+            "message",
+            "update",
+            "offer",
+            "shop",
+            "account",
+            "click",
+            "order",
+            "store",
+            "today",
+            "week",
+            "month",
+            "year",
+            "time",
+            "day",
+            "news",
+            "info",
+            "read",
+            "send",
+            "reply",
+            "forward",
+            "contact",
+            "team",
+            "support",
+            "help",
+            "check",
+            "confirm",
+            "verify",
+            "access",
+            "open",
+            "save",
+            "sale",
+            "deal",
+            "discount",
+            "reward",
+            "point",
+            "earn",
+            "subscribe",
+            "newsletter",
+            "notification",
+            "alert",
+            "reminder",
+            "manage",
+            "setting",
+            "preference",
+            "privacy",
+            "policy",
+            "term",
+            "service",
+            "product",
+            "item",
+            "price",
+            "cost",
+            "amount",
+            "total",
+            "customer",
+            "member",
+            "user",
+            "account",
+            "profile",
+            "password",
+            "review",
+            "rating",
+            "comment",
+            "share",
+            "follow",
+            "like",
+            "post",
             # Additional CSS/font/whitespace artifacts seen in email templates
-            'lspace', 'rspace', 'sans', 'serif', 'arial', 'verdana', 'helvetica',
-            'line', 'letter', 'spacing', 'indent', 'overflow', 'wrap', 'break',
-            'normal', 'bold', 'italic', 'underline', 'decoration', 'transform',
-            'uppercase', 'lowercase', 'capitalize', 'shadow', 'opacity', 'radius',
-            'cursor', 'pointer', 'hover', 'focus', 'active', 'disabled', 'checked',
+            "lspace",
+            "rspace",
+            "sans",
+            "serif",
+            "arial",
+            "verdana",
+            "helvetica",
+            "line",
+            "letter",
+            "spacing",
+            "indent",
+            "overflow",
+            "wrap",
+            "break",
+            "normal",
+            "bold",
+            "italic",
+            "underline",
+            "decoration",
+            "transform",
+            "uppercase",
+            "lowercase",
+            "capitalize",
+            "shadow",
+            "opacity",
+            "radius",
+            "cursor",
+            "pointer",
+            "hover",
+            "focus",
+            "active",
+            "disabled",
+            "checked",
             # Promotional/marketing vocabulary that floods inboxes despite HTML stripping.
             # These words appear in plain-text portions of promotional emails (subject
             # lines, call-to-action buttons, footer copy) and do NOT signal user interest.
             # This expanded set was identified by examining the top-20 topic_counts
             # from a real inbox dominated by marketing emails (2026-02-28 audit).
-            'offers', 'holiday', 'rewards', 'gift', 'deals', 'information',
-            'limited', 'exclusive', 'special', 'extra', 'plus', 'best', 'great',
-            'amazing', 'incredible', 'fantastic', 'love', 'back', 'last', 'next',
-            'only', 'come', 'going', 'want', 'need', 'make', 'find', 'take',
-            'know', 'think', 'look', 'show', 'feel', 'tell', 'keep', 'turn',
-            'cart', 'checkout', 'purchase', 'bought', 'spend', 'earn', 'spend',
-            'shipping', 'delivery', 'returns', 'exchange', 'eligible', 'redeem',
-            'activate', 'claim', 'apply', 'enter', 'register', 'sign', 'login',
-            'welcome', 'thank', 'thanks', 'hello', 'dear', 'regards', 'sincerely',
-            'best', 'warm', 'kind', 'invite', 'join', 'stay', 'visit', 'learn',
-            'discover', 'explore', 'enjoy', 'start', 'stop', 'continue', 'complete',
+            "offers",
+            "holiday",
+            "rewards",
+            "gift",
+            "deals",
+            "information",
+            "limited",
+            "exclusive",
+            "special",
+            "extra",
+            "plus",
+            "best",
+            "great",
+            "amazing",
+            "incredible",
+            "fantastic",
+            "love",
+            "back",
+            "last",
+            "next",
+            "only",
+            "come",
+            "going",
+            "want",
+            "need",
+            "make",
+            "find",
+            "take",
+            "know",
+            "think",
+            "look",
+            "show",
+            "feel",
+            "tell",
+            "keep",
+            "turn",
+            "cart",
+            "checkout",
+            "purchase",
+            "bought",
+            "spend",
+            "earn",
+            "spend",
+            "shipping",
+            "delivery",
+            "returns",
+            "exchange",
+            "eligible",
+            "redeem",
+            "activate",
+            "claim",
+            "apply",
+            "enter",
+            "register",
+            "sign",
+            "login",
+            "welcome",
+            "thank",
+            "thanks",
+            "hello",
+            "dear",
+            "regards",
+            "sincerely",
+            "best",
+            "warm",
+            "kind",
+            "invite",
+            "join",
+            "stay",
+            "visit",
+            "learn",
+            "discover",
+            "explore",
+            "enjoy",
+            "start",
+            "stop",
+            "continue",
+            "complete",
             # Common proper nouns that appear in marketing greetings (e.g. "Hi Jeremy!")
             # but are not meaningful user interests. We match lowercase so "jeremy" is
             # caught whether the extractor normalises to lowercase or not.
@@ -1116,7 +1395,12 @@ class SemanticFactInferrer:
             # misclassified as interests. We avoid listing specific proper nouns
             # and instead catch the pattern via the marketing email filter at source —
             # but for residual facts already in the database, we add a few observed ones.
-            'jeremy', 'hello', 'dear', 'friend', 'team', 'staff',
+            "jeremy",
+            "hello",
+            "dear",
+            "friend",
+            "team",
+            "staff",
         }
 
         # --- Purge previously-stored garbage facts ---
@@ -1142,8 +1426,11 @@ class SemanticFactInferrer:
         logger.info(
             "Topic threshold diagnostics: total_topics=%d, non_noise_topics=%d, "
             "total_samples=%d, min_count_for_expertise=%d (8%%), min_count_for_interest=%d (3%%)",
-            len(topic_counts), non_noise_count, total_samples,
-            min_expertise_count, min_interest_count,
+            len(topic_counts),
+            non_noise_count,
+            total_samples,
+            min_expertise_count,
+            min_interest_count,
         )
 
         for topic, count in topic_counts.items():
@@ -1158,7 +1445,9 @@ class SemanticFactInferrer:
                 # Frequently discussed topic — likely an expertise area
                 logger.debug(
                     "Creating expertise fact: topic=%s, count=%d, frequency=%.3f",
-                    topic, count, frequency_ratio,
+                    topic,
+                    count,
+                    frequency_ratio,
                 )
                 try:
                     self.ums.update_semantic_fact(
@@ -1176,7 +1465,9 @@ class SemanticFactInferrer:
                 # Moderately discussed topic — area of interest
                 logger.debug(
                     "Creating interest fact: topic=%s, count=%d, frequency=%.3f",
-                    topic, count, frequency_ratio,
+                    topic,
+                    count,
+                    frequency_ratio,
                 )
                 try:
                     self.ums.update_semantic_fact(
@@ -1208,8 +1499,7 @@ class SemanticFactInferrer:
             )[:5]
             if fallback_candidates:
                 logger.info(
-                    "Standard thresholds produced 0 facts; using top-N relative fallback "
-                    "with %d candidate topics",
+                    "Standard thresholds produced 0 facts; using top-N relative fallback with %d candidate topics",
                     len(fallback_candidates),
                 )
                 for topic, count in fallback_candidates:
@@ -1237,9 +1527,9 @@ class SemanticFactInferrer:
             for topic, count in topic_counts.items()
             if topic.lower() not in TOPIC_NOISE_BLOCKLIST and count >= 3
         }
-        has_dominant_topic = any(
-            count / total_samples > 0.08 for count in non_noise_topics.values()
-        ) if total_samples > 0 else False
+        has_dominant_topic = (
+            any(count / total_samples > 0.08 for count in non_noise_topics.values()) if total_samples > 0 else False
+        )
 
         if not has_dominant_topic and len(non_noise_topics) >= 5:
             try:
@@ -1258,11 +1548,15 @@ class SemanticFactInferrer:
         surviving = len(topic_counts) - filtered_count
         logger.info(
             "Topics after noise filter: %d survived out of %d total (%d noise tokens filtered)",
-            surviving, len(topic_counts), filtered_count,
+            surviving,
+            len(topic_counts),
+            filtered_count,
         )
         logger.info(
             "Topic inference complete: %d facts created, %d failed (samples=%d)",
-            facts_created, facts_failed, total_samples,
+            facts_created,
+            facts_failed,
+            total_samples,
         )
         return {"type": "topic", "processed": True, "reason": None, "facts_written": facts_created}
 
@@ -1308,10 +1602,7 @@ class SemanticFactInferrer:
         # still run even when hourly_activity is empty.
         total_messages = sum(hourly_activity.values())
         if total_messages > 0:
-            business_hours_count = sum(
-                count for hour, count in hourly_activity.items()
-                if 9 <= int(hour) <= 17
-            )
+            business_hours_count = sum(count for hour, count in hourly_activity.items() if 9 <= int(hour) <= 17)
             business_hours_ratio = business_hours_count / total_messages
 
             if business_hours_ratio > 0.9:
@@ -1488,7 +1779,9 @@ class SemanticFactInferrer:
 
         # --- Analyze signal patterns ---
         # Compute averages for different signal types to identify patterns
-        stress_signals = [s for s in recent_signals if s.get("signal_type") in ["negative_language", "incoming_negative_language"]]
+        stress_signals = [
+            s for s in recent_signals if s.get("signal_type") in ["negative_language", "incoming_negative_language"]
+        ]
         pressure_signals = [s for s in recent_signals if s.get("signal_type") == "incoming_pressure"]
 
         # --- Infer baseline stress from negative language frequency ---
@@ -1581,14 +1874,8 @@ class SemanticFactInferrer:
             if total_activity == 0:
                 return {"type": "temporal", "processed": True, "reason": None}
 
-            morning_activity = sum(
-                count for hour, count in hourly_activity.items()
-                if 6 <= int(hour) <= 10
-            )
-            evening_activity = sum(
-                count for hour, count in hourly_activity.items()
-                if 20 <= int(hour) <= 23
-            )
+            morning_activity = sum(count for hour, count in hourly_activity.items() if 6 <= int(hour) <= 10)
+            evening_activity = sum(count for hour, count in hourly_activity.items() if 20 <= int(hour) <= 23)
 
             morning_ratio = morning_activity / total_activity
             evening_ratio = evening_activity / total_activity
@@ -1722,16 +2009,11 @@ class SemanticFactInferrer:
         # --- Identify primary work location ---
         # Find the place with highest work-domain visit count
         work_places = {
-            place_id: data
-            for place_id, data in place_behaviors.items()
-            if data.get("dominant_domain") == "work"
+            place_id: data for place_id, data in place_behaviors.items() if data.get("dominant_domain") == "work"
         }
 
         if work_places:
-            primary_work_place = max(
-                work_places.items(),
-                key=lambda x: x[1].get("visit_count", 0)
-            )
+            primary_work_place = max(work_places.items(), key=lambda x: x[1].get("visit_count", 0))
             place_id, place_data = primary_work_place
             visit_count = place_data.get("visit_count", 0)
 
@@ -1892,7 +2174,9 @@ class SemanticFactInferrer:
                     key="risk_tolerance",
                     category="values",
                     value="high_risk_tolerance",
-                    confidence=min(0.8, base_confidence + (0.3 - avg_research_depth) + (300 - avg_decision_speed) / 600),
+                    confidence=min(
+                        0.8, base_confidence + (0.3 - avg_research_depth) + (300 - avg_decision_speed) / 600
+                    ),
                     episode_id=episode_id,
                 )
             # Low risk: slow decisions + high research
@@ -1975,32 +2259,105 @@ class SemanticFactInferrer:
 
         # Days of week by weekday() index (Monday=0)
         DAY_NAMES = [
-            "monday", "tuesday", "wednesday", "thursday", "friday",
-            "saturday", "sunday",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
         ]
 
         # Stop words that should never appear as topic facts from subject lines.
         # Covers common English words, email prefixes, and generic marketing terms.
         SUBJECT_STOP_WORDS = {
-            "re", "fwd", "fw", "the", "a", "an", "and", "or", "but",
-            "in", "on", "at", "to", "for", "of", "is", "it", "be",
-            "as", "by", "with", "from", "your", "our", "we", "you",
-            "i", "my", "are", "was", "has", "have", "this", "that",
-            "not", "no", "can", "will", "just", "up", "out", "if",
-            "about", "all", "please", "here", "more", "new", "get",
-            "hi", "hello", "dear", "thank", "thanks", "update",
-            "email", "message", "notification", "reminder", "info",
-            "http", "https", "www", "com", "org", "net",
+            "re",
+            "fwd",
+            "fw",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "is",
+            "it",
+            "be",
+            "as",
+            "by",
+            "with",
+            "from",
+            "your",
+            "our",
+            "we",
+            "you",
+            "i",
+            "my",
+            "are",
+            "was",
+            "has",
+            "have",
+            "this",
+            "that",
+            "not",
+            "no",
+            "can",
+            "will",
+            "just",
+            "up",
+            "out",
+            "if",
+            "about",
+            "all",
+            "please",
+            "here",
+            "more",
+            "new",
+            "get",
+            "hi",
+            "hello",
+            "dear",
+            "thank",
+            "thanks",
+            "update",
+            "email",
+            "message",
+            "notification",
+            "reminder",
+            "info",
+            "http",
+            "https",
+            "www",
+            "com",
+            "org",
+            "net",
         }
 
         # Common personal email provider domains — everything else is treated
         # as a potential work domain (the "company.com → work" heuristic from
         # the task description).
         PERSONAL_DOMAINS = {
-            "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
-            "live.com", "icloud.com", "me.com", "aol.com",
-            "protonmail.com", "proton.me", "hey.com", "fastmail.com",
-            "ymail.com", "mail.com", "gmx.com",
+            "gmail.com",
+            "yahoo.com",
+            "hotmail.com",
+            "outlook.com",
+            "live.com",
+            "icloud.com",
+            "me.com",
+            "aol.com",
+            "protonmail.com",
+            "proton.me",
+            "hey.com",
+            "fastmail.com",
+            "ymail.com",
+            "mail.com",
+            "gmx.com",
         }
 
         # --- Step 1: Query events.db ---
@@ -2082,31 +2439,22 @@ class SemanticFactInferrer:
                 if isinstance(subject, str) and subject.strip():
                     cleaned = subject.strip()
                     # Strip common reply/forward prefixes (may be nested, e.g. "Re: Fwd:")
-                    for prefix in ("Re: ", "RE: ", "Fwd: ", "FWD: ", "FW: ",
-                                   "re: ", "fwd: ", "fw: "):
+                    for prefix in ("Re: ", "RE: ", "Fwd: ", "FWD: ", "FW: ", "re: ", "fwd: ", "fw: "):
                         while cleaned.lower().startswith(prefix.lower()):
-                            cleaned = cleaned[len(prefix):].strip()
+                            cleaned = cleaned[len(prefix) :].strip()
 
                     for raw_word in cleaned.lower().split():
                         # Remove surrounding punctuation
                         word = raw_word.strip(".,!?;:\"'()[]{}-_/\\|@#$%^&*+=<>~`")
-                        if (
-                            len(word) >= 4
-                            and word not in SUBJECT_STOP_WORDS
-                            and word.isalpha()
-                        ):
-                            subject_word_counts[word] = (
-                                subject_word_counts.get(word, 0) + 1
-                            )
+                        if len(word) >= 4 and word not in SUBJECT_STOP_WORDS and word.isalpha():
+                            subject_word_counts[word] = subject_word_counts.get(word, 0) + 1
 
         # --- Step 3: Store facts ---
         facts_written = 0
 
         # Relationship facts: top-10 most-frequent non-marketing email senders
         if contact_counts:
-            sorted_contacts = sorted(
-                contact_counts.items(), key=lambda x: x[1], reverse=True
-            )
+            sorted_contacts = sorted(contact_counts.items(), key=lambda x: x[1], reverse=True)
             for contact_addr, count in sorted_contacts[:10]:
                 if count < 2:
                     # Not enough volume to be a meaningful contact
@@ -2114,15 +2462,11 @@ class SemanticFactInferrer:
 
                 # Classify as work or personal by email domain
                 domain = contact_addr.rsplit("@", 1)[-1] if "@" in contact_addr else ""
-                relationship_type = (
-                    "personal" if domain in PERSONAL_DOMAINS else "work"
-                )
+                relationship_type = "personal" if domain in PERSONAL_DOMAINS else "work"
 
                 # Build a key-safe representation of the email address
                 # (keys cannot contain '@' or '.' as fact key separators)
-                safe_addr = (
-                    contact_addr.replace("@", "_at_").replace(".", "_dot_")
-                )
+                safe_addr = contact_addr.replace("@", "_at_").replace(".", "_dot_")
 
                 try:
                     self.ums.update_semantic_fact(
@@ -2139,8 +2483,7 @@ class SemanticFactInferrer:
                     facts_written += 1
                 except Exception as exc:
                     logger.warning(
-                        "infer_facts_from_events: failed to store contact fact "
-                        "for %s: %s", contact_addr, exc
+                        "infer_facts_from_events: failed to store contact fact for %s: %s", contact_addr, exc
                     )
 
         # Temporal facts: active hours and most active day
@@ -2169,10 +2512,7 @@ class SemanticFactInferrer:
                         )
                         facts_written += 1
                     except Exception as exc:
-                        logger.warning(
-                            "infer_facts_from_events: failed to store "
-                            "active_hours fact: %s", exc
-                        )
+                        logger.warning("infer_facts_from_events: failed to store active_hours fact: %s", exc)
 
         if day_counts:
             most_active_day = max(day_counts, key=day_counts.get)
@@ -2186,16 +2526,11 @@ class SemanticFactInferrer:
                 )
                 facts_written += 1
             except Exception as exc:
-                logger.warning(
-                    "infer_facts_from_events: failed to store "
-                    "most_active_day fact: %s", exc
-                )
+                logger.warning("infer_facts_from_events: failed to store most_active_day fact: %s", exc)
 
         # Topic facts: top-10 most-common subject keywords (min 2 occurrences)
         if subject_word_counts:
-            sorted_words = sorted(
-                subject_word_counts.items(), key=lambda x: x[1], reverse=True
-            )
+            sorted_words = sorted(subject_word_counts.items(), key=lambda x: x[1], reverse=True)
             stored_topics = 0
             for word, count in sorted_words:
                 if stored_topics >= 10:
@@ -2213,16 +2548,16 @@ class SemanticFactInferrer:
                     facts_written += 1
                     stored_topics += 1
                 except Exception as exc:
-                    logger.warning(
-                        "infer_facts_from_events: failed to store "
-                        "topic fact for %s: %s", word, exc
-                    )
+                    logger.warning("infer_facts_from_events: failed to store topic fact for %s: %s", word, exc)
 
         logger.info(
             "infer_facts_from_events: scanned %d events, wrote %d facts "
             "(unique_senders=%d, hour_buckets=%d, subject_words=%d)",
-            len(rows), facts_written,
-            len(contact_counts), len(hour_counts), len(subject_word_counts),
+            len(rows),
+            facts_written,
+            len(contact_counts),
+            len(hour_counts),
+            len(subject_word_counts),
         )
 
         return {
@@ -2261,8 +2596,7 @@ class SemanticFactInferrer:
         # a method with processed=True but facts_written=0 indicates a threshold
         # or filter issue rather than missing data.
         per_method_parts = [
-            f"{r['type']}={'skipped' if not r.get('processed') else r.get('facts_written', '?')}"
-            for r in results
+            f"{r['type']}={'skipped' if not r.get('processed') else r.get('facts_written', '?')}" for r in results
         ]
         per_method_str = ", ".join(per_method_parts)
 
@@ -2340,9 +2674,7 @@ class SemanticFactInferrer:
         # Snapshot current fact count for per-cycle delta tracking
         try:
             with self.ums.db.get_connection("user_model") as conn:
-                _total_facts_before = conn.execute(
-                    "SELECT COUNT(*) FROM semantic_facts"
-                ).fetchone()[0]
+                _total_facts_before = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
         except Exception:
             _total_facts_before = 0
 
@@ -2363,9 +2695,7 @@ class SemanticFactInferrer:
             # even for methods that don't return a facts_written key themselves.
             try:
                 with self.ums.db.get_connection("user_model") as conn:
-                    _facts_before_method = conn.execute(
-                        "SELECT COUNT(*) FROM semantic_facts"
-                    ).fetchone()[0]
+                    _facts_before_method = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
             except Exception:
                 _facts_before_method = 0
 
@@ -2387,9 +2717,7 @@ class SemanticFactInferrer:
             if "facts_written" not in result:
                 try:
                     with self.ums.db.get_connection("user_model") as conn:
-                        _facts_after_method = conn.execute(
-                            "SELECT COUNT(*) FROM semantic_facts"
-                        ).fetchone()[0]
+                        _facts_after_method = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
                     result["facts_written"] = max(0, _facts_after_method - _facts_before_method)
                 except Exception:
                     result["facts_written"] = 0
@@ -2412,34 +2740,27 @@ class SemanticFactInferrer:
             _event_count_for_fallback = self._get_event_count()
             if _episode_count_for_fallback == 0 and _event_count_for_fallback > 100:
                 logger.info(
-                    "SemanticFactInferrer: 0 episodes with %d events — "
-                    "running event-based fallback inference",
+                    "SemanticFactInferrer: 0 episodes with %d events — running event-based fallback inference",
                     _event_count_for_fallback,
                 )
                 fallback_result = self.infer_facts_from_events()
                 results.append(fallback_result)
             elif _episode_count_for_fallback > 0:
                 logger.debug(
-                    "SemanticFactInferrer: %d episodes present — "
-                    "skipping event-based fallback (normal path active)",
+                    "SemanticFactInferrer: %d episodes present — skipping event-based fallback (normal path active)",
                     _episode_count_for_fallback,
                 )
         except Exception:
-            logger.exception(
-                "SemanticFactInferrer: event fallback check failed, continuing"
-            )
+            logger.exception("SemanticFactInferrer: event fallback check failed, continuing")
 
         self._log_inference_summary(results)
 
         # Log overall cycle delta (new facts inserted this cycle vs. total in DB)
         try:
             with self.ums.db.get_connection("user_model") as conn:
-                _total_facts_after = conn.execute(
-                    "SELECT COUNT(*) FROM semantic_facts"
-                ).fetchone()[0]
+                _total_facts_after = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()[0]
             logger.info(
-                "SemanticFactInferrer cycle complete — new_facts_inserted=%d, "
-                "total_facts_in_db=%d",
+                "SemanticFactInferrer cycle complete — new_facts_inserted=%d, total_facts_in_db=%d",
                 max(0, _total_facts_after - _total_facts_before),
                 _total_facts_after,
             )

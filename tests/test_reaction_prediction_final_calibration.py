@@ -33,7 +33,7 @@ class TestReactionPredictionFinalCalibration:
     def daytime_mock(self):
         """Mock datetime.now() to return 2pm UTC (14:00) to avoid time penalties."""
         daytime = datetime(2026, 2, 16, 14, 0, 0, tzinfo=timezone.utc)
-        with patch('services.prediction_engine.engine.datetime') as mock_dt:
+        with patch("services.prediction_engine.engine.datetime") as mock_dt:
             mock_dt.now.return_value = daytime
             mock_dt.fromisoformat = datetime.fromisoformat  # Preserve fromisoformat
             mock_dt.timezone = timezone  # Preserve timezone
@@ -120,17 +120,15 @@ class TestReactionPredictionFinalCalibration:
             conn.execute("DELETE FROM feedback_log")
 
         # Clear mood signals
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": []
-        })
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": []})
 
         context = {}
         reaction = await engine.predict_reaction(clean_prediction, context)
 
-        assert reaction.predicted_reaction == "helpful", \
+        assert reaction.predicted_reaction == "helpful", (
             f"Expected helpful, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.30" in reaction.reasoning, \
-            f"Expected score=0.30 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.30" in reaction.reasoning, f"Expected score=0.30 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_high_confidence_prediction_gets_boost(
@@ -147,17 +145,15 @@ class TestReactionPredictionFinalCalibration:
         with db.get_connection("preferences") as conn:
             conn.execute("DELETE FROM feedback_log")
 
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": []
-        })
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": []})
 
         context = {}
         reaction = await engine.predict_reaction(high_confidence_prediction, context)
 
-        assert reaction.predicted_reaction == "helpful", \
+        assert reaction.predicted_reaction == "helpful", (
             f"Expected helpful, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.50" in reaction.reasoning, \
-            f"Expected score=0.50 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.50" in reaction.reasoning, f"Expected score=0.50 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_conflict_prediction_gets_urgency_boost(
@@ -174,17 +170,15 @@ class TestReactionPredictionFinalCalibration:
         with db.get_connection("preferences") as conn:
             conn.execute("DELETE FROM feedback_log")
 
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": []
-        })
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": []})
 
         context = {}
         reaction = await engine.predict_reaction(conflict_prediction, context)
 
-        assert reaction.predicted_reaction == "helpful", \
+        assert reaction.predicted_reaction == "helpful", (
             f"Expected helpful, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.50" in reaction.reasoning, \
-            f"Expected score=0.50 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.50" in reaction.reasoning, f"Expected score=0.50 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_opportunity_prediction_with_minor_penalty(
@@ -201,22 +195,18 @@ class TestReactionPredictionFinalCalibration:
         with db.get_connection("preferences") as conn:
             conn.execute("DELETE FROM feedback_log")
 
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": []
-        })
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": []})
 
         context = {}
         reaction = await engine.predict_reaction(opportunity_prediction, context)
 
-        assert reaction.predicted_reaction == "helpful", \
+        assert reaction.predicted_reaction == "helpful", (
             f"Expected helpful, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.25" in reaction.reasoning, \
-            f"Expected score=0.25 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.25" in reaction.reasoning, f"Expected score=0.25 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
-    async def test_stressed_user_gets_penalty(
-        self, engine, clean_prediction, db, user_model_store, daytime_mock
-    ):
+    async def test_stressed_user_gets_penalty(self, engine, clean_prediction, db, user_model_store, daytime_mock):
         """
         If user shows stress signals, predictions get -0.1 penalty.
 
@@ -229,22 +219,25 @@ class TestReactionPredictionFinalCalibration:
             conn.execute("DELETE FROM feedback_log")
 
         # Simulate stress signals
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": [
-                {"signal_type": "negative_language", "score": -0.5},
-                {"signal_type": "calendar_density", "score": 0.8},
-                {"signal_type": "negative_language", "score": -0.3},
-            ]
-        })
+        user_model_store.update_signal_profile(
+            "mood_signals",
+            {
+                "recent_signals": [
+                    {"signal_type": "negative_language", "score": -0.5},
+                    {"signal_type": "calendar_density", "score": 0.8},
+                    {"signal_type": "negative_language", "score": -0.3},
+                ]
+            },
+        )
 
         context = {}
         reaction = await engine.predict_reaction(clean_prediction, context)
 
         # With stress penalty, score drops to 0.2 (exactly at threshold)
-        assert reaction.predicted_reaction == "helpful", \
+        assert reaction.predicted_reaction == "helpful", (
             f"Expected helpful (edge case at threshold), got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.20" in reaction.reasoning, \
-            f"Expected score=0.20 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.20" in reaction.reasoning, f"Expected score=0.20 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_high_dismissals_gets_penalty(
@@ -268,17 +261,15 @@ class TestReactionPredictionFinalCalibration:
                     (f"dismiss-{i}", f"notif-{i}", "notification", "dismissed", "{}", current_time.isoformat()),
                 )
 
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": []
-        })
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": []})
 
         context = {}
         reaction = await engine.predict_reaction(clean_prediction, context)
 
-        assert reaction.predicted_reaction == "neutral", \
+        assert reaction.predicted_reaction == "neutral", (
             f"Expected neutral, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.10" in reaction.reasoning, \
-            f"Expected score=0.10 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.10" in reaction.reasoning, f"Expected score=0.10 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_compound_penalties_suppress_prediction(
@@ -305,28 +296,29 @@ class TestReactionPredictionFinalCalibration:
                 )
 
         # Add stress signals
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": [
-                {"signal_type": "negative_language", "score": -0.5},
-                {"signal_type": "calendar_density", "score": 0.8},
-                {"signal_type": "negative_language", "score": -0.3},
-            ]
-        })
+        user_model_store.update_signal_profile(
+            "mood_signals",
+            {
+                "recent_signals": [
+                    {"signal_type": "negative_language", "score": -0.5},
+                    {"signal_type": "calendar_density", "score": 0.8},
+                    {"signal_type": "negative_language", "score": -0.3},
+                ]
+            },
+        )
 
         context = {}
         reaction = await engine.predict_reaction(opportunity_prediction, context)
 
-        assert reaction.predicted_reaction == "neutral", \
+        assert reaction.predicted_reaction == "neutral", (
             f"Expected neutral, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
+        )
         # Score: 0.3 (start) - 0.05 (opportunity) - 0.1 (stress) - 0.2 (dismissals) = -0.05
         # -0.05 > -0.1, so it's neutral not annoying
-        assert "score=-0.05" in reaction.reasoning, \
-            f"Expected score=-0.05 in reasoning, got: {reaction.reasoning}"
+        assert "score=-0.05" in reaction.reasoning, f"Expected score=-0.05 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
-    async def test_edge_case_exactly_at_helpful_threshold(
-        self, engine, db, user_model_store, daytime_mock
-    ):
+    async def test_edge_case_exactly_at_helpful_threshold(self, engine, db, user_model_store, daytime_mock):
         """
         A prediction scoring exactly 0.2 should be 'helpful' (>= threshold).
         """
@@ -334,13 +326,16 @@ class TestReactionPredictionFinalCalibration:
             conn.execute("DELETE FROM feedback_log")
 
         # 3 stress signals to trigger -0.1 penalty
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": [
-                {"signal_type": "negative_language", "score": -0.5},
-                {"signal_type": "calendar_density", "score": 0.8},
-                {"signal_type": "negative_language", "score": -0.3},
-            ]
-        })
+        user_model_store.update_signal_profile(
+            "mood_signals",
+            {
+                "recent_signals": [
+                    {"signal_type": "negative_language", "score": -0.5},
+                    {"signal_type": "calendar_density", "score": 0.8},
+                    {"signal_type": "negative_language", "score": -0.3},
+                ]
+            },
+        )
 
         # Clean prediction: 0.3 - 0.1 = 0.2
         pred = Prediction(
@@ -354,13 +349,12 @@ class TestReactionPredictionFinalCalibration:
         context = {}
         reaction = await engine.predict_reaction(pred, context)
 
-        assert reaction.predicted_reaction == "helpful", \
+        assert reaction.predicted_reaction == "helpful", (
             f"Expected helpful (>= 0.2), got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
+        )
 
     @pytest.mark.asyncio
-    async def test_edge_case_just_below_helpful_threshold(
-        self, engine, db, user_model_store, daytime_mock
-    ):
+    async def test_edge_case_just_below_helpful_threshold(self, engine, db, user_model_store, daytime_mock):
         """
         A prediction scoring 0.19 should be 'neutral' (> -0.1 but < 0.2).
         """
@@ -368,13 +362,16 @@ class TestReactionPredictionFinalCalibration:
             conn.execute("DELETE FROM feedback_log")
 
         # 3 stress signals for -0.1 penalty
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": [
-                {"signal_type": "negative_language", "score": -0.5},
-                {"signal_type": "calendar_density", "score": 0.8},
-                {"signal_type": "negative_language", "score": -0.3},
-            ]
-        })
+        user_model_store.update_signal_profile(
+            "mood_signals",
+            {
+                "recent_signals": [
+                    {"signal_type": "negative_language", "score": -0.5},
+                    {"signal_type": "calendar_density", "score": 0.8},
+                    {"signal_type": "negative_language", "score": -0.3},
+                ]
+            },
+        )
 
         # Opportunity prediction: 0.3 - 0.05 (opportunity) - 0.1 (stress) = 0.15
         pred = Prediction(
@@ -388,10 +385,10 @@ class TestReactionPredictionFinalCalibration:
         context = {}
         reaction = await engine.predict_reaction(pred, context)
 
-        assert reaction.predicted_reaction == "neutral", \
+        assert reaction.predicted_reaction == "neutral", (
             f"Expected neutral, got {reaction.predicted_reaction}. Reasoning: {reaction.reasoning}"
-        assert "score=0.15" in reaction.reasoning, \
-            f"Expected score=0.15 in reasoning, got: {reaction.reasoning}"
+        )
+        assert "score=0.15" in reaction.reasoning, f"Expected score=0.15 in reasoning, got: {reaction.reasoning}"
 
     @pytest.mark.asyncio
     async def test_default_gate_predictions_achieve_80_percent_surface_rate(
@@ -407,22 +404,22 @@ class TestReactionPredictionFinalCalibration:
         with db.get_connection("preferences") as conn:
             conn.execute("DELETE FROM feedback_log")
 
-        user_model_store.update_signal_profile("mood_signals", {
-            "recent_signals": []
-        })
+        user_model_store.update_signal_profile("mood_signals", {"recent_signals": []})
 
         # Test 100 typical 'default' gate predictions
         predictions = []
         for i in range(100):
             conf = 0.6 + (i / 500.0)  # Range: 0.6 to 0.8
             pred_type = ["reminder", "need", "opportunity"][i % 3]
-            predictions.append(Prediction(
-                prediction_type=pred_type,
-                description=f"Test prediction {i}",
-                confidence=conf,
-                confidence_gate=ConfidenceGate.DEFAULT,
-                time_horizon="today",
-            ))
+            predictions.append(
+                Prediction(
+                    prediction_type=pred_type,
+                    description=f"Test prediction {i}",
+                    confidence=conf,
+                    confidence_gate=ConfidenceGate.DEFAULT,
+                    time_horizon="today",
+                )
+            )
 
         context = {}
         surfaced_count = 0
@@ -434,5 +431,6 @@ class TestReactionPredictionFinalCalibration:
 
         surface_rate = surfaced_count / len(predictions)
 
-        assert surface_rate >= 0.80, \
+        assert surface_rate >= 0.80, (
             f"Surface rate {surface_rate:.1%} is below 80% target (surfaced {surfaced_count}/{len(predictions)})"
+        )

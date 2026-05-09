@@ -397,9 +397,7 @@ async def test_browser_sync_skips_seen_posts(reddit_connector, mock_event_bus, m
 
 
 @pytest.mark.asyncio
-async def test_browser_sync_priority_subreddits_get_normal_priority(
-    reddit_connector, mock_event_bus
-):
+async def test_browser_sync_priority_subreddits_get_normal_priority(reddit_connector, mock_event_bus):
     """Verify posts from priority_subreddits get 'normal' priority."""
     mock_posts = [
         {
@@ -432,9 +430,7 @@ async def test_browser_sync_priority_subreddits_get_normal_priority(
 
 
 @pytest.mark.asyncio
-async def test_browser_sync_non_priority_subreddits_get_low_priority(
-    reddit_connector, mock_event_bus
-):
+async def test_browser_sync_non_priority_subreddits_get_low_priority(reddit_connector, mock_event_bus):
     """Verify posts from non-priority subreddits get 'low' priority."""
     mock_posts = [
         {
@@ -467,9 +463,7 @@ async def test_browser_sync_non_priority_subreddits_get_low_priority(
 
 
 @pytest.mark.asyncio
-async def test_browser_sync_respects_max_posts_per_sync(
-    reddit_connector, mock_event_bus
-):
+async def test_browser_sync_respects_max_posts_per_sync(reddit_connector, mock_event_bus):
     """Verify browser_sync limits posts to max_posts_per_sync config."""
     # Create 50 new posts
     mock_posts = [
@@ -557,9 +551,7 @@ async def test_extract_messages_parses_unread_inbox(reddit_connector):
 
 
 @pytest.mark.asyncio
-async def test_browser_sync_publishes_inbox_messages(
-    reddit_connector, mock_event_bus
-):
+async def test_browser_sync_publishes_inbox_messages(reddit_connector, mock_event_bus):
     """Verify browser_sync publishes message.received events for inbox."""
     mock_messages = [
         {
@@ -587,10 +579,7 @@ async def test_browser_sync_publishes_inbox_messages(
     assert count == 1
 
     # Find message.received event
-    message_calls = [
-        c for c in mock_event_bus.publish.call_args_list
-        if c[0][0] == "message.received"
-    ]
+    message_calls = [c for c in mock_event_bus.publish.call_args_list if c[0][0] == "message.received"]
     assert len(message_calls) == 1
 
     payload = message_calls[0][0][1]

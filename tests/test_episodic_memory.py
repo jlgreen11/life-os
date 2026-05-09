@@ -686,18 +686,14 @@ async def test_episode_content_full_strips_large_body(db, event_store, user_mode
     await lifeos._create_episode(event)
 
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
         assert len(episodes) == 1, "Episode should be created"
 
         episode = dict(episodes[0])
         content_full_raw = episode["content_full"]
 
         # Total JSON must be under the 4 000-char hard cap
-        assert len(content_full_raw) <= 4_000, (
-            f"content_full exceeds 4000 chars: {len(content_full_raw)}"
-        )
+        assert len(content_full_raw) <= 4_000, f"content_full exceeds 4000 chars: {len(content_full_raw)}"
 
         content_full = json.loads(content_full_raw)
 

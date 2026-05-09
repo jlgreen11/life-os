@@ -165,9 +165,9 @@ class TestBlobProbeRecoveryOnStartup:
                 manager._check_and_recover_db("user_model")
 
         # The distinct blob overflow warning should be present.
-        assert any(
-            "Blob overflow corruption detected" in record.message for record in caplog.records
-        ), "Expected 'Blob overflow corruption detected' warning in logs"
+        assert any("Blob overflow corruption detected" in record.message for record in caplog.records), (
+            "Expected 'Blob overflow corruption detected' warning in logs"
+        )
 
     def test_recovery_produces_functional_db_after_blob_corruption(self, tmp_path):
         """After blob-corruption recovery, re-initialisation should produce a working DB.
@@ -196,10 +196,7 @@ class TestBlobProbeRecoveryOnStartup:
 
         # Step 4: Verify the new database is fully functional.
         with manager2.get_connection("user_model") as conn:
-            tables = [
-                r[0]
-                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            ]
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
             assert "episodes" in tables
             assert "semantic_facts" in tables
             assert "routines" in tables

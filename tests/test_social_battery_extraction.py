@@ -45,13 +45,10 @@ class TestSocialBatterySignalExtraction:
 
     def test_large_meeting_emits_heavy_drain_signal(self, engine):
         """6+ attendees → social_battery value = 0.1 (heavy drain)."""
-        event = _make_calendar_event(
-            attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com", "f@x.com"]
-        )
+        event = _make_calendar_event(attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com", "f@x.com"])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert len(signals) == 1, "Expected exactly one social_battery signal"
         assert signals[0]["value"] == pytest.approx(0.1)
         assert signals[0]["weight"] == pytest.approx(0.4)
@@ -59,13 +56,10 @@ class TestSocialBatterySignalExtraction:
 
     def test_medium_meeting_emits_significant_drain_signal(self, engine):
         """3-5 attendees → social_battery value = 0.3."""
-        event = _make_calendar_event(
-            attendees=["a@x.com", "b@x.com", "c@x.com"]
-        )
+        event = _make_calendar_event(attendees=["a@x.com", "b@x.com", "c@x.com"])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert len(signals) == 1
         assert signals[0]["value"] == pytest.approx(0.3)
 
@@ -74,8 +68,7 @@ class TestSocialBatterySignalExtraction:
         event = _make_calendar_event(attendees=["colleague@x.com"])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert len(signals) == 1
         assert signals[0]["value"] == pytest.approx(0.5)
 
@@ -84,8 +77,7 @@ class TestSocialBatterySignalExtraction:
         event = _make_calendar_event(title="Focus Time", attendees=[])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert len(signals) == 1
         assert signals[0]["value"] == pytest.approx(0.7)
 
@@ -94,8 +86,7 @@ class TestSocialBatterySignalExtraction:
         event = _make_calendar_event(title="Daily Standup", attendees=[])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert len(signals) == 1
         # No attendee list but social keyword → conservative small-meeting estimate
         assert signals[0]["value"] == pytest.approx(0.5)
@@ -105,8 +96,7 @@ class TestSocialBatterySignalExtraction:
         event = _make_calendar_event(title="Monthly All-Hands Meeting", attendees=[])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert len(signals) == 1
         assert signals[0]["value"] == pytest.approx(0.5)
 
@@ -115,8 +105,7 @@ class TestSocialBatterySignalExtraction:
         event = _make_calendar_event(title="Quarterly Review", attendees=[])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert signals, "Expected a social_battery signal for review event"
         assert signals[0]["value"] == pytest.approx(0.5)
 
@@ -125,30 +114,23 @@ class TestSocialBatterySignalExtraction:
         event = _make_calendar_event(title="All-Hands Update", attendees=[])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert signals
 
     def test_five_attendees_is_medium_not_large(self, engine):
         """5 attendees (boundary) → medium drain (0.3), not large (0.1)."""
-        event = _make_calendar_event(
-            attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"]
-        )
+        event = _make_calendar_event(attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert signals[0]["value"] == pytest.approx(0.3)
 
     def test_six_attendees_is_large(self, engine):
         """6 attendees (boundary) → large drain (0.1)."""
-        event = _make_calendar_event(
-            attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com", "f@x.com"]
-        )
+        event = _make_calendar_event(attendees=["a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com", "f@x.com"])
         result = engine.extract(event)
 
-        signals = [s for r in result for s in r.get("signals", [])
-                   if s["signal_type"] == "social_battery"]
+        signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
         assert signals[0]["value"] == pytest.approx(0.1)
 
     def test_delta_from_baseline_is_correct(self, engine):
@@ -160,8 +142,7 @@ class TestSocialBatterySignalExtraction:
             event = _make_calendar_event(title=title, attendees=attendees)
             result = engine.extract(event)
 
-            signals = [s for r in result for s in r.get("signals", [])
-                       if s["signal_type"] == "social_battery"]
+            signals = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
             assert signals, f"Expected social_battery signal for {attendee_count} attendees"
             expected_delta = expected_value - 0.5
             assert signals[0]["delta_from_baseline"] == pytest.approx(expected_delta), (
@@ -183,8 +164,7 @@ class TestSocialBatterySignalExtraction:
                 "timestamp": "2026-02-18T10:00:00+00:00",
             }
             result = engine.extract(event)
-            social = [s for r in result for s in r.get("signals", [])
-                      if s["signal_type"] == "social_battery"]
+            social = [s for r in result for s in r.get("signals", []) if s["signal_type"] == "social_battery"]
             assert not social, f"Unexpected social_battery signal from {event_type}"
 
 
@@ -236,10 +216,20 @@ class TestSocialBatteryInComputeCurrentMood:
         # small meeting (0.5, weight 0.4) + large meeting (0.1, weight 0.4)
         # weighted average = (0.5 * 0.4 + 0.1 * 0.4) / (0.4 + 0.4) = 0.3
         signals = [
-            {"signal_type": "social_battery", "value": 0.5,
-             "delta_from_baseline": 0.0, "weight": 0.4, "source": "calendar"},
-            {"signal_type": "social_battery", "value": 0.1,
-             "delta_from_baseline": -0.4, "weight": 0.4, "source": "calendar"},
+            {
+                "signal_type": "social_battery",
+                "value": 0.5,
+                "delta_from_baseline": 0.0,
+                "weight": 0.4,
+                "source": "calendar",
+            },
+            {
+                "signal_type": "social_battery",
+                "value": 0.1,
+                "delta_from_baseline": -0.4,
+                "weight": 0.4,
+                "source": "calendar",
+            },
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": signals})
 
@@ -251,8 +241,13 @@ class TestSocialBatteryInComputeCurrentMood:
         """Without any social_battery signals, social_battery defaults to 0.5."""
         # Inject only non-social-battery signals
         signals = [
-            {"signal_type": "calendar_density", "value": 1.0,
-             "delta_from_baseline": 0.0, "weight": 0.2, "source": "calendar"},
+            {
+                "signal_type": "calendar_density",
+                "value": 1.0,
+                "delta_from_baseline": 0.0,
+                "weight": 0.2,
+                "source": "calendar",
+            },
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": signals})
 

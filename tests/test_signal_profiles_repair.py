@@ -92,10 +92,7 @@ async def test_repair_drops_and_recreates_on_read_error(db):
     with db.get_connection("user_model") as conn:
         count = conn.execute("SELECT COUNT(*) FROM signal_profiles").fetchone()[0]
         # Verify the schema is intact — all expected columns must exist
-        cols = [
-            row[1]
-            for row in conn.execute("PRAGMA table_info(signal_profiles)").fetchall()
-        ]
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(signal_profiles)").fetchall()]
 
     assert count == 0, "Repaired table should be empty so backfills can repopulate"
     assert "profile_type" in cols
@@ -194,17 +191,12 @@ async def test_repair_detects_partial_corruption_missed_by_limit1(db):
         db.get_connection = original_get_connection
 
     # The SUM query must have been attempted — otherwise we haven't exercised the fix.
-    assert sum_query_attempted[0], (
-        "Repair must use SUM(LENGTH(data)) to detect corruption, not LIMIT 1"
-    )
+    assert sum_query_attempted[0], "Repair must use SUM(LENGTH(data)) to detect corruption, not LIMIT 1"
 
     # After repair: table exists and is empty (ready for backfill).
     with db.get_connection("user_model") as conn:
         count = conn.execute("SELECT COUNT(*) FROM signal_profiles").fetchone()[0]
-        cols = [
-            row[1]
-            for row in conn.execute("PRAGMA table_info(signal_profiles)").fetchall()
-        ]
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(signal_profiles)").fetchall()]
 
     assert count == 0, "Repair must clear the corrupted table for backfill to repopulate"
     assert "profile_type" in cols

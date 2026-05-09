@@ -32,7 +32,7 @@ class MoodInferenceEngine(BaseExtractor):
     # values stored in the "baselines" signal profile.
     DEFAULT_BASELINES = {
         "typing_speed_wpm": 40.0,
-        "response_latency_seconds": 300.0,    # 5 minutes
+        "response_latency_seconds": 300.0,  # 5 minutes
         "message_length_words": 25.0,
         "exclamation_rate": 0.1,
         "emoji_rate": 0.05,
@@ -41,12 +41,35 @@ class MoodInferenceEngine(BaseExtractor):
     # Negative-valence words used to score both outbound (the user's own
     # language) and inbound (stress-inducing content arriving at the user).
     NEGATIVE_WORDS = {
-        "frustrated", "annoyed", "tired", "exhausted", "stressed",
-        "worried", "overwhelmed", "confused", "angry", "upset",
-        "sorry", "unfortunately", "problem", "issue", "difficult",
-        "urgent", "critical", "emergency", "immediately", "asap",
-        "disappointing", "concerned", "unacceptable", "overdue",
-        "escalate", "failed", "failure", "broken", "blocked",
+        "frustrated",
+        "annoyed",
+        "tired",
+        "exhausted",
+        "stressed",
+        "worried",
+        "overwhelmed",
+        "confused",
+        "angry",
+        "upset",
+        "sorry",
+        "unfortunately",
+        "problem",
+        "issue",
+        "difficult",
+        "urgent",
+        "critical",
+        "emergency",
+        "immediately",
+        "asap",
+        "disappointing",
+        "concerned",
+        "unacceptable",
+        "overdue",
+        "escalate",
+        "failed",
+        "failure",
+        "broken",
+        "blocked",
     }
 
     def can_process(self, event: dict) -> bool:
@@ -93,10 +116,12 @@ class MoodInferenceEngine(BaseExtractor):
         # outbound text are a strong mood indicator (weight=0.6) because the
         # user chose those words deliberately.
         is_outbound = event_type in [
-            EventType.EMAIL_SENT.value, EventType.MESSAGE_SENT.value,
+            EventType.EMAIL_SENT.value,
+            EventType.MESSAGE_SENT.value,
         ]
         is_inbound = event_type in [
-            EventType.EMAIL_RECEIVED.value, EventType.MESSAGE_RECEIVED.value,
+            EventType.EMAIL_RECEIVED.value,
+            EventType.MESSAGE_RECEIVED.value,
         ]
 
         if is_outbound:
@@ -105,26 +130,28 @@ class MoodInferenceEngine(BaseExtractor):
                 word_count = len(text.split())
                 baseline_length = self._get_baseline("message_length_words")
 
-                mood_signals.append({
-                    "signal_type": "message_length",
-                    "value": word_count,
-                    # Fractional deviation: +0.5 means 50% longer than baseline.
-                    "delta_from_baseline": (word_count - baseline_length) / max(baseline_length, 1),
-                    "weight": 0.3,
-                    "source": event.get("source", "unknown"),
-                })
-
-                negative_count = sum(
-                    1 for w in text.lower().split() if w in self.NEGATIVE_WORDS
-                )
-                if negative_count > 0:
-                    mood_signals.append({
-                        "signal_type": "negative_language",
-                        "value": negative_count / max(word_count, 1),
-                        "delta_from_baseline": negative_count / max(word_count, 1),
-                        "weight": 0.6,
+                mood_signals.append(
+                    {
+                        "signal_type": "message_length",
+                        "value": word_count,
+                        # Fractional deviation: +0.5 means 50% longer than baseline.
+                        "delta_from_baseline": (word_count - baseline_length) / max(baseline_length, 1),
+                        "weight": 0.3,
                         "source": event.get("source", "unknown"),
-                    })
+                    }
+                )
+
+                negative_count = sum(1 for w in text.lower().split() if w in self.NEGATIVE_WORDS)
+                if negative_count > 0:
+                    mood_signals.append(
+                        {
+                            "signal_type": "negative_language",
+                            "value": negative_count / max(word_count, 1),
+                            "delta_from_baseline": negative_count / max(word_count, 1),
+                            "weight": 0.6,
+                            "source": event.get("source", "unknown"),
+                        }
+                    )
 
         # --- Inbound communication signals ---
         # Content arriving at the user directly affects mood.  An angry email
@@ -138,34 +165,33 @@ class MoodInferenceEngine(BaseExtractor):
             text = payload.get("body", "") or payload.get("body_plain", "")
             if text:
                 word_count = len(text.split())
-                negative_count = sum(
-                    1 for w in text.lower().split() if w in self.NEGATIVE_WORDS
-                )
+                negative_count = sum(1 for w in text.lower().split() if w in self.NEGATIVE_WORDS)
                 if negative_count > 0:
-                    mood_signals.append({
-                        "signal_type": "incoming_negative_language",
-                        "value": negative_count / max(word_count, 1),
-                        "delta_from_baseline": negative_count / max(word_count, 1),
-                        "weight": 0.4,
-                        "source": event.get("source", "unknown"),
-                    })
+                    mood_signals.append(
+                        {
+                            "signal_type": "incoming_negative_language",
+                            "value": negative_count / max(word_count, 1),
+                            "delta_from_baseline": negative_count / max(word_count, 1),
+                            "weight": 0.4,
+                            "source": event.get("source", "unknown"),
+                        }
+                    )
 
                 # Incoming urgency pressure: messages with high exclamation
                 # density or ALL-CAPS words create pressure on the user even
                 # before they open the message.
-                caps_words = sum(
-                    1 for w in text.split()
-                    if w.isupper() and len(w) > 1
-                )
+                caps_words = sum(1 for w in text.split() if w.isupper() and len(w) > 1)
                 exclamation_density = text.count("!") / max(word_count, 1)
                 if caps_words >= 2 or exclamation_density > 0.1:
-                    mood_signals.append({
-                        "signal_type": "incoming_pressure",
-                        "value": caps_words + exclamation_density,
-                        "delta_from_baseline": 0.3,
-                        "weight": 0.3,
-                        "source": event.get("source", "unknown"),
-                    })
+                    mood_signals.append(
+                        {
+                            "signal_type": "incoming_pressure",
+                            "value": caps_words + exclamation_density,
+                            "delta_from_baseline": 0.3,
+                            "weight": 0.3,
+                            "source": event.get("source", "unknown"),
+                        }
+                    )
 
         # --- Sleep signals ---
         # Sleep quality and duration carry high weight because poor sleep
@@ -173,22 +199,26 @@ class MoodInferenceEngine(BaseExtractor):
         if event_type == EventType.SLEEP_RECORDED.value:
             hours = payload.get("duration_hours", 7)
             quality = payload.get("quality_score", 0.5)
-            mood_signals.append({
-                "signal_type": "sleep_quality",
-                "value": quality,
-                # 0.7 is treated as the baseline for "good" sleep quality.
-                "delta_from_baseline": quality - 0.7,
-                "weight": 0.8,
-                "source": "health",
-            })
-            mood_signals.append({
-                "signal_type": "sleep_duration",
-                "value": hours,
-                # 7.5 hours is the assumed baseline for adequate sleep.
-                "delta_from_baseline": (hours - 7.5) / 7.5,
-                "weight": 0.5,
-                "source": "health",
-            })
+            mood_signals.append(
+                {
+                    "signal_type": "sleep_quality",
+                    "value": quality,
+                    # 0.7 is treated as the baseline for "good" sleep quality.
+                    "delta_from_baseline": quality - 0.7,
+                    "weight": 0.8,
+                    "source": "health",
+                }
+            )
+            mood_signals.append(
+                {
+                    "signal_type": "sleep_duration",
+                    "value": hours,
+                    # 7.5 hours is the assumed baseline for adequate sleep.
+                    "delta_from_baseline": (hours - 7.5) / 7.5,
+                    "weight": 0.5,
+                    "source": "health",
+                }
+            )
 
         # --- Proxy energy signals (when no health data available) ---
         # In the absence of sleep/activity trackers, infer energy from behavioral
@@ -210,10 +240,11 @@ class MoodInferenceEngine(BaseExtractor):
         #
         # Only extract when there's actual message content (text), to avoid polluting
         # tests that expect no signals from empty messages.
-        if (is_outbound or is_inbound):
+        if is_outbound or is_inbound:
             text = payload.get("body", "") or payload.get("body_plain", "")
             if text and len(text.strip()) > 0:  # Only if there's actual content
                 from datetime import datetime, timezone
+
                 try:
                     timestamp_str = event.get("timestamp", "")
                     if timestamp_str:
@@ -243,15 +274,17 @@ class MoodInferenceEngine(BaseExtractor):
                         else:  # 21-24
                             energy_estimate = 0.3
 
-                        mood_signals.append({
-                            "signal_type": "circadian_energy",
-                            "value": energy_estimate,
-                            # Delta from baseline (0.5 = neutral energy)
-                            "delta_from_baseline": energy_estimate - 0.5,
-                            # Lower weight than sleep (0.3 vs 0.8) since it's indirect
-                            "weight": 0.3,
-                            "source": event.get("source", "unknown"),
-                        })
+                        mood_signals.append(
+                            {
+                                "signal_type": "circadian_energy",
+                                "value": energy_estimate,
+                                # Delta from baseline (0.5 = neutral energy)
+                                "delta_from_baseline": energy_estimate - 0.5,
+                                # Lower weight than sleep (0.3 vs 0.8) since it's indirect
+                                "weight": 0.3,
+                                "source": event.get("source", "unknown"),
+                            }
+                        )
                 except Exception:
                     pass  # Malformed timestamp, skip circadian signal
 
@@ -268,34 +301,40 @@ class MoodInferenceEngine(BaseExtractor):
                 # Longer-than-baseline messages suggest active engagement (high energy)
                 # Shorter suggests low-effort communication (potentially low energy)
                 if word_count > baseline_length * 1.2:  # 20%+ above baseline
-                    mood_signals.append({
-                        "signal_type": "communication_energy",
-                        "value": min(1.0, word_count / baseline_length),
-                        "delta_from_baseline": 0.2,
-                        "weight": 0.2,
-                        "source": event.get("source", "unknown"),
-                    })
+                    mood_signals.append(
+                        {
+                            "signal_type": "communication_energy",
+                            "value": min(1.0, word_count / baseline_length),
+                            "delta_from_baseline": 0.2,
+                            "weight": 0.2,
+                            "source": event.get("source", "unknown"),
+                        }
+                    )
                 elif word_count < baseline_length * 0.5:  # 50%+ below baseline
-                    mood_signals.append({
-                        "signal_type": "communication_energy",
-                        "value": word_count / baseline_length,
-                        "delta_from_baseline": -0.3,
-                        "weight": 0.2,
-                        "source": event.get("source", "unknown"),
-                    })
+                    mood_signals.append(
+                        {
+                            "signal_type": "communication_energy",
+                            "value": word_count / baseline_length,
+                            "delta_from_baseline": -0.3,
+                            "weight": 0.2,
+                            "source": event.get("source", "unknown"),
+                        }
+                    )
 
         # --- Calendar density (stress indicator) ---
         # Each new calendar event increments the density counter.  A burst of
         # calendar events in a short window signals a packed schedule and
         # potential stress.
         if event_type == EventType.CALENDAR_EVENT_CREATED.value:
-            mood_signals.append({
-                "signal_type": "calendar_density",
-                "value": 1.0,
-                "delta_from_baseline": 0.0,
-                "weight": 0.2,
-                "source": "calendar",
-            })
+            mood_signals.append(
+                {
+                    "signal_type": "calendar_density",
+                    "value": 1.0,
+                    "delta_from_baseline": 0.0,
+                    "weight": 0.2,
+                    "source": "calendar",
+                }
+            )
 
             # --- Social battery (meeting load indicator) ---
             # Social interactions — particularly multi-person meetings — drain
@@ -321,19 +360,30 @@ class MoodInferenceEngine(BaseExtractor):
             # accumulate to move the average materially.
             attendees = payload.get("attendees", [])
             title = payload.get("title", "").lower()
-            social_keywords = {"meeting", "standup", "stand-up", "sync", "review",
-                               "interview", "workshop", "presentation", "all-hands",
-                               "team", "1:1", "one-on-one"}
+            social_keywords = {
+                "meeting",
+                "standup",
+                "stand-up",
+                "sync",
+                "review",
+                "interview",
+                "workshop",
+                "presentation",
+                "all-hands",
+                "team",
+                "1:1",
+                "one-on-one",
+            }
             is_social = bool(attendees) or any(kw in title for kw in social_keywords)
 
             if is_social:
                 n = len(attendees)
                 if n >= 6:
-                    battery_after = 0.1   # Heavy drain: large meeting
+                    battery_after = 0.1  # Heavy drain: large meeting
                 elif n >= 3:
-                    battery_after = 0.3   # Significant drain: medium meeting
+                    battery_after = 0.3  # Significant drain: medium meeting
                 elif n >= 1:
-                    battery_after = 0.5   # Moderate drain: small meeting
+                    battery_after = 0.5  # Moderate drain: small meeting
                 else:
                     # Social keyword in title but no explicit attendees — treat
                     # as a small meeting (conservative estimate).
@@ -342,14 +392,16 @@ class MoodInferenceEngine(BaseExtractor):
                 # Solo block: treat as partial recovery from previous social drain.
                 battery_after = 0.7
 
-            mood_signals.append({
-                "signal_type": "social_battery",
-                "value": battery_after,
-                # Delta relative to a neutral 0.5 baseline (positive = above, negative = below).
-                "delta_from_baseline": battery_after - 0.5,
-                "weight": 0.4,
-                "source": "calendar",
-            })
+            mood_signals.append(
+                {
+                    "signal_type": "social_battery",
+                    "value": battery_after,
+                    # Delta relative to a neutral 0.5 baseline (positive = above, negative = below).
+                    "delta_from_baseline": battery_after - 0.5,
+                    "weight": 0.4,
+                    "source": "calendar",
+                }
+            )
 
         # --- Spending anomaly (stress signal) ---
         # Unusually large transactions can correlate with stress-spending or
@@ -357,13 +409,15 @@ class MoodInferenceEngine(BaseExtractor):
         if event_type == EventType.TRANSACTION_NEW.value:
             amount = abs(payload.get("amount", 0))
             if amount > 100:
-                mood_signals.append({
-                    "signal_type": "spending_spike",
-                    "value": amount,
-                    "delta_from_baseline": 0.5,  # Simplified fixed delta for now.
-                    "weight": 0.3,
-                    "source": "finance",
-                })
+                mood_signals.append(
+                    {
+                        "signal_type": "spending_spike",
+                        "value": amount,
+                        "delta_from_baseline": 0.5,  # Simplified fixed delta for now.
+                        "weight": 0.3,
+                        "source": "finance",
+                    }
+                )
 
         # Persist accumulated signals so compute_current_mood can consume them.
         if mood_signals:
@@ -413,18 +467,42 @@ class MoodInferenceEngine(BaseExtractor):
         # were considered, but ZERO of these signals existed in production,
         # causing 100% of episodes to have NULL energy_level despite 27K+ mood
         # signals being available.
-        energy_signals = [s for s in recent_signals if s["signal_type"] in [
-            "sleep_quality", "sleep_duration", "activity_level",
-            "circadian_energy", "communication_energy",
-        ]]
-        stress_signals = [s for s in recent_signals if s["signal_type"] in [
-            "calendar_density", "negative_language", "spending_spike",
-            "response_latency", "incoming_negative_language", "incoming_pressure",
-        ]]
-        valence_signals = [s for s in recent_signals if s["signal_type"] in [
-            "negative_language", "emoji_usage", "message_length",
-            "incoming_negative_language",
-        ]]
+        energy_signals = [
+            s
+            for s in recent_signals
+            if s["signal_type"]
+            in [
+                "sleep_quality",
+                "sleep_duration",
+                "activity_level",
+                "circadian_energy",
+                "communication_energy",
+            ]
+        ]
+        stress_signals = [
+            s
+            for s in recent_signals
+            if s["signal_type"]
+            in [
+                "calendar_density",
+                "negative_language",
+                "spending_spike",
+                "response_latency",
+                "incoming_negative_language",
+                "incoming_pressure",
+            ]
+        ]
+        valence_signals = [
+            s
+            for s in recent_signals
+            if s["signal_type"]
+            in [
+                "negative_language",
+                "emoji_usage",
+                "message_length",
+                "incoming_negative_language",
+            ]
+        ]
 
         # Social battery: derived from accumulated social_battery signals emitted
         # by the calendar event handler above.  Falls back to 0.5 (neutral) when
@@ -444,9 +522,7 @@ class MoodInferenceEngine(BaseExtractor):
             # Confidence ramps with signal volume; 10+ signals reach full confidence.
             confidence=min(1.0, len(recent_signals) * 0.1),
             # Attach the most recent 10 raw signals for explainability/debugging.
-            contributing_signals=[
-                MoodSignal(**s) for s in recent_signals[-10:]
-            ],
+            contributing_signals=[MoodSignal(**s) for s in recent_signals[-10:]],
         )
 
         # Overlay a directional trend by comparing the current snapshot against
@@ -554,8 +630,8 @@ class MoodInferenceEngine(BaseExtractor):
             return total / len(subset)
 
         # Rows come back newest-first.  Slice into the two windows.
-        recent_window = rows[:4]      # Most recent ~1 hour
-        baseline_window = rows[4:]    # Previous ~2 hours
+        recent_window = rows[:4]  # Most recent ~1 hour
+        baseline_window = rows[4:]  # Previous ~2 hours
 
         recent_score = _composite(recent_window)
         baseline_score = _composite(baseline_window)
@@ -629,18 +705,13 @@ class MoodInferenceEngine(BaseExtractor):
                     # Inspect each signal dict for non-serializable fields.
                     for idx, sig in enumerate(val if isinstance(val, list) else []):
                         if not isinstance(sig, dict):
-                            bad_fields.append(
-                                f"recent_signals[{idx}]={type(sig).__name__}"
-                            )
+                            bad_fields.append(f"recent_signals[{idx}]={type(sig).__name__}")
                             continue
                         for field, fval in sig.items():
                             try:
                                 json.dumps(fval)
                             except (TypeError, ValueError):
-                                bad_fields.append(
-                                    f"recent_signals[{idx}][{field!r}]"
-                                    f"={type(fval).__name__}"
-                                )
+                                bad_fields.append(f"recent_signals[{idx}][{field!r}]={type(fval).__name__}")
                 else:
                     try:
                         json.dumps(val)
@@ -668,7 +739,8 @@ class MoodInferenceEngine(BaseExtractor):
             logger.error(
                 "MoodExtractor: mood_signals profile FAILED to persist after write "
                 "(data keys=%s, signals=%d) — retrying after WAL checkpoint",
-                list(data.keys()), len(data.get("recent_signals", [])),
+                list(data.keys()),
+                len(data.get("recent_signals", [])),
             )
             # Force a WAL checkpoint to flush all pending frames to the main
             # database file, then retry the write.  This resolves transient
@@ -677,9 +749,7 @@ class MoodInferenceEngine(BaseExtractor):
             try:
                 self.db.checkpoint_wal("user_model")
             except Exception as wal_err:
-                logger.warning(
-                    "MoodExtractor: WAL checkpoint before retry failed: %s", wal_err
-                )
+                logger.warning("MoodExtractor: WAL checkpoint before retry failed: %s", wal_err)
             self.ums.update_signal_profile("mood_signals", data)
             verify2 = self.ums.get_signal_profile("mood_signals")
             if not verify2:

@@ -19,6 +19,7 @@ from main import LifeOS
 # Helper: build a minimal LifeOS instance with only the database wired up
 # ---------------------------------------------------------------------------
 
+
 def _make_lifeos(db, user_model_store, event_bus):
     """Return a LifeOS whose DB, user-model store, and event bus are the
     test fixtures, bypassing the full startup sequence."""
@@ -33,6 +34,7 @@ def _make_lifeos(db, user_model_store, event_bus):
 # ---------------------------------------------------------------------------
 # _get_notification_response_time unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestGetNotificationResponseTime:
     """Unit tests for LifeOS._get_notification_response_time."""
@@ -121,6 +123,7 @@ class TestGetNotificationResponseTime:
 # ---------------------------------------------------------------------------
 # Integration: full feedback path with real response times
 # ---------------------------------------------------------------------------
+
 
 class TestNotificationFeedbackIntegration:
     """End-to-end tests verifying that notification feedback events receive

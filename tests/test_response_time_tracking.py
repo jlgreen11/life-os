@@ -132,7 +132,7 @@ class TestResponseTimeCalculation:
                 "source": "signal",
                 "payload": {
                     "from_address": contact,
-                    "body": f"Message {i+1}",
+                    "body": f"Message {i + 1}",
                     "channel": "signal",
                 },
             }
@@ -146,7 +146,7 @@ class TestResponseTimeCalculation:
                 "source": "signal",
                 "payload": {
                     "to_addresses": [contact],
-                    "body": f"Reply {i+1}",
+                    "body": f"Reply {i + 1}",
                     "channel": "signal",
                     "is_reply": True,
                 },
@@ -292,30 +292,31 @@ class TestSemanticFactInferenceIntegration:
         # Build the relationship profile directly rather than relying on the
         # extractor's event-by-event accumulation, which would require many events
         # to reach the right interaction_count ratios.
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {
-                "alice@example.com": {
-                    "interaction_count": 30,
-                    "inbound_count": 15,
-                    "outbound_count": 15,  # bidirectional (outbound > 0)
-                },
-                "coworker1@example.com": {
-                    "interaction_count": 5,
-                    "inbound_count": 3,
-                    "outbound_count": 2,
-                },
-                "coworker2@example.com": {
-                    "interaction_count": 5,
-                    "inbound_count": 2,
-                    "outbound_count": 3,
-                },
-            }
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 30,
+                        "inbound_count": 15,
+                        "outbound_count": 15,  # bidirectional (outbound > 0)
+                    },
+                    "coworker1@example.com": {
+                        "interaction_count": 5,
+                        "inbound_count": 3,
+                        "outbound_count": 2,
+                    },
+                    "coworker2@example.com": {
+                        "interaction_count": 5,
+                        "inbound_count": 2,
+                        "outbound_count": 3,
+                    },
+                }
+            },
+        )
         # Manually set samples_count to meet the 10-sample threshold
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 40 WHERE profile_type = 'relationships'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 40 WHERE profile_type = 'relationships'")
 
         # Run semantic fact inference
         semantic_inferrer.infer_from_relationship_profile()
@@ -323,9 +324,7 @@ class TestSemanticFactInferenceIntegration:
         # alice(30) >= 2 * avg(13.3) = 26.7 → should produce a high_priority fact
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
         high_priority_facts = [
-            f for f in facts
-            if f["key"] == "relationship_priority_alice@example.com"
-            and f["value"] == "high_priority"
+            f for f in facts if f["key"] == "relationship_priority_alice@example.com" and f["value"] == "high_priority"
         ]
 
         assert len(high_priority_facts) == 1, (
@@ -343,32 +342,29 @@ class TestSemanticFactInferenceIntegration:
         This test verifies that a very low-count contact produces no facts.
         """
         # Single contact with only 3 interactions (below the 5-count minimum)
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {
-                "occasional@example.com": {
-                    "interaction_count": 3,  # below minimum of 5
-                    "inbound_count": 2,
-                    "outbound_count": 1,
-                },
-            }
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {
+                    "occasional@example.com": {
+                        "interaction_count": 3,  # below minimum of 5
+                        "inbound_count": 2,
+                        "outbound_count": 1,
+                    },
+                }
+            },
+        )
         with user_model_store.db.get_connection("user_model") as conn:
-            conn.execute(
-                "UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = 'relationships'"
-            )
+            conn.execute("UPDATE signal_profiles SET samples_count = 10 WHERE profile_type = 'relationships'")
 
         # Run inference
         semantic_inferrer.infer_from_relationship_profile()
 
         # No facts should be created for a contact with < 5 interactions
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
-        contact_facts = [
-            f for f in facts
-            if "occasional@example.com" in f.get("key", "")
-        ]
+        contact_facts = [f for f in facts if "occasional@example.com" in f.get("key", "")]
         assert len(contact_facts) == 0, (
-            "Contacts with interaction_count < 5 should produce no facts "
-            "(insufficient data to infer patterns)"
+            "Contacts with interaction_count < 5 should produce no facts (insufficient data to infer patterns)"
         )
 
     def test_neutral_priority_no_fact_inferred(self, relationship_extractor, semantic_inferrer, user_model_store):
@@ -408,10 +404,7 @@ class TestSemanticFactInferenceIntegration:
 
         # Verify: No priority fact for this contact
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
-        priority_facts = [
-            f for f in facts
-            if f["key"] == f"relationship_priority_{contact}"
-        ]
+        priority_facts = [f for f in facts if f["key"] == f"relationship_priority_{contact}"]
 
         assert len(priority_facts) == 0
 
@@ -452,9 +445,6 @@ class TestSemanticFactInferenceIntegration:
 
         # Verify: No fact inferred (insufficient data)
         facts = user_model_store.get_semantic_facts(category="implicit_preference")
-        priority_facts = [
-            f for f in facts
-            if f["key"] == f"relationship_priority_{contact}"
-        ]
+        priority_facts = [f for f in facts if f["key"] == f"relationship_priority_{contact}"]
 
         assert len(priority_facts) == 0

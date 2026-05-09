@@ -56,8 +56,7 @@ def test_deduplicate_unresolved_surfaced_predictions(ums):
     # Verify only one prediction was stored
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE prediction_type = ?",
-            ("reminder",)
+            "SELECT COUNT(*) as count FROM predictions WHERE prediction_type = ?", ("reminder",)
         ).fetchone()["count"]
 
     assert count == 1, "Duplicate unresolved prediction should not be stored"
@@ -103,7 +102,7 @@ def test_deduplicate_filtered_predictions_within_24h(ums):
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
             "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Unreplied message from bob@example.com",)
+            ("Unreplied message from bob@example.com",),
         ).fetchone()["count"]
 
     assert count == 1, "Duplicate filtered predictions within 24h should not be stored"
@@ -152,8 +151,7 @@ def test_allow_regeneration_after_24h(ums):
     # Verify both predictions were stored (different descriptions after update)
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE prediction_type = ?",
-            ("opportunity",)
+            "SELECT COUNT(*) as count FROM predictions WHERE prediction_type = ?", ("opportunity",)
         ).fetchone()["count"]
 
     # Both should be stored because description changed (7 days → 8 days)
@@ -193,8 +191,7 @@ def test_deduplicate_exact_match_after_24h(ums):
     # Verify both were stored (outside 24h window)
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Check on project status",)
+            "SELECT COUNT(*) as count FROM predictions WHERE description = ?", ("Check on project status",)
         ).fetchone()["count"]
 
     assert count == 2, "Duplicate after 24h window should be allowed"
@@ -236,8 +233,7 @@ def test_deduplicate_different_types_same_description(ums):
     # Verify both were stored (different types)
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Review Q4 planning doc",)
+            "SELECT COUNT(*) as count FROM predictions WHERE description = ?", ("Review Q4 planning doc",)
         ).fetchone()["count"]
 
     assert count == 2, "Predictions with different types should not be deduplicated"
@@ -274,8 +270,7 @@ def test_deduplicate_boundary_exactly_24h(ums):
     # Verify both were stored (just outside window)
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Water plants",)
+            "SELECT COUNT(*) as count FROM predictions WHERE description = ?", ("Water plants",)
         ).fetchone()["count"]
 
     assert count == 2, "Duplicate just after 24h boundary should be allowed"
@@ -313,8 +308,7 @@ def test_deduplicate_mixed_surfaced_and_filtered(ums):
     # Verify only surfaced prediction was stored
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Reply to dave@example.com",)
+            "SELECT COUNT(*) as count FROM predictions WHERE description = ?", ("Reply to dave@example.com",)
         ).fetchone()["count"]
 
     assert count == 1, "Filtered duplicate of surfaced prediction should be blocked"
@@ -347,7 +341,7 @@ def test_no_duplication_spam_during_continuous_generation(ums):
     with ums.db.get_connection("user_model") as conn:
         count = conn.execute(
             "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Unreplied message from test@example.com",)
+            ("Unreplied message from test@example.com",),
         ).fetchone()["count"]
 
     assert count == 1, f"Expected 1 prediction, got {count} (deduplication failed)"
@@ -390,8 +384,7 @@ def test_telemetry_emission_on_deduplication(ums, db):
     # This test passes if deduplication logic ran (count == 1)
     with db.get_connection("user_model") as conn:
         count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE description = ?",
-            ("Test deduplication telemetry",)
+            "SELECT COUNT(*) as count FROM predictions WHERE description = ?", ("Test deduplication telemetry",)
         ).fetchone()["count"]
 
     assert count == 1, "Deduplication should have prevented duplicate storage"

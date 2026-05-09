@@ -22,6 +22,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_life_os(db, event_store, user_model_store, connector_map=None):
     """
     Build a minimal LifeOS shell that exposes _execute_rule_action without
@@ -49,9 +50,7 @@ def _make_life_os(db, event_store, user_model_store, connector_map=None):
     lo.task_manager = tm
 
     # Wire the real _infer_domain_from_event_type method
-    lo._infer_domain_from_event_type = LifeOS._infer_domain_from_event_type.__get__(
-        lo, LifeOS
-    )
+    lo._infer_domain_from_event_type = LifeOS._infer_domain_from_event_type.__get__(lo, LifeOS)
     return lo
 
 
@@ -86,6 +85,7 @@ def _mock_connector():
 # ---------------------------------------------------------------------------
 # Archive action tests
 # ---------------------------------------------------------------------------
+
 
 class TestArchiveAction:
     """Tests for the 'archive' rule action type."""
@@ -125,13 +125,9 @@ class TestArchiveAction:
         event_store.store_event(event)
 
         # Archive first
-        await lo._execute_rule_action(
-            {"type": "archive", "rule_id": "rule-arch-3"}, event
-        )
+        await lo._execute_rule_action({"type": "archive", "rule_id": "rule-arch-3"}, event)
         # Then try to notify — should be skipped because _suppressed is True
-        await lo._execute_rule_action(
-            {"type": "notify", "rule_name": "Test", "rule_id": "rule-n-1"}, event
-        )
+        await lo._execute_rule_action({"type": "notify", "rule_name": "Test", "rule_id": "rule-n-1"}, event)
 
         lo.notification_manager.create_notification.assert_not_called()
 
@@ -139,6 +135,7 @@ class TestArchiveAction:
 # ---------------------------------------------------------------------------
 # Forward action tests
 # ---------------------------------------------------------------------------
+
 
 class TestForwardAction:
     """Tests for the 'forward' rule action type."""
@@ -148,7 +145,9 @@ class TestForwardAction:
         """Forward action dispatches to connector.execute('send_email', ...) with correct params."""
         connector = _mock_connector()
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -171,7 +170,9 @@ class TestForwardAction:
         """Forward action reads the target address from 'value' as a fallback."""
         connector = _mock_connector()
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -197,7 +198,9 @@ class TestForwardAction:
     async def test_forward_unknown_source_logs_warning(self, db, event_store, user_model_store, caplog):
         """Forward action with no matching connector logs a warning and returns."""
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={},  # no connectors registered
         )
         event = _dummy_event(source="unknown_connector")
@@ -214,7 +217,9 @@ class TestForwardAction:
         connector = _mock_connector()
         connector.execute = AsyncMock(side_effect=NotImplementedError("forward not supported"))
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -230,7 +235,9 @@ class TestForwardAction:
         """Forward action falls back to 'snippet' when 'body' is absent from the payload."""
         connector = _mock_connector()
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -248,6 +255,7 @@ class TestForwardAction:
 # Auto-reply action tests
 # ---------------------------------------------------------------------------
 
+
 class TestAutoReplyAction:
     """Tests for the 'auto_reply' rule action type."""
 
@@ -256,7 +264,9 @@ class TestAutoReplyAction:
         """Auto-reply action dispatches to connector.execute('reply_email', ...) with correct params."""
         connector = _mock_connector()
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -283,7 +293,9 @@ class TestAutoReplyAction:
         """Auto-reply reads the reply text from 'message' as a fallback for 'value'."""
         connector = _mock_connector()
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -313,7 +325,9 @@ class TestAutoReplyAction:
     async def test_auto_reply_unknown_source_logs_warning(self, db, event_store, user_model_store, caplog):
         """Auto-reply with no matching connector logs a warning and returns."""
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={},
         )
         event = _dummy_event(source="unknown_connector")
@@ -334,7 +348,9 @@ class TestAutoReplyAction:
         connector = _mock_connector()
         connector.execute = AsyncMock(side_effect=RuntimeError("Connection lost"))
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")
@@ -354,7 +370,9 @@ class TestAutoReplyAction:
         """Auto-reply falls back to event['id'] for in_reply_to when payload has no message_id."""
         connector = _mock_connector()
         lo = _make_life_os(
-            db, event_store, user_model_store,
+            db,
+            event_store,
+            user_model_store,
             connector_map={"proton_mail": connector},
         )
         event = _dummy_event(source="proton_mail")

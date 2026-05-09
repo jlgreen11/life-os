@@ -26,6 +26,7 @@ import pytest
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_life_os(db, event_store, user_model_store):
     """
     Build a minimal LifeOS shell that exposes _execute_rule_action without
@@ -49,9 +50,7 @@ def _make_life_os(db, event_store, user_model_store):
     lo.task_manager = tm
 
     # _infer_domain_from_event_type is a pure method — wire the real one
-    lo._infer_domain_from_event_type = LifeOS._infer_domain_from_event_type.__get__(
-        lo, LifeOS
-    )
+    lo._infer_domain_from_event_type = LifeOS._infer_domain_from_event_type.__get__(lo, LifeOS)
     return lo
 
 
@@ -62,6 +61,7 @@ def _dummy_event(event_type="email.received"):
 # ---------------------------------------------------------------------------
 # 1. Unhandled rule action type  → logger.warning
 # ---------------------------------------------------------------------------
+
 
 class TestUnhandledRuleActionWarning:
     """_execute_rule_action should warn on unknown action types."""
@@ -140,9 +140,7 @@ class TestUnhandledRuleActionWarning:
             event["source"] = "test_source"
             with patch("main.logger") as mock_logger:
                 await lo._execute_rule_action(action, event)
-                mock_logger.warning.assert_not_called(), (
-                    f"action type={action['type']} should not emit a warning"
-                )
+                mock_logger.warning.assert_not_called(), (f"action type={action['type']} should not emit a warning")
 
     @pytest.mark.asyncio
     async def test_none_action_type_emits_warning(self, db, event_store, user_model_store):
@@ -158,6 +156,7 @@ class TestUnhandledRuleActionWarning:
 # ---------------------------------------------------------------------------
 # 2. Bare except: → specific exception types in diagnostics
 # ---------------------------------------------------------------------------
+
 
 class TestDiagnosticsExceptionSpecificity:
     """
@@ -176,6 +175,7 @@ class TestDiagnosticsExceptionSpecificity:
         cannot insert invalid JSON there).  The loop logic is identical to what
         the diagnostics endpoint executes after fetching rows from the DB.
         """
+
         # Simulate two rows: one with a valid JSON string and one whose payload
         # field contains a non-JSON value (e.g. a corrupted row or a dict that
         # sqlite3.Row returns as a raw string rather than parsed JSON).

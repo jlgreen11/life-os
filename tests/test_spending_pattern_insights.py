@@ -65,12 +65,14 @@ def _store_txn(
         days_ago: How many days in the past to stamp the event.
     """
     ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
-    payload = json.dumps({
-        "amount": amount,
-        "category": category,
-        "merchant": merchant,
-        "name": merchant,
-    })
+    payload = json.dumps(
+        {
+            "amount": amount,
+            "category": category,
+            "merchant": merchant,
+            "name": merchant,
+        }
+    )
     with db.get_connection("events") as conn:
         conn.execute(
             """INSERT INTO events
@@ -170,9 +172,9 @@ def test_top_category_confidence_scales_with_share(db):
     # Low-share case: FOOD_AND_DRINK = 26% of total ($260 of $1000)
     # confidence = min(0.80, 0.50 + 0.26 * 0.60) = 0.656
     engine_low = _make_engine(db)
-    _store_txn(db, 260.0, "FOOD_AND_DRINK", days_ago=5)       # $260 = 26% of $1000
-    _store_txn(db, 370.0, "CAT_B", days_ago=5)                 # $370
-    _store_txn(db, 370.0, "CAT_C", days_ago=5)                 # $370 (ties CAT_B)
+    _store_txn(db, 260.0, "FOOD_AND_DRINK", days_ago=5)  # $260 = 26% of $1000
+    _store_txn(db, 370.0, "CAT_B", days_ago=5)  # $370
+    _store_txn(db, 370.0, "CAT_C", days_ago=5)  # $370 (ties CAT_B)
 
     # High-share case: FOOD_AND_DRINK = 40% of total ($400 of $1000)
     # confidence = min(0.80, 0.50 + 0.40 * 0.60) = 0.74
@@ -180,19 +182,17 @@ def test_top_category_confidence_scales_with_share(db):
         db2 = DatabaseManager(data_dir=tmp)
         db2.initialize_all()
         engine_high = _make_engine(db2)
-        _store_txn(db2, 400.0, "FOOD_AND_DRINK", days_ago=5)   # $400 = 40% of $1000
-        _store_txn(db2, 300.0, "CAT_B", days_ago=5)             # $300
-        _store_txn(db2, 300.0, "CAT_C", days_ago=5)             # $300
+        _store_txn(db2, 400.0, "FOOD_AND_DRINK", days_ago=5)  # $400 = 40% of $1000
+        _store_txn(db2, 300.0, "CAT_B", days_ago=5)  # $300
+        _store_txn(db2, 300.0, "CAT_C", days_ago=5)  # $300
 
         # Each db needs ≥5 transactions for the data gate; add fillers
         for _ in range(2):
             _store_txn(db, 0.01, "MISC", days_ago=5)
             _store_txn(db2, 0.01, "MISC", days_ago=5)
 
-        insights_low = [i for i in engine_low._spending_pattern_insights()
-                        if i.category == "top_spending_category"]
-        insights_high = [i for i in engine_high._spending_pattern_insights()
-                         if i.category == "top_spending_category"]
+        insights_low = [i for i in engine_low._spending_pattern_insights() if i.category == "top_spending_category"]
+        insights_high = [i for i in engine_high._spending_pattern_insights() if i.category == "top_spending_category"]
 
         # CAT_B/CAT_C ties at 37% in low case — either may win. FOOD_AND_DRINK
         # wins at 40% in high case. Both should fire and the high case should
@@ -296,7 +296,7 @@ def test_recurring_subscription_detected_across_two_months(db):
     # Netflix ~$15 in two different calendar months within 90 days
     _store_txn(db, 15.49, "SUBSCRIPTION", merchant="Netflix", days_ago=65)  # 2 months ago
     _store_txn(db, 15.49, "SUBSCRIPTION", merchant="Netflix", days_ago=35)  # 1 month ago
-    _store_txn(db, 15.49, "SUBSCRIPTION", merchant="Netflix", days_ago=5)   # this month
+    _store_txn(db, 15.49, "SUBSCRIPTION", merchant="Netflix", days_ago=5)  # this month
     # Padding for the ≥5-transaction data gate (recent 30-day window)
     for _ in range(4):
         _store_txn(db, 20.0, "FOOD_AND_DRINK", days_ago=10)
@@ -408,6 +408,7 @@ def test_feedback_route_maps_spending_categories(db):
     # We validate it here by checking it directly from the route source.
     import ast, inspect
     import web.routes as routes_module
+
     source = inspect.getsource(routes_module)
 
     # The mapping is defined inline in the insight_feedback function.

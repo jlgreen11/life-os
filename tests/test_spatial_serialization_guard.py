@@ -96,10 +96,11 @@ def test_inferred_location_guard_fires_on_bad_source_data(db, user_model_store, 
         }
     }
 
-    with patch.object(user_model_store, "get_signal_profile", return_value=bad_profile), \
-         patch.object(user_model_store, "update_signal_profile") as mock_write, \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", return_value=bad_profile),
+        patch.object(user_model_store, "update_signal_profile") as mock_write,
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_inferred_location(
             location="japan",
             source_field="email_timezone",
@@ -110,10 +111,9 @@ def test_inferred_location_guard_fires_on_bad_source_data(db, user_model_store, 
         mock_write.assert_not_called()
 
     # Error message should appear in logs
-    assert any(
-        "non-JSON-serializable" in record.message
-        for record in caplog.records
-    ), "Expected a non-JSON-serializable error to be logged"
+    assert any("non-JSON-serializable" in record.message for record in caplog.records), (
+        "Expected a non-JSON-serializable error to be logged"
+    )
 
 
 def test_inferred_location_guard_logs_bad_field_name(db, user_model_store, caplog):
@@ -140,10 +140,11 @@ def test_inferred_location_guard_logs_bad_field_name(db, user_model_store, caplo
         }
     }
 
-    with patch.object(user_model_store, "get_signal_profile", return_value=bad_profile), \
-         patch.object(user_model_store, "update_signal_profile"), \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", return_value=bad_profile),
+        patch.object(user_model_store, "update_signal_profile"),
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_inferred_location(
             location="west coast us",
             source_field="email_timezone",
@@ -191,10 +192,11 @@ def test_spatial_profile_guard_fires_on_bad_activity_counts(db, user_model_store
         }
     }
 
-    with patch.object(user_model_store, "get_signal_profile", return_value=bad_profile), \
-         patch.object(user_model_store, "update_signal_profile") as mock_write, \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", return_value=bad_profile),
+        patch.object(user_model_store, "update_signal_profile") as mock_write,
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_spatial_profile(
             location="hq office",
             duration_minutes=60.0,
@@ -205,10 +207,9 @@ def test_spatial_profile_guard_fires_on_bad_activity_counts(db, user_model_store
 
         mock_write.assert_not_called()
 
-    assert any(
-        "non-JSON-serializable" in record.message
-        for record in caplog.records
-    ), "Expected a non-JSON-serializable error to be logged"
+    assert any("non-JSON-serializable" in record.message for record in caplog.records), (
+        "Expected a non-JSON-serializable error to be logged"
+    )
 
 
 def test_spatial_profile_guard_fires_on_bad_typical_activities(db, user_model_store, caplog):
@@ -239,10 +240,11 @@ def test_spatial_profile_guard_fires_on_bad_typical_activities(db, user_model_st
         }
     }
 
-    with patch.object(user_model_store, "get_signal_profile", return_value=bad_profile), \
-         patch.object(user_model_store, "update_signal_profile") as mock_write, \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", return_value=bad_profile),
+        patch.object(user_model_store, "update_signal_profile") as mock_write,
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_spatial_profile(
             location="coffee shop",
             duration_minutes=30.0,
@@ -256,9 +258,7 @@ def test_spatial_profile_guard_fires_on_bad_typical_activities(db, user_model_st
     error_messages = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
     assert error_messages, "Expected an ERROR log"
     combined = " ".join(error_messages)
-    assert "non-JSON-serializable" in combined, (
-        "Log should indicate the data was non-JSON-serializable"
-    )
+    assert "non-JSON-serializable" in combined, "Log should indicate the data was non-JSON-serializable"
 
 
 def test_spatial_profile_guard_logs_bad_field_details(db, user_model_store, caplog):
@@ -286,10 +286,11 @@ def test_spatial_profile_guard_logs_bad_field_details(db, user_model_store, capl
         }
     }
 
-    with patch.object(user_model_store, "get_signal_profile", return_value=bad_profile), \
-         patch.object(user_model_store, "update_signal_profile"), \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", return_value=bad_profile),
+        patch.object(user_model_store, "update_signal_profile"),
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_spatial_profile(
             location="studio",
             duration_minutes=120.0,
@@ -385,9 +386,7 @@ def test_valid_data_persists_through_both_paths_interleaved(db, user_model_store
 # ---------------------------------------------------------------------------
 
 
-def test_post_write_verification_logs_error_when_profile_missing(
-    db, user_model_store, caplog
-):
+def test_post_write_verification_logs_error_when_profile_missing(db, user_model_store, caplog):
     """Post-write verification logs an ERROR when the profile is absent after write.
 
     We simulate this by making update_signal_profile a no-op (so nothing is
@@ -405,10 +404,11 @@ def test_post_write_verification_logs_error_when_profile_missing(
             return None  # First call: no existing profile
         return None  # Second call: simulated missing profile after write
 
-    with patch.object(user_model_store, "get_signal_profile", side_effect=patched_get), \
-         patch.object(user_model_store, "update_signal_profile"), \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", side_effect=patched_get),
+        patch.object(user_model_store, "update_signal_profile"),
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_inferred_location(
             location="test location",
             source_field="email_timezone",
@@ -417,14 +417,12 @@ def test_post_write_verification_logs_error_when_profile_missing(
 
     # Should log an error about the profile failing to persist
     error_msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
-    assert any(
-        "FAILED to persist" in msg for msg in error_msgs
-    ), f"Expected 'FAILED to persist' error, got: {error_msgs}"
+    assert any("FAILED to persist" in msg for msg in error_msgs), (
+        f"Expected 'FAILED to persist' error, got: {error_msgs}"
+    )
 
 
-def test_post_write_verification_logs_error_when_spatial_profile_missing_after_update(
-    db, user_model_store, caplog
-):
+def test_post_write_verification_logs_error_when_spatial_profile_missing_after_update(db, user_model_store, caplog):
     """Post-write verification for _update_spatial_profile logs ERROR when profile absent.
 
     Mirrors the inferred-location test but for the place_behaviors write path.
@@ -438,10 +436,11 @@ def test_post_write_verification_logs_error_when_spatial_profile_missing_after_u
         call_count["n"] += 1
         return None
 
-    with patch.object(user_model_store, "get_signal_profile", side_effect=patched_get), \
-         patch.object(user_model_store, "update_signal_profile"), \
-         caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"):
-
+    with (
+        patch.object(user_model_store, "get_signal_profile", side_effect=patched_get),
+        patch.object(user_model_store, "update_signal_profile"),
+        caplog.at_level(logging.ERROR, logger="services.signal_extractor.spatial"),
+    ):
         extractor._update_spatial_profile(
             location="gym",
             duration_minutes=45.0,
@@ -451,6 +450,6 @@ def test_post_write_verification_logs_error_when_spatial_profile_missing_after_u
         )
 
     error_msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
-    assert any(
-        "FAILED to persist" in msg for msg in error_msgs
-    ), f"Expected 'FAILED to persist' error, got: {error_msgs}"
+    assert any("FAILED to persist" in msg for msg in error_msgs), (
+        f"Expected 'FAILED to persist' error, got: {error_msgs}"
+    )

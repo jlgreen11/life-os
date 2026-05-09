@@ -53,8 +53,7 @@ def _insert_email_sent(db, to_address: str, timestamp: str) -> str:
     return eid
 
 
-def _populate_contact_emails(db, from_address: str, count: int = 6,
-                             days_ago_start: int = 60):
+def _populate_contact_emails(db, from_address: str, count: int = 6, days_ago_start: int = 60):
     """Insert multiple email.received events for a contact spread over time.
 
     Creates ``count`` events starting from ``days_ago_start`` days ago,
@@ -75,9 +74,7 @@ def _populate_contact_emails(db, from_address: str, count: int = 6,
 
 
 @pytest.mark.asyncio
-async def test_generate_insights_returns_insights_when_store_fails(
-    db, user_model_store
-):
+async def test_generate_insights_returns_insights_when_store_fails(db, user_model_store):
     """generate_insights() should return insights even when _store_insight raises.
 
     When user_model.db is corrupted, persisting insights fails.  The fix
@@ -94,13 +91,13 @@ async def test_generate_insights_returns_insights_when_store_fails(
             """INSERT INTO tasks
                (id, title, status, priority, due_date, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), "Overdue task", "pending", 2, due,
-             now.isoformat()),
+            (str(uuid.uuid4()), "Overdue task", "pending", 2, due, now.isoformat()),
         )
 
     # Patch _store_insight to raise sqlite3.DatabaseError
     with patch.object(
-        engine, "_store_insight",
+        engine,
+        "_store_insight",
         side_effect=sqlite3.DatabaseError("database disk image is malformed"),
     ):
         insights = await engine.generate_insights()
@@ -112,9 +109,7 @@ async def test_generate_insights_returns_insights_when_store_fails(
 
 
 @pytest.mark.asyncio
-async def test_generate_insights_stores_when_db_healthy(
-    db, user_model_store
-):
+async def test_generate_insights_stores_when_db_healthy(db, user_model_store):
     """generate_insights() should store insights normally when DB is healthy."""
     engine = InsightEngine(db, user_model_store, cache_ttl_seconds=0)
 
@@ -125,8 +120,7 @@ async def test_generate_insights_stores_when_db_healthy(
             """INSERT INTO tasks
                (id, title, status, priority, due_date, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), "Overdue task", "pending", 2, due,
-             now.isoformat()),
+            (str(uuid.uuid4()), "Overdue task", "pending", 2, due, now.isoformat()),
         )
 
     insights = await engine.generate_insights()
@@ -171,9 +165,7 @@ def test_contact_gap_fallback_filters_marketing(db, user_model_store):
     engine = InsightEngine(db, user_model_store)
 
     # Insert emails from a no-reply address
-    _populate_contact_emails(
-        db, "noreply@newsletters.example.com", count=8, days_ago_start=60
-    )
+    _populate_contact_emails(db, "noreply@newsletters.example.com", count=8, days_ago_start=60)
 
     with patch.object(user_model_store, "get_signal_profile", return_value=None):
         insights = engine._contact_gap_insights()
@@ -229,10 +221,7 @@ def test_contact_gap_fallback_skips_recent_contacts(db, user_model_store):
         insights = engine._contact_gap_insights()
 
     # The most recent email is 5 days ago (< 14 day threshold), so no insight
-    contact_gap = [
-        i for i in insights
-        if i.category == "contact_gap" and i.entity == "recent@example.com"
-    ]
+    contact_gap = [i for i in insights if i.category == "contact_gap" and i.entity == "recent@example.com"]
     assert len(contact_gap) == 0
 
 

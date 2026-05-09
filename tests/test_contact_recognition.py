@@ -126,9 +126,7 @@ class TestGoogleConnectorDisplayName:
     def test_parse_email_header(self):
         from connectors.google.connector import GoogleConnector
 
-        name, addr = GoogleConnector._parse_email_header(
-            '"Nate Smith" <nate@example.com>'
-        )
+        name, addr = GoogleConnector._parse_email_header('"Nate Smith" <nate@example.com>')
         assert name == "Nate Smith"
         assert addr == "nate@example.com"
 
@@ -142,9 +140,7 @@ class TestGoogleConnectorDisplayName:
     def test_parse_email_names(self):
         from connectors.google.connector import GoogleConnector
 
-        names = GoogleConnector._parse_email_names(
-            '"Alice Jones" <alice@example.com>, bob@test.com'
-        )
+        names = GoogleConnector._parse_email_names('"Alice Jones" <alice@example.com>, bob@test.com')
         assert names == {"alice@example.com": "Alice Jones"}
         # bob@test.com has no display name, so it's excluded
         assert "bob@test.com" not in names
@@ -159,18 +155,14 @@ class TestProtonMailConnectorDisplayName:
     def test_parse_address_with_name(self):
         from connectors.proton_mail.connector import ProtonMailConnector
 
-        name, addr = ProtonMailConnector._parse_address_with_name(
-            '"Nate Smith" <nate@example.com>'
-        )
+        name, addr = ProtonMailConnector._parse_address_with_name('"Nate Smith" <nate@example.com>')
         assert name == "Nate Smith"
         assert addr == "nate@example.com"
 
     def test_parse_address_names(self):
         from connectors.proton_mail.connector import ProtonMailConnector
 
-        names = ProtonMailConnector._parse_address_names(
-            '"Alice Jones" <alice@example.com>, bob@test.com'
-        )
+        names = ProtonMailConnector._parse_address_names('"Alice Jones" <alice@example.com>, bob@test.com')
         assert names == {"alice@example.com": "Alice Jones"}
 
 
@@ -181,10 +173,7 @@ class TestProtonMailConnectorDisplayName:
 
 def _make_profile(interaction_count: int, display_name: str = "") -> dict:
     now = datetime.now(UTC).isoformat()
-    ts = [
-        (datetime.now(UTC) - timedelta(days=i)).isoformat()
-        for i in range(interaction_count)
-    ]
+    ts = [(datetime.now(UTC) - timedelta(days=i)).isoformat() for i in range(interaction_count)]
     profile = {
         "interaction_count": interaction_count,
         "interaction_timestamps": ts[:interaction_count],

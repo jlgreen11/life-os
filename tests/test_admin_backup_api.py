@@ -298,9 +298,7 @@ class TestRestoreBackup:
 
         # The restore_from_backup method archives the old DB
         archive_path = os.path.join(tmp_data_dir, "user_model.pre_restore.db")
-        assert os.path.exists(archive_path), (
-            f"Expected archive at {archive_path}, found: {os.listdir(tmp_data_dir)}"
-        )
+        assert os.path.exists(archive_path), f"Expected archive at {archive_path}, found: {os.listdir(tmp_data_dir)}"
 
     def test_rejects_dotdot_traversal(self, tmp_data_dir):
         """Paths with .. that escape the backups directory are rejected."""

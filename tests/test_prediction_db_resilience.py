@@ -37,18 +37,20 @@ def _make_calendar_event(event_store, hours_from_now: float, title: str = "Test 
     start = now + timedelta(hours=hours_from_now)
     end = start + timedelta(hours=1)
     event_id = str(uuid.uuid4())
-    event_store.store_event({
-        "id": event_id,
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {
-            "title": title,
-            "start_time": start.isoformat(),
-            "end_time": end.isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "title": title,
+                "start_time": start.isoformat(),
+                "end_time": end.isoformat(),
+            },
+            "metadata": {},
+        }
+    )
     return event_id
 
 
@@ -59,20 +61,22 @@ def _make_email_event(event_store, hours_ago: float, from_address: str, subject:
     """
     now = datetime.now(timezone.utc)
     event_id = str(uuid.uuid4())
-    event_store.store_event({
-        "id": event_id,
-        "type": "email.received",
-        "source": "google",
-        "timestamp": (now - timedelta(hours=hours_ago)).isoformat(),
-        "payload": {
-            "from_address": from_address,
-            "subject": subject,
-            "snippet": f"Message about {subject}",
-            "body_plain": f"Hi, regarding {subject}. Please respond.",
-            "message_id": f"msg-{event_id[:8]}",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": "email.received",
+            "source": "google",
+            "timestamp": (now - timedelta(hours=hours_ago)).isoformat(),
+            "payload": {
+                "from_address": from_address,
+                "subject": subject,
+                "snippet": f"Message about {subject}",
+                "body_plain": f"Hi, regarding {subject}. Please respond.",
+                "message_id": f"msg-{event_id[:8]}",
+            },
+            "metadata": {},
+        }
+    )
     return event_id
 
 
@@ -82,10 +86,12 @@ def _corrupt_user_model_connection(db, original_get_connection):
     All other database names (events, state, entities, preferences) pass through
     to the real connection.
     """
+
     def patched_get_connection(db_name):
         if db_name == "user_model":
             raise sqlite3.DatabaseError("database disk image is malformed")
         return original_get_connection(db_name)
+
     return patched_get_connection
 
 
@@ -113,7 +119,8 @@ async def test_routine_deviations_survives_db_error(db, event_store, user_model_
     # Patch get_connection to raise DatabaseError only for user_model
     original_get_connection = db.get_connection
     with mock.patch.object(
-        db, "get_connection",
+        db,
+        "get_connection",
         side_effect=_corrupt_user_model_connection(db, original_get_connection),
     ):
         # Should NOT raise
@@ -140,7 +147,8 @@ async def test_all_checks_fail_gracefully(db, event_store, user_model_store):
 
     # Patch get_connection to raise for ALL database names
     with mock.patch.object(
-        db, "get_connection",
+        db,
+        "get_connection",
         side_effect=sqlite3.DatabaseError("database disk image is malformed"),
     ):
         # Should NOT raise — each check is wrapped in its own try/except
@@ -170,32 +178,36 @@ async def test_events_db_checks_work_despite_user_model_corruption(db, event_sto
     now = datetime.now(timezone.utc)
     _make_calendar_event(event_store, hours_from_now=3, title="Team standup")
     # Overlap: starts 15 min into the first event
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {
-            "title": "Design review",
-            "start_time": (now + timedelta(hours=3, minutes=15)).isoformat(),
-            "end_time": (now + timedelta(hours=4, minutes=15)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "title": "Design review",
+                "start_time": (now + timedelta(hours=3, minutes=15)).isoformat(),
+                "end_time": (now + timedelta(hours=4, minutes=15)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Insert a travel event in the preparation window (12-48h out)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {
-            "title": "Flight to NYC",
-            "start_time": (now + timedelta(hours=24)).isoformat(),
-            "end_time": (now + timedelta(hours=30)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "title": "Flight to NYC",
+                "start_time": (now + timedelta(hours=24)).isoformat(),
+                "end_time": (now + timedelta(hours=30)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Corrupt user_model.db — only user_model connections raise
     original_get_connection = db.get_connection
@@ -208,12 +220,14 @@ async def test_events_db_checks_work_despite_user_model_corruption(db, event_sto
     with mock.patch.object(db, "get_connection", side_effect=corrupted_get_connection):
         # Also mock ums.get_signal_profile to simulate user_model being broken
         with mock.patch.object(
-            user_model_store, "get_signal_profile",
+            user_model_store,
+            "get_signal_profile",
             side_effect=sqlite3.DatabaseError("database disk image is malformed"),
         ):
             # Also mock ums.store_prediction to simulate storage failure
             with mock.patch.object(
-                user_model_store, "store_prediction",
+                user_model_store,
+                "store_prediction",
                 side_effect=sqlite3.DatabaseError("database disk image is malformed"),
             ):
                 predictions = await engine.generate_predictions({})
@@ -258,11 +272,13 @@ async def test_follow_up_needs_works_despite_user_model_corruption(db, event_sto
 
     with mock.patch.object(db, "get_connection", side_effect=corrupted_get_connection):
         with mock.patch.object(
-            user_model_store, "get_signal_profile",
+            user_model_store,
+            "get_signal_profile",
             side_effect=sqlite3.DatabaseError("database disk image is malformed"),
         ):
             with mock.patch.object(
-                user_model_store, "store_prediction",
+                user_model_store,
+                "store_prediction",
                 side_effect=sqlite3.DatabaseError("database disk image is malformed"),
             ):
                 predictions = await engine.generate_predictions({})
@@ -306,6 +322,7 @@ async def test_generation_stats_records_errors(db, event_store, user_model_store
 
     with mock.patch.object(engine, "_check_routine_deviations", side_effect=failing_routine_check):
         import logging
+
         with caplog.at_level(logging.INFO, logger="services.prediction_engine.engine"):
             predictions = await engine.generate_predictions({})
 
@@ -341,25 +358,28 @@ async def test_prediction_store_failure_doesnt_crash(db, event_store, user_model
     # Insert overlapping events to ensure at least some predictions are generated
     now = datetime.now(timezone.utc)
     _make_calendar_event(event_store, hours_from_now=3, title="Morning standup")
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {
-            "title": "Sprint planning",
-            "start_time": (now + timedelta(hours=3, minutes=10)).isoformat(),
-            "end_time": (now + timedelta(hours=4, minutes=10)).isoformat(),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "title": "Sprint planning",
+                "start_time": (now + timedelta(hours=3, minutes=10)).isoformat(),
+                "end_time": (now + timedelta(hours=4, minutes=10)).isoformat(),
+            },
+            "metadata": {},
+        }
+    )
 
     # Also add an email to trigger follow-up predictions
     _make_email_event(event_store, hours_ago=5, from_address="pm@company.com", subject="Sprint blockers")
 
     # Mock store_prediction to always fail with DatabaseError
     with mock.patch.object(
-        user_model_store, "store_prediction",
+        user_model_store,
+        "store_prediction",
         side_effect=sqlite3.DatabaseError("database disk image is malformed"),
     ):
         # Should NOT raise

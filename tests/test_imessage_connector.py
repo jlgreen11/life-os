@@ -24,6 +24,7 @@ from connectors.imessage.connector import iMessageConnector, APPLE_EPOCH_OFFSET
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_fake_chat_db(path: str) -> str:
     """Create a minimal Messages-compatible SQLite database at *path*.
 
@@ -130,8 +131,7 @@ def _insert_message(
         """INSERT INTO message (guid, text, handle_id, date, is_from_me,
                                 cache_roomnames, service, thread_originator_guid)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (guid, text, handle_rowid, apple_ns, is_from_me, group_name, service,
-         thread_originator_guid),
+        (guid, text, handle_rowid, apple_ns, is_from_me, group_name, service, thread_originator_guid),
     )
     msg_rowid = cur.lastrowid
 
@@ -175,6 +175,7 @@ def _insert_message(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def fake_chat_db(tmp_path):
     """Return the path to a freshly-created fake chat.db."""
@@ -215,6 +216,7 @@ def connector(fake_chat_db, mock_event_bus, db):
 # TestAuthenticate
 # ---------------------------------------------------------------------------
 
+
 class TestAuthenticate:
     @pytest.mark.asyncio
     async def test_success_db_exists(self, connector):
@@ -225,7 +227,8 @@ class TestAuthenticate:
     async def test_failure_db_missing(self, mock_event_bus, db, tmp_path):
         missing = os.path.join(str(tmp_path), "nonexistent", "chat.db")
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": missing},
         )
         result = await c.authenticate()
@@ -235,6 +238,7 @@ class TestAuthenticate:
 # ---------------------------------------------------------------------------
 # TestSync
 # ---------------------------------------------------------------------------
+
 
 class TestSync:
     @pytest.mark.asyncio
@@ -264,7 +268,10 @@ class TestSync:
     @pytest.mark.asyncio
     async def test_outbound_message_publishes_sent(self, connector, fake_chat_db, mock_event_bus):
         _insert_message(
-            fake_chat_db, "My reply", sender_id="+15559876543", is_from_me=1,
+            fake_chat_db,
+            "My reply",
+            sender_id="+15559876543",
+            is_from_me=1,
         )
         count = await connector.sync()
 
@@ -304,7 +311,8 @@ class TestSync:
     @pytest.mark.asyncio
     async def test_group_message(self, connector, fake_chat_db, mock_event_bus):
         _insert_message(
-            fake_chat_db, "Group hello",
+            fake_chat_db,
+            "Group hello",
             sender_id="+15559876543",
             group_name="Family Chat",
             chat_identifier="chat123456",
@@ -318,7 +326,8 @@ class TestSync:
     @pytest.mark.asyncio
     async def test_sms_message(self, connector, fake_chat_db, mock_event_bus):
         _insert_message(
-            fake_chat_db, "SMS text",
+            fake_chat_db,
+            "SMS text",
             sender_id="+15559876543",
             service="SMS",
         )
@@ -331,7 +340,8 @@ class TestSync:
     async def test_sms_excluded_when_disabled(self, fake_chat_db, mock_event_bus, db):
         """When include_sms is False, SMS messages should be skipped."""
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": fake_chat_db, "include_sms": False},
         )
         with db.get_connection("state") as conn:
@@ -381,6 +391,7 @@ class TestSync:
 # ---------------------------------------------------------------------------
 # TestExecute
 # ---------------------------------------------------------------------------
+
 
 class TestExecute:
     @pytest.mark.asyncio
@@ -440,6 +451,7 @@ class TestExecute:
 # TestHealthCheck
 # ---------------------------------------------------------------------------
 
+
 class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_ok_when_db_exists(self, connector):
@@ -450,7 +462,8 @@ class TestHealthCheck:
     async def test_error_when_db_missing(self, mock_event_bus, db, tmp_path):
         missing = os.path.join(str(tmp_path), "nonexistent", "chat.db")
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": missing},
         )
         result = await c.health_check()
@@ -460,6 +473,7 @@ class TestHealthCheck:
 # ---------------------------------------------------------------------------
 # TestClassifyDomain
 # ---------------------------------------------------------------------------
+
 
 class TestClassifyDomain:
     def test_work_keywords(self, connector):
@@ -476,6 +490,7 @@ class TestClassifyDomain:
 # ---------------------------------------------------------------------------
 # TestContactSync
 # ---------------------------------------------------------------------------
+
 
 class TestContactSync:
     """Test contact synchronization from chat.db to entities.db."""
@@ -581,7 +596,8 @@ class TestContactSync:
         """Should not crash if chat.db doesn't exist."""
         missing = os.path.join(str(tmp_path), "nonexistent", "chat.db")
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": missing},
         )
         # Should not raise
@@ -641,6 +657,7 @@ class TestContactSync:
 # ---------------------------------------------------------------------------
 # TestLifecycle
 # ---------------------------------------------------------------------------
+
 
 class TestLifecycle:
     """Test connector lifecycle: start, stop, background tasks."""
@@ -708,6 +725,7 @@ class TestLifecycle:
 # TestExecuteEdgeCases
 # ---------------------------------------------------------------------------
 
+
 class TestExecuteEdgeCases:
     """Additional edge cases for the execute() method."""
 
@@ -717,7 +735,7 @@ class TestExecuteEdgeCases:
         invalid_recipients = [
             "'; DROP TABLE messages; --",
             "../../../etc/passwd",
-            "recipient\ntell application \"Finder\"",
+            'recipient\ntell application "Finder"',
             'recipient" & "malicious',
         ]
         for recipient in invalid_recipients:
@@ -803,6 +821,7 @@ class TestExecuteEdgeCases:
 # ---------------------------------------------------------------------------
 # TestSyncEdgeCases
 # ---------------------------------------------------------------------------
+
 
 class TestSyncEdgeCases:
     """Additional edge cases for sync() method."""
@@ -918,6 +937,7 @@ class TestSyncEdgeCases:
 # TestConcurrency
 # ---------------------------------------------------------------------------
 
+
 class TestConcurrency:
     """Test concurrent operations and race conditions."""
 
@@ -956,6 +976,7 @@ class TestConcurrency:
 # TestPayloadEnrichment
 # ---------------------------------------------------------------------------
 
+
 class TestPayloadEnrichment:
     """Tests for thread_id, has_attachments, and is_reply payload fields.
 
@@ -968,7 +989,8 @@ class TestPayloadEnrichment:
     async def test_thread_id_from_chat_identifier(self, connector, fake_chat_db, mock_event_bus):
         """thread_id should be the chat.chat_identifier (conversation ID)."""
         _insert_message(
-            fake_chat_db, "Hello",
+            fake_chat_db,
+            "Hello",
             sender_id="+15559876543",
             chat_identifier="iMessage;-;+15559876543",
         )
@@ -1004,7 +1026,8 @@ class TestPayloadEnrichment:
     async def test_has_attachments_true(self, connector, fake_chat_db, mock_event_bus):
         """has_attachments should be True when message has linked attachments."""
         _insert_message(
-            fake_chat_db, "See attached photo",
+            fake_chat_db,
+            "See attached photo",
             sender_id="+15559876543",
             attachment_count=2,
         )
@@ -1026,7 +1049,8 @@ class TestPayloadEnrichment:
     async def test_is_reply_true(self, connector, fake_chat_db, mock_event_bus):
         """is_reply should be True when thread_originator_guid is set."""
         _insert_message(
-            fake_chat_db, "This is a reply",
+            fake_chat_db,
+            "This is a reply",
             sender_id="+15559876543",
             thread_originator_guid="original-msg-guid-123",
         )
@@ -1048,7 +1072,8 @@ class TestPayloadEnrichment:
     async def test_message_with_all_enrichments(self, connector, fake_chat_db, mock_event_bus):
         """A reply with attachments in a conversation has all fields set."""
         _insert_message(
-            fake_chat_db, "Check this out",
+            fake_chat_db,
+            "Check this out",
             sender_id="+15559876543",
             chat_identifier="iMessage;-;+15559876543",
             thread_originator_guid="parent-guid-456",
@@ -1066,7 +1091,8 @@ class TestPayloadEnrichment:
         """has_attachments should work correctly at boundary values."""
         # Message with exactly 1 attachment
         _insert_message(
-            fake_chat_db, "Single attachment",
+            fake_chat_db,
+            "Single attachment",
             sender_id="+15559876543",
             attachment_count=1,
         )
@@ -1079,7 +1105,8 @@ class TestPayloadEnrichment:
     async def test_multiple_attachments_counted(self, connector, fake_chat_db, mock_event_bus):
         """Messages with multiple attachments should still report has_attachments=True."""
         _insert_message(
-            fake_chat_db, "Several photos",
+            fake_chat_db,
+            "Several photos",
             sender_id="+15559876543",
             attachment_count=5,
         )
@@ -1138,7 +1165,8 @@ class TestPayloadEnrichment:
         conn.close()
 
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": db_file},
         )
         with db.get_connection("state") as sconn:
@@ -1158,6 +1186,7 @@ class TestPayloadEnrichment:
 # ---------------------------------------------------------------------------
 # TestAppleTimestamp
 # ---------------------------------------------------------------------------
+
 
 class TestAppleTimestamp:
     """Verify Apple Core Data nanosecond timestamp conversion.
@@ -1209,6 +1238,7 @@ class TestAppleTimestamp:
 # TestInputValidation
 # ---------------------------------------------------------------------------
 
+
 class TestInputValidation:
     """Validate the _VALID_RECIPIENT regex that prevents AppleScript injection.
 
@@ -1221,6 +1251,7 @@ class TestInputValidation:
     def test_valid_phone_number(self):
         """Standard phone numbers with country code should pass."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("+15559876543")
         assert _VALID_RECIPIENT.match("+442071234567")
         assert _VALID_RECIPIENT.match("5559876543")
@@ -1228,6 +1259,7 @@ class TestInputValidation:
     def test_valid_email(self):
         """Email addresses should pass the validation regex."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("user@example.com")
         assert _VALID_RECIPIENT.match("first.last@company.co.uk")
         assert _VALID_RECIPIENT.match("user-name@mail.example.com")
@@ -1235,47 +1267,56 @@ class TestInputValidation:
     def test_valid_alphanumeric_id(self):
         """Plain alphanumeric identifiers should pass."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("johndoe123")
 
     def test_rejects_semicolon(self):
         """Semicolons could terminate AppleScript statements — must reject."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("+15551234567;echo pwned") is None
 
     def test_rejects_single_quotes(self):
         """Single quotes could break AppleScript string literals — must reject."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("user'name") is None
 
     def test_rejects_double_quotes(self):
         """Double quotes could break AppleScript string delimiters — must reject."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match('user"name') is None
 
     def test_rejects_newline(self):
         """Newlines could inject AppleScript commands — must reject."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("user\ntell application") is None
 
     def test_rejects_applescript_injection(self):
         """A full AppleScript injection attempt must be rejected."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         attack = '"+15551234567" & do shell script "rm -rf /"'
         assert _VALID_RECIPIENT.match(attack) is None
 
     def test_rejects_spaces(self):
         """Spaces are not valid in phone numbers or emails — must reject."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("John Doe") is None
 
     def test_rejects_backtick(self):
         """Backticks could enable shell execution in some contexts — must reject."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("user`whoami`@example.com") is None
 
     def test_rejects_empty_string(self):
         """Empty strings should not pass validation."""
         from connectors.imessage.connector import _VALID_RECIPIENT
+
         assert _VALID_RECIPIENT.match("") is None
 
     @pytest.mark.asyncio
@@ -1322,6 +1363,7 @@ class TestInputValidation:
 # TestErrorHandling
 # ---------------------------------------------------------------------------
 
+
 class TestErrorHandling:
     """Test error handling for filesystem and permission issues."""
 
@@ -1330,7 +1372,8 @@ class TestErrorHandling:
         """sync() should return 0 if chat.db doesn't exist."""
         missing = os.path.join(str(tmp_path), "nonexistent", "chat.db")
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": missing},
         )
         count = await c.sync()
@@ -1350,7 +1393,8 @@ class TestErrorHandling:
             f.write("not a real database")
 
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": db_file},
         )
         # The file exists but is not a valid SQLite DB, so the query fails
@@ -1365,7 +1409,8 @@ class TestErrorHandling:
             f.write("corrupted content")
 
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": db_file},
         )
         result = await c.health_check()
@@ -1399,6 +1444,7 @@ class TestErrorHandling:
 # TestGroupChatParticipants
 # ---------------------------------------------------------------------------
 
+
 class TestGroupChatParticipants:
     """Test group chat detection and metadata enrichment.
 
@@ -1411,7 +1457,8 @@ class TestGroupChatParticipants:
     async def test_direct_message_not_group(self, connector, fake_chat_db, mock_event_bus):
         """Direct messages should have is_group=False and group_name=None."""
         _insert_message(
-            fake_chat_db, "Hey there",
+            fake_chat_db,
+            "Hey there",
             sender_id="+15559876543",
         )
         await connector.sync()
@@ -1424,7 +1471,8 @@ class TestGroupChatParticipants:
     async def test_group_message_has_display_name(self, connector, fake_chat_db, mock_event_bus):
         """Group messages should use chat.display_name as group_name."""
         _insert_message(
-            fake_chat_db, "Team update",
+            fake_chat_db,
+            "Team update",
             sender_id="+15559876543",
             group_name="Engineering Team",
             chat_identifier="chat123456",
@@ -1439,7 +1487,8 @@ class TestGroupChatParticipants:
     async def test_group_work_domain(self, connector, fake_chat_db, mock_event_bus):
         """Groups with work keywords should be classified as work domain."""
         _insert_message(
-            fake_chat_db, "Standup at 10am",
+            fake_chat_db,
+            "Standup at 10am",
             sender_id="+15559876543",
             group_name="Daily Standup",
             chat_identifier="work-chat-1",
@@ -1453,7 +1502,8 @@ class TestGroupChatParticipants:
     async def test_group_personal_domain(self, connector, fake_chat_db, mock_event_bus):
         """Groups without work keywords should be classified as personal."""
         _insert_message(
-            fake_chat_db, "Birthday party Saturday!",
+            fake_chat_db,
+            "Birthday party Saturday!",
             sender_id="+15559876543",
             group_name="Family Chat",
             chat_identifier="fam-chat-1",
@@ -1467,6 +1517,7 @@ class TestGroupChatParticipants:
 # ---------------------------------------------------------------------------
 # TestConnectorConfig
 # ---------------------------------------------------------------------------
+
 
 class TestConnectorConfig:
     """Test connector initialization and configuration."""
@@ -1486,7 +1537,8 @@ class TestConnectorConfig:
     def test_db_path_expansion(self, mock_event_bus, db):
         """Tilde in db_path should be expanded to the home directory."""
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"db_path": "~/Library/Messages/chat.db"},
         )
         assert "~" not in c._db_path
@@ -1500,7 +1552,8 @@ class TestConnectorConfig:
     def test_include_sms_configurable(self, mock_event_bus, db):
         """include_sms should be configurable via settings."""
         c = iMessageConnector(
-            event_bus=mock_event_bus, db=db,
+            event_bus=mock_event_bus,
+            db=db,
             config={"include_sms": False},
         )
         assert c._include_sms is False

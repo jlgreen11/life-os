@@ -27,6 +27,7 @@ from services.ai_engine.engine import AIEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine(db, ums):
     """Create an AIEngine with a mock vector store attached."""
     engine = AIEngine(db, ums, {})
@@ -60,11 +61,14 @@ def _make_event(event_id, subject, source="gmail", ts="2026-02-10T10:00:00Z"):
 @pytest.mark.asyncio
 async def test_vector_results_use_single_db_query(db, user_model_store, event_store):
     """All vector-hit rows must be fetched in one DB call, not N calls."""
-    _insert_events(event_store, [
-        _make_event("e1", "Alpha update"),
-        _make_event("e2", "Beta update"),
-        _make_event("e3", "Gamma update"),
-    ])
+    _insert_events(
+        event_store,
+        [
+            _make_event("e1", "Alpha update"),
+            _make_event("e2", "Beta update"),
+            _make_event("e3", "Gamma update"),
+        ],
+    )
 
     engine = _make_engine(db, user_model_store)
     # Vector store returns three hits
@@ -94,18 +98,21 @@ async def test_vector_results_use_single_db_query(db, user_model_store, event_st
 @pytest.mark.asyncio
 async def test_results_ordered_by_similarity_score(db, user_model_store, event_store):
     """Results must arrive in descending similarity order (vector store ranking)."""
-    _insert_events(event_store, [
-        _make_event("low-sim", "Low relevance doc", ts="2026-02-01T00:00:00Z"),
-        _make_event("high-sim", "Highly relevant doc", ts="2026-02-02T00:00:00Z"),
-        _make_event("mid-sim", "Moderately relevant doc", ts="2026-02-03T00:00:00Z"),
-    ])
+    _insert_events(
+        event_store,
+        [
+            _make_event("low-sim", "Low relevance doc", ts="2026-02-01T00:00:00Z"),
+            _make_event("high-sim", "Highly relevant doc", ts="2026-02-02T00:00:00Z"),
+            _make_event("mid-sim", "Moderately relevant doc", ts="2026-02-03T00:00:00Z"),
+        ],
+    )
 
     engine = _make_engine(db, user_model_store)
     # Return in deliberate high→mid→low order
     engine.vector_store.search.return_value = [
         {"doc_id": "high-sim", "score": 0.99},
-        {"doc_id": "mid-sim",  "score": 0.70},
-        {"doc_id": "low-sim",  "score": 0.30},
+        {"doc_id": "mid-sim", "score": 0.70},
+        {"doc_id": "low-sim", "score": 0.30},
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -186,8 +193,8 @@ async def test_vector_results_with_missing_events_are_skipped(db, user_model_sto
 
     engine = _make_engine(db, user_model_store)
     engine.vector_store.search.return_value = [
-        {"doc_id": "exists",    "score": 0.90},
-        {"doc_id": "ghost-id",  "score": 0.80},  # Not in DB
+        {"doc_id": "exists", "score": 0.90},
+        {"doc_id": "ghost-id", "score": 0.80},  # Not in DB
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):
@@ -254,10 +261,13 @@ async def test_single_vector_result_still_batched(db, user_model_store, event_st
 async def test_chunked_doc_ids_are_deduplicated_with_best_score(db, user_model_store, event_store):
     """Vector results with chunk suffixes ('e1_0', 'e1_1') must be merged
     into a single event lookup using the best score across chunks."""
-    _insert_events(event_store, [
-        _make_event("e1", "Chunked document"),
-        _make_event("e2", "Another document"),
-    ])
+    _insert_events(
+        event_store,
+        [
+            _make_event("e1", "Chunked document"),
+            _make_event("e2", "Another document"),
+        ],
+    )
 
     engine = _make_engine(db, user_model_store)
     # Simulate chunks: e1 split into 3 chunks, e2 is a single doc
@@ -265,7 +275,7 @@ async def test_chunked_doc_ids_are_deduplicated_with_best_score(db, user_model_s
         {"doc_id": "e1_0", "score": 0.70},
         {"doc_id": "e1_1", "score": 0.90},  # Best chunk for e1
         {"doc_id": "e1_2", "score": 0.60},
-        {"doc_id": "e2",   "score": 0.80},
+        {"doc_id": "e2", "score": 0.80},
     ]
 
     with patch.object(engine.context, "assemble_search_context", return_value="ctx"):

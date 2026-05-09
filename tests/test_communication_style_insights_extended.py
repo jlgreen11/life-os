@@ -24,6 +24,7 @@ from services.insight_engine.engine import InsightEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _prime_ums_with_linguistic_profile(ums, averages: dict, samples_count: int = 10):
     """Store a synthetic linguistic profile so InsightEngine can read it.
 
@@ -61,6 +62,7 @@ def _make_outbound_event(body: str) -> dict:
 # Part 1 — LinguisticExtractor averages completeness
 # ===========================================================================
 
+
 class TestLinguisticAveragesCompleteness:
     """Verify that _update_profile now includes question_rate, ellipsis_rate,
     and unique_word_ratio in the aggregated averages dict."""
@@ -88,9 +90,7 @@ class TestLinguisticAveragesCompleteness:
 
         profile = user_model_store.get_signal_profile("linguistic")
         averages = profile["data"].get("averages", {})
-        assert "ellipsis_rate" in averages, (
-            "ellipsis_rate should be aggregated into averages"
-        )
+        assert "ellipsis_rate" in averages, "ellipsis_rate should be aggregated into averages"
         assert averages["ellipsis_rate"] >= 0.0
 
     def test_unique_word_ratio_in_averages(self, db, user_model_store):
@@ -101,9 +101,7 @@ class TestLinguisticAveragesCompleteness:
 
         profile = user_model_store.get_signal_profile("linguistic")
         averages = profile["data"].get("averages", {})
-        assert "unique_word_ratio" in averages, (
-            "unique_word_ratio should be aggregated into averages"
-        )
+        assert "unique_word_ratio" in averages, "unique_word_ratio should be aggregated into averages"
         assert 0.0 < averages["unique_word_ratio"] <= 1.0
 
     def test_question_rate_value_reflects_actual_questions(self, db, user_model_store):
@@ -128,21 +126,24 @@ class TestLinguisticAveragesCompleteness:
 
         profile = user_model_store.get_signal_profile("linguistic")
         averages = profile["data"]["averages"]
-        for key in ("avg_sentence_length", "formality", "hedge_rate",
-                    "assertion_rate", "exclamation_rate", "emoji_rate", "profanity_rate"):
+        for key in (
+            "avg_sentence_length",
+            "formality",
+            "hedge_rate",
+            "assertion_rate",
+            "exclamation_rate",
+            "emoji_rate",
+            "profanity_rate",
+        ):
             assert key in averages, f"Existing average '{key}' should still be present"
 
     def test_averages_recomputed_from_multiple_samples(self, db, user_model_store):
         """Averages must be computed across the full sample window."""
         extractor = LinguisticExtractor(db, user_model_store)
         # First message: no questions
-        extractor.extract(_make_outbound_event(
-            "This is a declarative statement. It contains no questions at all."
-        ))
+        extractor.extract(_make_outbound_event("This is a declarative statement. It contains no questions at all."))
         # Second message: all questions
-        extractor.extract(_make_outbound_event(
-            "Are you ready? Is the report done? Did you review the draft?"
-        ))
+        extractor.extract(_make_outbound_event("Are you ready? Is the report done? Did you review the draft?"))
 
         profile = user_model_store.get_signal_profile("linguistic")
         averages = profile["data"]["averages"]
@@ -155,6 +156,7 @@ class TestLinguisticAveragesCompleteness:
 # ===========================================================================
 # Part 2 — InsightEngine._communication_style_insights extensions
 # ===========================================================================
+
 
 class TestCommunicationStyleInsightsExtended:
     """Verify the five insight types that _communication_style_insights now generates."""
@@ -177,65 +179,58 @@ class TestCommunicationStyleInsightsExtended:
     def test_inquisitive_insight_high_question_rate(self, db, user_model_store):
         """A question_rate >= 0.35 should surface an inquisitive-style insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "question_rate": 0.40},
             samples_count=10,
         )
         insights = engine._communication_style_insights()
-        inquisitive = [
-            i for i in insights
-            if "questions" in i.summary.lower() or "inquisitive" in i.summary.lower()
-        ]
-        assert inquisitive, (
-            "question_rate=0.40 (>= 0.35 threshold) should produce an inquisitive insight"
-        )
+        inquisitive = [i for i in insights if "questions" in i.summary.lower() or "inquisitive" in i.summary.lower()]
+        assert inquisitive, "question_rate=0.40 (>= 0.35 threshold) should produce an inquisitive insight"
         assert inquisitive[0].entity == "inquisitive"
 
     def test_declarative_insight_low_question_rate(self, db, user_model_store):
         """A question_rate <= 0.05 should surface a declarative-style insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "question_rate": 0.02},
             samples_count=10,
         )
         insights = engine._communication_style_insights()
         declarative = [i for i in insights if "declarative" in i.summary.lower()]
-        assert declarative, (
-            "question_rate=0.02 (<= 0.05 threshold) should produce a declarative insight"
-        )
+        assert declarative, "question_rate=0.02 (<= 0.05 threshold) should produce a declarative insight"
 
     def test_no_question_insight_mid_range(self, db, user_model_store):
         """A mid-range question_rate (0.20) should NOT fire either question insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "question_rate": 0.20},
             samples_count=10,
         )
         insights = engine._communication_style_insights()
         mid_insights = [i for i in insights if i.entity in ("inquisitive", "declarative")]
-        assert not mid_insights, (
-            "question_rate=0.20 is between thresholds and should not produce a question insight"
-        )
+        assert not mid_insights, "question_rate=0.20 is between thresholds and should not produce a question insight"
 
     def test_tentative_insight_high_hedge_rate(self, db, user_model_store):
         """A hedge_rate >= 0.5 should surface a tentative-phrasing insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "hedge_rate": 0.6},
             samples_count=10,
         )
         insights = engine._communication_style_insights()
         tentative = [i for i in insights if i.entity == "tentative"]
         assert tentative, "hedge_rate=0.6 should produce a tentative insight"
-        assert (
-            "hedge" in tentative[0].summary.lower()
-            or "maybe" in tentative[0].summary.lower()
-        )
+        assert "hedge" in tentative[0].summary.lower() or "maybe" in tentative[0].summary.lower()
 
     def test_confident_insight_low_hedge_rate(self, db, user_model_store):
         """A hedge_rate <= 0.05 should surface a confident-style insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "hedge_rate": 0.02},
             samples_count=10,
         )
@@ -246,7 +241,8 @@ class TestCommunicationStyleInsightsExtended:
     def test_emoji_insight_high_emoji_rate(self, db, user_model_store):
         """An emoji_rate >= 0.05 should surface an expressive-emoji insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.3, "emoji_rate": 0.08},
             samples_count=10,
         )
@@ -257,7 +253,8 @@ class TestCommunicationStyleInsightsExtended:
     def test_no_emoji_insight_low_rate(self, db, user_model_store):
         """A low emoji_rate (< 0.05) must not produce an emoji insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "emoji_rate": 0.01},
             samples_count=10,
         )
@@ -268,7 +265,8 @@ class TestCommunicationStyleInsightsExtended:
     def test_rich_vocabulary_insight(self, db, user_model_store):
         """A unique_word_ratio >= 0.75 should surface a rich-vocabulary insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "unique_word_ratio": 0.80},
             samples_count=10,
         )
@@ -279,7 +277,8 @@ class TestCommunicationStyleInsightsExtended:
     def test_focused_vocabulary_insight(self, db, user_model_store):
         """A unique_word_ratio <= 0.40 should surface a focused-vocabulary insight."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {"formality": 0.5, "unique_word_ratio": 0.35},
             samples_count=10,
         )
@@ -315,21 +314,21 @@ class TestCommunicationStyleInsightsExtended:
         insights = engine._communication_style_insights()
         # Only the formality insight fires; all additional ones require >= 5 samples
         assert len(insights) == 1, (
-            "With 4 samples only the formality insight should fire; "
-            "additional insights require >= 5 samples"
+            "With 4 samples only the formality insight should fire; additional insights require >= 5 samples"
         )
         assert "formal" in insights[0].summary.lower()
 
     def test_multiple_insights_generated_simultaneously(self, db, user_model_store):
         """All five insight dimensions should fire when all thresholds are met."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {
-                "formality": 0.8,           # -> formal
-                "question_rate": 0.40,       # -> inquisitive
-                "hedge_rate": 0.6,           # -> tentative
-                "emoji_rate": 0.08,          # -> expressive
-                "unique_word_ratio": 0.80,   # -> rich_vocabulary
+                "formality": 0.8,  # -> formal
+                "question_rate": 0.40,  # -> inquisitive
+                "hedge_rate": 0.6,  # -> tentative
+                "emoji_rate": 0.08,  # -> expressive
+                "unique_word_ratio": 0.80,  # -> rich_vocabulary
             },
             samples_count=20,
         )
@@ -345,7 +344,8 @@ class TestCommunicationStyleInsightsExtended:
     def test_all_insights_have_category_communication_style(self, db, user_model_store):
         """Every generated insight must have category='communication_style'."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {
                 "formality": 0.5,
                 "question_rate": 0.40,
@@ -362,7 +362,8 @@ class TestCommunicationStyleInsightsExtended:
     def test_all_insights_have_dedup_key(self, db, user_model_store):
         """Every generated insight must have a non-empty dedup_key."""
         engine = _make_engine(
-            db, user_model_store,
+            db,
+            user_model_store,
             {
                 "formality": 0.2,
                 "question_rate": 0.40,

@@ -42,10 +42,17 @@ def _make_life_os(db):
     life_os.vector_store.get_stats = Mock(return_value={"total": 0, "dimensions": 384})
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.5, social_battery=0.5,
-        cognitive_load=0.5, emotional_valence=0.5, confidence=0.5, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.5,
+            social_battery=0.5,
+            cognitive_load=0.5,
+            emotional_valence=0.5,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
     life_os.notification_manager = Mock()
     life_os.notification_manager.get_stats = Mock(return_value={"pending": 0})
     life_os.notification_manager.get_pending = Mock(return_value=[])

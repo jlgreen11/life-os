@@ -21,6 +21,7 @@ from web.app import create_web_app
 # Shared fixture: minimal mock LifeOS for route testing
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_life_os():
     """Create a mock LifeOS instance with enough services for our tests."""
@@ -36,13 +37,15 @@ def mock_life_os():
             __exit__=Mock(return_value=False),
         )
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events":      {"status": "ok", "errors": [], "path": "/tmp/events.db",      "size_bytes": 1024},
-        "entities":    {"status": "ok", "errors": [], "path": "/tmp/entities.db",    "size_bytes": 1024},
-        "state":       {"status": "ok", "errors": [], "path": "/tmp/state.db",       "size_bytes": 1024},
-        "user_model":  {"status": "ok", "errors": [], "path": "/tmp/user_model.db",  "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+    )
 
     # Event bus
     life_os.event_bus = Mock()
@@ -69,10 +72,17 @@ def mock_life_os():
     # Signal extractor
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.3, social_battery=0.7,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.5, trend="stable"
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.7,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
 
     # Notification manager
     life_os.notification_manager = Mock()
@@ -102,10 +112,12 @@ def mock_life_os():
 
     # Prediction engine
     life_os.prediction_engine = Mock()
-    life_os.prediction_engine.get_diagnostics = AsyncMock(return_value={
-        "prediction_types": {},
-        "overall": {"health": "unknown"},
-    })
+    life_os.prediction_engine.get_diagnostics = AsyncMock(
+        return_value={
+            "prediction_types": {},
+            "overall": {"health": "unknown"},
+        }
+    )
 
     # Connectors
     life_os.connectors = []
@@ -137,18 +149,24 @@ def client(mock_life_os):
 # Bug 1: /api/context/batch event type mapping
 # ---------------------------------------------------------------------------
 
+
 class TestContextBatchEventTypeMapping:
     """Verify that the batch endpoint maps context types to internal types."""
 
     def test_batch_maps_location_type(self, client, mock_life_os):
         """context.location events should be stored as location.changed."""
-        response = client.post("/api/context/batch", json={
-            "events": [{
-                "type": "context.location",
-                "source": "ios_app",
-                "payload": {"latitude": 40.7128, "longitude": -74.0060},
-            }]
-        })
+        response = client.post(
+            "/api/context/batch",
+            json={
+                "events": [
+                    {
+                        "type": "context.location",
+                        "source": "ios_app",
+                        "payload": {"latitude": 40.7128, "longitude": -74.0060},
+                    }
+                ]
+            },
+        )
 
         assert response.status_code == 200
         assert response.json()["count"] == 1
@@ -161,13 +179,18 @@ class TestContextBatchEventTypeMapping:
 
     def test_batch_maps_device_nearby_type(self, client, mock_life_os):
         """context.device_nearby events should be stored as home.device.state_changed."""
-        response = client.post("/api/context/batch", json={
-            "events": [{
-                "type": "context.device_nearby",
-                "source": "ios_app",
-                "payload": {"device_name": "iPhone"},
-            }]
-        })
+        response = client.post(
+            "/api/context/batch",
+            json={
+                "events": [
+                    {
+                        "type": "context.device_nearby",
+                        "source": "ios_app",
+                        "payload": {"device_name": "iPhone"},
+                    }
+                ]
+            },
+        )
 
         assert response.status_code == 200
         stored = mock_life_os.event_store.stored_events
@@ -177,13 +200,18 @@ class TestContextBatchEventTypeMapping:
 
     def test_batch_maps_background_refresh_type(self, client, mock_life_os):
         """context.background_refresh should map to system.connector.sync_complete."""
-        response = client.post("/api/context/batch", json={
-            "events": [{
-                "type": "context.background_refresh",
-                "source": "ios_app",
-                "payload": {},
-            }]
-        })
+        response = client.post(
+            "/api/context/batch",
+            json={
+                "events": [
+                    {
+                        "type": "context.background_refresh",
+                        "source": "ios_app",
+                        "payload": {},
+                    }
+                ]
+            },
+        )
 
         assert response.status_code == 200
         stored = mock_life_os.event_store.stored_events
@@ -191,13 +219,18 @@ class TestContextBatchEventTypeMapping:
 
     def test_batch_unknown_type_falls_back(self, client, mock_life_os):
         """Unknown context types should fall back to system.user.command."""
-        response = client.post("/api/context/batch", json={
-            "events": [{
-                "type": "context.unknown_sensor",
-                "source": "ios_app",
-                "payload": {},
-            }]
-        })
+        response = client.post(
+            "/api/context/batch",
+            json={
+                "events": [
+                    {
+                        "type": "context.unknown_sensor",
+                        "source": "ios_app",
+                        "payload": {},
+                    }
+                ]
+            },
+        )
 
         assert response.status_code == 200
         stored = mock_life_os.event_store.stored_events
@@ -206,16 +239,16 @@ class TestContextBatchEventTypeMapping:
 
     def test_batch_multiple_events_mapped_correctly(self, client, mock_life_os):
         """Each event in a batch should be independently type-mapped."""
-        response = client.post("/api/context/batch", json={
-            "events": [
-                {"type": "context.location", "source": "ios_app",
-                 "payload": {"latitude": 1.0, "longitude": 2.0}},
-                {"type": "context.device_nearby", "source": "ios_app",
-                 "payload": {"device_name": "Watch"}},
-                {"type": "context.time", "source": "ios_app",
-                 "payload": {}},
-            ]
-        })
+        response = client.post(
+            "/api/context/batch",
+            json={
+                "events": [
+                    {"type": "context.location", "source": "ios_app", "payload": {"latitude": 1.0, "longitude": 2.0}},
+                    {"type": "context.device_nearby", "source": "ios_app", "payload": {"device_name": "Watch"}},
+                    {"type": "context.time", "source": "ios_app", "payload": {}},
+                ]
+            },
+        )
 
         assert response.status_code == 200
         assert response.json()["count"] == 3
@@ -229,6 +262,7 @@ class TestContextBatchEventTypeMapping:
 # ---------------------------------------------------------------------------
 # Bug 2: /api/system/intelligence partial failure resilience
 # ---------------------------------------------------------------------------
+
 
 class TestIntelligenceEndpointResilience:
     """Verify that the intelligence endpoint returns partial results on failure."""
@@ -334,19 +368,13 @@ class TestIntelligenceEndpointResilience:
             # Verify that a warning was logged for the failed table
             mock_logger.warning.assert_called()
             warning_args = mock_logger.warning.call_args_list
-            found_routines_warning = any(
-                "routines" in str(call) for call in warning_args
-            )
-            assert found_routines_warning, (
-                f"Expected warning about 'routines' table, got: {warning_args}"
-            )
+            found_routines_warning = any("routines" in str(call) for call in warning_args)
+            assert found_routines_warning, f"Expected warning about 'routines' table, got: {warning_args}"
 
     def test_intelligence_all_tables_fail_returns_zeros(self, client, mock_life_os):
         """When all table queries fail, all counts should be 0 (not crash)."""
         mock_conn = Mock()
-        mock_conn.execute = Mock(
-            side_effect=sqlite3.OperationalError("database is locked")
-        )
+        mock_conn.execute = Mock(side_effect=sqlite3.OperationalError("database is locked"))
         mock_life_os.db.get_connection = Mock(
             return_value=Mock(
                 __enter__=Mock(return_value=mock_conn),
@@ -359,6 +387,5 @@ class TestIntelligenceEndpointResilience:
         data = response.json()
 
         depth = data["user_model_depth"]
-        for table in ("signal_profiles", "routines", "workflows",
-                      "semantic_facts", "episodes"):
+        for table in ("signal_profiles", "routines", "workflows", "semantic_facts", "episodes"):
             assert depth[table] == 0

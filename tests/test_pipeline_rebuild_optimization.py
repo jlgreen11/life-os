@@ -23,6 +23,7 @@ from services.signal_extractor.pipeline import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_event(db, event_type: str, payload: dict | None = None, ts: str | None = None):
     """Insert a synthetic event into events.db and return its id."""
     event_id = str(uuid.uuid4())
@@ -48,12 +49,20 @@ def _insert_event(db, event_type: str, payload: dict | None = None, ts: str | No
 # Tests for PROFILE_EVENT_TYPES coverage
 # ---------------------------------------------------------------------------
 
+
 class TestProfileEventTypesCoverage:
     """Ensure the mapping covers all 9 expected profile types."""
 
     EXPECTED_PROFILES = {
-        "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-        "relationships", "topics", "temporal", "spatial", "decision",
+        "linguistic",
+        "linguistic_inbound",
+        "cadence",
+        "mood_signals",
+        "relationships",
+        "topics",
+        "temporal",
+        "spatial",
+        "decision",
     }
 
     def test_covers_all_expected_profiles(self):
@@ -76,6 +85,7 @@ class TestProfileEventTypesCoverage:
 # Tests for filtered rebuild
 # ---------------------------------------------------------------------------
 
+
 class TestRebuildFilteredByProfile:
     """Verify that rebuild_profiles_from_events filters by event type."""
 
@@ -91,7 +101,8 @@ class TestRebuildFilteredByProfile:
         _insert_event(db, "calendar.event.created", {"title": "meeting"})
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=100, missing_profiles=["cadence"],
+            event_limit=100,
+            missing_profiles=["cadence"],
         )
 
         # Cadence extractor needs: email.sent, message.sent, email.received, message.received
@@ -111,7 +122,8 @@ class TestRebuildFilteredByProfile:
         _insert_event(db, "message.sent", {"body": "test"})
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=100, missing_profiles=["spatial"],
+            event_limit=100,
+            missing_profiles=["spatial"],
         )
 
         # Spatial needs: calendar.event.created, ios.context.update, system.user.location_update
@@ -139,7 +151,8 @@ class TestRebuildFilteredByProfile:
         _insert_event(db, "system.rule.triggered", {"rule_id": "r1"})
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=100, missing_profiles=[],
+            event_limit=100,
+            missing_profiles=[],
         )
 
         assert result["events_processed"] == 2
@@ -154,7 +167,8 @@ class TestRebuildFilteredByProfile:
         _insert_event(db, "system.rule.triggered", {"rule_id": "r1"})
 
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=100, missing_profiles=["cadence", "spatial"],
+            event_limit=100,
+            missing_profiles=["cadence", "spatial"],
         )
 
         # Union of cadence + spatial covers email.received AND calendar.event.created.
@@ -170,21 +184,21 @@ class TestRebuildFilteredByProfile:
         # "nonexistent" has no entry in PROFILE_EVENT_TYPES but shouldn't crash.
         # Combined with "cadence" it should still filter to cadence types.
         result = pipeline.rebuild_profiles_from_events(
-            event_limit=100, missing_profiles=["nonexistent", "cadence"],
+            event_limit=100,
+            missing_profiles=["nonexistent", "cadence"],
         )
 
         assert result["events_processed"] == 1
 
     def test_system_rule_triggered_always_excluded_when_filtering(self, db, user_model_store):
         """system.rule.triggered (57% of real events) is never in any profile's type list."""
-        assert "system.rule.triggered" not in {
-            t for types in PROFILE_EVENT_TYPES.values() for t in types
-        }
+        assert "system.rule.triggered" not in {t for types in PROFILE_EVENT_TYPES.values() for t in types}
 
 
 # ---------------------------------------------------------------------------
 # Tests for check_and_rebuild_missing_profiles integration
 # ---------------------------------------------------------------------------
+
 
 class TestCheckAndRebuildPassesMissingProfiles:
     """Verify that check_and_rebuild_missing_profiles passes missing profile names."""
@@ -197,7 +211,8 @@ class TestCheckAndRebuildPassesMissingProfiles:
 
         # Insert a cadence-relevant event
         _insert_event(
-            db, "email.received",
+            db,
+            "email.received",
             {"sender": "test@example.com", "body": "Test message content"},
         )
 

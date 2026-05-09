@@ -165,10 +165,8 @@ class TestRoutineInsights:
     def test_multiple_routines_each_get_insight(self, db):
         """Two qualifying routines produce two insights."""
         ums = UserModelStore(db)
-        _store_routine(ums, name="Morning routine", trigger="morning",
-                       times_observed=10, consistency_score=0.80)
-        _store_routine(ums, name="Evening routine", trigger="evening",
-                       times_observed=7, consistency_score=0.75)
+        _store_routine(ums, name="Morning routine", trigger="morning", times_observed=10, consistency_score=0.80)
+        _store_routine(ums, name="Evening routine", trigger="evening", times_observed=7, consistency_score=0.75)
         engine = InsightEngine(db=db, ums=ums)
         results = engine._routine_insights()
         assert len(results) == 2
@@ -176,14 +174,11 @@ class TestRoutineInsights:
     def test_only_qualifying_routines_surface(self, db):
         """Mix of qualifying and non-qualifying: only qualifying ones surface."""
         ums = UserModelStore(db)
-        _store_routine(ums, name="Good routine", trigger="morning",
-                       times_observed=10, consistency_score=0.80)
+        _store_routine(ums, name="Good routine", trigger="morning", times_observed=10, consistency_score=0.80)
         # Below consistency
-        _store_routine(ums, name="Weak routine", trigger="evening",
-                       times_observed=10, consistency_score=0.50)
+        _store_routine(ums, name="Weak routine", trigger="evening", times_observed=10, consistency_score=0.50)
         # Below observation count
-        _store_routine(ums, name="Rare routine", trigger="midday",
-                       times_observed=1, consistency_score=0.90)
+        _store_routine(ums, name="Rare routine", trigger="midday", times_observed=1, consistency_score=0.90)
         engine = InsightEngine(db=db, ums=ums)
         results = engine._routine_insights()
         assert len(results) == 1
@@ -253,9 +248,7 @@ class TestRoutineInsights:
     def test_summary_contains_step_count(self, db):
         """Summary mentions the number of steps."""
         ums = UserModelStore(db)
-        _store_routine(ums, steps=[
-            {"action": "a"}, {"action": "b"}, {"action": "c"}
-        ])
+        _store_routine(ums, steps=[{"action": "a"}, {"action": "b"}, {"action": "c"}])
         engine = InsightEngine(db=db, ums=ums)
         results = engine._routine_insights()
         assert "3 steps" in results[0].summary
@@ -332,6 +325,7 @@ class TestRoutineInsights:
     def test_routine_pattern_in_source_weight_map(self, db):
         """'routine_pattern' category is handled by _apply_source_weights."""
         from services.insight_engine.source_weights import SourceWeightManager
+
         ums = UserModelStore(db)
         swm = SourceWeightManager(db)
         engine = InsightEngine(db=db, ums=ums, source_weight_manager=swm)

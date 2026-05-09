@@ -103,9 +103,7 @@ class TestComputeAdaptiveLookbackDays:
         )
 
         effective = detector._compute_adaptive_lookback_days(30)
-        assert effective == 30, (
-            "Lookback should stay at 30 when enough episodes exist in the default window"
-        )
+        assert effective == 30, "Lookback should stay at 30 when enough episodes exist in the default window"
 
     def test_extension_when_all_episodes_outside_window(self, db, user_model_store):
         """When all episodes are older than the default window, lookback is extended."""
@@ -130,9 +128,7 @@ class TestComputeAdaptiveLookbackDays:
         detector = RoutineDetector(db, user_model_store)
 
         effective = detector._compute_adaptive_lookback_days(30)
-        assert effective == 30, (
-            "Lookback should stay at 30 when the database has no episodes at all"
-        )
+        assert effective == 30, "Lookback should stay at 30 when the database has no episodes at all"
 
     def test_extension_capped_at_180_days(self, db, user_model_store):
         """Even if episodes are 500 days old, the lookback caps at 180 days."""
@@ -178,9 +174,7 @@ class TestComputeAdaptiveLookbackDays:
         )
 
         effective = detector._compute_adaptive_lookback_days(30)
-        assert effective == 30, (
-            "Lookback should stay at 30 when there is at least one episode in the default window"
-        )
+        assert effective == 30, "Lookback should stay at 30 when there is at least one episode in the default window"
 
     def test_extension_triggered_when_window_is_completely_empty(self, db, user_model_store):
         """When the default window has 0 episodes (connector outage), extension fires."""
@@ -198,8 +192,7 @@ class TestComputeAdaptiveLookbackDays:
 
         effective = detector._compute_adaptive_lookback_days(30)
         assert effective > 30, (
-            "Lookback should extend when the default window has 0 episodes "
-            "(complete connector outage scenario)"
+            "Lookback should extend when the default window has 0 episodes (complete connector outage scenario)"
         )
 
 
@@ -259,9 +252,7 @@ class TestDetectRoutinesAdaptiveLookback:
 
         # Routines should be detected normally — the adaptive logic should not
         # interfere when the default window already has enough data.
-        assert len(routines) >= 1, (
-            "Routines within the default window should still be detected normally"
-        )
+        assert len(routines) >= 1, "Routines within the default window should still be detected normally"
 
     def test_empty_database_returns_empty_list(self, db, user_model_store):
         """With no episodes at all, detect_routines() returns [] without error."""
@@ -321,10 +312,9 @@ class TestDetectRoutinesAdaptiveLookback:
             detector.detect_routines(lookback_days=30)
 
         # The log message from _compute_adaptive_lookback_days should appear
-        assert any(
-            "Adaptive lookback: extended from" in record.message
-            for record in caplog.records
-        ), "Expected an INFO log about adaptive lookback extension"
+        assert any("Adaptive lookback: extended from" in record.message for record in caplog.records), (
+            "Expected an INFO log about adaptive lookback extension"
+        )
 
     def test_no_extension_log_when_episodes_in_window(self, db, user_model_store, caplog):
         """No adaptive-extension log should appear when the default window suffices."""
@@ -343,10 +333,9 @@ class TestDetectRoutinesAdaptiveLookback:
         with caplog.at_level(logging.INFO, logger="services.routine_detector.detector"):
             detector.detect_routines(lookback_days=30)
 
-        assert not any(
-            "Adaptive lookback: extended from" in record.message
-            for record in caplog.records
-        ), "Should NOT emit an adaptive-extension log when the default window has enough data"
+        assert not any("Adaptive lookback: extended from" in record.message for record in caplog.records), (
+            "Should NOT emit an adaptive-extension log when the default window has enough data"
+        )
 
     def test_db_error_during_adaptive_check_falls_back_gracefully(self, db, user_model_store, monkeypatch):
         """If the adaptive lookback query raises, detect_routines() continues with
@@ -374,9 +363,7 @@ class TestDetectRoutinesAdaptiveLookback:
         # try/except, so an error inside it returns lookback_days.  Monkeypatching
         # bypasses that wrapper.  We verify the broader detect_routines() is safe.
         result = detector.detect_routines(lookback_days=30)
-        assert isinstance(result, list), (
-            "detect_routines() should always return a list, even when adaptive check fails"
-        )
+        assert isinstance(result, list), "detect_routines() should always return a list, even when adaptive check fails"
 
     def test_minimum_50_episodes_across_5_days_triggers_detection(self, db, user_model_store):
         """Full end-to-end scenario: 50+ episodes at 35 days ago, across 5+ unique dates.

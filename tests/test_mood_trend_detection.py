@@ -31,6 +31,7 @@ composite = energy_level + emotional_valence - stress_level
   delta < -0.10  → "declining"
   otherwise      → "stable"
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
@@ -44,6 +45,7 @@ from services.signal_extractor.pipeline import SignalExtractorPipeline
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _seed_mood_history(db, rows: list[dict]):
     """Insert pre-built rows directly into mood_history for deterministic tests.
@@ -62,8 +64,7 @@ def _seed_mood_history(db, rows: list[dict]):
             # Assign a synthetic timestamp if not provided (newest last so that
             # ORDER BY timestamp DESC returns them in list-reversed order).
             ts = row.get(
-                "timestamp",
-                (datetime.now(timezone.utc) - timedelta(minutes=15 * (len(rows) - i))).isoformat()
+                "timestamp", (datetime.now(timezone.utc) - timedelta(minutes=15 * (len(rows) - i))).isoformat()
             )
             conn.execute(
                 """INSERT INTO mood_history
@@ -87,12 +88,10 @@ def _make_engine(db, user_model_store) -> MoodInferenceEngine:
     return MoodInferenceEngine(db, user_model_store)
 
 
-def _seed_signals(user_model_store, signal_type: str = "sleep_quality",
-                  value: float = 0.7, count: int = 3):
+def _seed_signals(user_model_store, signal_type: str = "sleep_quality", value: float = 0.7, count: int = 3):
     """Seed the mood_signals profile so compute_current_mood() has data."""
     signals = [
-        {"signal_type": signal_type, "value": value,
-         "delta_from_baseline": 0.0, "weight": 0.8, "source": "test"}
+        {"signal_type": signal_type, "value": value, "delta_from_baseline": 0.0, "weight": 0.8, "source": "test"}
         for _ in range(count)
     ]
     user_model_store.update_signal_profile("mood_signals", {"recent_signals": signals})
@@ -101,6 +100,7 @@ def _seed_signals(user_model_store, signal_type: str = "sleep_quality",
 # ---------------------------------------------------------------------------
 # _compute_trend() unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestComputeTrend:
     """Unit tests for MoodInferenceEngine._compute_trend()."""
@@ -116,12 +116,15 @@ class TestComputeTrend:
         The algorithm requires a baseline window (rows 5+), so with only 4
         rows there is nothing to compare against.
         """
-        _seed_mood_history(db, [
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
-        ])
+        _seed_mood_history(
+            db,
+            [
+                {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
+                {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
+                {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
+                {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9},
+            ],
+        )
         engine = _make_engine(db, user_model_store)
         assert engine._compute_trend() == "stable"
 
@@ -136,14 +139,8 @@ class TestComputeTrend:
 
         Delta = 1.7 − (−0.1) = 1.8  >> 0.10  → improving
         """
-        baseline_rows = [
-            {"energy_level": 0.3, "stress_level": 0.7, "emotional_valence": 0.3}
-            for _ in range(8)
-        ]
-        recent_rows = [
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9}
-            for _ in range(4)
-        ]
+        baseline_rows = [{"energy_level": 0.3, "stress_level": 0.7, "emotional_valence": 0.3} for _ in range(8)]
+        recent_rows = [{"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9} for _ in range(4)]
         # Seed baseline first (older), then recent (newer) — seeder assigns
         # timestamps newest-last so ORDER BY DESC returns recent first.
         _seed_mood_history(db, baseline_rows + recent_rows)
@@ -162,14 +159,8 @@ class TestComputeTrend:
 
         Delta = −0.4 − 1.7 = −2.1  << −0.10  → declining
         """
-        baseline_rows = [
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9}
-            for _ in range(8)
-        ]
-        recent_rows = [
-            {"energy_level": 0.2, "stress_level": 0.8, "emotional_valence": 0.2}
-            for _ in range(4)
-        ]
+        baseline_rows = [{"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9} for _ in range(8)]
+        recent_rows = [{"energy_level": 0.2, "stress_level": 0.8, "emotional_valence": 0.2} for _ in range(4)]
         _seed_mood_history(db, baseline_rows + recent_rows)
 
         engine = _make_engine(db, user_model_store)
@@ -180,10 +171,7 @@ class TestComputeTrend:
 
         Both windows have nearly identical composites — the delta is tiny.
         """
-        similar_rows = [
-            {"energy_level": 0.5, "stress_level": 0.3, "emotional_valence": 0.5}
-            for _ in range(12)
-        ]
+        similar_rows = [{"energy_level": 0.5, "stress_level": 0.3, "emotional_valence": 0.5} for _ in range(12)]
         _seed_mood_history(db, similar_rows)
 
         engine = _make_engine(db, user_model_store)
@@ -193,15 +181,9 @@ class TestComputeTrend:
         """Delta of exactly 0.11 should return 'improving' (above 0.10 threshold)."""
         # baseline composite: 0.5 + 0.5 - 0.3 = 0.7
         # recent composite: target 0.81 → energy=0.5, valence=0.5, stress=0.19
-        baseline_rows = [
-            {"energy_level": 0.5, "stress_level": 0.3, "emotional_valence": 0.5}
-            for _ in range(8)
-        ]
+        baseline_rows = [{"energy_level": 0.5, "stress_level": 0.3, "emotional_valence": 0.5} for _ in range(8)]
         # delta > 0.10: increase energy slightly and lower stress
-        recent_rows = [
-            {"energy_level": 0.6, "stress_level": 0.2, "emotional_valence": 0.6}
-            for _ in range(4)
-        ]
+        recent_rows = [{"energy_level": 0.6, "stress_level": 0.2, "emotional_valence": 0.6} for _ in range(4)]
         # recent composite: 0.6 + 0.6 − 0.2 = 1.0; baseline: 0.7; delta = 0.3 > 0.10
         _seed_mood_history(db, baseline_rows + recent_rows)
 
@@ -239,14 +221,8 @@ class TestComputeTrend:
         But since only the last 12 are queried, rows 5-12 (baseline window)
         are also all positive → delta ≈ 0 → "stable".
         """
-        negative_rows = [
-            {"energy_level": 0.1, "stress_level": 0.9, "emotional_valence": 0.1}
-            for _ in range(16)
-        ]
-        positive_rows = [
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9}
-            for _ in range(4)
-        ]
+        negative_rows = [{"energy_level": 0.1, "stress_level": 0.9, "emotional_valence": 0.1} for _ in range(16)]
+        positive_rows = [{"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9} for _ in range(4)]
         # All 20 are seeded; the 12 newest are the 4 negative + 4 positive + 4 positive
         # Wait — seeder assigns timestamps oldest-first.  The last 4 in the list
         # (positive_rows) will have the newest timestamps.
@@ -266,12 +242,11 @@ class TestComputeTrend:
 # SignalExtractorPipeline.get_current_mood() persistence tests
 # ---------------------------------------------------------------------------
 
+
 class TestMoodHistoryPersistence:
     """Tests that get_current_mood() writes to mood_history."""
 
-    def test_get_current_mood_stores_snapshot_when_signals_present(
-        self, db, user_model_store
-    ):
+    def test_get_current_mood_stores_snapshot_when_signals_present(self, db, user_model_store):
         """get_current_mood() should write a row to mood_history when confidence > 0."""
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
@@ -289,9 +264,7 @@ class TestMoodHistoryPersistence:
             after = conn.execute("SELECT COUNT(*) FROM mood_history").fetchone()[0]
         assert after == 1, "get_current_mood() should persist one snapshot to mood_history"
 
-    def test_get_current_mood_does_not_store_when_no_signals(
-        self, db, user_model_store
-    ):
+    def test_get_current_mood_does_not_store_when_no_signals(self, db, user_model_store):
         """get_current_mood() should NOT write to mood_history when confidence == 0.
 
         Writing neutral "no data" entries would dilute the trend baseline.
@@ -305,16 +278,13 @@ class TestMoodHistoryPersistence:
             count = conn.execute("SELECT COUNT(*) FROM mood_history").fetchone()[0]
         assert count == 0, "No signals → confidence=0 → no history row written"
 
-    def test_get_current_mood_persists_correct_dimensions(
-        self, db, user_model_store
-    ):
+    def test_get_current_mood_persists_correct_dimensions(self, db, user_model_store):
         """Persisted mood_history row should reflect the computed MoodState values."""
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         # Seed high-energy, low-stress signals
         signals = [
-            {"signal_type": "sleep_quality", "value": 0.9,
-             "delta_from_baseline": 0.0, "weight": 0.9, "source": "test"}
+            {"signal_type": "sleep_quality", "value": 0.9, "delta_from_baseline": 0.0, "weight": 0.9, "source": "test"}
             for _ in range(5)
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": signals})
@@ -322,9 +292,7 @@ class TestMoodHistoryPersistence:
         mood = pipeline.get_current_mood()
 
         with db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT * FROM mood_history ORDER BY timestamp DESC LIMIT 1"
-            ).fetchone()
+            row = conn.execute("SELECT * FROM mood_history ORDER BY timestamp DESC LIMIT 1").fetchone()
 
         assert row is not None
         # Energy level from sleep_quality signals should be high
@@ -349,6 +317,7 @@ class TestMoodHistoryPersistence:
 # ---------------------------------------------------------------------------
 # End-to-end: trend computed from persisted history via pipeline
 # ---------------------------------------------------------------------------
+
 
 class TestTrendEndToEnd:
     """End-to-end: verify trend computation uses the history written by pipeline.
@@ -380,15 +349,11 @@ class TestTrendEndToEnd:
              Trend should be "improving".
         """
         # Baseline: 8 rows of poor mood
-        _seed_mood_history(db, [
-            {"energy_level": 0.2, "stress_level": 0.8, "emotional_valence": 0.2}
-            for _ in range(8)
-        ])
+        _seed_mood_history(db, [{"energy_level": 0.2, "stress_level": 0.8, "emotional_valence": 0.2} for _ in range(8)])
 
         # High-energy signals → compute + persist high-composite row
         good_signals = [
-            {"signal_type": "sleep_quality", "value": 0.95,
-             "delta_from_baseline": 0.0, "weight": 0.9, "source": "test"}
+            {"signal_type": "sleep_quality", "value": 0.95, "delta_from_baseline": 0.0, "weight": 0.9, "source": "test"}
             for _ in range(5)
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": good_signals})
@@ -403,8 +368,7 @@ class TestTrendEndToEnd:
         # Now history = 8 bad + 4 good → trend should be improving
         mood = pipeline.get_current_mood()
         assert mood.trend == "improving", (
-            f"Expected 'improving' after 8 bad baseline rows + 4 good recent rows, "
-            f"got '{mood.trend}'"
+            f"Expected 'improving' after 8 bad baseline rows + 4 good recent rows, got '{mood.trend}'"
         )
 
     def test_trend_is_declining_after_mood_shifts_downward(self, db, user_model_store):
@@ -418,15 +382,17 @@ class TestTrendEndToEnd:
              baseline = 8 good rows → trend = "declining".
         """
         # Baseline: 8 rows of great mood
-        _seed_mood_history(db, [
-            {"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9}
-            for _ in range(8)
-        ])
+        _seed_mood_history(db, [{"energy_level": 0.9, "stress_level": 0.1, "emotional_valence": 0.9} for _ in range(8)])
 
         # High-stress signals
         bad_signals = [
-            {"signal_type": "calendar_density", "value": 0.9,
-             "delta_from_baseline": 0.0, "weight": 0.8, "source": "calendar"}
+            {
+                "signal_type": "calendar_density",
+                "value": 0.9,
+                "delta_from_baseline": 0.0,
+                "weight": 0.8,
+                "source": "calendar",
+            }
             for _ in range(5)
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": bad_signals})
@@ -440,6 +406,5 @@ class TestTrendEndToEnd:
         # 5th call: history = 8 good + 4 stressed → declining
         mood = pipeline.get_current_mood()
         assert mood.trend == "declining", (
-            f"Expected 'declining' after 8 good baseline rows + 4 stressed recent rows, "
-            f"got '{mood.trend}'"
+            f"Expected 'declining' after 8 good baseline rows + 4 stressed recent rows, got '{mood.trend}'"
         )

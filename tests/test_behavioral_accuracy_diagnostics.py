@@ -52,9 +52,17 @@ def _insert_prediction(
                 resolution_reason, supporting_signals, created_at)
                VALUES (?, ?, ?, ?, 'SUGGEST', ?, ?, ?, ?, ?, ?, ?)""",
             (
-                pred_id, prediction_type, description, confidence,
-                was_surfaced, was_accurate, user_response, resolved_at,
-                resolution_reason, supporting_signals, created_at,
+                pred_id,
+                prediction_type,
+                description,
+                confidence,
+                was_surfaced,
+                was_accurate,
+                user_response,
+                resolved_at,
+                resolution_reason,
+                supporting_signals,
+                created_at,
             ),
         )
     return pred_id
@@ -69,13 +77,25 @@ class TestPerTypeResolutionStats:
         recent = (now - timedelta(hours=6)).isoformat()
 
         # 2 reminder predictions: 1 resolved accurate, 1 unresolved
-        _insert_prediction(db, prediction_type="reminder", was_accurate=1,
-                           resolved_at=recent, user_response="inferred", created_at=recent)
+        _insert_prediction(
+            db,
+            prediction_type="reminder",
+            was_accurate=1,
+            resolved_at=recent,
+            user_response="inferred",
+            created_at=recent,
+        )
         _insert_prediction(db, prediction_type="reminder", was_surfaced=1, created_at=recent)
 
         # 1 routine_deviation: resolved inaccurate
-        _insert_prediction(db, prediction_type="routine_deviation", was_accurate=0,
-                           resolved_at=recent, user_response="inferred", created_at=recent)
+        _insert_prediction(
+            db,
+            prediction_type="routine_deviation",
+            was_accurate=0,
+            resolved_at=recent,
+            user_response="inferred",
+            created_at=recent,
+        )
 
         result = tracker.get_diagnostics()
         stats = result["per_type_stats"]
@@ -108,14 +128,10 @@ class TestResolutionMethodBreakdown:
         recent = (now - timedelta(hours=2)).isoformat()
         resolved = recent
 
-        _insert_prediction(db, user_response="inferred", resolved_at=resolved,
-                           was_accurate=1, created_at=recent)
-        _insert_prediction(db, user_response="inferred", resolved_at=resolved,
-                           was_accurate=0, created_at=recent)
-        _insert_prediction(db, user_response="acted_on", resolved_at=resolved,
-                           was_accurate=1, created_at=recent)
-        _insert_prediction(db, user_response="dismissed", resolved_at=resolved,
-                           was_accurate=0, created_at=recent)
+        _insert_prediction(db, user_response="inferred", resolved_at=resolved, was_accurate=1, created_at=recent)
+        _insert_prediction(db, user_response="inferred", resolved_at=resolved, was_accurate=0, created_at=recent)
+        _insert_prediction(db, user_response="acted_on", resolved_at=resolved, was_accurate=1, created_at=recent)
+        _insert_prediction(db, user_response="dismissed", resolved_at=resolved, was_accurate=0, created_at=recent)
 
         result = tracker.get_diagnostics()
         methods = result["resolution_methods"]
@@ -159,8 +175,7 @@ class TestUnresolvedDetails:
         now = datetime.now(timezone.utc)
         recent = (now - timedelta(hours=1)).isoformat()
 
-        _insert_prediction(db, was_surfaced=1, created_at=recent,
-                           supporting_signals={"expected_actions": ["reply"]})
+        _insert_prediction(db, was_surfaced=1, created_at=recent, supporting_signals={"expected_actions": ["reply"]})
 
         result = tracker.get_diagnostics()
         details = result["unresolved_details"]
@@ -185,8 +200,7 @@ class TestUnresolvedDetails:
         old = (now - timedelta(hours=12)).isoformat()
 
         for i in range(15):
-            _insert_prediction(db, was_surfaced=1, created_at=old,
-                               description=f"Prediction {i}")
+            _insert_prediction(db, was_surfaced=1, created_at=old, description=f"Prediction {i}")
 
         result = tracker.get_diagnostics()
         assert len(result["unresolved_details"]) == 10
@@ -244,8 +258,7 @@ class TestHealthAssessment:
 
         # 3 resolved, 2 unresolved = 60% resolution rate
         for _ in range(3):
-            _insert_prediction(db, was_accurate=1, resolved_at=resolved,
-                               user_response="inferred", created_at=recent)
+            _insert_prediction(db, was_accurate=1, resolved_at=resolved, user_response="inferred", created_at=recent)
         for _ in range(2):
             _insert_prediction(db, was_surfaced=1, created_at=recent)
 
@@ -260,8 +273,7 @@ class TestHealthAssessment:
 
         # 2 resolved, 6 unresolved = 25% resolution rate
         for _ in range(2):
-            _insert_prediction(db, was_accurate=1, resolved_at=resolved,
-                               user_response="inferred", created_at=recent)
+            _insert_prediction(db, was_accurate=1, resolved_at=resolved, user_response="inferred", created_at=recent)
         for _ in range(6):
             _insert_prediction(db, was_surfaced=1, created_at=recent)
 

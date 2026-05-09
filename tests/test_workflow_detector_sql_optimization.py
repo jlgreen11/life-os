@@ -28,34 +28,38 @@ class TestWorkflowDetectorSQLOptimization:
         # Create 5 emails from boss@company.com with responses within 2 hours
         for i in range(5):
             # Email received
-            event_store.store_event({
-                "id": f"email-recv-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "boss@company.com",
-                    "subject": f"Question {i}",
-                    "body_plain": "Quick question..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-recv-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "from_address": "boss@company.com",
+                        "subject": f"Question {i}",
+                        "body_plain": "Quick question...",
+                    },
+                    "metadata": {},
+                }
+            )
 
             # Response sent 1 hour later
-            event_store.store_event({
-                "id": f"email-sent-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": f"Re: Question {i}",
-                    "body_plain": "Here's the answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": f"Re: Question {i}",
+                        "body_plain": "Here's the answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -73,39 +77,35 @@ class TestWorkflowDetectorSQLOptimization:
         base_time = datetime.now(timezone.utc)
 
         # Create emails with different case variations
-        for i, sender in enumerate([
-            "Boss@Company.com",
-            "boss@company.com",
-            "BOSS@COMPANY.COM"
-        ]):
-            event_store.store_event({
-                "id": f"email-recv-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": sender,
-                    "subject": "Question",
-                    "body_plain": "Question..."
-                },
-                "metadata": {}
-            })
+        for i, sender in enumerate(["Boss@Company.com", "boss@company.com", "BOSS@COMPANY.COM"]):
+            event_store.store_event(
+                {
+                    "id": f"email-recv-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {"from_address": sender, "subject": "Question", "body_plain": "Question..."},
+                    "metadata": {},
+                }
+            )
 
             # Response
-            event_store.store_event({
-                "id": f"email-sent-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": [sender.lower()],  # Respond using lowercase
-                    "subject": "Re: Question",
-                    "body_plain": "Answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": [sender.lower()],  # Respond using lowercase
+                        "subject": "Re: Question",
+                        "body_plain": "Answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -122,49 +122,55 @@ class TestWorkflowDetectorSQLOptimization:
 
         # Sender with only 2 emails (below threshold)
         for i in range(2):
-            event_store.store_event({
-                "id": f"email-low-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "lowvolume@example.com",
-                    "subject": "Question",
-                    "body_plain": "Question..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-low-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "from_address": "lowvolume@example.com",
+                        "subject": "Question",
+                        "body_plain": "Question...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         # Sender with 3 emails (meets threshold)
         for i in range(3):
-            event_store.store_event({
-                "id": f"email-high-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "highvolume@example.com",
-                    "subject": "Question",
-                    "body_plain": "Question..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-high-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "from_address": "highvolume@example.com",
+                        "subject": "Question",
+                        "body_plain": "Question...",
+                    },
+                    "metadata": {},
+                }
+            )
 
-            event_store.store_event({
-                "id": f"email-sent-high-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["highvolume@example.com"],
-                    "subject": "Re: Question",
-                    "body_plain": "Answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-high-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["highvolume@example.com"],
+                        "subject": "Re: Question",
+                        "body_plain": "Answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -183,34 +189,38 @@ class TestWorkflowDetectorSQLOptimization:
             # Volume decreases: sender 0 gets 25 emails, sender 1 gets 24, etc.
             volume = 25 - sender_idx
             for email_idx in range(volume):
-                event_store.store_event({
-                    "id": f"email-{sender_idx}-{email_idx}",
-                    "type": "email.received",
-                    "source": "protonmail",
-                    "timestamp": (base_time + timedelta(days=email_idx)).isoformat(),
-                    "priority": "normal",
-                    "payload": {
-                        "from_address": f"sender{sender_idx}@example.com",
-                        "subject": "Question",
-                        "body_plain": "Question..."
-                    },
-                    "metadata": {}
-                })
+                event_store.store_event(
+                    {
+                        "id": f"email-{sender_idx}-{email_idx}",
+                        "type": "email.received",
+                        "source": "protonmail",
+                        "timestamp": (base_time + timedelta(days=email_idx)).isoformat(),
+                        "priority": "normal",
+                        "payload": {
+                            "from_address": f"sender{sender_idx}@example.com",
+                            "subject": "Question",
+                            "body_plain": "Question...",
+                        },
+                        "metadata": {},
+                    }
+                )
 
                 # Add response for workflow detection
-                event_store.store_event({
-                    "id": f"email-sent-{sender_idx}-{email_idx}",
-                    "type": "email.sent",
-                    "source": "protonmail",
-                    "timestamp": (base_time + timedelta(days=email_idx, hours=1)).isoformat(),
-                    "priority": "normal",
-                    "payload": {
-                        "to_addresses": [f"sender{sender_idx}@example.com"],
-                        "subject": "Re: Question",
-                        "body_plain": "Answer..."
-                    },
-                    "metadata": {}
-                })
+                event_store.store_event(
+                    {
+                        "id": f"email-sent-{sender_idx}-{email_idx}",
+                        "type": "email.sent",
+                        "source": "protonmail",
+                        "timestamp": (base_time + timedelta(days=email_idx, hours=1)).isoformat(),
+                        "priority": "normal",
+                        "payload": {
+                            "to_addresses": [f"sender{sender_idx}@example.com"],
+                            "subject": "Re: Question",
+                            "body_plain": "Answer...",
+                        },
+                        "metadata": {},
+                    }
+                )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -235,33 +245,33 @@ class TestWorkflowDetectorSQLOptimization:
 
         # Create 3 emails with responses at 1h, 2h, 3h (average 2h = 120min)
         for i, hours_to_respond in enumerate([1, 2, 3]):
-            event_store.store_event({
-                "id": f"email-recv-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "boss@company.com",
-                    "subject": "Question",
-                    "body_plain": "Question..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-recv-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {"from_address": "boss@company.com", "subject": "Question", "body_plain": "Question..."},
+                    "metadata": {},
+                }
+            )
 
-            event_store.store_event({
-                "id": f"email-sent-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=hours_to_respond)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": "Re: Question",
-                    "body_plain": "Answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=hours_to_respond)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": "Re: Question",
+                        "body_plain": "Answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -281,51 +291,53 @@ class TestWorkflowDetectorSQLOptimization:
 
         # Create 5 emails: 3 with responses within window, 2 with response outside window
         for i in range(5):
-            event_store.store_event({
-                "id": f"email-recv-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "boss@company.com",
-                    "subject": "Question",
-                    "body_plain": "Question..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-recv-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {"from_address": "boss@company.com", "subject": "Question", "body_plain": "Question..."},
+                    "metadata": {},
+                }
+            )
 
         # 3 responses within 4h window
         for i in range(3):
-            event_store.store_event({
-                "id": f"email-sent-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=2)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": "Re: Question",
-                    "body_plain": "Answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=2)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": "Re: Question",
+                        "body_plain": "Answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         # 2 responses outside 4h window (8 hours later)
         for i in range(3, 5):
-            event_store.store_event({
-                "id": f"email-sent-late-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=8)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": "Re: Question",
-                    "body_plain": "Answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-late-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=8)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": "Re: Question",
+                        "body_plain": "Answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -333,7 +345,7 @@ class TestWorkflowDetectorSQLOptimization:
         assert boss_workflow is not None
 
         # Success rate should be 3/5 = 60% (only 3 responses within window)
-        assert boss_workflow["success_rate"] == pytest.approx(3/5, rel=0.01)
+        assert boss_workflow["success_rate"] == pytest.approx(3 / 5, rel=0.01)
 
     def test_handles_multiple_action_types(self, db, user_model_store, event_store):
         """Test detection of workflows with multiple action types (email + task + calendar)."""
@@ -342,62 +354,64 @@ class TestWorkflowDetectorSQLOptimization:
 
         # Create 3 emails with varied responses
         for i in range(3):
-            event_store.store_event({
-                "id": f"email-recv-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "boss@company.com",
-                    "subject": "Meeting request",
-                    "body_plain": "Can we meet?"
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-recv-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "from_address": "boss@company.com",
+                        "subject": "Meeting request",
+                        "body_plain": "Can we meet?",
+                    },
+                    "metadata": {},
+                }
+            )
 
             # Create task (1h later)
-            event_store.store_event({
-                "id": f"task-{i}",
-                "type": "task.created",
-                "source": "task_manager",
-                "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "title": f"Prep for meeting {i}",
-                    "description": "Prepare materials"
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"task-{i}",
+                    "type": "task.created",
+                    "source": "task_manager",
+                    "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+                    "priority": "normal",
+                    "payload": {"title": f"Prep for meeting {i}", "description": "Prepare materials"},
+                    "metadata": {},
+                }
+            )
 
             # Create calendar event (2h later)
-            event_store.store_event({
-                "id": f"cal-{i}",
-                "type": "calendar.event.created",
-                "source": "caldav",
-                "timestamp": (base_time + timedelta(days=i, hours=2)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "title": f"Meeting {i}",
-                    "start_time": (base_time + timedelta(days=i+1)).isoformat()
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"cal-{i}",
+                    "type": "calendar.event.created",
+                    "source": "caldav",
+                    "timestamp": (base_time + timedelta(days=i, hours=2)).isoformat(),
+                    "priority": "normal",
+                    "payload": {"title": f"Meeting {i}", "start_time": (base_time + timedelta(days=i + 1)).isoformat()},
+                    "metadata": {},
+                }
+            )
 
             # Send response (3h later)
-            event_store.store_event({
-                "id": f"email-sent-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=3)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": "Re: Meeting request",
-                    "body_plain": "Meeting confirmed"
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=3)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": "Re: Meeting request",
+                        "body_plain": "Meeting confirmed",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
 
@@ -416,41 +430,46 @@ class TestWorkflowDetectorSQLOptimization:
     def test_performance_with_large_dataset(self, db, user_model_store, event_store):
         """Test that SQL optimization handles 1000+ emails efficiently (< 5 seconds)."""
         import time
+
         detector = WorkflowDetector(db, user_model_store)
         base_time = datetime.now(timezone.utc)
 
         # Create 1000 emails from 10 different senders
         for sender_idx in range(10):
             for email_idx in range(100):
-                event_store.store_event({
-                    "id": f"email-{sender_idx}-{email_idx}",
-                    "type": "email.received",
-                    "source": "protonmail",
-                    "timestamp": (base_time + timedelta(days=email_idx, hours=sender_idx)).isoformat(),
-                    "priority": "normal",
-                    "payload": {
-                        "from_address": f"sender{sender_idx}@example.com",
-                        "subject": "Question",
-                        "body_plain": "Question..."
-                    },
-                    "metadata": {}
-                })
+                event_store.store_event(
+                    {
+                        "id": f"email-{sender_idx}-{email_idx}",
+                        "type": "email.received",
+                        "source": "protonmail",
+                        "timestamp": (base_time + timedelta(days=email_idx, hours=sender_idx)).isoformat(),
+                        "priority": "normal",
+                        "payload": {
+                            "from_address": f"sender{sender_idx}@example.com",
+                            "subject": "Question",
+                            "body_plain": "Question...",
+                        },
+                        "metadata": {},
+                    }
+                )
 
                 # 50% get responses
                 if email_idx % 2 == 0:
-                    event_store.store_event({
-                        "id": f"email-sent-{sender_idx}-{email_idx}",
-                        "type": "email.sent",
-                        "source": "protonmail",
-                        "timestamp": (base_time + timedelta(days=email_idx, hours=sender_idx+1)).isoformat(),
-                        "priority": "normal",
-                        "payload": {
-                            "to_addresses": [f"sender{sender_idx}@example.com"],
-                            "subject": "Re: Question",
-                            "body_plain": "Answer..."
-                        },
-                        "metadata": {}
-                    })
+                    event_store.store_event(
+                        {
+                            "id": f"email-sent-{sender_idx}-{email_idx}",
+                            "type": "email.sent",
+                            "source": "protonmail",
+                            "timestamp": (base_time + timedelta(days=email_idx, hours=sender_idx + 1)).isoformat(),
+                            "priority": "normal",
+                            "payload": {
+                                "to_addresses": [f"sender{sender_idx}@example.com"],
+                                "subject": "Re: Question",
+                                "body_plain": "Answer...",
+                            },
+                            "metadata": {},
+                        }
+                    )
 
         # Measure detection time
         start = time.time()
@@ -470,33 +489,33 @@ class TestWorkflowDetectorSQLOptimization:
 
         # Create workflow pattern
         for i in range(3):
-            event_store.store_event({
-                "id": f"email-recv-{i}",
-                "type": "email.received",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "from_address": "boss@company.com",
-                    "subject": "Question",
-                    "body_plain": "Question..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-recv-{i}",
+                    "type": "email.received",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                    "priority": "normal",
+                    "payload": {"from_address": "boss@company.com", "subject": "Question", "body_plain": "Question..."},
+                    "metadata": {},
+                }
+            )
 
-            event_store.store_event({
-                "id": f"email-sent-{i}",
-                "type": "email.sent",
-                "source": "protonmail",
-                "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
-                "priority": "normal",
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": "Re: Question",
-                    "body_plain": "Answer..."
-                },
-                "metadata": {}
-            })
+            event_store.store_event(
+                {
+                    "id": f"email-sent-{i}",
+                    "type": "email.sent",
+                    "source": "protonmail",
+                    "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+                    "priority": "normal",
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": "Re: Question",
+                        "body_plain": "Answer...",
+                    },
+                    "metadata": {},
+                }
+            )
 
         workflows = detector.detect_workflows(lookback_days=30)
         stored_count = detector.store_workflows(workflows)

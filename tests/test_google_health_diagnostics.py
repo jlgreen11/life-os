@@ -54,7 +54,7 @@ def _make_http_error(status_code: int, reason: str = "error"):
     The mock has a resp attribute with a status field, matching the real
     HttpError interface so _classify_api_error can inspect it.
     """
-    exc = Exception(f"<HttpError {status_code} \"{reason}\">")
+    exc = Exception(f'<HttpError {status_code} "{reason}">')
     exc.resp = MagicMock()
     exc.resp.status = status_code
     return exc
@@ -66,10 +66,12 @@ async def test_health_check_returns_recovery_hint_on_403(connector):
     connector._gmail_service = MagicMock()
     connector._gmail_service.users().getProfile().execute.side_effect = _make_http_error(403, "Forbidden")
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=time.time() - 3600), \
-         patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value={"refresh_token": "tok123"}):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getmtime", return_value=time.time() - 3600),
+        patch("builtins.open", MagicMock()),
+        patch("json.load", return_value={"refresh_token": "tok123"}),
+    ):
         result = await connector.health_check()
 
     assert result["status"] == "error"
@@ -84,10 +86,12 @@ async def test_health_check_returns_recovery_hint_on_401(connector):
     connector._gmail_service = MagicMock()
     connector._gmail_service.users().getProfile().execute.side_effect = _make_http_error(401, "Unauthorized")
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=time.time() - 3600), \
-         patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value={"refresh_token": "tok123"}):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getmtime", return_value=time.time() - 3600),
+        patch("builtins.open", MagicMock()),
+        patch("json.load", return_value={"refresh_token": "tok123"}),
+    ):
         result = await connector.health_check()
 
     assert result["status"] == "error"
@@ -100,14 +104,14 @@ async def test_health_check_returns_recovery_hint_on_401(connector):
 async def test_health_check_returns_recovery_hint_on_connection_error(connector):
     """health_check returns recovery_hint with network_error when getProfile throws ConnectionError."""
     connector._gmail_service = MagicMock()
-    connector._gmail_service.users().getProfile().execute.side_effect = ConnectionError(
-        "Connection refused"
-    )
+    connector._gmail_service.users().getProfile().execute.side_effect = ConnectionError("Connection refused")
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=time.time() - 3600), \
-         patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value={"refresh_token": "tok123"}):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getmtime", return_value=time.time() - 3600),
+        patch("builtins.open", MagicMock()),
+        patch("json.load", return_value={"refresh_token": "tok123"}),
+    ):
         result = await connector.health_check()
 
     assert result["status"] == "error"
@@ -122,10 +126,12 @@ async def test_health_check_returns_full_diagnostics_on_mid_session_failure(conn
     connector._gmail_service = MagicMock()
     connector._gmail_service.users().getProfile().execute.side_effect = _make_http_error(403, "Forbidden")
 
-    with patch("os.path.exists", return_value=True), \
-         patch("os.path.getmtime", return_value=time.time() - 7200), \
-         patch("builtins.open", MagicMock()), \
-         patch("json.load", return_value={"refresh_token": "tok123"}):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.getmtime", return_value=time.time() - 7200),
+        patch("builtins.open", MagicMock()),
+        patch("json.load", return_value={"refresh_token": "tok123"}),
+    ):
         result = await connector.health_check()
 
     # Full diagnostics should be present (from _build_health_diagnostics)

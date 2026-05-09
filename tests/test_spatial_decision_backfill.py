@@ -35,8 +35,7 @@ from storage.user_model_store import UserModelStore
 # ---------------------------------------------------------------------------
 
 
-def _insert_event(db, event_id: str, event_type: str, timestamp: str,
-                  payload: dict, source: str = "google") -> None:
+def _insert_event(db, event_id: str, event_type: str, timestamp: str, payload: dict, source: str = "google") -> None:
     """Insert a test event directly into events.db."""
     with db.get_connection("events") as conn:
         conn.execute(
@@ -46,72 +45,104 @@ def _insert_event(db, event_id: str, event_type: str, timestamp: str,
         )
 
 
-def _calendar_event_with_location(db, event_id: str, hours_ago: int,
-                                  location: str = "Conference Room A") -> None:
+def _calendar_event_with_location(db, event_id: str, hours_ago: int, location: str = "Conference Room A") -> None:
     """Insert a synthetic calendar.event.created event with a location field."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "calendar.event.created", ts, {
-        "title": "Team standup",
-        "start_time": ts,
-        "end_time": (datetime.now(timezone.utc) - timedelta(hours=hours_ago - 1)).isoformat(),
-        "location": location,
-        "attendees": ["alice@example.com"],
-    })
+    _insert_event(
+        db,
+        event_id,
+        "calendar.event.created",
+        ts,
+        {
+            "title": "Team standup",
+            "start_time": ts,
+            "end_time": (datetime.now(timezone.utc) - timedelta(hours=hours_ago - 1)).isoformat(),
+            "location": location,
+            "attendees": ["alice@example.com"],
+        },
+    )
 
 
-def _task_created(db, event_id: str, hours_ago: int,
-                  title: str = "Review PR") -> None:
+def _task_created(db, event_id: str, hours_ago: int, title: str = "Review PR") -> None:
     """Insert a synthetic task.created event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "task.created", ts, {
-        "title": title,
-        "description": "Review the pull request for the new feature",
-        "created_at": ts,
-    })
+    _insert_event(
+        db,
+        event_id,
+        "task.created",
+        ts,
+        {
+            "title": title,
+            "description": "Review the pull request for the new feature",
+            "created_at": ts,
+        },
+    )
 
 
-def _task_completed(db, event_id: str, hours_ago: int,
-                    title: str = "Review PR") -> None:
+def _task_completed(db, event_id: str, hours_ago: int, title: str = "Review PR") -> None:
     """Insert a synthetic task.completed event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "task.completed", ts, {
-        "title": title,
-        "completed_at": ts,
-        "created_at": (datetime.now(timezone.utc) - timedelta(hours=hours_ago + 2)).isoformat(),
-    })
+    _insert_event(
+        db,
+        event_id,
+        "task.completed",
+        ts,
+        {
+            "title": title,
+            "completed_at": ts,
+            "created_at": (datetime.now(timezone.utc) - timedelta(hours=hours_ago + 2)).isoformat(),
+        },
+    )
 
 
-def _email_sent(db, event_id: str, hours_ago: int,
-                body: str = "Thanks for the update, I will review it.") -> None:
+def _email_sent(db, event_id: str, hours_ago: int, body: str = "Thanks for the update, I will review it.") -> None:
     """Insert a synthetic email.sent event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "email.sent", ts, {
-        "to_addresses": ["alice@example.com"],
-        "subject": "Re: Project update",
-        "body": body,
-        "body_plain": body,
-        "sent_at": ts,
-    })
+    _insert_event(
+        db,
+        event_id,
+        "email.sent",
+        ts,
+        {
+            "to_addresses": ["alice@example.com"],
+            "subject": "Re: Project update",
+            "body": body,
+            "body_plain": body,
+            "sent_at": ts,
+        },
+    )
 
 
-def _message_sent(db, event_id: str, hours_ago: int,
-                  body: str = "Got it, working on it now.") -> None:
+def _message_sent(db, event_id: str, hours_ago: int, body: str = "Got it, working on it now.") -> None:
     """Insert a synthetic message.sent event."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "message.sent", ts, {
-        "body": body,
-        "body_plain": body,
-    }, source="signal")
+    _insert_event(
+        db,
+        event_id,
+        "message.sent",
+        ts,
+        {
+            "body": body,
+            "body_plain": body,
+        },
+        source="signal",
+    )
 
 
 def _calendar_event_no_location(db, event_id: str, hours_ago: int) -> None:
     """Insert a calendar.event.created event without location (used for decision events)."""
     ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
-    _insert_event(db, event_id, "calendar.event.created", ts, {
-        "title": "Team sync",
-        "start_time": ts,
-        "attendees": ["bob@example.com"],
-    })
+    _insert_event(
+        db,
+        event_id,
+        "calendar.event.created",
+        ts,
+        {
+            "title": "Team sync",
+            "start_time": ts,
+            "attendees": ["bob@example.com"],
+        },
+    )
 
 
 def _insert_diverse_decision_events(db, count: int = 25) -> None:
@@ -127,11 +158,9 @@ def _insert_diverse_decision_events(db, count: int = 25) -> None:
         elif i % 5 == 1:
             _task_completed(db, f"dec-td-{i}", hours, title=f"Task {i}")
         elif i % 5 == 2:
-            _email_sent(db, f"dec-es-{i}", hours,
-                        body="I've decided to proceed with option A for the deployment.")
+            _email_sent(db, f"dec-es-{i}", hours, body="I've decided to proceed with option A for the deployment.")
         elif i % 5 == 3:
-            _message_sent(db, f"dec-ms-{i}", hours,
-                          body="Let's go ahead with the new design.")
+            _message_sent(db, f"dec-ms-{i}", hours, body="Let's go ahead with the new design.")
         else:
             _calendar_event_no_location(db, f"dec-cal-{i}", hours)
 
@@ -139,12 +168,17 @@ def _insert_diverse_decision_events(db, count: int = 25) -> None:
 def _insert_spatial_events(db, count: int = 15) -> None:
     """Insert calendar events with location data for spatial backfill testing."""
     locations = [
-        "Conference Room A", "Main Office", "Coffee Shop",
-        "Conference Room B", "Home Office",
+        "Conference Room A",
+        "Main Office",
+        "Coffee Shop",
+        "Conference Room B",
+        "Home Office",
     ]
     for i in range(count):
         _calendar_event_with_location(
-            db, f"spatial-{i}", hours_ago=i + 1,
+            db,
+            f"spatial-{i}",
+            hours_ago=i + 1,
             location=locations[i % len(locations)],
         )
 
@@ -318,8 +352,7 @@ async def test_startup_triggers_spatial_backfill_when_profile_empty(db):
         "events_processed": 15,
         "elapsed_seconds": 0.1,
     }
-    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile",
-               return_value=fake_stats):
+    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile", return_value=fake_stats):
         await life_os._backfill_spatial_profile_if_needed()
 
     # No exception = pass. The method completed successfully.
@@ -349,8 +382,7 @@ async def test_startup_skips_spatial_backfill_when_already_populated(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile", side_effect=_mock_backfill):
         await life_os._backfill_spatial_profile_if_needed()
 
     assert len(called) == 0, "Spatial backfill should be skipped when profile already has data"
@@ -378,8 +410,7 @@ async def test_startup_skips_spatial_backfill_on_insufficient_events(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile", side_effect=_mock_backfill):
         await life_os._backfill_spatial_profile_if_needed()
 
     assert len(called) == 0, "Spatial backfill should be skipped when event count < 10"
@@ -403,8 +434,7 @@ async def test_spatial_backfill_failure_does_not_crash_startup(db):
     def _crash(**kwargs):
         raise RuntimeError("Simulated spatial backfill crash")
 
-    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile",
-               side_effect=_crash):
+    with patch("scripts.backfill_spatial_profile.backfill_spatial_profile", side_effect=_crash):
         # Should NOT raise — fail-open design
         await life_os._backfill_spatial_profile_if_needed()
 
@@ -434,8 +464,7 @@ async def test_startup_triggers_decision_backfill_when_profile_empty(db):
         "events_processed": 25,
         "elapsed_seconds": 0.1,
     }
-    with patch("scripts.backfill_decision_profile.backfill_decision_profile",
-               return_value=fake_stats):
+    with patch("scripts.backfill_decision_profile.backfill_decision_profile", return_value=fake_stats):
         await life_os._backfill_decision_profile_if_needed()
 
     # No exception = pass. The method completed successfully.
@@ -465,8 +494,7 @@ async def test_startup_skips_decision_backfill_when_already_populated(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_decision_profile.backfill_decision_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_decision_profile.backfill_decision_profile", side_effect=_mock_backfill):
         await life_os._backfill_decision_profile_if_needed()
 
     assert len(called) == 0, "Decision backfill should be skipped when profile already has data"
@@ -495,8 +523,7 @@ async def test_startup_skips_decision_backfill_on_insufficient_events(db):
         called.append(True)
         return {}
 
-    with patch("scripts.backfill_decision_profile.backfill_decision_profile",
-               side_effect=_mock_backfill):
+    with patch("scripts.backfill_decision_profile.backfill_decision_profile", side_effect=_mock_backfill):
         await life_os._backfill_decision_profile_if_needed()
 
     assert len(called) == 0, "Decision backfill should be skipped when event count < 20"
@@ -520,7 +547,6 @@ async def test_decision_backfill_failure_does_not_crash_startup(db):
     def _crash(**kwargs):
         raise RuntimeError("Simulated decision backfill crash")
 
-    with patch("scripts.backfill_decision_profile.backfill_decision_profile",
-               side_effect=_crash):
+    with patch("scripts.backfill_decision_profile.backfill_decision_profile", side_effect=_crash):
         # Should NOT raise — fail-open design
         await life_os._backfill_decision_profile_if_needed()

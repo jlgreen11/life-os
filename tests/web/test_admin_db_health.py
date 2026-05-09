@@ -46,9 +46,12 @@ def _make_app(db) -> TestClient:
     life_os.connectors = []
     life_os.event_bus.is_connected = True
     life_os.vector_store.get_stats.return_value = {"document_count": 0}
-    life_os.prediction_engine.get_diagnostics = AsyncMock(return_value={
-        "prediction_types": {}, "overall": {"health": "unknown"},
-    })
+    life_os.prediction_engine.get_diagnostics = AsyncMock(
+        return_value={
+            "prediction_types": {},
+            "overall": {"health": "unknown"},
+        }
+    )
     life_os.semantic_fact_inferrer.run_all_inference.return_value = None
 
     # Wire backfill methods as no-op async callables

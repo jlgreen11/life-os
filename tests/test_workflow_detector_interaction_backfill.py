@@ -39,9 +39,7 @@ def _relax_interaction_type_constraint(db):
         for col in col_info:
             if col[1] == "interaction_type" and col[3] == 0:  # notnull == 0
                 return  # Already relaxed
-        row = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes'"
-        ).fetchone()
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes'").fetchone()
         if not row:
             return
         original_sql = row[0]
@@ -198,8 +196,10 @@ class TestBackfillCalledBeforeDetection:
             call_order.append("email")
             return original_email(lookback_days)
 
-        with patch.object(detector, "_backfill_stale_interaction_types", side_effect=mock_backfill), \
-             patch.object(detector, "_detect_email_workflows", side_effect=mock_email):
+        with (
+            patch.object(detector, "_backfill_stale_interaction_types", side_effect=mock_backfill),
+            patch.object(detector, "_detect_email_workflows", side_effect=mock_email),
+        ):
             detector.detect_workflows(lookback_days=30)
 
         assert "backfill" in call_order

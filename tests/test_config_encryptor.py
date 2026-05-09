@@ -97,12 +97,7 @@ class TestConfigEncryptorEncryption:
     def test_encrypts_multiple_sensitive_fields(self, tmp_path):
         """All fields in sensitive_fields set should be encrypted."""
         encryptor = ConfigEncryptor(data_dir=str(tmp_path))
-        config = {
-            "api_key": "key123",
-            "password": "pass456",
-            "username": "user",
-            "token": "token789"
-        }
+        config = {"api_key": "key123", "password": "pass456", "username": "user", "token": "token789"}
 
         encrypted = encryptor.encrypt_config(config, {"api_key", "password", "token"})
 
@@ -180,11 +175,7 @@ class TestConfigEncryptorDecryption:
     def test_decrypts_multiple_fields(self, tmp_path):
         """All encrypted fields should be decrypted."""
         encryptor = ConfigEncryptor(data_dir=str(tmp_path))
-        config = {
-            "api_key": "key123",
-            "password": "pass456",
-            "username": "user"
-        }
+        config = {"api_key": "key123", "password": "pass456", "username": "user"}
 
         encrypted = encryptor.encrypt_config(config, {"api_key", "password"})
         decrypted = encryptor.decrypt_config(encrypted, {"api_key", "password"})
@@ -256,12 +247,7 @@ class TestConfigEncryptorMasking:
     def test_masks_multiple_sensitive_fields(self, tmp_path):
         """All fields in sensitive_fields should be masked."""
         encryptor = ConfigEncryptor(data_dir=str(tmp_path))
-        config = {
-            "api_key": "key123",
-            "password": "pass456",
-            "username": "user",
-            "token": "token789"
-        }
+        config = {"api_key": "key123", "password": "pass456", "username": "user", "token": "token789"}
 
         masked = encryptor.mask_config(config, {"api_key", "password", "token"})
 
@@ -307,12 +293,7 @@ class TestConfigEncryptorRoundTrip:
     def test_encrypt_then_decrypt_restores_original_value(self, tmp_path):
         """Full round-trip should restore exact original value."""
         encryptor = ConfigEncryptor(data_dir=str(tmp_path))
-        original = {
-            "api_key": "my_secret_key_123",
-            "password": "P@ssw0rd!",
-            "username": "admin",
-            "port": 5432
-        }
+        original = {"api_key": "my_secret_key_123", "password": "P@ssw0rd!", "username": "admin", "port": 5432}
 
         encrypted = encryptor.encrypt_config(original, {"api_key", "password"})
         decrypted = encryptor.decrypt_config(encrypted, {"api_key", "password"})
@@ -343,7 +324,7 @@ class TestConfigEncryptorRoundTrip:
             "client_secret": "very_secret_token_456",
             "refresh_token": "another_secret_789",
             "sync_interval": 300,
-            "scopes": ["gmail", "calendar", "contacts"]
+            "scopes": ["gmail", "calendar", "contacts"],
         }
         sensitive = {"client_secret", "refresh_token"}
 

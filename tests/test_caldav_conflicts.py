@@ -29,21 +29,13 @@ async def test_detect_conflicts_with_overlapping_events(db, event_store):
         "calendars": ["Personal"],
     }
 
-    connector = CalDAVConnector(
-        event_bus=mock_event_bus,
-        db=db,
-        config=config
-    )
+    connector = CalDAVConnector(event_bus=mock_event_bus, db=db, config=config)
 
     # Inject the publish_event method to track published events
     published_events = []
 
     async def track_publish(event_type, payload, **kwargs):
-        published_events.append({
-            "type": event_type,
-            "payload": payload,
-            **kwargs
-        })
+        published_events.append({"type": event_type, "payload": payload, **kwargs})
 
     connector.publish_event = track_publish
 
@@ -52,41 +44,49 @@ async def test_detect_conflicts_with_overlapping_events(db, event_store):
 
     # Event 1: 10:00 - 11:00
     event1_id = str(uuid.uuid4())
-    event_store.store_event({
-        "id": event1_id,
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-1",
-            "calendar_id": "Personal",
-            "title": "Team Meeting",
-            "start_time": (now + timedelta(hours=1)).isoformat(),
-            "end_time": (now + timedelta(hours=2)).isoformat(),
-            "is_all_day": False,
-            "location": "Conference Room A",
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": event1_id,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-1",
+                    "calendar_id": "Personal",
+                    "title": "Team Meeting",
+                    "start_time": (now + timedelta(hours=1)).isoformat(),
+                    "end_time": (now + timedelta(hours=2)).isoformat(),
+                    "is_all_day": False,
+                    "location": "Conference Room A",
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Event 2: 10:30 - 11:30 (overlaps with Event 1)
     event2_id = str(uuid.uuid4())
-    event_store.store_event({
-        "id": event2_id,
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-2",
-            "calendar_id": "Personal",
-            "title": "Client Call",
-            "start_time": (now + timedelta(hours=1, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
-            "is_all_day": False,
-            "location": "Phone",
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": event2_id,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-2",
+                    "calendar_id": "Personal",
+                    "title": "Client Call",
+                    "start_time": (now + timedelta(hours=1, minutes=30)).isoformat(),
+                    "end_time": (now + timedelta(hours=2, minutes=30)).isoformat(),
+                    "is_all_day": False,
+                    "location": "Phone",
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run conflict detection
     await connector._detect_conflicts()
@@ -119,20 +119,12 @@ async def test_detect_conflicts_no_overlap(db, event_store):
         "password": "test",
     }
 
-    connector = CalDAVConnector(
-        event_bus=mock_event_bus,
-        db=db,
-        config=config
-    )
+    connector = CalDAVConnector(event_bus=mock_event_bus, db=db, config=config)
 
     published_events = []
 
     async def track_publish(event_type, payload, **kwargs):
-        published_events.append({
-            "type": event_type,
-            "payload": payload,
-            **kwargs
-        })
+        published_events.append({"type": event_type, "payload": payload, **kwargs})
 
     connector.publish_event = track_publish
 
@@ -140,38 +132,46 @@ async def test_detect_conflicts_no_overlap(db, event_store):
     now = datetime.now(timezone.utc)
 
     # Event 1: 10:00 - 11:00
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-1",
-            "calendar_id": "Personal",
-            "title": "Morning Meeting",
-            "start_time": (now + timedelta(hours=1)).isoformat(),
-            "end_time": (now + timedelta(hours=2)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-1",
+                    "calendar_id": "Personal",
+                    "title": "Morning Meeting",
+                    "start_time": (now + timedelta(hours=1)).isoformat(),
+                    "end_time": (now + timedelta(hours=2)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Event 2: 14:00 - 15:00 (no overlap)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-2",
-            "calendar_id": "Personal",
-            "title": "Afternoon Meeting",
-            "start_time": (now + timedelta(hours=5)).isoformat(),
-            "end_time": (now + timedelta(hours=6)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-2",
+                    "calendar_id": "Personal",
+                    "title": "Afternoon Meeting",
+                    "start_time": (now + timedelta(hours=5)).isoformat(),
+                    "end_time": (now + timedelta(hours=6)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run conflict detection
     await connector._detect_conflicts()
@@ -192,20 +192,12 @@ async def test_detect_conflicts_skips_all_day_events(db, event_store):
         "password": "test",
     }
 
-    connector = CalDAVConnector(
-        event_bus=mock_event_bus,
-        db=db,
-        config=config
-    )
+    connector = CalDAVConnector(event_bus=mock_event_bus, db=db, config=config)
 
     published_events = []
 
     async def track_publish(event_type, payload, **kwargs):
-        published_events.append({
-            "type": event_type,
-            "payload": payload,
-            **kwargs
-        })
+        published_events.append({"type": event_type, "payload": payload, **kwargs})
 
     connector.publish_event = track_publish
 
@@ -213,21 +205,25 @@ async def test_detect_conflicts_skips_all_day_events(db, event_store):
 
     # Create two all-day events on the same day
     for i in range(2):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "calendar.event.created",
-            "source": "caldav",
-            "timestamp": now.isoformat(),
-            "payload": json.dumps({
-                "event_id": f"cal-event-{i}",
-                "calendar_id": "Personal",
-                "title": f"All Day Event {i}",
-                "start_time": now.date().isoformat(),
-                "end_time": now.date().isoformat(),
-                "is_all_day": True,
-            }),
-            "metadata": json.dumps({}),
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "calendar.event.created",
+                "source": "caldav",
+                "timestamp": now.isoformat(),
+                "payload": json.dumps(
+                    {
+                        "event_id": f"cal-event-{i}",
+                        "calendar_id": "Personal",
+                        "title": f"All Day Event {i}",
+                        "start_time": now.date().isoformat(),
+                        "end_time": now.date().isoformat(),
+                        "is_all_day": True,
+                    }
+                ),
+                "metadata": json.dumps({}),
+            }
+        )
 
     # Run conflict detection
     await connector._detect_conflicts()
@@ -248,58 +244,58 @@ async def test_detect_conflicts_handles_edge_touching(db, event_store):
         "password": "test",
     }
 
-    connector = CalDAVConnector(
-        event_bus=mock_event_bus,
-        db=db,
-        config=config
-    )
+    connector = CalDAVConnector(event_bus=mock_event_bus, db=db, config=config)
 
     published_events = []
 
     async def track_publish(event_type, payload, **kwargs):
-        published_events.append({
-            "type": event_type,
-            "payload": payload,
-            **kwargs
-        })
+        published_events.append({"type": event_type, "payload": payload, **kwargs})
 
     connector.publish_event = track_publish
 
     now = datetime.now(timezone.utc)
 
     # Event 1: 10:00 - 11:00
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-1",
-            "calendar_id": "Personal",
-            "title": "First Meeting",
-            "start_time": (now + timedelta(hours=1)).isoformat(),
-            "end_time": (now + timedelta(hours=2)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-1",
+                    "calendar_id": "Personal",
+                    "title": "First Meeting",
+                    "start_time": (now + timedelta(hours=1)).isoformat(),
+                    "end_time": (now + timedelta(hours=2)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Event 2: 11:00 - 12:00 (starts exactly when Event 1 ends)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-2",
-            "calendar_id": "Personal",
-            "title": "Second Meeting",
-            "start_time": (now + timedelta(hours=2)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-2",
+                    "calendar_id": "Personal",
+                    "title": "Second Meeting",
+                    "start_time": (now + timedelta(hours=2)).isoformat(),
+                    "end_time": (now + timedelta(hours=3)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run conflict detection
     await connector._detect_conflicts()
@@ -320,75 +316,79 @@ async def test_detect_conflicts_with_multiple_overlaps(db, event_store):
         "password": "test",
     }
 
-    connector = CalDAVConnector(
-        event_bus=mock_event_bus,
-        db=db,
-        config=config
-    )
+    connector = CalDAVConnector(event_bus=mock_event_bus, db=db, config=config)
 
     published_events = []
 
     async def track_publish(event_type, payload, **kwargs):
-        published_events.append({
-            "type": event_type,
-            "payload": payload,
-            **kwargs
-        })
+        published_events.append({"type": event_type, "payload": payload, **kwargs})
 
     connector.publish_event = track_publish
 
     now = datetime.now(timezone.utc)
 
     # Event 1: 10:00 - 12:00
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-1",
-            "calendar_id": "Personal",
-            "title": "Long Meeting",
-            "start_time": (now + timedelta(hours=1)).isoformat(),
-            "end_time": (now + timedelta(hours=3)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-1",
+                    "calendar_id": "Personal",
+                    "title": "Long Meeting",
+                    "start_time": (now + timedelta(hours=1)).isoformat(),
+                    "end_time": (now + timedelta(hours=3)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Event 2: 10:30 - 11:00 (overlaps with Event 1)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-2",
-            "calendar_id": "Personal",
-            "title": "Quick Call",
-            "start_time": (now + timedelta(hours=1, minutes=30)).isoformat(),
-            "end_time": (now + timedelta(hours=2)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-2",
+                    "calendar_id": "Personal",
+                    "title": "Quick Call",
+                    "start_time": (now + timedelta(hours=1, minutes=30)).isoformat(),
+                    "end_time": (now + timedelta(hours=2)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Event 3: 11:15 - 11:45 (overlaps with both Event 1 and Event 2)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": now.isoformat(),
-        "payload": json.dumps({
-            "event_id": "cal-event-3",
-            "calendar_id": "Personal",
-            "title": "Another Call",
-            "start_time": (now + timedelta(hours=2, minutes=15)).isoformat(),
-            "end_time": (now + timedelta(hours=2, minutes=45)).isoformat(),
-            "is_all_day": False,
-        }),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": now.isoformat(),
+            "payload": json.dumps(
+                {
+                    "event_id": "cal-event-3",
+                    "calendar_id": "Personal",
+                    "title": "Another Call",
+                    "start_time": (now + timedelta(hours=2, minutes=15)).isoformat(),
+                    "end_time": (now + timedelta(hours=2, minutes=45)).isoformat(),
+                    "is_all_day": False,
+                }
+            ),
+            "metadata": json.dumps({}),
+        }
+    )
 
     # Run conflict detection
     await connector._detect_conflicts()
@@ -415,20 +415,12 @@ async def test_detect_conflicts_with_no_events(db, event_store):
         "password": "test",
     }
 
-    connector = CalDAVConnector(
-        event_bus=mock_event_bus,
-        db=db,
-        config=config
-    )
+    connector = CalDAVConnector(event_bus=mock_event_bus, db=db, config=config)
 
     published_events = []
 
     async def track_publish(event_type, payload, **kwargs):
-        published_events.append({
-            "type": event_type,
-            "payload": payload,
-            **kwargs
-        })
+        published_events.append({"type": event_type, "payload": payload, **kwargs})
 
     connector.publish_event = track_publish
 

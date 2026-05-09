@@ -73,12 +73,14 @@ def test_backfill_email_received(temp_db):
             "type": "email.received",
             "source": "protonmail",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": json.dumps({
-                "from_address": "Alice@Example.com",  # Mixed case to test LOWER()
-                "to_addresses": "user@example.com",
-                "subject": "Test Subject",
-                "body": "Test body",
-            }),
+            "payload": json.dumps(
+                {
+                    "from_address": "Alice@Example.com",  # Mixed case to test LOWER()
+                    "to_addresses": "user@example.com",
+                    "subject": "Test Subject",
+                    "body": "Test body",
+                }
+            ),
         }
         for _ in range(5)
     ]
@@ -120,12 +122,14 @@ def test_backfill_email_sent(temp_db):
             "type": "email.sent",
             "source": "protonmail",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": json.dumps({
-                "from_address": "User@Example.com",
-                "to_addresses": "Bob@Example.com",
-                "subject": "Reply",
-                "body": "Reply body",
-            }),
+            "payload": json.dumps(
+                {
+                    "from_address": "User@Example.com",
+                    "to_addresses": "Bob@Example.com",
+                    "subject": "Reply",
+                    "body": "Reply body",
+                }
+            ),
         }
         for _ in range(3)
     ]

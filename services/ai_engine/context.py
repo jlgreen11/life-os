@@ -217,6 +217,7 @@ class ContextAssembler:
             emotional_valence=0.73 (positive), social_battery=0.60, trend=stable
             (confidence: 0.90)
         """
+
         def _label(value: float, dim: str) -> str:
             """Convert a 0-1 scalar to a human-readable label.
 
@@ -277,8 +278,7 @@ class ContextAssembler:
 
         return "User mood context: " + ", ".join(parts)
 
-    def assemble_draft_context(self, contact_id: str, channel: str,
-                               incoming_message: str) -> str:
+    def assemble_draft_context(self, contact_id: str, channel: str, incoming_message: str) -> str:
         """Build context for drafting a reply.
 
         Combines five layers of information to help the LLM write a reply that
@@ -303,9 +303,7 @@ class ContextAssembler:
         # this channel. Templates are ranked by samples_analyzed so the most
         # data-rich template wins. The OR query allows fallback from a
         # contact-specific template to a channel-wide default.
-        template = self.ums.get_communication_template(
-            contact_id=contact_id, channel=channel
-        )
+        template = self.ums.get_communication_template(contact_id=contact_id, channel=channel)
 
         # Surface all style dimensions the LLM needs to replicate:
         # formality level, greeting/closing phrases, message length,
@@ -367,10 +365,7 @@ class ContextAssembler:
             if contact_avg and contact_avg.get("samples_count", 0) >= 3:
                 # Use per-contact style — more specific than global average.
                 avg = contact_avg
-                style_label = (
-                    f"User's style with this contact "
-                    f"({contact_avg['samples_count']} msgs)"
-                )
+                style_label = f"User's style with this contact ({contact_avg['samples_count']} msgs)"
             else:
                 # No per-contact data yet — fall back to global baseline.
                 avg = global_avg
@@ -449,7 +444,7 @@ class ContextAssembler:
             # Oxford comma preference — guide list formatting.
             oxford = avg.get("oxford_comma_preference")
             if oxford is not None:
-                parts.append(f'Oxford comma: {"yes" if oxford else "no"}')
+                parts.append(f"Oxford comma: {'yes' if oxford else 'no'}")
 
             # Capitalization style — guide casing conventions.
             cap_style = avg.get("capitalization_style")
@@ -477,13 +472,9 @@ class ContextAssembler:
             common_greetings = ling_profile["data"].get("common_greetings", [])
             common_closings = ling_profile["data"].get("common_closings", [])
             if common_greetings:
-                parts.append(
-                    "User's typical greetings: " + ", ".join(common_greetings[:3])
-                )
+                parts.append("User's typical greetings: " + ", ".join(common_greetings[:3]))
             if common_closings:
-                parts.append(
-                    "User's typical closings: " + ", ".join(common_closings[:3])
-                )
+                parts.append("User's typical closings: " + ", ".join(common_closings[:3]))
 
         # --- Layer 4: Contact's inbound writing style ---
         # Shows how *this specific contact* writes to the user (formality, hedge
@@ -496,15 +487,9 @@ class ContextAssembler:
         try:
             inbound_profile = self.ums.get_signal_profile("linguistic_inbound")
             if inbound_profile:
-                contact_avg = (
-                    inbound_profile["data"]
-                    .get("per_contact_averages", {})
-                    .get(contact_id)
-                )
+                contact_avg = inbound_profile["data"].get("per_contact_averages", {}).get(contact_id)
                 if contact_avg:
-                    contact_parts = [
-                        f"formality={contact_avg.get('formality', 0.5):.2f}"
-                    ]
+                    contact_parts = [f"formality={contact_avg.get('formality', 0.5):.2f}"]
                     c_question = contact_avg.get("question_rate", 0.0)
                     if c_question > 0.05:
                         contact_parts.append(f"question_rate={c_question:.2f}")
@@ -516,13 +501,8 @@ class ContextAssembler:
                         contact_parts.append(f"emoji_rate={c_emoji:.3f}")
                     c_sentence = contact_avg.get("avg_sentence_length", 0.0)
                     if c_sentence > 0:
-                        contact_parts.append(
-                            f"avg_sentence_length={c_sentence:.0f}w"
-                        )
-                    parts.append(
-                        f"Contact's writing style ({contact_id}): "
-                        + ", ".join(contact_parts)
-                    )
+                        contact_parts.append(f"avg_sentence_length={c_sentence:.0f}w")
+                    parts.append(f"Contact's writing style ({contact_id}): " + ", ".join(contact_parts))
         except Exception:
             # Fail-open: inbound style is a nice-to-have.  If the profile is
             # missing or malformed, the draft still has all outbound style data.
@@ -568,16 +548,11 @@ class ContextAssembler:
                         topic_list = json.loads(ep["topics"] or "[]")
                     except (ValueError, TypeError):
                         topic_list = []
-                    topic_str = (
-                        " [topics: " + ", ".join(topic_list[:3]) + "]"
-                        if topic_list else ""
-                    )
+                    topic_str = " [topics: " + ", ".join(topic_list[:3]) + "]" if topic_list else ""
 
                     interaction = ep["interaction_type"] or "unknown"
                     summary = ep["content_summary"] or ""
-                    history_lines.append(
-                        f"  {ts_short} ({interaction}): {summary}{topic_str}"
-                    )
+                    history_lines.append(f"  {ts_short} ({interaction}): {summary}{topic_str}")
                 parts.append("\n".join(history_lines))
         except Exception:
             # Fail-open: conversation history is enrichment, not critical path.
@@ -646,8 +621,7 @@ class ContextAssembler:
             facts = self.ums.get_semantic_facts(min_confidence=0.6)
             if facts:
                 fact_lines = [f"- {f['key']}: {f['value']}" for f in facts[:15]]
-                parts.append("Known facts about user (use for disambiguation):\n"
-                             + "\n".join(fact_lines))
+                parts.append("Known facts about user (use for disambiguation):\n" + "\n".join(fact_lines))
                 facts_found = True
         except Exception:
             # Fail-open: missing facts degrade search quality slightly but
@@ -733,8 +707,7 @@ class ContextAssembler:
             status = "overdue" if days_since > freq * 1.5 else "on track"
             freq_int = int(freq)
             lines.append(
-                f"- {row['name']}: last contact {days_since} days ago "
-                f"(typical: every {freq_int} days) -- {status}"
+                f"- {row['name']}: last contact {days_since} days ago (typical: every {freq_int} days) -- {status}"
             )
 
         if not lines:
@@ -953,8 +926,7 @@ class ContextAssembler:
 
                 if tasks:
                     # Format each task as a concise bullet with priority tag and due date.
-                    lines = [f"- [{t['priority']}] {t['title']} (due: {t['due_date'] or 'no date'})"
-                             for t in tasks]
+                    lines = [f"- [{t['priority']}] {t['title']} (due: {t['due_date'] or 'no date'})" for t in tasks]
                     return "Pending tasks:\n" + "\n".join(lines)
                 return "Pending tasks: none"
         except Exception as e:
@@ -1141,9 +1113,7 @@ class ContextAssembler:
             # fraction of how often the routine fires in the expected window;
             # 0.5 means it triggers at least half the time, which is enough
             # to describe it as a genuine habit.
-            quality_routines = [
-                r for r in routines if (r.get("consistency_score") or 0.0) >= 0.5
-            ][:5]
+            quality_routines = [r for r in routines if (r.get("consistency_score") or 0.0) >= 0.5][:5]
 
             if not quality_routines:
                 return ""
@@ -1170,10 +1140,7 @@ class ContextAssembler:
                 line = f"- {label} ({', '.join(parts_inner)})"
                 lines.append(line)
 
-            return (
-                "Observed behavioral routines (Layer 3 Procedural Memory):\n"
-                + "\n".join(lines)
-            )
+            return "Observed behavioral routines (Layer 3 Procedural Memory):\n" + "\n".join(lines)
         except Exception:
             # Fail-open: missing routines degrade the briefing slightly but
             # must never prevent it from generating a response.
@@ -1328,26 +1295,17 @@ class ContextAssembler:
         if values_facts:
             lines.append("  Values:")
             for f in values_facts:
-                lines.append(
-                    f"  - {_label(f['key'])}: {_fmt_value(f['value'])}"
-                    f" (confidence: {f['confidence']:.2f})"
-                )
+                lines.append(f"  - {_label(f['key'])}: {_fmt_value(f['value'])} (confidence: {f['confidence']:.2f})")
 
         if behavioral_facts:
             lines.append("  Behavioral patterns:")
             for f in behavioral_facts:
-                lines.append(
-                    f"  - {_label(f['key'])}: {_fmt_value(f['value'])}"
-                    f" (confidence: {f['confidence']:.2f})"
-                )
+                lines.append(f"  - {_label(f['key'])}: {_fmt_value(f['value'])} (confidence: {f['confidence']:.2f})")
 
         if preference_facts:
             lines.append("  Preferences:")
             for f in preference_facts:
-                lines.append(
-                    f"  - {_label(f['key'])}: {_fmt_value(f['value'])}"
-                    f" (confidence: {f['confidence']:.2f})"
-                )
+                lines.append(f"  - {_label(f['key'])}: {_fmt_value(f['value'])} (confidence: {f['confidence']:.2f})")
 
         return "\n".join(lines)
 
@@ -1450,9 +1408,7 @@ class ContextAssembler:
                 if priority_senders:
                     # Sort descending by message count so the most active sender
                     # appears first, making the most urgent sender immediately visible.
-                    sorted_priority = sorted(
-                        priority_senders.items(), key=lambda x: -x[1]["count"]
-                    )
+                    sorted_priority = sorted(priority_senders.items(), key=lambda x: -x[1]["count"])
                     lines.append("  From priority contacts:")
                     for addr, info in sorted_priority:
                         count = info["count"]
@@ -1466,9 +1422,7 @@ class ContextAssembler:
                             lines.append(f"    - {addr} ({cnt_str}): {subjects_str}")
                         else:
                             lines.append(f"    - {addr} ({cnt_str})")
-                    other_count = total - sum(
-                        info["count"] for info in priority_senders.values()
-                    )
+                    other_count = total - sum(info["count"] for info in priority_senders.values())
                     if other_count > 0:
                         lines.append(f"  From other senders: {other_count}")
         except Exception:
@@ -1552,9 +1506,7 @@ class ContextAssembler:
 
                     # Top 3 senders by count
                     if sender_counts:
-                        top_senders = sorted(
-                            sender_counts.items(), key=lambda x: -x[1]
-                        )[:3]
+                        top_senders = sorted(sender_counts.items(), key=lambda x: -x[1])[:3]
                         sender_strs = [f"{addr} ({cnt})" for addr, cnt in top_senders]
                         lines.append("Top senders: " + ", ".join(sender_strs))
 
@@ -1646,10 +1598,7 @@ class ContextAssembler:
             lines = ["Active contacts this week (from event log):"]
             for addr, stats in sorted_contacts:
                 total = stats["received"] + stats["sent"]
-                lines.append(
-                    f"- {addr}: {total} interactions "
-                    f"({stats['received']} received, {stats['sent']} sent)"
-                )
+                lines.append(f"- {addr}: {total} interactions ({stats['received']} received, {stats['sent']} sent)")
 
             return "\n".join(lines)
         except Exception:

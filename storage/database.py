@@ -9,8 +9,8 @@ so that dependencies are explicit and circular-import risks are minimized.
 """
 
 # Re-export the primary classes so that ``from storage.database import X`` continues to work.
-from storage.manager import DatabaseManager
 from storage.event_store import EventStore
+from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
 
 __all__ = ["DatabaseManager", "EventStore", "UserModelStore"]

@@ -53,28 +53,37 @@ class TestRoutineDetector:
             day_start = base_date.replace(hour=8, minute=0, second=0) + timedelta(days=day_offset)
 
             # Step 1: Check email
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "check_email", "content_summary": "Check Email",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "check_email",
+                    "content_summary": "Check Email",
+                }
+            )
 
             # Step 2: Review calendar
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (day_start + timedelta(minutes=15)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "review_calendar", "content_summary": "Review Calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (day_start + timedelta(minutes=15)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "review_calendar",
+                    "content_summary": "Review Calendar",
+                }
+            )
 
             # Step 3: Make coffee
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (day_start + timedelta(minutes=30)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "make_coffee", "content_summary": "Make Coffee",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (day_start + timedelta(minutes=30)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "make_coffee",
+                    "content_summary": "Make Coffee",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -107,19 +116,25 @@ class TestRoutineDetector:
         for day_offset in range(10):
             evening_start = base_date.replace(hour=18, minute=0, second=0) + timedelta(days=day_offset)
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": evening_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "inbox_zero", "content_summary": "Inbox Zero",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": evening_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "inbox_zero",
+                    "content_summary": "Inbox Zero",
+                }
+            )
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (evening_start + timedelta(minutes=30)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "update_tasks", "content_summary": "Update Tasks",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (evening_start + timedelta(minutes=30)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "update_tasks",
+                    "content_summary": "Update Tasks",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -141,21 +156,25 @@ class TestRoutineDetector:
             arrive_time = base_date + timedelta(days=day_offset, hours=17)
 
             # Arrive home → turn on lights → check mail
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": arrive_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "location",
-                "location": "Home",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": arrive_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "location",
+                    "location": "Home",
+                }
+            )
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (arrive_time + timedelta(minutes=5)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "smart_home",
-                "location": "Home",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (arrive_time + timedelta(minutes=5)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "smart_home",
+                    "location": "Home",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -176,23 +195,27 @@ class TestRoutineDetector:
 
         # Home routine
         for day_offset in range(10):
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (base_date + timedelta(days=day_offset, hours=17)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "location",
-                "location": "Home",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (base_date + timedelta(days=day_offset, hours=17)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "location",
+                    "location": "Home",
+                }
+            )
 
         # Work routine
         for day_offset in range(10):
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (base_date + timedelta(days=day_offset, hours=9)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "location",
-                "location": "Office",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (base_date + timedelta(days=day_offset, hours=9)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "location",
+                    "location": "Office",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -214,27 +237,35 @@ class TestRoutineDetector:
 
             # Meeting ends
             meeting_event_id = str(uuid.uuid4())
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": meeting_end.isoformat(),
-                "event_id": meeting_event_id,
-                "interaction_type": "calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": meeting_end.isoformat(),
+                    "event_id": meeting_event_id,
+                    "interaction_type": "calendar",
+                }
+            )
 
             # Actions that follow: update tasks → send follow-up
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (meeting_end + timedelta(minutes=5)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "update_tasks", "content_summary": "Update Tasks",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (meeting_end + timedelta(minutes=5)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "update_tasks",
+                    "content_summary": "Update Tasks",
+                }
+            )
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (meeting_end + timedelta(minutes=15)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "send_followup", "content_summary": "Send Followup",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (meeting_end + timedelta(minutes=15)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "send_followup",
+                    "content_summary": "Send Followup",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -256,12 +287,15 @@ class TestRoutineDetector:
             if day_offset in [3, 7]:  # Skip 2 days
                 continue
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "morning_check", "content_summary": "Morning Check",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "morning_check",
+                    "content_summary": "Morning Check",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -278,24 +312,29 @@ class TestRoutineDetector:
 
         # Create rare_action on only 2 of 10 active days → consistency = 2/10 = 0.2
         for day_offset in [0, 5]:
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "rare_action", "content_summary": "Rare Action",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (base_date + timedelta(days=day_offset, hours=8)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "rare_action",
+                    "content_summary": "Rare Action",
+                }
+            )
 
         # Pad with unique filler episodes on all 10 days so active_days = 10.
         # Each filler uses a unique interaction_type (only 1 day each) so it
         # won't itself be detected as a routine (below min_occurrences=2).
         for day_offset in range(10):
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (base_date + timedelta(days=day_offset, hours=12)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": f"filler_{day_offset}",
-                "content_summary": f"Filler {day_offset}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (base_date + timedelta(days=day_offset, hours=12)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": f"filler_{day_offset}",
+                    "content_summary": f"Filler {day_offset}",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -313,19 +352,25 @@ class TestRoutineDetector:
         for day_offset in range(10):
             day_start = base_date.replace(hour=9, minute=0) + timedelta(days=day_offset)
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "step1", "content_summary": "Step1",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "step1",
+                    "content_summary": "Step1",
+                }
+            )
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (day_start + timedelta(minutes=10)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "step2", "content_summary": "Step2",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (day_start + timedelta(minutes=10)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "step2",
+                    "content_summary": "Step2",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -446,22 +491,28 @@ class TestRoutineDetector:
         # Create old episodes (outside lookback)
         old_date = datetime.now(timezone.utc) - timedelta(days=40)
         for i in range(5):
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (old_date + timedelta(days=i)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "old_action", "content_summary": "Old Action",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (old_date + timedelta(days=i)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "old_action",
+                    "content_summary": "Old Action",
+                }
+            )
 
         # Create recent episodes (within lookback)
         recent_date = datetime.now(timezone.utc) - timedelta(days=7)
         for i in range(5):
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (recent_date + timedelta(days=i, hours=9)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "recent_action", "content_summary": "Recent Action",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (recent_date + timedelta(days=i, hours=9)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "recent_action",
+                    "content_summary": "Recent Action",
+                }
+            )
 
         # Detect with 30-day lookback (should exclude old_action)
         routines = detector.detect_routines(lookback_days=30)
@@ -506,36 +557,46 @@ class TestRoutineDetector:
             day = base_date + timedelta(days=day_offset)
 
             # Temporal: morning actions
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day.replace(hour=8).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "morning_email", "content_summary": "Morning Email",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day.replace(hour=8).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "morning_email",
+                    "content_summary": "Morning Email",
+                }
+            )
 
             # Location: home actions
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day.replace(hour=18).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "location",
-                "location": "Home",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day.replace(hour=18).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "location",
+                    "location": "Home",
+                }
+            )
 
             # Event-triggered: post-meeting actions
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day.replace(hour=10).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day.replace(hour=10).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "calendar",
+                }
+            )
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day.replace(hour=10, minute=5).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "post_meeting_task", "content_summary": "Post Meeting Task",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day.replace(hour=10, minute=5).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "post_meeting_task",
+                    "content_summary": "Post Meeting Task",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -567,25 +628,27 @@ class TestRoutineDetector:
         varying_hours = [3, 4, 5, 3, 4]  # different hours, all night bucket (0–4)
 
         for day_offset, hour in enumerate(varying_hours):
-            day = (base_date + timedelta(days=day_offset)).replace(
-                hour=hour, minute=0, second=0, microsecond=0
+            day = (base_date + timedelta(days=day_offset)).replace(hour=hour, minute=0, second=0, microsecond=0)
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "email_received",
+                    "content_summary": "Email received",
+                }
             )
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "email_received",
-                "content_summary": "Email received",
-            })
             # Add a second action (email_sent) shortly after on 3+ days so that
             # bucket has >= 1 recurring action and consistency can reach 0.6.
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (day + timedelta(minutes=5)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "email_sent",
-                "content_summary": "Email sent",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (day + timedelta(minutes=5)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "email_sent",
+                    "content_summary": "Email sent",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -616,21 +679,25 @@ class TestRoutineDetector:
         for day_offset in range(2):
             day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "sparse_morning_email",
-                "content_summary": "Sparse morning email",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "sparse_morning_email",
+                    "content_summary": "Sparse morning email",
+                }
+            )
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (day_start + timedelta(minutes=10)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "sparse_morning_calendar",
-                "content_summary": "Sparse morning calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (day_start + timedelta(minutes=10)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "sparse_morning_calendar",
+                    "content_summary": "Sparse morning calendar",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -639,9 +706,7 @@ class TestRoutineDetector:
         sparse_steps = []
         for r in morning_routines:
             sparse_steps.extend(s for s in r["steps"] if s["action"].startswith("sparse_morning_"))
-        assert len(sparse_steps) == 0, (
-            "Expected no routine from 2-day pattern; min_occurrences=3 should reject it"
-        )
+        assert len(sparse_steps) == 0, "Expected no routine from 2-day pattern; min_occurrences=3 should reject it"
 
     def test_event_triggered_routine_with_single_followup(self, db, user_model_store):
         """Regression: an event-triggered routine with exactly 1 consistent
@@ -662,29 +727,32 @@ class TestRoutineDetector:
         for day_offset in range(5):
             meeting_time = base_date + timedelta(days=day_offset, hours=14)
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": meeting_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "video_call",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": meeting_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "video_call",
+                }
+            )
 
             # Single follow-up action: always check email after video call
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (meeting_time + timedelta(minutes=10)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "post_call_email_check",
-                "content_summary": "Check email after call",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (meeting_time + timedelta(minutes=10)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "post_call_email_check",
+                    "content_summary": "Check email after call",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
         # Should detect an event-triggered routine for "after_video_call"
         event_routines = [r for r in routines if r["trigger"] == "after_video_call"]
         assert len(event_routines) >= 1, (
-            "Expected event-triggered routine with 1 follow-up action; "
-            "following_actions >= 1 guard should allow it"
+            "Expected event-triggered routine with 1 follow-up action; following_actions >= 1 guard should allow it"
         )
 
         routine = event_routines[0]
@@ -734,22 +802,26 @@ class TestRoutineDetector:
 
             # Morning email on days 0, 2, 4 (3 of 5 = 0.6 consistency)
             if day_offset in [0, 2, 4]:
-                user_model_store.store_episode({
-                    "id": str(uuid.uuid4()),
-                    "timestamp": day_start.isoformat(),
-                    "event_id": str(uuid.uuid4()),
-                    "interaction_type": "cold_start_email",
-                    "content_summary": "Cold start email",
-                })
+                user_model_store.store_episode(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "timestamp": day_start.isoformat(),
+                        "event_id": str(uuid.uuid4()),
+                        "interaction_type": "cold_start_email",
+                        "content_summary": "Cold start email",
+                    }
+                )
 
             # Filler on all days so active_days = 5
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (day_start + timedelta(hours=4)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": f"cs_filler_{day_offset}",
-                "content_summary": f"Filler {day_offset}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (day_start + timedelta(hours=4)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": f"cs_filler_{day_offset}",
+                    "content_summary": f"Filler {day_offset}",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -782,24 +854,28 @@ class TestRoutineDetector:
         for day_offset in range(10):
             day_start = base_date.replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
             # Filler on all 10 days
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": f"filler_cs2_{day_offset}",
-                "content_summary": f"Filler {day_offset}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": f"filler_cs2_{day_offset}",
+                    "content_summary": f"Filler {day_offset}",
+                }
+            )
 
         # Morning action on 4 of 10 days → consistency = 0.4
         for day_offset in [0, 3, 6, 9]:
             day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "sparse_cold_email",
-                "content_summary": "Sparse cold email",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "sparse_cold_email",
+                    "content_summary": "Sparse cold email",
+                }
+            )
 
         # With 10 active days (< 14), threshold is 0.4.
         # consistency = 4/10 = 0.4, which passes 0.4 threshold but fails base 0.6.
@@ -832,26 +908,30 @@ class TestRoutineDetector:
         for day_offset in range(6):
             day_start = base_date.replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
             # Filler on all 6 days
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": f"filler_loc_{day_offset}",
-                "content_summary": f"Filler {day_offset}",
-                "location": "Gym",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": f"filler_loc_{day_offset}",
+                    "content_summary": f"Filler {day_offset}",
+                    "location": "Gym",
+                }
+            )
 
         # Location action on 3 of 6 days at Gym → consistency = 0.5
         for day_offset in [0, 2, 4]:
             day_start = base_date.replace(hour=7, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "gym_workout",
-                "content_summary": "Gym workout",
-                "location": "Gym",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "gym_workout",
+                    "content_summary": "Gym workout",
+                    "location": "Gym",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
@@ -877,31 +957,34 @@ class TestRoutineDetector:
         # Create episodes on 35 days
         for day_offset in range(35):
             day_start = base_date.replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": f"filler_mat_{day_offset}",
-                "content_summary": f"Filler {day_offset}",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": f"filler_mat_{day_offset}",
+                    "content_summary": f"Filler {day_offset}",
+                }
+            )
 
         # Morning action on only 10 of 35 days → consistency ≈ 0.29 < 0.6
         for day_offset in [0, 3, 7, 10, 14, 17, 21, 24, 28, 31]:
             day_start = base_date.replace(hour=8, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "mature_morning_check",
-                "content_summary": "Mature morning check",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "mature_morning_check",
+                    "content_summary": "Mature morning check",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=40)
 
         # With 35 active days, threshold = 0.6 (full). 10/35 ≈ 0.29 < 0.6 → rejected.
         mature_routines = [
-            r for r in routines
-            if any(s["action"] == "mature_morning_check" for s in r.get("steps", []))
+            r for r in routines if any(s["action"] == "mature_morning_check" for s in r.get("steps", []))
         ]
         assert len(mature_routines) == 0, (
             "With 35 active days (>= 30), base threshold 0.6 should apply — "

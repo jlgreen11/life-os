@@ -49,9 +49,12 @@ class TestGetDiagnosticsWithProfile:
 
     def test_profile_shows_available(self, inferrer, user_model_store):
         """A stored profile should appear as available with sample count."""
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {"alice": {"response_time_avg": 300}},
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {"alice": {"response_time_avg": 300}},
+            },
+        )
         diag = inferrer.get_diagnostics()
         rel = diag["profile_availability"]["relationships"]
         assert rel["available"] is True
@@ -59,19 +62,25 @@ class TestGetDiagnosticsWithProfile:
 
     def test_health_degraded_with_profiles_no_facts(self, inferrer, user_model_store):
         """Health should be 'degraded' when profiles exist but no facts written."""
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {},
-            "samples_count": 10,
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {},
+                "samples_count": 10,
+            },
+        )
         diag = inferrer.get_diagnostics()
         assert diag["health"] == "degraded"
 
     def test_health_ok_with_facts(self, inferrer, user_model_store):
         """Health should be 'ok' when profiles exist and facts have been written."""
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {},
-            "samples_count": 10,
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {},
+                "samples_count": 10,
+            },
+        )
         # Write a fact directly
         user_model_store.update_semantic_fact(
             key="test_fact",
@@ -112,17 +121,20 @@ class TestRunAllInferenceCachesResults:
     def test_last_cycle_processed_with_data(self, inferrer, user_model_store):
         """With a profile present, its type should appear in processed list."""
         # Store a linguistic profile with enough data to be processed
-        user_model_store.update_signal_profile("linguistic", {
-            "avg_formality": 0.3,
-            "avg_sentence_length": 12.0,
-            "vocabulary_richness": 0.6,
-            "avg_message_length": 150.0,
-            "emoji_frequency": 0.05,
-            "exclamation_frequency": 0.1,
-            "question_frequency": 0.2,
-            "contraction_frequency": 0.4,
-            "samples_count": 30,
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "avg_formality": 0.3,
+                "avg_sentence_length": 12.0,
+                "vocabulary_richness": 0.6,
+                "avg_message_length": 150.0,
+                "emoji_frequency": 0.05,
+                "exclamation_frequency": 0.1,
+                "question_frequency": 0.2,
+                "contraction_frequency": 0.4,
+                "samples_count": 30,
+            },
+        )
         inferrer.run_all_inference()
         diag = inferrer.get_diagnostics()
         assert "linguistic" in diag["last_cycle"]["processed"]
@@ -145,7 +157,14 @@ class TestDiagnosticsStructure:
         """All 9 profile types should appear in profile_availability."""
         diag = inferrer.get_diagnostics()
         expected = {
-            "linguistic", "linguistic_inbound", "relationships", "topics",
-            "cadence", "mood_signals", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "relationships",
+            "topics",
+            "cadence",
+            "mood_signals",
+            "temporal",
+            "spatial",
+            "decision",
         }
         assert set(diag["profile_availability"].keys()) == expected

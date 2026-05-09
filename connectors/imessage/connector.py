@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Recipient addresses must look like a phone number or email — reject
 # anything that could smuggle AppleScript via the ``participant`` string.
-_VALID_RECIPIENT = re.compile(r'^[+\w.@-]+$')
+_VALID_RECIPIENT = re.compile(r"^[+\w.@-]+$")
 
 # Apple Core Data epoch (2001-01-01 00:00:00 UTC) expressed as a Unix
 # timestamp.  macOS stores message timestamps as nanoseconds since this
@@ -223,15 +223,9 @@ class iMessageConnector(BaseConnector):
 
             # Detect the attachment table on first sync and cache the result.
             if self._has_attachment_table is None:
-                self._has_attachment_table = self._table_exists(
-                    conn, "message_attachment_join"
-                )
+                self._has_attachment_table = self._table_exists(conn, "message_attachment_join")
 
-            query = (
-                _SYNC_QUERY
-                if self._has_attachment_table
-                else _SYNC_QUERY_NO_ATTACHMENTS
-            )
+            query = _SYNC_QUERY if self._has_attachment_table else _SYNC_QUERY_NO_ATTACHMENTS
             rows = conn.execute(query, (last_rowid,)).fetchall()
 
             count = 0
@@ -288,8 +282,10 @@ class iMessageConnector(BaseConnector):
                 }
 
                 await self.publish_event(
-                    event_type, payload,
-                    priority="normal", metadata=metadata,
+                    event_type,
+                    payload,
+                    priority="normal",
+                    metadata=metadata,
                 )
 
                 count += 1
@@ -320,34 +316,28 @@ class iMessageConnector(BaseConnector):
                 raise ValueError(f"Invalid recipient format: {recipient}")
 
             # Escape characters that would break AppleScript string literals.
-            safe_message = (message
-                .replace("\\", "\\\\")
-                .replace('"', '\\"')
-                .replace("\n", "\\n")
-                .replace("\r", "\\r"))
-            safe_recipient = (recipient
-                .replace("\\", "\\\\")
-                .replace('"', '\\"'))
+            safe_message = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+            safe_recipient = recipient.replace("\\", "\\\\").replace('"', '\\"')
 
             script = (
                 'tell application "Messages"\n'
-                '  set targetService to 1st account whose service type = iMessage\n'
+                "  set targetService to 1st account whose service type = iMessage\n"
                 f'  set targetBuddy to participant "{safe_recipient}" of targetService\n'
                 f'  send "{safe_message}" to targetBuddy\n'
-                'end tell'
+                "end tell"
             )
 
             proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
+                "osascript",
+                "-e",
+                script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"AppleScript failed (rc={proc.returncode}): {stderr.decode().strip()}"
-                )
+                raise RuntimeError(f"AppleScript failed (rc={proc.returncode}): {stderr.decode().strip()}")
 
             # Publish a message.sent event for outbound tracking.
             await self.publish_event(
@@ -417,8 +407,7 @@ class iMessageConnector(BaseConnector):
 
                 # Check if this identifier already has a contact
                 row = econn.execute(
-                    "SELECT contact_id FROM contact_identifiers "
-                    "WHERE identifier = ? AND identifier_type = ?",
+                    "SELECT contact_id FROM contact_identifiers WHERE identifier = ? AND identifier_type = ?",
                     (identifier, identifier_type),
                 ).fetchone()
 
@@ -443,7 +432,8 @@ class iMessageConnector(BaseConnector):
                             f"Unknown ({identifier})",
                             json.dumps([identifier]),
                             json.dumps({"imessage": identifier}),
-                            now, now,
+                            now,
+                            now,
                         ),
                     )
                     econn.execute(

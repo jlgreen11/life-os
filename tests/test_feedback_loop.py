@@ -30,8 +30,7 @@ async def test_prediction_accuracy_decay(db, user_model_store):
                    (id, prediction_type, description, confidence, confidence_gate,
                     was_surfaced, was_accurate, resolved_at)
                    VALUES (?, ?, ?, ?, ?, 1, 0, ?)""",
-                (pred_id, "reminder", f"Test prediction {i}", 0.7, "suggest",
-                 datetime.now(timezone.utc).isoformat()),
+                (pred_id, "reminder", f"Test prediction {i}", 0.7, "suggest", datetime.now(timezone.utc).isoformat()),
             )
 
     # Engine should compute a reduced multiplier for "reminder" type
@@ -53,8 +52,7 @@ async def test_accurate_predictions_maintain_multiplier(db, user_model_store):
                    (id, prediction_type, description, confidence, confidence_gate,
                     was_surfaced, was_accurate, resolved_at)
                    VALUES (?, ?, ?, ?, ?, 1, 1, ?)""",
-                (pred_id, "conflict", f"Test prediction {i}", 0.9, "default",
-                 datetime.now(timezone.utc).isoformat()),
+                (pred_id, "conflict", f"Test prediction {i}", 0.9, "default", datetime.now(timezone.utc).isoformat()),
             )
 
     multiplier = engine._get_accuracy_multiplier("conflict")
@@ -88,8 +86,7 @@ async def test_heavy_penalty_floor_below_20_percent_accuracy(db, user_model_stor
                    (id, prediction_type, description, confidence, confidence_gate,
                     was_surfaced, was_accurate, resolved_at)
                    VALUES (?, ?, ?, ?, ?, 1, 0, ?)""",
-                (str(uuid.uuid4()), "reminder", f"bad {i}", 0.5, "suggest",
-                 datetime.now(timezone.utc).isoformat()),
+                (str(uuid.uuid4()), "reminder", f"bad {i}", 0.5, "suggest", datetime.now(timezone.utc).isoformat()),
             )
     with db.get_connection("user_model") as conn:
         conn.execute(
@@ -97,8 +94,7 @@ async def test_heavy_penalty_floor_below_20_percent_accuracy(db, user_model_stor
                (id, prediction_type, description, confidence, confidence_gate,
                 was_surfaced, was_accurate, resolved_at)
                VALUES (?, ?, ?, ?, ?, 1, 1, ?)""",
-            (str(uuid.uuid4()), "reminder", "good one", 0.5, "suggest",
-             datetime.now(timezone.utc).isoformat()),
+            (str(uuid.uuid4()), "reminder", "good one", 0.5, "suggest", datetime.now(timezone.utc).isoformat()),
         )
 
     multiplier = engine._get_accuracy_multiplier("reminder")

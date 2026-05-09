@@ -62,9 +62,7 @@ def _email_event(body: str, subject: str = "", from_addr: str = "alice@example.c
 class TestSerializationGuard:
     """Verify the pre-write JSON serialization guard in _update_topic_map()."""
 
-    def test_set_in_topic_counts_skips_write_and_logs_error(
-        self, topic_extractor, caplog
-    ):
+    def test_set_in_topic_counts_skips_write_and_logs_error(self, topic_extractor, caplog):
         """
         When topic_counts contains a set() value (non-serializable), the
         guard must skip the DB write and log an error naming the bad field.
@@ -105,10 +103,7 @@ class TestSerializationGuard:
         # Restore original get to check real DB state
         topic_extractor.ums.get_signal_profile = original_get
         profile = topic_extractor.ums.get_signal_profile("topics")
-        assert profile is None, (
-            "Profile must not be written when serialization guard fires; "
-            f"got: {profile}"
-        )
+        assert profile is None, f"Profile must not be written when serialization guard fires; got: {profile}"
 
         # An error must be logged identifying the serialization failure
         error_messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
@@ -116,9 +111,7 @@ class TestSerializationGuard:
             f"Expected 'non-JSON-serializable' in error log; got: {error_messages}"
         )
 
-    def test_set_in_topic_counts_error_identifies_bad_field(
-        self, topic_extractor, caplog
-    ):
+    def test_set_in_topic_counts_error_identifies_bad_field(self, topic_extractor, caplog):
         """
         The error log must name the specific topic_counts key whose value
         is non-serializable so the root cause is immediately diagnosable.
@@ -160,9 +153,7 @@ class TestSerializationGuard:
             f"Expected error to identify 'topic_counts[legacy_topic]'; got: {error_messages}"
         )
 
-    def test_set_in_recent_topics_entry_skips_write_and_logs_error(
-        self, topic_extractor, caplog
-    ):
+    def test_set_in_recent_topics_entry_skips_write_and_logs_error(self, topic_extractor, caplog):
         """
         When a recent_topics entry contains a non-serializable field (e.g.
         a set in the 'topics' list element), the guard must skip the write
@@ -209,9 +200,7 @@ class TestSerializationGuard:
         topic_extractor.ums.get_signal_profile = original_get
         assert topic_extractor.ums.get_signal_profile("topics") is None
 
-    def test_recent_topics_error_identifies_bad_entry_field(
-        self, topic_extractor, caplog
-    ):
+    def test_recent_topics_error_identifies_bad_entry_field(self, topic_extractor, caplog):
         """
         The error log must identify which recent_topics entry index and which
         field within that entry is non-serializable.
@@ -273,9 +262,7 @@ class TestSerializationGuard:
         # No errors should be logged for valid data
         error_messages = [r.message for r in caplog.records if r.levelno == logging.ERROR]
         serialization_errors = [m for m in error_messages if "non-JSON-serializable" in m]
-        assert not serialization_errors, (
-            f"Guard blocked valid data write; errors: {serialization_errors}"
-        )
+        assert not serialization_errors, f"Guard blocked valid data write; errors: {serialization_errors}"
 
         # Signal should be produced
         assert len(signals) == 1, "Expected one topic signal for valid event"
@@ -300,7 +287,5 @@ class TestSerializationGuard:
         counts = profile["data"]["topic_counts"]
 
         # "python" appears in all 3 messages
-        assert counts.get("python", 0) == 3, (
-            f"Expected python count=3, got {counts.get('python', 0)}"
-        )
+        assert counts.get("python", 0) == 3, f"Expected python count=3, got {counts.get('python', 0)}"
         assert len(profile["data"]["recent_topics"]) == 3

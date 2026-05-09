@@ -51,11 +51,13 @@ async def test_routine_deviation_uses_correct_prediction_type(db, user_model_sto
             (
                 "Morning routine",
                 "morning",
-                json.dumps([
-                    {"order": 0, "action": "email_received", "typical_duration_minutes": 5.0},
-                    {"order": 1, "action": "task_created", "typical_duration_minutes": 5.0},
-                    {"order": 2, "action": "email_sent", "typical_duration_minutes": 5.0},
-                ]),
+                json.dumps(
+                    [
+                        {"order": 0, "action": "email_received", "typical_duration_minutes": 5.0},
+                        {"order": 1, "action": "task_created", "typical_duration_minutes": 5.0},
+                        {"order": 2, "action": "email_sent", "typical_duration_minutes": 5.0},
+                    ]
+                ),
                 15.0,
                 0.85,  # High consistency — reliable routine
                 50,
@@ -160,9 +162,7 @@ async def test_opportunity_predictions_do_not_include_routine_deviations(db, use
 
     # Query for 'opportunity' predictions — should find NONE from routines
     with db.get_connection("user_model") as conn:
-        opportunity_preds = conn.execute(
-            "SELECT * FROM predictions WHERE prediction_type = 'opportunity'"
-        ).fetchall()
+        opportunity_preds = conn.execute("SELECT * FROM predictions WHERE prediction_type = 'opportunity'").fetchall()
 
     # CRITICAL: Routine deviations should NOT appear in opportunity predictions
     for pred in opportunity_preds:
@@ -187,10 +187,18 @@ async def test_diagnostics_can_find_routine_deviation_predictions(db, user_model
             """INSERT INTO routines (name, trigger_condition, steps, typical_duration, consistency_score, times_observed)
                VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)""",
             (
-                "Morning routine", "morning", json.dumps([{"order": 0, "action": "email_received"}]),
-                15.0, 0.85, 50,
-                "Evening routine", "evening", json.dumps([{"order": 0, "action": "task_completed"}]),
-                10.0, 0.75, 30,
+                "Morning routine",
+                "morning",
+                json.dumps([{"order": 0, "action": "email_received"}]),
+                15.0,
+                0.85,
+                50,
+                "Evening routine",
+                "evening",
+                json.dumps([{"order": 0, "action": "task_completed"}]),
+                10.0,
+                0.75,
+                30,
             ),
         )
         conn.commit()
@@ -207,8 +215,7 @@ async def test_diagnostics_can_find_routine_deviation_predictions(db, user_model
     # Verify routine_deviation diagnostics include the stored predictions
     routine_diag = diagnostics["prediction_types"]["routine_deviation"]
     assert routine_diag["generated_last_7d"] == 2, (
-        f"Diagnostics should find 2 routine_deviation predictions, "
-        f"got {routine_diag['generated_last_7d']}"
+        f"Diagnostics should find 2 routine_deviation predictions, got {routine_diag['generated_last_7d']}"
     )
     assert routine_diag["status"] == "active", (
         "Routine deviation type should be 'active' when predictions are being generated"
@@ -231,9 +238,11 @@ async def test_routine_deviation_prediction_fields(db, user_model_store):
             (
                 "Reading routine",
                 "learning",
-                json.dumps([
-                    {"order": 0, "action": "task_created", "typical_duration_minutes": 30.0},
-                ]),
+                json.dumps(
+                    [
+                        {"order": 0, "action": "task_created", "typical_duration_minutes": 30.0},
+                    ]
+                ),
                 30.0,
                 0.70,
                 40,

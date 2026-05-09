@@ -38,9 +38,7 @@ def test_mixed_tz_naive_and_aware_timestamps(detector):
     ]
 
     # Should not raise TypeError
-    results = detector._fallback_follow_up_actions(
-        trigger_timestamps, "email_received", all_fallback_rows
-    )
+    results = detector._fallback_follow_up_actions(trigger_timestamps, "email_received", all_fallback_rows)
 
     # calendar_blocked follows email_received on 3 days
     assert len(results) >= 1
@@ -64,9 +62,7 @@ def test_all_naive_timestamps(detector):
         ("meeting_scheduled", "2026-02-20T11:00:00"),
     ]
 
-    results = detector._fallback_follow_up_actions(
-        trigger_timestamps, "email_received", all_fallback_rows
-    )
+    results = detector._fallback_follow_up_actions(trigger_timestamps, "email_received", all_fallback_rows)
     assert len(results) >= 1
 
 
@@ -86,9 +82,7 @@ def test_all_aware_timestamps(detector):
         ("meeting_scheduled", "2026-02-20T11:00:00+00:00"),
     ]
 
-    results = detector._fallback_follow_up_actions(
-        trigger_timestamps, "email_received", all_fallback_rows
-    )
+    results = detector._fallback_follow_up_actions(trigger_timestamps, "email_received", all_fallback_rows)
     assert len(results) >= 1
 
 
@@ -108,7 +102,5 @@ def test_reverse_mixed_tz(detector):
         ("calendar_blocked", "2026-02-20T10:30:00+00:00"),
     ]
 
-    results = detector._fallback_follow_up_actions(
-        trigger_timestamps, "email_received", all_fallback_rows
-    )
+    results = detector._fallback_follow_up_actions(trigger_timestamps, "email_received", all_fallback_rows)
     assert len(results) >= 1

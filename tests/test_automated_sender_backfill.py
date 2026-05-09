@@ -99,8 +99,7 @@ def test_backfill_tags_old_prediction_no_signals(db):
             conn,
             pred_id,
             description=(
-                "It's been 45 days since you last contacted noreply@company.com "
-                "(you usually connect every ~14 days)"
+                "It's been 45 days since you last contacted noreply@company.com (you usually connect every ~14 days)"
             ),
             supporting_signals="[]",  # Old empty-list format — no contact_email
         )
@@ -127,8 +126,7 @@ def test_backfill_tags_old_prediction_null_signals(db):
             conn,
             pred_id,
             description=(
-                "It's been 30 days since you last contacted "
-                "newsletter@marketing-platform.com (avg gap ~20 days)"
+                "It's been 30 days since you last contacted newsletter@marketing-platform.com (avg gap ~20 days)"
             ),
             supporting_signals="null",  # NULL-equivalent JSON
         )
@@ -183,8 +181,7 @@ def test_backfill_does_not_tag_human_contact_predictions(db):
             conn,
             pred_id,
             description=(
-                "It's been 45 days since you last contacted alice@gmail.com "
-                "(you usually connect every ~21 days)"
+                "It's been 45 days since you last contacted alice@gmail.com (you usually connect every ~21 days)"
             ),
             supporting_signals="{}",
         )
@@ -250,9 +247,7 @@ def test_backfill_skips_accurate_predictions(db):
             (pred_id,),
         ).fetchone()
 
-    assert row["resolution_reason"] is None, (
-        "Accurate predictions should never be tagged as automated_sender_fast_path"
-    )
+    assert row["resolution_reason"] is None, "Accurate predictions should never be tagged as automated_sender_fast_path"
 
 
 def test_backfill_tags_multiple_predictions_in_bulk(db):
@@ -278,19 +273,13 @@ def test_backfill_tags_multiple_predictions_in_bulk(db):
 
     with db.get_connection("user_model") as conn:
         for pid in pred_ids_automated:
-            row = conn.execute(
-                "SELECT resolution_reason FROM predictions WHERE id = ?", (pid,)
-            ).fetchone()
+            row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pid,)).fetchone()
             assert row["resolution_reason"] == "automated_sender_fast_path", (
                 f"Automated prediction {pid} should be tagged"
             )
 
-        human_row = conn.execute(
-            "SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id_human,)
-        ).fetchone()
-        assert human_row["resolution_reason"] is None, (
-            "Human prediction should not be tagged"
-        )
+        human_row = conn.execute("SELECT resolution_reason FROM predictions WHERE id = ?", (pred_id_human,)).fetchone()
+        assert human_row["resolution_reason"] is None, "Human prediction should not be tagged"
 
 
 def test_backfill_prefers_signals_over_description(db):
@@ -305,14 +294,15 @@ def test_backfill_prefers_signals_over_description(db):
             conn,
             pred_id,
             description=(
-                "It's been 45 days since you last contacted noreply@example.com "
-                "(you usually connect every ~21 days)"
+                "It's been 45 days since you last contacted noreply@example.com (you usually connect every ~21 days)"
             ),
             # signals says it's a real human — trust this over description
-            supporting_signals=json.dumps({
-                "contact_email": "alice@gmail.com",
-                "contact_name": "Alice",
-            }),
+            supporting_signals=json.dumps(
+                {
+                    "contact_email": "alice@gmail.com",
+                    "contact_name": "Alice",
+                }
+            ),
         )
 
     BehavioralAccuracyTracker(db)
@@ -336,10 +326,12 @@ def test_backfill_with_signals_contact_email_automated(db):
             conn,
             pred_id,
             description="Reach out to Brand Newsletter",  # No email in description
-            supporting_signals=json.dumps({
-                "contact_email": "newsletter@brand.com",
-                "days_since_last_contact": 30,
-            }),
+            supporting_signals=json.dumps(
+                {
+                    "contact_email": "newsletter@brand.com",
+                    "days_since_last_contact": 30,
+                }
+            ),
         )
 
     BehavioralAccuracyTracker(db)
@@ -392,16 +384,13 @@ def test_get_resolution_reason_description_fallback_human(db):
         "id": "test-id",
         "prediction_type": "opportunity",
         "description": (
-            "It's been 45 days since you last contacted alice@gmail.com "
-            "(you usually connect every ~21 days)"
+            "It's been 45 days since you last contacted alice@gmail.com (you usually connect every ~21 days)"
         ),
         "supporting_signals": "{}",
     }
 
     reason = tracker._get_resolution_reason(prediction, was_accurate=False)
-    assert reason is None, (
-        "_get_resolution_reason description fallback should not tag human contacts"
-    )
+    assert reason is None, "_get_resolution_reason description fallback should not tag human contacts"
 
 
 def test_get_resolution_reason_accurate_always_none(db):
@@ -416,9 +405,7 @@ def test_get_resolution_reason_accurate_always_none(db):
 
     # Even though noreply@company.com is automated, accurate=True means real behavior
     reason = tracker._get_resolution_reason(prediction, was_accurate=True)
-    assert reason is None, (
-        "Accurate predictions always return None regardless of contact address"
-    )
+    assert reason is None, "Accurate predictions always return None regardless of contact address"
 
 
 def test_get_resolution_reason_signals_override_description(db):
@@ -432,15 +419,13 @@ def test_get_resolution_reason_signals_override_description(db):
     prediction = {
         "id": "test-id",
         "prediction_type": "opportunity",
-        "description": (
-            "It's been 45 days since you last contacted noreply@example.com"
+        "description": ("It's been 45 days since you last contacted noreply@example.com"),
+        "supporting_signals": json.dumps(
+            {
+                "contact_email": "alice@gmail.com",  # Real human overrides description
+            }
         ),
-        "supporting_signals": json.dumps({
-            "contact_email": "alice@gmail.com",  # Real human overrides description
-        }),
     }
 
     reason = tracker._get_resolution_reason(prediction, was_accurate=False)
-    assert reason is None, (
-        "Human contact_email in signals should override automated email in description"
-    )
+    assert reason is None, "Human contact_email in signals should override automated email in description"

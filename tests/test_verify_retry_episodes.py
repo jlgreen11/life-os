@@ -64,8 +64,7 @@ def _insert_episode(db, interaction_type="email_received"):
     now = datetime.now(timezone.utc).isoformat()
     with db.get_connection("user_model") as conn:
         conn.execute(
-            "INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO episodes (id, timestamp, event_id, interaction_type, content_summary) VALUES (?, ?, ?, ?, ?)",
             (episode_id, now, event_id, interaction_type, "Test episode"),
         )
         conn.commit()
@@ -185,8 +184,7 @@ class TestPhase5SemanticFactVerification:
         # Insert a fact directly
         with db.get_connection("user_model") as conn:
             conn.execute(
-                "INSERT INTO semantic_facts (key, category, value, confidence, source_episodes) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO semantic_facts (key, category, value, confidence, source_episodes) VALUES (?, ?, ?, ?, ?)",
                 ("existing_fact", "preference", "Existing fact", 0.8, "[]"),
             )
             conn.commit()
@@ -231,7 +229,17 @@ class TestPhase6RoutineVerification:
 
         # Mock the routine_detector to simulate producing routines
         def mock_detect(lookback_days=30):
-            return [{"name": "Morning routine", "trigger": "morning", "steps": [], "consistency_score": 0.8, "times_observed": 5, "typical_duration_minutes": 30, "variations": []}]
+            return [
+                {
+                    "name": "Morning routine",
+                    "trigger": "morning",
+                    "steps": [],
+                    "consistency_score": 0.8,
+                    "times_observed": 5,
+                    "typical_duration_minutes": 30,
+                    "variations": [],
+                }
+            ]
 
         def mock_store(routines):
             for routine in routines:
@@ -249,15 +257,17 @@ class TestPhase6RoutineVerification:
         """When routines already exist, skip detection."""
         _insert_episode(db)
         # Insert a routine directly
-        lifeos.user_model_store.store_routine({
-            "name": "Existing routine",
-            "trigger": "morning",
-            "steps": [],
-            "consistency_score": 0.9,
-            "times_observed": 10,
-            "typical_duration_minutes": 30,
-            "variations": [],
-        })
+        lifeos.user_model_store.store_routine(
+            {
+                "name": "Existing routine",
+                "trigger": "morning",
+                "steps": [],
+                "consistency_score": 0.9,
+                "times_observed": 10,
+                "typical_duration_minutes": 30,
+                "variations": [],
+            }
+        )
 
         detection_called = False
 

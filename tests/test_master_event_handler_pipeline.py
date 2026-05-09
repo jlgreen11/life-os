@@ -31,6 +31,7 @@ from models.core import EventType
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def lifeos_config():
     """Minimal config dict for LifeOS in test mode."""
@@ -106,6 +107,7 @@ def _make_event(event_type: str = "email.received", **payload_overrides) -> dict
 # Test 1: Full pipeline stores event and creates episode
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_email_event_stored_and_episode_created(lifeos, db):
     """Process an email.received event end-to-end and verify storage + episode."""
@@ -121,17 +123,13 @@ async def test_email_event_stored_and_episode_created(lifeos, db):
 
     # Stage 1: event persisted in events.db
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "Event should be stored in events.db"
     assert dict(row)["type"] == "email.received"
 
     # Stage 6: episode created in user_model.db
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 1, "Exactly one episode should be created"
 
     episode = dict(episodes[0])
@@ -145,6 +143,7 @@ async def test_email_event_stored_and_episode_created(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 2: Signal extraction updates linguistic profile
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_email_event_triggers_signal_extraction(lifeos, db):
@@ -168,6 +167,7 @@ async def test_email_event_triggers_signal_extraction(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 3: Source weight tracking records an interaction
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_source_weight_tracking_records_interaction(lifeos, db):
@@ -201,14 +201,14 @@ async def test_source_weight_tracking_records_interaction(lifeos, db):
             break
 
     assert after_count == before_count + 1, (
-        f"Interaction count for '{source_key}' should increment by 1 "
-        f"(was {before_count}, now {after_count})"
+        f"Interaction count for '{source_key}' should increment by 1 (was {before_count}, now {after_count})"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 4: Vector embedding stores the document
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_vector_embedding_stage_reached(lifeos, db):
@@ -245,6 +245,7 @@ async def test_vector_embedding_stage_reached(lifeos, db):
 # Test 5: Pipeline error isolation — broken signal extractor
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_pipeline_error_isolation_signal_extractor(lifeos, db):
     """If signal extraction fails, event storage and episode creation still work.
@@ -272,17 +273,13 @@ async def test_pipeline_error_isolation_signal_extractor(lifeos, db):
 
     # Stage 1: event should still be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "Event should be stored despite signal extraction failure"
 
     # Stage 6: episode should still be created (runs after signal extraction,
     # but signal extraction failure doesn't block it due to fail-open)
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) >= 1, "Episode should be created despite signal extraction failure"
 
     # Restore the original method
@@ -292,6 +289,7 @@ async def test_pipeline_error_isolation_signal_extractor(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 6: Pipeline error isolation — broken rules engine
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_pipeline_error_isolation_rules_engine(lifeos, db):
@@ -316,16 +314,12 @@ async def test_pipeline_error_isolation_rules_engine(lifeos, db):
 
     # Event should be stored (stage 1)
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "Event should be stored despite rules engine failure"
 
     # Episode should be created (stage 6)
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) >= 1, "Episode should be created despite rules engine failure"
 
     # Signal extraction should still have run (stage 2)
@@ -339,6 +333,7 @@ async def test_pipeline_error_isolation_rules_engine(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 7: Rule match produces actions during pipeline
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_rule_match_executes_during_pipeline(lifeos, db):
@@ -361,16 +356,12 @@ async def test_rule_match_executes_during_pipeline(lifeos, db):
 
     # Verify the event was stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None
 
     # Verify the tag action was executed — event_tags lives in events.db
     with db.get_connection("events") as conn:
-        tags = conn.execute(
-            "SELECT * FROM event_tags WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        tags = conn.execute("SELECT * FROM event_tags WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(tags) >= 1, "Rule should have tagged the event"
     tag_values = [dict(t)["tag"] for t in tags]
     assert "pipeline-test-tag" in tag_values
@@ -379,6 +370,7 @@ async def test_rule_match_executes_during_pipeline(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 8: Suppress action prevents notification creation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_suppress_action_prevents_notification(lifeos, db):
@@ -411,16 +403,12 @@ async def test_suppress_action_prevents_notification(lifeos, db):
 
     # Event should be stored regardless
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None
 
     # No notification should have been created because suppress runs first
     with db.get_connection("state") as conn:
-        notifs = conn.execute(
-            "SELECT * FROM notifications WHERE source_event_id = ?", (event["id"],)
-        ).fetchall()
+        notifs = conn.execute("SELECT * FROM notifications WHERE source_event_id = ?", (event["id"],)).fetchall()
     assert len(notifs) == 0, "Suppressed event should NOT generate a notification"
 
 
@@ -428,12 +416,16 @@ async def test_suppress_action_prevents_notification(lifeos, db):
 # Test 9: Multiple events processed sequentially
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_multiple_events_sequential_pipeline(lifeos, db):
     """Process several events in sequence and verify each is stored with an episode."""
     events = [
-        _make_event("email.received", subject=f"Sequential test email {i}",
-                     body_plain=f"Body of sequential test email number {i}.")
+        _make_event(
+            "email.received",
+            subject=f"Sequential test email {i}",
+            body_plain=f"Body of sequential test email number {i}.",
+        )
         for i in range(3)
     ]
 
@@ -443,23 +435,20 @@ async def test_multiple_events_sequential_pipeline(lifeos, db):
     # All events should be stored
     with db.get_connection("events") as conn:
         for event in events:
-            row = conn.execute(
-                "SELECT * FROM events WHERE id = ?", (event["id"],)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
             assert row is not None, f"Event {event['id']} should be stored"
 
     # All events should have episodes
     with db.get_connection("user_model") as conn:
         for event in events:
-            episodes = conn.execute(
-                "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-            ).fetchall()
+            episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
             assert len(episodes) == 1, f"Event {event['id']} should have exactly one episode"
 
 
 # ---------------------------------------------------------------------------
 # Test 10: System events are stored but skip episode creation
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_system_event_stored_but_no_episode(lifeos, db):
@@ -478,22 +467,19 @@ async def test_system_event_stored_but_no_episode(lifeos, db):
 
     # Event should be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "System event should still be stored"
 
     # But no episode should be created (system events are skipped)
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) == 0, "System event should NOT create an episode"
 
 
 # ---------------------------------------------------------------------------
 # Test 11: Episode creation runs AFTER signal extraction (pipeline ordering)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_episode_creation_runs_after_signal_extraction(lifeos, db):
@@ -555,6 +541,7 @@ async def test_episode_creation_runs_after_signal_extraction(lifeos, db):
 # Test 12: WebSocket mood broadcast after email event
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_email_event_triggers_mood_websocket_broadcast(lifeos, db):
     """Processing an email.received event should trigger a mood_update WebSocket broadcast.
@@ -577,10 +564,7 @@ async def test_email_event_triggers_mood_websocket_broadcast(lifeos, db):
         await lifeos.master_event_handler(event)
 
     # Verify at least one broadcast call was a mood_update
-    mood_calls = [
-        call for call in mock_broadcast.call_args_list
-        if call[0][0].get("type") == "mood_update"
-    ]
+    mood_calls = [call for call in mock_broadcast.call_args_list if call[0][0].get("type") == "mood_update"]
     assert len(mood_calls) >= 1, (
         f"Expected at least one mood_update broadcast for email.received event. "
         f"All broadcast calls: {mock_broadcast.call_args_list}"
@@ -590,6 +574,7 @@ async def test_email_event_triggers_mood_websocket_broadcast(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 13: Notification triggers WebSocket broadcast
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_notification_triggers_websocket_broadcast(lifeos, db):
@@ -617,13 +602,9 @@ async def test_notification_triggers_websocket_broadcast(lifeos, db):
         await lifeos.master_event_handler(event)
 
     # Verify a notification-type WebSocket broadcast was sent
-    notif_calls = [
-        call for call in mock_broadcast.call_args_list
-        if call[0][0].get("type") == "notification"
-    ]
+    notif_calls = [call for call in mock_broadcast.call_args_list if call[0][0].get("type") == "notification"]
     assert len(notif_calls) >= 1, (
-        f"Expected at least one notification WebSocket broadcast. "
-        f"All broadcast calls: {mock_broadcast.call_args_list}"
+        f"Expected at least one notification WebSocket broadcast. All broadcast calls: {mock_broadcast.call_args_list}"
     )
 
     # Verify the notification broadcast includes the source_event_id
@@ -634,6 +615,7 @@ async def test_notification_triggers_websocket_broadcast(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 14: WebSocket broadcast failure does not crash the pipeline
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_websocket_broadcast_failure_does_not_crash_pipeline(lifeos, db):
@@ -654,7 +636,8 @@ async def test_websocket_broadcast_failure_does_not_crash_pipeline(lifeos, db):
     )
 
     with patch.object(
-        ws_manager, "broadcast",
+        ws_manager,
+        "broadcast",
         new_callable=AsyncMock,
         side_effect=RuntimeError("WebSocket broadcast failed"),
     ):
@@ -663,22 +646,19 @@ async def test_websocket_broadcast_failure_does_not_crash_pipeline(lifeos, db):
 
     # Stage 1: event should still be stored
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "Event should be stored despite WebSocket broadcast failure"
 
     # Stage 6: episode should still be created
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) >= 1, "Episode should be created despite WebSocket broadcast failure"
 
 
 # ---------------------------------------------------------------------------
 # Test 15: System event skips signal extraction
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_system_event_skips_signal_extraction(lifeos, db):
@@ -717,9 +697,7 @@ async def test_system_event_skips_signal_extraction(lifeos, db):
 
     # But the event should still be stored (stage 1 runs before the guard)
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "System event should still be stored in events.db"
 
     # Restore
@@ -729,6 +707,7 @@ async def test_system_event_skips_signal_extraction(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 16: System event still records source weight
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_system_event_still_records_source_weight(lifeos, db):
@@ -766,8 +745,7 @@ async def test_system_event_still_records_source_weight(lifeos, db):
 
     # The source key for system.rule.triggered should be "system.general"
     assert "system.general" in record_calls, (
-        f"Expected 'system.general' source key for system.rule.triggered, "
-        f"got: {record_calls}"
+        f"Expected 'system.general' source key for system.rule.triggered, got: {record_calls}"
     )
 
     # Restore
@@ -777,6 +755,7 @@ async def test_system_event_still_records_source_weight(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 17: Suppress action sets _suppressed flag on event dict
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_suppress_action_sets_suppressed_flag_on_event(lifeos, db):
@@ -807,9 +786,7 @@ async def test_suppress_action_sets_suppressed_flag_on_event(lifeos, db):
     await lifeos.master_event_handler(event)
 
     # The suppress action should have set the in-memory flag
-    assert event.get("_suppressed") is True, (
-        "event['_suppressed'] should be True after suppress action executes"
-    )
+    assert event.get("_suppressed") is True, "event['_suppressed'] should be True after suppress action executes"
 
     # Also verify the persistent tag was written
     with db.get_connection("events") as conn:
@@ -823,6 +800,7 @@ async def test_suppress_action_sets_suppressed_flag_on_event(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 18: Suppress runs before notify in same rule set (ordering)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_suppress_runs_before_notify_in_same_rule_set(lifeos, db):
@@ -868,15 +846,11 @@ async def test_suppress_runs_before_notify_in_same_rule_set(lifeos, db):
     await lifeos.master_event_handler(event)
 
     # The suppress action should have set the flag
-    assert event.get("_suppressed") is True, (
-        "Suppress action should have set _suppressed = True"
-    )
+    assert event.get("_suppressed") is True, "Suppress action should have set _suppressed = True"
 
     # No notification should have been created because suppress ran first
     with db.get_connection("state") as conn:
-        notifs = conn.execute(
-            "SELECT * FROM notifications WHERE source_event_id = ?", (event["id"],)
-        ).fetchall()
+        notifs = conn.execute("SELECT * FROM notifications WHERE source_event_id = ?", (event["id"],)).fetchall()
     assert len(notifs) == 0, (
         "Notification should NOT be created when suppress runs in the same action set — "
         "the suppress-before-notify sort at main.py:2120-2122 should prevent it"
@@ -886,6 +860,7 @@ async def test_suppress_runs_before_notify_in_same_rule_set(lifeos, db):
 # ---------------------------------------------------------------------------
 # Test 19: Task manager error does not block embedding
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_task_manager_error_does_not_block_embedding(lifeos, db):
@@ -935,6 +910,7 @@ async def test_task_manager_error_does_not_block_embedding(lifeos, db):
 # Test 20: Embedding error does not block episode creation
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_embedding_error_does_not_block_episode_creation(lifeos, db):
     """If _embed_event (stage 5) raises, the pipeline should still reach
@@ -961,16 +937,12 @@ async def test_embedding_error_does_not_block_episode_creation(lifeos, db):
 
     # Event should be stored (stage 1)
     with db.get_connection("events") as conn:
-        row = conn.execute(
-            "SELECT * FROM events WHERE id = ?", (event["id"],)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM events WHERE id = ?", (event["id"],)).fetchone()
     assert row is not None, "Event should be stored despite embedding failure"
 
     # Episode should be created (stage 6) despite embedding failure (stage 5)
     with db.get_connection("user_model") as conn:
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE event_id = ?", (event["id"],)
-        ).fetchall()
+        episodes = conn.execute("SELECT * FROM episodes WHERE event_id = ?", (event["id"],)).fetchall()
     assert len(episodes) >= 1, (
         "Episode (stage 6) should be created despite _embed_event (stage 5) failure — "
         "each pipeline stage is independently wrapped in try/except"

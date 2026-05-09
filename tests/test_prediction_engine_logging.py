@@ -33,6 +33,7 @@ def engine(db, user_model_store):
 # Logger presence
 # ---------------------------------------------------------------------------
 
+
 def test_engine_uses_logging_module():
     """PredictionEngine module must define a module-level logger via logging.getLogger.
 
@@ -40,9 +41,9 @@ def test_engine_uses_logging_module():
     (InsightEngine, SemanticFactInferrer, AIEngine, etc.).
     """
     import services.prediction_engine.engine as eng_module
+
     assert hasattr(eng_module, "logger"), (
-        "services.prediction_engine.engine must expose a module-level 'logger' "
-        "created with logging.getLogger(__name__)"
+        "services.prediction_engine.engine must expose a module-level 'logger' created with logging.getLogger(__name__)"
     )
     assert isinstance(eng_module.logger, logging.Logger)
 
@@ -50,12 +51,14 @@ def test_engine_uses_logging_module():
 def test_logger_name_is_module_path():
     """The logger must be named after the module (__name__) for correct hierarchy."""
     import services.prediction_engine.engine as eng_module
+
     assert eng_module.logger.name == "services.prediction_engine.engine"
 
 
 # ---------------------------------------------------------------------------
 # Accuracy-multiplier WARNING
 # ---------------------------------------------------------------------------
+
 
 def test_accuracy_multiplier_warning_emitted(db, user_model_store, engine, caplog):
     """_get_accuracy_multiplier() emits a WARNING when accuracy < 20% with ≥10 samples.
@@ -80,12 +83,9 @@ def test_accuracy_multiplier_warning_emitted(db, user_model_store, engine, caplo
     assert multiplier == 0.3, "Floor of 0.3 should be returned for <20% accuracy with ≥10 samples"
 
     warning_records = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "accuracy_multiplier" in r.getMessage()
+        r for r in caplog.records if r.levelno == logging.WARNING and "accuracy_multiplier" in r.getMessage()
     ]
-    assert len(warning_records) == 1, (
-        "Exactly one WARNING record about accuracy_multiplier should be emitted"
-    )
+    assert len(warning_records) == 1, "Exactly one WARNING record about accuracy_multiplier should be emitted"
     msg = warning_records[0].getMessage()
     assert "opportunity" in msg
     assert "0.0%" in msg or "0%" in msg, "Message should include the actual accuracy rate"
@@ -110,8 +110,7 @@ def test_accuracy_multiplier_no_warning_above_threshold(db, user_model_store, en
 
     assert multiplier > 0.3, "No floor penalty should be applied at 50% accuracy"
     warning_records = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "accuracy_multiplier" in r.getMessage()
+        r for r in caplog.records if r.levelno == logging.WARNING and "accuracy_multiplier" in r.getMessage()
     ]
     assert len(warning_records) == 0, "No WARNING should be emitted above the 20% threshold"
 
@@ -137,8 +136,7 @@ def test_contact_accuracy_multiplier_warning_emitted(db, user_model_store, engin
     assert multiplier == 0.5, "Per-contact floor of 0.5 expected for <20% accuracy with ≥3 samples"
 
     warning_records = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "contact_accuracy_multiplier" in r.getMessage()
+        r for r in caplog.records if r.levelno == logging.WARNING and "contact_accuracy_multiplier" in r.getMessage()
     ]
     assert len(warning_records) == 1
     msg = warning_records[0].getMessage()
@@ -149,6 +147,7 @@ def test_contact_accuracy_multiplier_warning_emitted(db, user_model_store, engin
 # No print() leakage
 # ---------------------------------------------------------------------------
 
+
 def test_no_print_calls_in_engine_source():
     """PredictionEngine source must not contain any bare print() calls.
 
@@ -157,18 +156,18 @@ def test_no_print_calls_in_engine_source():
     """
     import inspect
     import services.prediction_engine.engine as eng_module
+
     source = inspect.getsource(eng_module)
 
     # Find lines that look like standalone print() calls (not in comments/docstrings)
     import re
+
     print_lines = [
         (i + 1, line)
         for i, line in enumerate(source.splitlines())
         if re.search(r"^\s*print\(", line) and not line.lstrip().startswith("#")
     ]
-    assert print_lines == [], (
-        f"Found bare print() calls in engine.py — migrate to logger.*(): {print_lines}"
-    )
+    assert print_lines == [], f"Found bare print() calls in engine.py — migrate to logger.*(): {print_lines}"
 
 
 # ---------------------------------------------------------------------------
@@ -219,21 +218,23 @@ async def test_calendar_reminders_logs_on_corrupt_dedup_entry(db, event_store, u
     # the method reaches the dedup section instead of returning early.
     start_time = now + timedelta(hours=6)
     end_time = start_time + timedelta(hours=1)
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "calendar.event.created",
-        "source": "google",
-        "timestamp": now.isoformat(),
-        "payload": {
-            "event_id": "cal-evt-123",
-            "title": "Team Meeting",
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
-            "is_all_day": False,
-            "location": "",
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "calendar.event.created",
+            "source": "google",
+            "timestamp": now.isoformat(),
+            "payload": {
+                "event_id": "cal-evt-123",
+                "title": "Team Meeting",
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "is_all_day": False,
+                "location": "",
+            },
+            "metadata": {},
+        }
+    )
 
     # Insert a prediction with corrupt supporting_signals directly into the DB.
     # The predictions table has no JSON trigger, so raw text is accepted.
@@ -260,13 +261,9 @@ async def test_calendar_reminders_logs_on_corrupt_dedup_entry(db, event_store, u
 
     # Should have logged a debug message about the malformed entry
     debug_calls = mock_logger.debug.call_args_list
-    dedup_log_found = any(
-        "calendar_reminders" in str(call) and "malformed dedup" in str(call)
-        for call in debug_calls
-    )
+    dedup_log_found = any("calendar_reminders" in str(call) and "malformed dedup" in str(call) for call in debug_calls)
     assert dedup_log_found, (
-        f"Expected a 'calendar_reminders: skipping malformed dedup entry' debug log. "
-        f"Got debug calls: {debug_calls}"
+        f"Expected a 'calendar_reminders: skipping malformed dedup entry' debug log. Got debug calls: {debug_calls}"
     )
 
 
@@ -299,12 +296,10 @@ def test_count_calendar_event_types_logs_on_malformed_payload(db, user_model_sto
     # Should have logged a debug message about the malformed payload
     debug_calls = mock_logger.debug.call_args_list
     payload_log_found = any(
-        "calendar_stats" in str(call) and "malformed event payload" in str(call)
-        for call in debug_calls
+        "calendar_stats" in str(call) and "malformed event payload" in str(call) for call in debug_calls
     )
     assert payload_log_found, (
-        f"Expected a 'calendar_stats: skipping malformed event payload' debug log. "
-        f"Got debug calls: {debug_calls}"
+        f"Expected a 'calendar_stats: skipping malformed event payload' debug log. Got debug calls: {debug_calls}"
     )
 
 

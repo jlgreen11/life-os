@@ -189,8 +189,7 @@ async def test_contains_any_operator(db):
         name="Marketing detector",
         trigger_event="email.received",
         conditions=[
-            {"field": "payload.body", "op": "contains_any",
-             "value": ["unsubscribe", "opt out", "manage preferences"]},
+            {"field": "payload.body", "op": "contains_any", "value": ["unsubscribe", "opt out", "manage preferences"]},
         ],
         actions=[{"type": "tag", "value": "marketing"}],
     )
@@ -220,8 +219,11 @@ async def test_in_operator(db):
         name="VIP sender",
         trigger_event="email.received",
         conditions=[
-            {"field": "payload.from", "op": "in",
-             "value": ["boss@company.com", "ceo@company.com", "founder@startup.com"]},
+            {
+                "field": "payload.from",
+                "op": "in",
+                "value": ["boss@company.com", "ceo@company.com", "founder@startup.com"],
+            },
         ],
         actions=[{"type": "notify", "priority": "high"}],
     )
@@ -251,8 +253,7 @@ async def test_not_in_operator(db):
         name="External sender",
         trigger_event="email.received",
         conditions=[
-            {"field": "payload.from", "op": "not_in",
-             "value": ["internal@company.com", "team@company.com"]},
+            {"field": "payload.from", "op": "not_in", "value": ["internal@company.com", "team@company.com"]},
         ],
         actions=[{"type": "tag", "value": "external"}],
     )
@@ -817,10 +818,7 @@ async def test_trigger_count_tracking(db):
 
     # Check that times_triggered incremented
     with db.get_connection("preferences") as conn:
-        row = conn.execute(
-            "SELECT times_triggered FROM rules WHERE id = ?",
-            (rule_id,)
-        ).fetchone()
+        row = conn.execute("SELECT times_triggered FROM rules WHERE id = ?", (rule_id,)).fetchone()
         assert row["times_triggered"] == 5
 
 

@@ -55,8 +55,7 @@ def test_place_behaviors_is_dict_not_string(db, user_model_store):
 
     # The value MUST be a dict — never a string.
     assert isinstance(place_behaviors, dict), (
-        f"place_behaviors should be a dict but got {type(place_behaviors).__name__}: "
-        f"{place_behaviors!r}"
+        f"place_behaviors should be a dict but got {type(place_behaviors).__name__}: {place_behaviors!r}"
     )
 
     # Sanity check: the location entry is actually there and accessible.
@@ -132,8 +131,7 @@ def test_inferred_locations_is_dict_not_string(db, user_model_store):
 
     # The value MUST be a dict — never a string.
     assert isinstance(inferred_locations, dict), (
-        f"inferred_locations should be a dict but got "
-        f"{type(inferred_locations).__name__}: {inferred_locations!r}"
+        f"inferred_locations should be a dict but got {type(inferred_locations).__name__}: {inferred_locations!r}"
     )
 
     # The mapped region should be present.
@@ -238,9 +236,7 @@ def test_get_dominant_location_now_picks_most_recent(db, user_model_store):
     extractor.extract(home_event)
 
     location = extractor.get_dominant_location_now()
-    assert location == "home office", (
-        f"Expected 'home office' (most recent) but got '{location}'"
-    )
+    assert location == "home office", f"Expected 'home office' (most recent) but got '{location}'"
 
 
 # ---------------------------------------------------------------------------
@@ -287,19 +283,11 @@ def test_mixed_updates_preserve_both_fields(db, user_model_store):
     data = profile["data"]
 
     # Both fields must be dicts after interleaved writes.
-    assert isinstance(data.get("place_behaviors"), dict), (
-        "place_behaviors must be a dict after mixed updates"
-    )
-    assert isinstance(data.get("inferred_locations"), dict), (
-        "inferred_locations must be a dict after mixed updates"
-    )
+    assert isinstance(data.get("place_behaviors"), dict), "place_behaviors must be a dict after mixed updates"
+    assert isinstance(data.get("inferred_locations"), dict), "inferred_locations must be a dict after mixed updates"
 
     # place_behaviors should still hold the calendar event data.
-    assert "studio b" in data["place_behaviors"], (
-        "place_behaviors should still contain 'studio b' after email update"
-    )
+    assert "studio b" in data["place_behaviors"], "place_behaviors should still contain 'studio b' after email update"
 
     # inferred_locations should hold the email hint.
-    assert "london uk" in data["inferred_locations"], (
-        "inferred_locations should contain 'london uk' after email update"
-    )
+    assert "london uk" in data["inferred_locations"], "inferred_locations should contain 'london uk' after email update"

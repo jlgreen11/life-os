@@ -34,9 +34,7 @@ async def test_generation_stats_persisted_after_run(db, event_store, user_model_
 
     # Check persisted state in prediction_engine_state table
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT value FROM prediction_engine_state WHERE key = 'last_generation_stats'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM prediction_engine_state WHERE key = 'last_generation_stats'").fetchone()
     assert row is not None
     persisted = json.loads(row["value"])
     assert isinstance(persisted, dict)

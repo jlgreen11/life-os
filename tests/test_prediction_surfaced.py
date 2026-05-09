@@ -22,14 +22,16 @@ async def test_prediction_marked_surfaced_when_notification_created(db, event_st
 
     # Create a prediction first
     prediction_id = "pred-123"
-    user_model_store.store_prediction({
-        "id": prediction_id,
-        "prediction_type": "reminder",
-        "description": "Test prediction",
-        "confidence": 0.7,
-        "confidence_gate": "default",
-        "was_surfaced": False,  # Starts as not surfaced
-    })
+    user_model_store.store_prediction(
+        {
+            "id": prediction_id,
+            "prediction_type": "reminder",
+            "description": "Test prediction",
+            "confidence": 0.7,
+            "confidence_gate": "default",
+            "was_surfaced": False,  # Starts as not surfaced
+        }
+    )
 
     # Verify prediction starts as not surfaced
     with db.get_connection("user_model") as conn:
@@ -114,14 +116,16 @@ async def test_multiple_notifications_from_same_prediction(db, event_store, user
 
     # Create a prediction
     prediction_id = "pred-789"
-    user_model_store.store_prediction({
-        "id": prediction_id,
-        "prediction_type": "reminder",
-        "description": "Test prediction",
-        "confidence": 0.7,
-        "confidence_gate": "default",
-        "was_surfaced": False,
-    })
+    user_model_store.store_prediction(
+        {
+            "id": prediction_id,
+            "prediction_type": "reminder",
+            "description": "Test prediction",
+            "confidence": 0.7,
+            "confidence_gate": "default",
+            "was_surfaced": False,
+        }
+    )
 
     # Create first notification from prediction
     notif_id_1 = await nm.create_notification(
@@ -168,14 +172,16 @@ async def test_accuracy_calculation_only_counts_surfaced_predictions(db, event_s
 
     for i in range(5):
         prediction_id = f"pred-{i}"
-        user_model_store.store_prediction({
-            "id": prediction_id,
-            "prediction_type": "reminder",
-            "description": f"Test prediction {i}",
-            "confidence": 0.7,
-            "confidence_gate": "default",
-            "was_surfaced": False,
-        })
+        user_model_store.store_prediction(
+            {
+                "id": prediction_id,
+                "prediction_type": "reminder",
+                "description": f"Test prediction {i}",
+                "confidence": 0.7,
+                "confidence_gate": "default",
+                "was_surfaced": False,
+            }
+        )
 
         # Surface predictions 0, 1, 2 via notifications
         if i < 3:
@@ -237,14 +243,16 @@ async def test_filtered_predictions_remain_unsurfaced(db, event_store, user_mode
     # (simulates the prediction engine filtering low-confidence predictions)
 
     for i in range(3):
-        user_model_store.store_prediction({
-            "id": f"filtered-{i}",
-            "prediction_type": "reminder",
-            "description": f"Filtered prediction {i}",
-            "confidence": 0.2,  # Too low, would be filtered
-            "confidence_gate": "observe",
-            "was_surfaced": False,
-        })
+        user_model_store.store_prediction(
+            {
+                "id": f"filtered-{i}",
+                "prediction_type": "reminder",
+                "description": f"Filtered prediction {i}",
+                "confidence": 0.2,  # Too low, would be filtered
+                "confidence_gate": "observe",
+                "was_surfaced": False,
+            }
+        )
 
     # Verify all remain unsurfaced
     with db.get_connection("user_model") as conn:

@@ -29,13 +29,18 @@ def _ts(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def _insert_event(conn, event_type: str, timestamp: datetime, *,
-                  email_from: str | None = None,
-                  email_to: str | None = None,
-                  task_id: str | None = None,
-                  calendar_event_id: str | None = None,
-                  payload: dict | None = None,
-                  source: str = "test"):
+def _insert_event(
+    conn,
+    event_type: str,
+    timestamp: datetime,
+    *,
+    email_from: str | None = None,
+    email_to: str | None = None,
+    task_id: str | None = None,
+    calendar_event_id: str | None = None,
+    payload: dict | None = None,
+    source: str = "test",
+):
     """Insert a single event into the events table with denormalized columns.
 
     Directly populates the denormalized columns (email_from, email_to, etc.)
@@ -64,9 +69,14 @@ def _insert_event(conn, event_type: str, timestamp: datetime, *,
     return eid
 
 
-def _insert_episode(conn, interaction_type: str, timestamp: datetime, *,
-                    event_id: str | None = None,
-                    content_summary: str = "test episode"):
+def _insert_episode(
+    conn,
+    interaction_type: str,
+    timestamp: datetime,
+    *,
+    event_id: str | None = None,
+    content_summary: str = "test episode",
+):
     """Insert a single episode into the episodes table."""
     ep_id = str(uuid.uuid4())
     conn.execute(
@@ -114,13 +124,9 @@ class TestDetectEmailWorkflows:
         with db.get_connection("events") as conn:
             # 3 received emails from the same sender over multiple days
             for i in range(3):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=5 - i),
-                              email_from=sender)
+                _insert_event(conn, "email.received", now - timedelta(days=5 - i), email_from=sender)
                 # Reply sent to the same sender within 2 hours
-                _insert_event(conn, "email.sent",
-                              now - timedelta(days=5 - i, hours=-2),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.sent", now - timedelta(days=5 - i, hours=-2), email_to=json.dumps([sender]))
 
         workflows = detector._detect_email_workflows(lookback_days=30)
 
@@ -138,9 +144,7 @@ class TestDetectEmailWorkflows:
 
         with db.get_connection("events") as conn:
             for i in range(5):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=5 - i),
-                              email_from=sender)
+                _insert_event(conn, "email.received", now - timedelta(days=5 - i), email_from=sender)
 
         workflows = detector._detect_email_workflows(lookback_days=30)
 
@@ -155,12 +159,8 @@ class TestDetectEmailWorkflows:
         with db.get_connection("events") as conn:
             # Only 2 emails (below default min_occurrences=3)
             for i in range(2):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=2 - i),
-                              email_from=sender)
-                _insert_event(conn, "email.sent",
-                              now - timedelta(days=2 - i, hours=-1),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.received", now - timedelta(days=2 - i), email_from=sender)
+                _insert_event(conn, "email.sent", now - timedelta(days=2 - i, hours=-1), email_to=json.dumps([sender]))
 
         workflows = detector._detect_email_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -173,13 +173,10 @@ class TestDetectEmailWorkflows:
         with db.get_connection("events") as conn:
             for i in range(4):
                 base = now - timedelta(days=20 - i * 4)
-                _insert_event(conn, "email.received", base,
-                              email_from=sender)
+                _insert_event(conn, "email.received", base, email_from=sender)
                 # Reply sent 24 hours later (outside 12-hour gap)
                 # No other events in between to avoid cross-matching
-                _insert_event(conn, "email.sent",
-                              base + timedelta(hours=24),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.sent", base + timedelta(hours=24), email_to=json.dumps([sender]))
 
         workflows = detector._detect_email_workflows(lookback_days=30)
         # All replies are outside the 12-hour gap, so email.sent actions
@@ -195,13 +192,9 @@ class TestDetectEmailWorkflows:
         with db.get_connection("events") as conn:
             # 5 received emails but only 1 reply (below min_completions=2)
             for i in range(5):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=5 - i),
-                              email_from=sender)
+                _insert_event(conn, "email.received", now - timedelta(days=5 - i), email_from=sender)
             # Only one reply
-            _insert_event(conn, "email.sent",
-                          now - timedelta(days=4, hours=-1),
-                          email_to=json.dumps([sender]))
+            _insert_event(conn, "email.sent", now - timedelta(days=4, hours=-1), email_to=json.dumps([sender]))
 
         # min_completions=2 by default, but we need min_occurrences (3) matching
         # actions to even count them. 1 reply < 3 min_occurrences for the action.
@@ -215,13 +208,9 @@ class TestDetectEmailWorkflows:
 
         with db.get_connection("events") as conn:
             for i in range(3):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=5 - i),
-                              email_from=sender)
+                _insert_event(conn, "email.received", now - timedelta(days=5 - i), email_from=sender)
                 # email_to as plain string instead of JSON array
-                _insert_event(conn, "email.sent",
-                              now - timedelta(days=5 - i, hours=-1),
-                              email_to=sender)
+                _insert_event(conn, "email.sent", now - timedelta(days=5 - i, hours=-1), email_to=sender)
 
         workflows = detector._detect_email_workflows(lookback_days=30)
         assert len(workflows) >= 1
@@ -233,12 +222,10 @@ class TestDetectEmailWorkflows:
 
         with db.get_connection("events") as conn:
             for i in range(3):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=5 - i),
-                              email_from=sender)
-                _insert_event(conn, "email.sent",
-                              now - timedelta(days=5 - i, hours=-1),
-                              email_to=json.dumps(["boss@example.com"]))
+                _insert_event(conn, "email.received", now - timedelta(days=5 - i), email_from=sender)
+                _insert_event(
+                    conn, "email.sent", now - timedelta(days=5 - i, hours=-1), email_to=json.dumps(["boss@example.com"])
+                )
 
         workflows = detector._detect_email_workflows(lookback_days=30)
         assert len(workflows) >= 1
@@ -255,8 +242,7 @@ class TestDetectEmailWorkflows:
                 # Create a task 30 min later
                 _insert_event(conn, "task.created", base + timedelta(minutes=30))
                 # Send reply 2 hours later
-                _insert_event(conn, "email.sent", base + timedelta(hours=2),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.sent", base + timedelta(hours=2), email_to=json.dumps([sender]))
 
         workflows = detector._detect_email_workflows(lookback_days=30)
         assert len(workflows) >= 1
@@ -283,10 +269,8 @@ class TestDetectTaskWorkflows:
                 base = now - timedelta(days=8 - i * 2)
                 tid = f"task-{i}"
                 _insert_event(conn, "task.created", base, task_id=tid)
-                _insert_event(conn, "email.sent",
-                              base + timedelta(hours=1))
-                _insert_event(conn, "task.completed",
-                              base + timedelta(hours=2), task_id=tid)
+                _insert_event(conn, "email.sent", base + timedelta(hours=1))
+                _insert_event(conn, "task.completed", base + timedelta(hours=2), task_id=tid)
 
         workflows = detector._detect_task_workflows(lookback_days=30)
 
@@ -304,10 +288,8 @@ class TestDetectTaskWorkflows:
         with db.get_connection("events") as conn:
             # Only 2 tasks (below min_occurrences=3)
             for i in range(2):
-                _insert_event(conn, "task.created",
-                              now - timedelta(days=2 - i))
-                _insert_event(conn, "task.completed",
-                              now - timedelta(days=2 - i, hours=-1))
+                _insert_event(conn, "task.created", now - timedelta(days=2 - i))
+                _insert_event(conn, "task.completed", now - timedelta(days=2 - i, hours=-1))
 
         workflows = detector._detect_task_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -319,10 +301,8 @@ class TestDetectTaskWorkflows:
         with db.get_connection("events") as conn:
             # 4 tasks, but only task.completed follows (1 action type)
             for i in range(4):
-                _insert_event(conn, "task.created",
-                              now - timedelta(days=4 - i))
-                _insert_event(conn, "task.completed",
-                              now - timedelta(days=4 - i, hours=-2))
+                _insert_event(conn, "task.created", now - timedelta(days=4 - i))
+                _insert_event(conn, "task.completed", now - timedelta(days=4 - i, hours=-2))
 
         workflows = detector._detect_task_workflows(lookback_days=30)
         # min_steps=2 means we need 2 different following action types
@@ -355,10 +335,8 @@ class TestDetectTaskWorkflows:
                 base = now - timedelta(days=20 - i * 4)
                 _insert_event(conn, "task.created", base)
                 # Completion 24 hours later (outside 12-hour gap)
-                _insert_event(conn, "task.completed",
-                              base + timedelta(hours=24))
-                _insert_event(conn, "email.sent",
-                              base + timedelta(hours=25))
+                _insert_event(conn, "task.completed", base + timedelta(hours=24))
+                _insert_event(conn, "email.sent", base + timedelta(hours=25))
 
         workflows = detector._detect_task_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -380,14 +358,11 @@ class TestDetectCalendarWorkflows:
             for i in range(4):
                 base = now - timedelta(days=8 - i * 2)
                 cal_id = f"cal-{i}"
-                _insert_event(conn, "calendar.event.created", base,
-                              calendar_event_id=cal_id)
+                _insert_event(conn, "calendar.event.created", base, calendar_event_id=cal_id)
                 # Follow-up email 1 hour after event
-                _insert_event(conn, "email.sent",
-                              base + timedelta(hours=1))
+                _insert_event(conn, "email.sent", base + timedelta(hours=1))
                 # Follow-up task 2 hours after event
-                _insert_event(conn, "task.created",
-                              base + timedelta(hours=2))
+                _insert_event(conn, "task.created", base + timedelta(hours=2))
 
         workflows = detector._detect_calendar_workflows(lookback_days=30)
 
@@ -403,10 +378,8 @@ class TestDetectCalendarWorkflows:
 
         with db.get_connection("events") as conn:
             for i in range(2):
-                _insert_event(conn, "calendar.event.created",
-                              now - timedelta(days=2 - i))
-                _insert_event(conn, "email.sent",
-                              now - timedelta(days=2 - i, hours=-1))
+                _insert_event(conn, "calendar.event.created", now - timedelta(days=2 - i))
+                _insert_event(conn, "email.sent", now - timedelta(days=2 - i, hours=-1))
 
         workflows = detector._detect_calendar_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -431,17 +404,13 @@ class TestDetectCalendarWorkflows:
             for i in range(4):
                 base = now - timedelta(days=8 - i * 2)
                 # Calendar event created early (time set in the future)
-                _insert_event(conn, "calendar.event.created", base,
-                              calendar_event_id=f"cal-{i}")
+                _insert_event(conn, "calendar.event.created", base, calendar_event_id=f"cal-{i}")
                 # Prep: email received 1 hour after creation but still "before" the meeting
-                _insert_event(conn, "email.received",
-                              base + timedelta(hours=1))
+                _insert_event(conn, "email.received", base + timedelta(hours=1))
                 # Follow-up: email sent 3 hours after creation
-                _insert_event(conn, "email.sent",
-                              base + timedelta(hours=3))
+                _insert_event(conn, "email.sent", base + timedelta(hours=3))
                 # Follow-up: task created 4 hours after
-                _insert_event(conn, "task.created",
-                              base + timedelta(hours=4))
+                _insert_event(conn, "task.created", base + timedelta(hours=4))
 
         workflows = detector._detect_calendar_workflows(lookback_days=30)
 
@@ -456,11 +425,9 @@ class TestDetectCalendarWorkflows:
         with db.get_connection("events") as conn:
             for i in range(4):
                 base = now - timedelta(days=16 - i * 4)
-                _insert_event(conn, "calendar.event.created", base,
-                              calendar_event_id=f"cal-{i}")
+                _insert_event(conn, "calendar.event.created", base, calendar_event_id=f"cal-{i}")
                 # Follow-up 24 hours later (outside gap)
-                _insert_event(conn, "email.sent",
-                              base + timedelta(hours=24))
+                _insert_event(conn, "email.sent", base + timedelta(hours=24))
 
         workflows = detector._detect_calendar_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -483,10 +450,8 @@ class TestDetectInteractionWorkflows:
             for i in range(4):
                 base = now - timedelta(days=8 - i * 2)
                 _insert_episode(conn, "research", base)
-                _insert_episode(conn, "compose",
-                                base + timedelta(hours=1))
-                _insert_episode(conn, "review",
-                                base + timedelta(hours=2))
+                _insert_episode(conn, "compose", base + timedelta(hours=1))
+                _insert_episode(conn, "review", base + timedelta(hours=2))
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
 
@@ -521,8 +486,7 @@ class TestDetectInteractionWorkflows:
 
         with db.get_connection("user_model") as conn:
             for i in range(10):
-                _insert_episode(conn, "email_read",
-                                now - timedelta(days=10 - i))
+                _insert_episode(conn, "email_read", now - timedelta(days=10 - i))
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -536,10 +500,8 @@ class TestDetectInteractionWorkflows:
                 base = now - timedelta(days=20 - i * 4)
                 _insert_episode(conn, "research", base)
                 # Next episode 24 hours later (outside 12-hour gap)
-                _insert_episode(conn, "compose",
-                                base + timedelta(hours=24))
-                _insert_episode(conn, "review",
-                                base + timedelta(hours=48))
+                _insert_episode(conn, "compose", base + timedelta(hours=24))
+                _insert_episode(conn, "review", base + timedelta(hours=48))
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         assert len(workflows) == 0
@@ -555,8 +517,7 @@ class TestDetectInteractionWorkflows:
             for i in range(4):
                 base = now - timedelta(days=8 - i * 2)
                 _insert_episode(conn, "research", base)
-                _insert_episode(conn, "compose",
-                                base + timedelta(hours=1))
+                _insert_episode(conn, "compose", base + timedelta(hours=1))
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         # "research" has only 1 following type → < min_steps=2
@@ -580,8 +541,7 @@ class TestDetectInteractionWorkflows:
                 _insert_episode(conn, "review", base + timedelta(hours=2))
 
                 # 'unknown' episodes interspersed
-                _insert_episode(conn, "unknown",
-                                base + timedelta(hours=1, minutes=30))
+                _insert_episode(conn, "unknown", base + timedelta(hours=1, minutes=30))
 
         workflows = detector._detect_interaction_workflows(lookback_days=30)
         # Valid episodes should still form workflows
@@ -607,8 +567,7 @@ class TestDetectWorkflowsIntegration:
                 base = now - timedelta(days=8 - i * 2)
                 _insert_event(conn, "email.received", base, email_from=sender)
                 _insert_event(conn, "task.created", base + timedelta(minutes=30))
-                _insert_event(conn, "email.sent", base + timedelta(hours=2),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.sent", base + timedelta(hours=2), email_to=json.dumps([sender]))
 
         # Insert interaction workflow data
         with db.get_connection("user_model") as conn:
@@ -647,14 +606,11 @@ class TestDetectWorkflowsIntegration:
                 base = now - timedelta(days=8 - i * 2)
                 _insert_event(conn, "email.received", base, email_from=sender)
                 _insert_event(conn, "task.created", base + timedelta(minutes=30))
-                _insert_event(conn, "email.sent", base + timedelta(hours=2),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.sent", base + timedelta(hours=2), email_to=json.dumps([sender]))
 
         # Monkey-patch interaction strategy to throw
         original = detector._detect_interaction_workflows
-        detector._detect_interaction_workflows = lambda days: (_ for _ in ()).throw(
-            RuntimeError("simulated failure")
-        )
+        detector._detect_interaction_workflows = lambda days: (_ for _ in ()).throw(RuntimeError("simulated failure"))
 
         try:
             workflows = detector.detect_workflows(lookback_days=30)
@@ -673,8 +629,7 @@ class TestDetectWorkflowsIntegration:
                 base = now - timedelta(days=8 - i * 2)
                 _insert_event(conn, "email.received", base, email_from=sender)
                 _insert_event(conn, "task.created", base + timedelta(minutes=30))
-                _insert_event(conn, "email.sent", base + timedelta(hours=2),
-                              email_to=json.dumps([sender]))
+                _insert_event(conn, "email.sent", base + timedelta(hours=2), email_to=json.dumps([sender]))
 
         workflows = detector.detect_workflows(lookback_days=30)
         if workflows:
@@ -717,9 +672,7 @@ class TestGetDiagnostics:
 
         with db.get_connection("events") as conn:
             for i in range(20):
-                _insert_event(conn, "email.received",
-                              now - timedelta(days=10 - i % 10),
-                              email_from="diag@example.com")
+                _insert_event(conn, "email.received", now - timedelta(days=10 - i % 10), email_from="diag@example.com")
 
         diag = detector.get_diagnostics(lookback_days=30)
 

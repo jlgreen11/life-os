@@ -87,9 +87,7 @@ def test_cleanup_runs_on_startup_when_needed(db):
 
     # Verify pre-state: profile contains 5 contacts (3 marketing + 2 human)
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-        ).fetchone()
+        row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
 
     contacts_before = json.loads(row["data"]).get("contacts", {})
     assert len(contacts_before) == 5, "Should start with 5 contacts"
@@ -99,6 +97,7 @@ def test_cleanup_runs_on_startup_when_needed(db):
     # Create LifeOS instance with test database
     import asyncio
     from storage.user_model_store import UserModelStore
+
     ums = UserModelStore(db)
     lifeos = LifeOS(db=db, user_model_store=ums)
 
@@ -107,9 +106,7 @@ def test_cleanup_runs_on_startup_when_needed(db):
 
     # Verify post-state: marketing contacts removed, human contacts preserved
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-        ).fetchone()
+        row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
 
     contacts_after = json.loads(row["data"]).get("contacts", {})
 
@@ -173,15 +170,14 @@ def test_cleanup_skips_when_profile_already_clean(db):
     # Run the cleanup
     import asyncio
     from storage.user_model_store import UserModelStore
+
     ums = UserModelStore(db)
     lifeos = LifeOS(db=db, user_model_store=ums)
     asyncio.run(lifeos._clean_relationship_profile_if_needed())
 
     # Verify cleanup was skipped (all contacts still present)
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-        ).fetchone()
+        row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
 
     contacts_after = json.loads(row["data"]).get("contacts", {})
 
@@ -210,15 +206,14 @@ def test_cleanup_skips_when_profile_empty(db):
     # Run the cleanup using the test-scoped db fixture so we don't touch
     # the real (potentially corrupted) production database.
     import asyncio
+
     ums = UserModelStore(db)
     lifeos = LifeOS(db=db, user_model_store=ums)
     asyncio.run(lifeos._clean_relationship_profile_if_needed())
 
     # Verify profile is still empty
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-        ).fetchone()
+        row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
 
     contacts = json.loads(row["data"]).get("contacts", {})
     assert len(contacts) == 0
@@ -233,15 +228,14 @@ def test_cleanup_skips_when_profile_missing(db):
     # Run the cleanup using the test-scoped db fixture so we don't touch
     # the real (potentially corrupted) production database.
     import asyncio
+
     ums = UserModelStore(db)
     lifeos = LifeOS(db=db, user_model_store=ums)
     asyncio.run(lifeos._clean_relationship_profile_if_needed())
 
     # Verify no profile was created
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM signal_profiles WHERE profile_type = 'relationships'"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
 
     assert row[0] == 0
 
@@ -296,15 +290,14 @@ def test_cleanup_preserves_human_contact_data(db):
     # Run the cleanup
     import asyncio
     from storage.user_model_store import UserModelStore
+
     ums = UserModelStore(db)
     lifeos = LifeOS(db=db, user_model_store=ums)
     asyncio.run(lifeos._clean_relationship_profile_if_needed())
 
     # Verify human contact data is fully preserved
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT data FROM signal_profiles WHERE profile_type = 'relationships'"
-        ).fetchone()
+        row = conn.execute("SELECT data FROM signal_profiles WHERE profile_type = 'relationships'").fetchone()
 
     contacts_after = json.loads(row["data"]).get("contacts", {})
     alice = contacts_after["alice@example.com"]

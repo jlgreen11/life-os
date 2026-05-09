@@ -40,6 +40,7 @@ from services.insight_engine.models import Insight
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_insight(category: str) -> Insight:
     """Return a minimal Insight with the given category."""
     return Insight(
@@ -57,6 +58,7 @@ def _make_engine_with_mock_swm(db):
     from unittest.mock import MagicMock
     from storage.user_model_store import UserModelStore
     from services.insight_engine.source_weights import SourceWeightManager
+
     ums = UserModelStore(db)
     mock_swm = MagicMock(spec=SourceWeightManager)
     mock_swm.get_effective_weight.return_value = 1.0
@@ -67,6 +69,7 @@ def _make_engine_with_mock_swm(db):
 def _get_routes_source() -> str:
     """Return the full source text of web/routes.py."""
     from web import routes as routes_module
+
     return inspect.getsource(routes_module)
 
 
@@ -158,6 +161,7 @@ PR_278_279_MISSING_CATEGORIES = [
 # Tests: routes.py map completeness
 # ---------------------------------------------------------------------------
 
+
 class TestRoutesFeedbackMapCompleteness:
     """Verify the routes.py feedback endpoint source map covers all engine categories."""
 
@@ -168,10 +172,7 @@ class TestRoutesFeedbackMapCompleteness:
         string inside the create_routes() source.
         """
         routes_src = _get_routes_source()
-        missing = [
-            cat for cat in ALL_ENGINE_CATEGORIES
-            if not _category_in_routes_map(cat, routes_src)
-        ]
+        missing = [cat for cat in ALL_ENGINE_CATEGORIES if not _category_in_routes_map(cat, routes_src)]
         assert not missing, (
             f"These categories are missing from routes.py category_to_source map "
             f"(feedback for these insights will silently drop source weight updates): "
@@ -181,13 +182,9 @@ class TestRoutesFeedbackMapCompleteness:
     def test_previously_missing_categories_now_present(self):
         """The 14 categories added in this fix must appear in the routes.py map."""
         routes_src = _get_routes_source()
-        still_missing = [
-            c for c in PREVIOUSLY_MISSING_CATEGORIES
-            if not _category_in_routes_map(c, routes_src)
-        ]
+        still_missing = [c for c in PREVIOUSLY_MISSING_CATEGORIES if not _category_in_routes_map(c, routes_src)]
         assert not still_missing, (
-            f"These previously-missing categories are still absent from routes.py: "
-            f"{still_missing}"
+            f"These previously-missing categories are still absent from routes.py: {still_missing}"
         )
 
     def test_intentionally_excluded_not_in_routes(self):
@@ -211,6 +208,7 @@ class TestRoutesFeedbackMapCompleteness:
 # Tests: engine interaction recording for the 14 new categories
 # ---------------------------------------------------------------------------
 
+
 class TestNewCategoryInteractionRecording:
     """Verify _apply_source_weights records interactions for the 14 new categories.
 
@@ -218,28 +216,32 @@ class TestNewCategoryInteractionRecording:
     generation time (the routes.py tests above confirm the feedback side).
     """
 
-    @pytest.mark.parametrize("category,expected_source", [
-        ("style_mismatch", "messaging.direct"),
-        ("decision_speed", "email.work"),
-        ("delegation_tendency", "messaging.direct"),
-        ("decision_fatigue", "messaging.direct"),
-        ("top_interests", "email.work"),
-        ("trending_topic", "email.work"),
-        ("response_time_baseline", "email.work"),
-        ("fastest_contacts", "messaging.direct"),
-        ("communication_peak_hours", "email.work"),
-        ("channel_cadence", "email.work"),
-        ("routine_pattern", "email.work"),
-        ("spatial_top_location", "location.visits"),
-        ("spatial_work_location", "location.visits"),
-        ("spatial_location_diversity", "location.visits"),
-    ])
+    @pytest.mark.parametrize(
+        "category,expected_source",
+        [
+            ("style_mismatch", "messaging.direct"),
+            ("decision_speed", "email.work"),
+            ("delegation_tendency", "messaging.direct"),
+            ("decision_fatigue", "messaging.direct"),
+            ("top_interests", "email.work"),
+            ("trending_topic", "email.work"),
+            ("response_time_baseline", "email.work"),
+            ("fastest_contacts", "messaging.direct"),
+            ("communication_peak_hours", "email.work"),
+            ("channel_cadence", "email.work"),
+            ("routine_pattern", "email.work"),
+            ("spatial_top_location", "location.visits"),
+            ("spatial_work_location", "location.visits"),
+            ("spatial_location_diversity", "location.visits"),
+        ],
+    )
     def test_category_records_correct_interaction(self, db, category, expected_source):
         """Each new category must call record_interaction() with the correct source key."""
         engine, mock_swm = _make_engine_with_mock_swm(db)
         engine._apply_source_weights([_make_insight(category)])
-        mock_swm.record_interaction.assert_called_once_with(expected_source), (
-            f"Category '{category}' should map to source key '{expected_source}'"
+        (
+            mock_swm.record_interaction.assert_called_once_with(expected_source),
+            (f"Category '{category}' should map to source key '{expected_source}'"),
         )
 
     def test_spending_categories_record_finance_transactions(self, db):
@@ -253,8 +255,9 @@ class TestNewCategoryInteractionRecording:
         ]:
             mock_swm.reset_mock()
             engine._apply_source_weights([_make_insight(cat)])
-            mock_swm.record_interaction.assert_called_once_with("finance.transactions"), (
-                f"Category '{cat}' should map to 'finance.transactions'"
+            (
+                mock_swm.record_interaction.assert_called_once_with("finance.transactions"),
+                (f"Category '{cat}' should map to 'finance.transactions'"),
             )
 
     def test_intentionally_excluded_categories_record_no_interaction(self, db):
@@ -263,8 +266,9 @@ class TestNewCategoryInteractionRecording:
         for excluded in INTENTIONALLY_EXCLUDED:
             mock_swm.reset_mock()
             engine._apply_source_weights([_make_insight(excluded)])
-            mock_swm.record_interaction.assert_not_called(), (
-                f"'{excluded}' should produce no record_interaction() call"
+            (
+                mock_swm.record_interaction.assert_not_called(),
+                (f"'{excluded}' should produce no record_interaction() call"),
             )
 
 
@@ -272,6 +276,7 @@ class TestNewCategoryInteractionRecording:
 # Tests: PR #278-279 new categories (reciprocity_imbalance, fast_responder,
 #         and workflow_pattern_* variants)
 # ---------------------------------------------------------------------------
+
 
 class TestPR278279NewCategories:
     """Verify the 6 categories added by PRs #278-279 are in both the engine
@@ -286,23 +291,23 @@ class TestPR278279NewCategories:
     def test_pr278_279_categories_present_in_routes(self):
         """All 6 new categories must appear in routes.py category_to_source."""
         routes_src = _get_routes_source()
-        missing = [
-            cat for cat in PR_278_279_MISSING_CATEGORIES
-            if not _category_in_routes_map(cat, routes_src)
-        ]
+        missing = [cat for cat in PR_278_279_MISSING_CATEGORIES if not _category_in_routes_map(cat, routes_src)]
         assert not missing, (
             f"These PR #278-279 categories are still absent from routes.py: {missing}. "
             f"User feedback on these insights will be silently discarded."
         )
 
-    @pytest.mark.parametrize("category,expected_source", [
-        ("reciprocity_imbalance", "messaging.direct"),
-        ("fast_responder", "messaging.direct"),
-        ("workflow_pattern_email", "email.work"),
-        ("workflow_pattern_task", "email.work"),
-        ("workflow_pattern_calendar", "email.work"),
-        ("workflow_pattern_interaction", "messaging.direct"),
-    ])
+    @pytest.mark.parametrize(
+        "category,expected_source",
+        [
+            ("reciprocity_imbalance", "messaging.direct"),
+            ("fast_responder", "messaging.direct"),
+            ("workflow_pattern_email", "email.work"),
+            ("workflow_pattern_task", "email.work"),
+            ("workflow_pattern_calendar", "email.work"),
+            ("workflow_pattern_interaction", "messaging.direct"),
+        ],
+    )
     def test_new_category_records_correct_interaction(self, db, category, expected_source):
         """Each PR #278-279 category must call record_interaction() with the right source key.
 
@@ -311,8 +316,9 @@ class TestPR278279NewCategories:
         """
         engine, mock_swm = _make_engine_with_mock_swm(db)
         engine._apply_source_weights([_make_insight(category)])
-        mock_swm.record_interaction.assert_called_once_with(expected_source), (
-            f"Category '{category}' should map to source key '{expected_source}'"
+        (
+            mock_swm.record_interaction.assert_called_once_with(expected_source),
+            (f"Category '{category}' should map to source key '{expected_source}'"),
         )
 
     def test_reciprocity_imbalance_maps_to_messaging_direct(self, db):

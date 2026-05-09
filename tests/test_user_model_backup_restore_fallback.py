@@ -117,8 +117,7 @@ class TestBackupRestoreFallback:
         # Insert some data first so the DB is non-trivial
         with db.get_connection("user_model") as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO episodes (id, timestamp, event_id, content_summary) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO episodes (id, timestamp, event_id, content_summary) VALUES (?, ?, ?, ?)",
                 ("ep1", "2026-01-01T00:00:00Z", "evt1", "test episode"),
             )
 

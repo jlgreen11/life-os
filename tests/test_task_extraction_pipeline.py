@@ -23,10 +23,12 @@ async def test_process_event_extracts_tasks_from_email(db, event_store):
     """TaskManager should extract and persist tasks from actionable emails."""
     # Mock AI engine that returns action items
     mock_ai = AsyncMock()
-    mock_ai.extract_action_items = AsyncMock(return_value=[
-        {"title": "Review PR #123", "due_hint": "by Friday", "priority": "high"},
-        {"title": "Update documentation", "due_hint": None, "priority": "normal"},
-    ])
+    mock_ai.extract_action_items = AsyncMock(
+        return_value=[
+            {"title": "Review PR #123", "due_hint": "by Friday", "priority": "high"},
+            {"title": "Update documentation", "due_hint": None, "priority": "normal"},
+        ]
+    )
 
     manager = TaskManager(db, ai_engine=mock_ai)
 
@@ -45,8 +47,7 @@ async def test_process_event_extracts_tasks_from_email(db, event_store):
 
     # Verify AI engine was called with the email body
     mock_ai.extract_action_items.assert_called_once_with(
-        "Can you review PR #123 by Friday? Also please update the documentation.",
-        "email.received"
+        "Can you review PR #123 by Friday? Also please update the documentation.", "email.received"
     )
 
     # Verify tasks were persisted to the database
@@ -76,9 +77,11 @@ async def test_process_event_extracts_tasks_from_email(db, event_store):
 async def test_process_event_extracts_tasks_from_message(db):
     """TaskManager should extract tasks from direct messages."""
     mock_ai = AsyncMock()
-    mock_ai.extract_action_items = AsyncMock(return_value=[
-        {"title": "Send expense report", "due_hint": "today", "priority": "high"},
-    ])
+    mock_ai.extract_action_items = AsyncMock(
+        return_value=[
+            {"title": "Send expense report", "due_hint": "today", "priority": "high"},
+        ]
+    )
 
     manager = TaskManager(db, ai_engine=mock_ai)
 
@@ -95,8 +98,7 @@ async def test_process_event_extracts_tasks_from_message(db):
 
     # Verify AI extraction was called
     mock_ai.extract_action_items.assert_called_once_with(
-        "Hey, can you send me the expense report today? Thanks!",
-        "message.received"
+        "Hey, can you send me the expense report today? Thanks!", "message.received"
     )
 
     # Verify task was created
@@ -112,10 +114,12 @@ async def test_process_event_extracts_tasks_from_message(db):
 async def test_process_event_extracts_tasks_from_calendar_event(db):
     """TaskManager should extract tasks from calendar event descriptions."""
     mock_ai = AsyncMock()
-    mock_ai.extract_action_items = AsyncMock(return_value=[
-        {"title": "Prepare slides", "due_hint": None, "priority": "normal"},
-        {"title": "Book conference room", "due_hint": None, "priority": "normal"},
-    ])
+    mock_ai.extract_action_items = AsyncMock(
+        return_value=[
+            {"title": "Prepare slides", "due_hint": None, "priority": "normal"},
+            {"title": "Book conference room", "due_hint": None, "priority": "normal"},
+        ]
+    )
 
     manager = TaskManager(db, ai_engine=mock_ai)
 
@@ -132,8 +136,7 @@ async def test_process_event_extracts_tasks_from_calendar_event(db):
 
     # Verify AI extraction was called with description + summary
     mock_ai.extract_action_items.assert_called_once_with(
-        "Agenda: Q4 planning. TODO: Prepare slides. Book conference room. Team meeting",
-        "calendar.event.created"
+        "Agenda: Q4 planning. TODO: Prepare slides. Book conference room. Team meeting", "calendar.event.created"
     )
 
     # Verify both tasks were created
@@ -370,9 +373,11 @@ async def test_process_event_handles_empty_extraction_result(db):
 async def test_process_event_preserves_event_provenance(db):
     """TaskManager should link tasks back to source events for full traceability."""
     mock_ai = AsyncMock()
-    mock_ai.extract_action_items = AsyncMock(return_value=[
-        {"title": "Send report", "due_hint": "Friday", "priority": "high"},
-    ])
+    mock_ai.extract_action_items = AsyncMock(
+        return_value=[
+            {"title": "Send report", "due_hint": "Friday", "priority": "high"},
+        ]
+    )
 
     manager = TaskManager(db, ai_engine=mock_ai)
 
@@ -398,11 +403,13 @@ async def test_process_event_preserves_event_provenance(db):
 async def test_process_event_handles_multiple_extraction_calls(db):
     """TaskManager should correctly handle multiple events in sequence."""
     mock_ai = AsyncMock()
-    mock_ai.extract_action_items = AsyncMock(side_effect=[
-        [{"title": "Task 1", "due_hint": None, "priority": "normal"}],
-        [{"title": "Task 2", "due_hint": None, "priority": "normal"}],
-        [],  # Third event has no action items
-    ])
+    mock_ai.extract_action_items = AsyncMock(
+        side_effect=[
+            [{"title": "Task 1", "due_hint": None, "priority": "normal"}],
+            [{"title": "Task 2", "due_hint": None, "priority": "normal"}],
+            [],  # Third event has no action items
+        ]
+    )
 
     manager = TaskManager(db, ai_engine=mock_ai)
 

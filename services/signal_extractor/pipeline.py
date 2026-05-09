@@ -40,22 +40,49 @@ PROFILE_EVENT_TYPES: dict[str, list[str]] = {
     "linguistic_inbound": ["email.received", "message.received"],
     "cadence": ["email.sent", "message.sent", "email.received", "message.received"],
     "mood_signals": [
-        "email.received", "email.sent", "message.received", "message.sent",
-        "health.metric.updated", "health.sleep.recorded",
-        "calendar.event.created", "finance.transaction.new",
-        "location.changed", "system.user.command",
+        "email.received",
+        "email.sent",
+        "message.received",
+        "message.sent",
+        "health.metric.updated",
+        "health.sleep.recorded",
+        "calendar.event.created",
+        "finance.transaction.new",
+        "location.changed",
+        "system.user.command",
     ],
     "relationships": ["email.received", "email.sent", "message.received", "message.sent"],
     "temporal": [
-        "email.sent", "message.sent",
-        "email.received", "message.received",
-        "calendar.event.created", "calendar.event.updated",
-        "task.created", "task.completed", "task.updated",
+        "email.sent",
+        "message.sent",
+        "email.received",
+        "message.received",
+        "calendar.event.created",
+        "calendar.event.updated",
+        "task.created",
+        "task.completed",
+        "task.updated",
         "system.user.command",
     ],
     "topics": ["email.received", "email.sent", "message.received", "message.sent", "system.user.command"],
-    "spatial": ["calendar.event.created", "calendar.event.updated", "ios.context.update", "system.user.location_update", "email.received"],
-    "decision": ["task.completed", "task.created", "email.sent", "message.sent", "email.received", "message.received", "calendar.event.created", "calendar.event.updated", "finance.transaction.new"],
+    "spatial": [
+        "calendar.event.created",
+        "calendar.event.updated",
+        "ios.context.update",
+        "system.user.location_update",
+        "email.received",
+    ],
+    "decision": [
+        "task.completed",
+        "task.created",
+        "email.sent",
+        "message.sent",
+        "email.received",
+        "message.received",
+        "calendar.event.created",
+        "calendar.event.updated",
+        "finance.transaction.new",
+    ],
 }
 
 # Number of consecutive degraded health checks to wait before retrying a
@@ -239,9 +266,7 @@ class SignalExtractorPipeline:
                 # Count events routed to this extractor so diagnostics can show
                 # whether the extractor is receiving events at all.  A non-zero
                 # count with a still-missing profile points to a persistence bug.
-                self._extractor_hit_counts[extractor_name] = (
-                    self._extractor_hit_counts.get(extractor_name, 0) + 1
-                )
+                self._extractor_hit_counts[extractor_name] = self._extractor_hit_counts.get(extractor_name, 0) + 1
                 try:
                     # extract() both returns signals AND persists them into the
                     # extractor's own profile store as a side-effect.
@@ -298,7 +323,8 @@ class SignalExtractorPipeline:
         except Exception as e:
             logger.warning(
                 "_count_qualifying_events: failed for profile '%s': %s",
-                profile_name, e,
+                profile_name,
+                e,
             )
             return 0
 
@@ -319,8 +345,15 @@ class SignalExtractorPipeline:
             - ``data_keys``: first 5 keys from the profile data dict
         """
         expected = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
         result = {}
         for ptype in expected:
@@ -365,10 +398,7 @@ class SignalExtractorPipeline:
             result.get("linguistic", {}).get("status") == "missing"
             and result.get("linguistic_inbound", {}).get("status") == "ok"
         ):
-            result["linguistic"]["note"] = (
-                "expected: no outbound email/message events; "
-                "linguistic_inbound is healthy"
-            )
+            result["linguistic"]["note"] = "expected: no outbound email/message events; linguistic_inbound is healthy"
 
         self._last_profile_health = result
         return result
@@ -451,8 +481,15 @@ class SignalExtractorPipeline:
             - ``skipped``: bool, True if rebuild was skipped (no events or no missing profiles)
         """
         expected_profiles = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
 
         try:
@@ -479,13 +516,16 @@ class SignalExtractorPipeline:
             if event_count == 0:
                 logger.info(
                     "check_and_rebuild_missing_profiles: %d profiles missing (%s) but no events in events.db — skipping rebuild",
-                    len(missing), ", ".join(missing),
+                    len(missing),
+                    ", ".join(missing),
                 )
                 return {"missing_before": missing, "rebuilt": [], "skipped": True}
 
             logger.info(
                 "check_and_rebuild_missing_profiles: %d profiles missing (%s), %d events available — starting rebuild",
-                len(missing), ", ".join(missing), event_count,
+                len(missing),
+                ", ".join(missing),
+                event_count,
             )
 
             # Replay up to 50,000 recent events through all extractors,
@@ -494,7 +534,8 @@ class SignalExtractorPipeline:
             # (filtered out by type), 50K ensures we reach far enough back
             # to capture sufficient email/message/calendar events for all profiles.
             rebuild_result = self.rebuild_profiles_from_events(
-                event_limit=50000, missing_profiles=missing,
+                event_limit=50000,
+                missing_profiles=missing,
             )
 
             # Determine which previously-missing/stale profiles now have
@@ -511,8 +552,10 @@ class SignalExtractorPipeline:
 
             logger.info(
                 "check_and_rebuild_missing_profiles: rebuilt %d profiles (%s), %d still missing (%s), %d events processed, %d errors",
-                len(rebuilt), ", ".join(rebuilt) or "none",
-                len(still_missing), ", ".join(still_missing) or "none",
+                len(rebuilt),
+                ", ".join(rebuilt) or "none",
+                len(still_missing),
+                ", ".join(still_missing) or "none",
                 rebuild_result.get("events_processed", 0),
                 len(rebuild_result.get("errors", [])),
             )
@@ -528,15 +571,11 @@ class SignalExtractorPipeline:
                     # (no outbound email/message events in history).
                     inbound = self.ums.get_signal_profile("linguistic_inbound")
                     if inbound and not _is_profile_stale(inbound):
-                        still_missing_annotations.append(
-                            "linguistic (no outbound events — expected)"
-                        )
+                        still_missing_annotations.append("linguistic (no outbound events — expected)")
                         continue
                 still_missing_annotations.append(pt)
             missing_suffix = (
-                "; still missing: " + ", ".join(still_missing_annotations)
-                if still_missing_annotations
-                else ""
+                "; still missing: " + ", ".join(still_missing_annotations) if still_missing_annotations else ""
             )
             logger.info(
                 "Rebuild complete: %d/%d profiles populated%s",
@@ -554,10 +593,7 @@ class SignalExtractorPipeline:
                     "to persist — this indicates update_signal_profile() is silently failing. "
                     "Profiles: %s",
                     len(write_failures),
-                    ", ".join(
-                        f"{name} ({info['extractor_hits']} hits)"
-                        for name, info in write_failures.items()
-                    ),
+                    ", ".join(f"{name} ({info['extractor_hits']} hits)" for name, info in write_failures.items()),
                 )
 
             # Log detailed per-profile health after rebuild for operator visibility.
@@ -565,7 +601,10 @@ class SignalExtractorPipeline:
             for ptype, info in health.items():
                 logger.info(
                     "  profile %-20s status=%-7s samples=%d keys=%s",
-                    ptype, info["status"], info["samples"], info["data_keys"],
+                    ptype,
+                    info["status"],
+                    info["samples"],
+                    info["data_keys"],
                 )
 
             return {"missing_before": missing, "rebuilt": rebuilt, "skipped": False}
@@ -730,7 +769,8 @@ class SignalExtractorPipeline:
         if type_filter_values:
             logger.info(
                 "rebuild_profiles_from_events: filtering to %d event types for %d missing profiles",
-                len(type_filter_values), len(missing_profiles or []),
+                len(type_filter_values),
+                len(missing_profiles or []),
             )
 
         # Load recent events from events.db (DESC so we get the most recent first).
@@ -752,7 +792,8 @@ class SignalExtractorPipeline:
 
         logger.info(
             "rebuild_profiles_from_events: fetched %d events (limit was %d)%s",
-            len(rows), event_limit,
+            len(rows),
+            event_limit,
             " — limit reached, older relevant events may exist" if len(rows) >= event_limit else "",
         )
 
@@ -763,8 +804,9 @@ class SignalExtractorPipeline:
         # Reverse to chronological order so profiles accumulate correctly.
         rows = list(reversed(rows))
 
-        logger.info("rebuild_profiles_from_events: replaying %d events through %d extractors",
-                     len(rows), len(self.extractors))
+        logger.info(
+            "rebuild_profiles_from_events: replaying %d events through %d extractors", len(rows), len(self.extractors)
+        )
 
         events_processed = 0
         # Track which extractors successfully processed at least one event.
@@ -813,7 +855,10 @@ class SignalExtractorPipeline:
         profiles_rebuilt = sorted(extractor_hits.keys())
         logger.info(
             "rebuild_profiles_from_events: done — %d events processed, %d profiles rebuilt (%s), %d errors",
-            events_processed, len(profiles_rebuilt), ", ".join(profiles_rebuilt) or "none", len(errors),
+            events_processed,
+            len(profiles_rebuilt),
+            ", ".join(profiles_rebuilt) or "none",
+            len(errors),
         )
 
         # Log per-extractor error counts for operators diagnosing rebuild failures.
@@ -907,23 +952,25 @@ class SignalExtractorPipeline:
         # that would obscure real trend signals.
         if mood.confidence > 0:
             try:
-                self.ums.store_mood({
-                    "energy_level": mood.energy_level,
-                    "stress_level": mood.stress_level,
-                    "social_battery": mood.social_battery,
-                    "cognitive_load": mood.cognitive_load,
-                    "emotional_valence": mood.emotional_valence,
-                    "confidence": mood.confidence,
-                    "trend": mood.trend,
-                    "contributing_signals": [
-                        {
-                            "signal_type": s.signal_type,
-                            "value": s.value,
-                            "weight": s.weight,
-                        }
-                        for s in (mood.contributing_signals or [])
-                    ],
-                })
+                self.ums.store_mood(
+                    {
+                        "energy_level": mood.energy_level,
+                        "stress_level": mood.stress_level,
+                        "social_battery": mood.social_battery,
+                        "cognitive_load": mood.cognitive_load,
+                        "emotional_valence": mood.emotional_valence,
+                        "confidence": mood.confidence,
+                        "trend": mood.trend,
+                        "contributing_signals": [
+                            {
+                                "signal_type": s.signal_type,
+                                "value": s.value,
+                                "weight": s.weight,
+                            }
+                            for s in (mood.contributing_signals or [])
+                        ],
+                    }
+                )
             except Exception as e:
                 # Fail-open: mood history persistence must never crash the
                 # event loop.  The mood state is still returned to the caller.
@@ -946,7 +993,16 @@ class SignalExtractorPipeline:
         try:
             # Gather per-dimension profile summaries (sample counts and freshness).
             profiles = {}
-            for profile_type in ["linguistic", "cadence", "mood_signals", "relationships", "topics", "temporal", "spatial", "decision"]:
+            for profile_type in [
+                "linguistic",
+                "cadence",
+                "mood_signals",
+                "relationships",
+                "topics",
+                "temporal",
+                "spatial",
+                "decision",
+            ]:
                 profile = self.ums.get_signal_profile(profile_type)
                 if profile:
                     profiles[profile_type] = {
@@ -972,9 +1028,7 @@ class SignalExtractorPipeline:
             # Fail-open: user_model.db corruption must never crash briefing
             # generation or web API routes.  Return an empty but valid summary
             # with a degraded flag so callers can detect the fallback.
-            logger.warning(
-                "get_user_summary: user_model.db unavailable (%s), returning empty summary", e
-            )
+            logger.warning("get_user_summary: user_model.db unavailable (%s), returning empty summary", e)
             return {
                 "profiles": {},
                 "semantic_facts_count": 0,
@@ -997,8 +1051,15 @@ class SignalExtractorPipeline:
         # 1. Profile status — which profiles exist and their sample counts
         try:
             expected = [
-                "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-                "relationships", "topics", "temporal", "spatial", "decision",
+                "linguistic",
+                "linguistic_inbound",
+                "cadence",
+                "mood_signals",
+                "relationships",
+                "topics",
+                "temporal",
+                "spatial",
+                "decision",
             ]
             profiles = {}
             for pt in expected:
@@ -1019,9 +1080,7 @@ class SignalExtractorPipeline:
                     }
             result["profiles"] = profiles
             result["profiles_present"] = sum(1 for v in profiles.values() if v["status"] == "ok")
-            result["profiles_missing"] = sum(
-                1 for v in profiles.values() if v["status"] in ("missing", "stale")
-            )
+            result["profiles_missing"] = sum(1 for v in profiles.values() if v["status"] in ("missing", "stale"))
         except Exception as e:
             result["profiles"] = {"error": str(e)}
 
@@ -1055,9 +1114,7 @@ class SignalExtractorPipeline:
 
         # 3. Extractor registration — list all registered extractors
         try:
-            result["extractors"] = [
-                type(ext).__name__ for ext in self.extractors
-            ]
+            result["extractors"] = [type(ext).__name__ for ext in self.extractors]
             result["extractor_count"] = len(self.extractors)
         except Exception as e:
             result["extractors"] = {"error": str(e)}

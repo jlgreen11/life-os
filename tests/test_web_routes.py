@@ -32,13 +32,15 @@ def mock_life_os():
     life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
     # Return a healthy per-database status dict so the /health endpoint can
     # iterate it without hitting the real filesystem.
-    life_os.db.get_database_health = Mock(return_value={
-        "events":      {"status": "ok", "errors": [], "path": "/tmp/events.db",      "size_bytes": 1024},
-        "entities":    {"status": "ok", "errors": [], "path": "/tmp/entities.db",    "size_bytes": 1024},
-        "state":       {"status": "ok", "errors": [], "path": "/tmp/state.db",       "size_bytes": 1024},
-        "user_model":  {"status": "ok", "errors": [], "path": "/tmp/user_model.db",  "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+    )
 
     # Startup state
     life_os.startup_state = "running"
@@ -54,9 +56,14 @@ def mock_life_os():
     life_os.event_store.get_event_count = Mock(return_value=100)
     life_os.event_store.get_events = Mock(return_value=[])
     life_os.event_store.store_event = Mock(return_value="evt-123")
-    life_os.event_store.get_event_flow_stats = Mock(return_value={
-        "sources": {}, "stale_sources": [], "total_24h": 0, "events_per_hour": 0.0,
-    })
+    life_os.event_store.get_event_flow_stats = Mock(
+        return_value={
+            "sources": {},
+            "stale_sources": [],
+            "total_24h": 0,
+            "events_per_hour": 0.0,
+        }
+    )
 
     # Mock vector store
     life_os.vector_store = Mock()
@@ -66,10 +73,17 @@ def mock_life_os():
     # Mock signal extractor
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable"
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
 
     # Mock notification manager
     life_os.notification_manager = Mock()
@@ -153,6 +167,7 @@ def client(app):
 # Health & Status
 # ---------------------------------------------------------------------------
 
+
 def test_health_endpoint(client, mock_life_os):
     """Test /health returns system health status."""
     response = client.get("/health")
@@ -197,6 +212,7 @@ def test_status_endpoint(client, mock_life_os):
 # Health Summary
 # ---------------------------------------------------------------------------
 
+
 def _make_health_summary_db_mock(fetchone_results):
     """Return a mock db.get_connection context manager that plays back fetchone results.
 
@@ -219,13 +235,13 @@ def _make_health_summary_db_mock(fetchone_results):
 
 # Shared set of DB rows that represent an active, healthy system.
 _HEALTHY_DB_ROWS = [
-    {"c": 5},                            # predictions total
-    {"ts": "2026-04-11T07:00:00"},       # predictions last_generation
-    {"c": 3},                            # predictions last_24h (active)
-    {"c": 8},                            # notifications delivered_24h
-    {"c": 2},                            # notifications expired_24h → rate = 0.8
-    {"ts": "2026-04-11T08:00:00"},       # events last_event
-    {"c": 50},                           # events events_24h
+    {"c": 5},  # predictions total
+    {"ts": "2026-04-11T07:00:00"},  # predictions last_generation
+    {"c": 3},  # predictions last_24h (active)
+    {"c": 8},  # notifications delivered_24h
+    {"c": 2},  # notifications expired_24h → rate = 0.8
+    {"ts": "2026-04-11T08:00:00"},  # events last_event
+    {"c": 50},  # events events_24h
 ]
 
 
@@ -287,20 +303,21 @@ def test_health_summary_critical_when_predictions_stalled(client, mock_life_os):
     """Test overall_health is 'critical' when predictions exist but none generated in 24h."""
     # Profiles all present so only prediction status drives critical
     mock_life_os.user_model_store.get_signal_profile.return_value = {
-        "samples_count": 10, "data": {"key": "value"},
+        "samples_count": 10,
+        "data": {"key": "value"},
     }
     mock_life_os.source_weight_manager = Mock()
     mock_life_os.source_weight_manager.get_all_weights.return_value = []
 
     # Stalled: total > 0 but last_24h == 0
     stalled_rows = [
-        {"c": 5},                            # predictions total (has history)
-        {"ts": "2026-04-01T12:00:00"},       # last_generation (old)
-        {"c": 0},                            # predictions last_24h → stalled
-        {"c": 5},                            # notifications delivered_24h
-        {"c": 2},                            # notifications expired_24h
-        {"ts": "2026-04-11T08:00:00"},       # events last_event
-        {"c": 50},                           # events events_24h
+        {"c": 5},  # predictions total (has history)
+        {"ts": "2026-04-01T12:00:00"},  # last_generation (old)
+        {"c": 0},  # predictions last_24h → stalled
+        {"c": 5},  # notifications delivered_24h
+        {"c": 2},  # notifications expired_24h
+        {"ts": "2026-04-11T08:00:00"},  # events last_event
+        {"c": 50},  # events events_24h
     ]
     mock_life_os.db.get_connection = _make_health_summary_db_mock(stalled_rows)
 
@@ -315,7 +332,8 @@ def test_health_summary_critical_when_connector_error(client, mock_life_os):
     """Test overall_health is 'critical' when a connector reports error status."""
     # Profiles all present, predictions active
     mock_life_os.user_model_store.get_signal_profile.return_value = {
-        "samples_count": 10, "data": {"key": "value"},
+        "samples_count": 10,
+        "data": {"key": "value"},
     }
     mock_life_os.source_weight_manager = Mock()
     mock_life_os.source_weight_manager.get_all_weights.return_value = []
@@ -358,7 +376,8 @@ def test_health_summary_healthy_when_all_indicators_positive(client, mock_life_o
     delivery rate is acceptable, and no connectors are in error."""
     # All 9 profiles present
     mock_life_os.user_model_store.get_signal_profile.return_value = {
-        "samples_count": 10, "data": {"key": "value"},
+        "samples_count": 10,
+        "data": {"key": "value"},
     }
     mock_life_os.source_weight_manager = Mock()
     mock_life_os.source_weight_manager.get_all_weights.return_value = []
@@ -378,11 +397,10 @@ def test_health_summary_healthy_when_all_indicators_positive(client, mock_life_o
 # Command Bar
 # ---------------------------------------------------------------------------
 
+
 def test_command_search(client, mock_life_os):
     """Test command bar handles search commands."""
-    mock_life_os.vector_store.search.return_value = [
-        {"text": "Result 1", "score": 0.9}
-    ]
+    mock_life_os.vector_store.search.return_value = [{"text": "Result 1", "score": 0.9}]
 
     response = client.post("/api/command", json={"text": "search meetings"})
     assert response.status_code == 200
@@ -476,6 +494,7 @@ def test_command_publishes_telemetry(client, mock_life_os):
 # Dashboard Feed
 # ---------------------------------------------------------------------------
 
+
 def test_dashboard_feed_default(client, mock_life_os):
     """Test dashboard feed returns unified inbox by default."""
     response = client.get("/api/dashboard/feed")
@@ -517,7 +536,7 @@ def test_dashboard_feed_with_tasks(client, mock_life_os):
             "description": "Task description",
             "priority": "normal",
             "created_at": "2026-02-15T12:00:00Z",
-            "domain": "work"
+            "domain": "work",
         }
     ]
 
@@ -548,12 +567,33 @@ def test_dashboard_feed_limit(client, mock_life_os):
 def test_dashboard_feed_priority_sorting(client, mock_life_os):
     """Test dashboard feed sorts by priority."""
     mock_life_os.notification_manager.get_pending.return_value = [
-        {"id": "n1", "priority": "normal", "created_at": "2026-02-15T12:00:00Z",
-         "title": "Normal", "body": "", "source": "test", "metadata": {}},
-        {"id": "n2", "priority": "critical", "created_at": "2026-02-15T11:00:00Z",
-         "title": "Critical", "body": "", "source": "test", "metadata": {}},
-        {"id": "n3", "priority": "high", "created_at": "2026-02-15T13:00:00Z",
-         "title": "High", "body": "", "source": "test", "metadata": {}}
+        {
+            "id": "n1",
+            "priority": "normal",
+            "created_at": "2026-02-15T12:00:00Z",
+            "title": "Normal",
+            "body": "",
+            "source": "test",
+            "metadata": {},
+        },
+        {
+            "id": "n2",
+            "priority": "critical",
+            "created_at": "2026-02-15T11:00:00Z",
+            "title": "Critical",
+            "body": "",
+            "source": "test",
+            "metadata": {},
+        },
+        {
+            "id": "n3",
+            "priority": "high",
+            "created_at": "2026-02-15T13:00:00Z",
+            "title": "High",
+            "body": "",
+            "source": "test",
+            "metadata": {},
+        },
     ]
 
     response = client.get("/api/dashboard/feed")
@@ -569,6 +609,7 @@ def test_dashboard_feed_priority_sorting(client, mock_life_os):
 # Briefing
 # ---------------------------------------------------------------------------
 
+
 def test_get_briefing(client, mock_life_os):
     """Test GET /api/briefing generates morning briefing."""
     response = client.get("/api/briefing")
@@ -583,11 +624,10 @@ def test_get_briefing(client, mock_life_os):
 # Search
 # ---------------------------------------------------------------------------
 
+
 def test_search(client, mock_life_os):
     """Test POST /api/search performs semantic search."""
-    mock_life_os.vector_store.search.return_value = [
-        {"text": "Result 1", "score": 0.9}
-    ]
+    mock_life_os.vector_store.search.return_value = [{"text": "Result 1", "score": 0.9}]
 
     response = client.post("/api/search", json={"query": "test", "limit": 5})
     assert response.status_code == 200
@@ -595,18 +635,12 @@ def test_search(client, mock_life_os):
     assert data["query"] == "test"
     assert len(data["results"]) == 1
     assert data["count"] == 1
-    mock_life_os.vector_store.search.assert_called_once_with(
-        "test", limit=5, filter_metadata=None
-    )
+    mock_life_os.vector_store.search.assert_called_once_with("test", limit=5, filter_metadata=None)
 
 
 def test_search_with_filters(client, mock_life_os):
     """Test search with metadata filters."""
-    response = client.post("/api/search", json={
-        "query": "test",
-        "limit": 10,
-        "filters": {"source": "email"}
-    })
+    response = client.post("/api/search", json={"query": "test", "limit": 10, "filters": {"source": "email"}})
     assert response.status_code == 200
     args = mock_life_os.vector_store.search.call_args
     assert args[1]["filter_metadata"] == {"source": "email"}
@@ -616,30 +650,25 @@ def test_search_with_filters(client, mock_life_os):
 # Tasks
 # ---------------------------------------------------------------------------
 
+
 def test_list_tasks(client, mock_life_os):
     """Test GET /api/tasks lists pending tasks via get_tasks(status='pending')."""
     # The route now calls get_tasks() instead of the old get_pending_tasks() stub.
-    mock_life_os.task_manager.get_tasks.return_value = [
-        {"id": "t1", "title": "Task 1"}
-    ]
+    mock_life_os.task_manager.get_tasks.return_value = [{"id": "t1", "title": "Task 1"}]
 
     response = client.get("/api/tasks")
     assert response.status_code == 200
     data = response.json()
     assert len(data["tasks"]) == 1
     assert data["count"] == 1
-    mock_life_os.task_manager.get_tasks.assert_called_once_with(
-        status="pending", limit=50
-    )
+    mock_life_os.task_manager.get_tasks.assert_called_once_with(status="pending", limit=50)
 
 
 def test_create_task(client, mock_life_os):
     """Test POST /api/tasks creates a new task."""
-    response = client.post("/api/tasks", json={
-        "title": "Buy groceries",
-        "description": "Milk, eggs, bread",
-        "priority": "high"
-    })
+    response = client.post(
+        "/api/tasks", json={"title": "Buy groceries", "description": "Milk, eggs, bread", "priority": "high"}
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["task_id"] == "task-123"
@@ -648,10 +677,7 @@ def test_create_task(client, mock_life_os):
 
 def test_update_task(client, mock_life_os):
     """Test PATCH /api/tasks/{task_id} updates a task."""
-    response = client.patch("/api/tasks/task-123", json={
-        "status": "in_progress",
-        "priority": "high"
-    })
+    response = client.patch("/api/tasks/task-123", json={"status": "in_progress", "priority": "high"})
     assert response.status_code == 200
     assert response.json()["status"] == "updated"
     mock_life_os.task_manager.update_task.assert_called_once()
@@ -669,11 +695,10 @@ def test_complete_task(client, mock_life_os):
 # Notifications
 # ---------------------------------------------------------------------------
 
+
 def test_list_notifications(client, mock_life_os):
     """Test GET /api/notifications lists pending notifications."""
-    mock_life_os.notification_manager.get_pending.return_value = [
-        {"id": "n1", "title": "Notification 1"}
-    ]
+    mock_life_os.notification_manager.get_pending.return_value = [{"id": "n1", "title": "Notification 1"}]
 
     response = client.get("/api/notifications")
     assert response.status_code == 200
@@ -717,13 +742,12 @@ def test_get_digest(client, mock_life_os):
 # Draft Messages
 # ---------------------------------------------------------------------------
 
+
 def test_draft_message(client, mock_life_os):
     """Test POST /api/draft generates message draft."""
-    response = client.post("/api/draft", json={
-        "contact_id": "c1",
-        "channel": "email",
-        "incoming_message": "Can we meet tomorrow?"
-    })
+    response = client.post(
+        "/api/draft", json={"contact_id": "c1", "channel": "email", "incoming_message": "Can we meet tomorrow?"}
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["draft"] == "Draft message"
@@ -734,11 +758,10 @@ def test_draft_message(client, mock_life_os):
 # Rules
 # ---------------------------------------------------------------------------
 
+
 def test_list_rules(client, mock_life_os):
     """Test GET /api/rules lists all automation rules."""
-    mock_life_os.rules_engine.get_all_rules.return_value = [
-        {"id": "r1", "name": "Rule 1"}
-    ]
+    mock_life_os.rules_engine.get_all_rules.return_value = [{"id": "r1", "name": "Rule 1"}]
 
     response = client.get("/api/rules")
     assert response.status_code == 200
@@ -748,12 +771,15 @@ def test_list_rules(client, mock_life_os):
 
 def test_create_rule(client, mock_life_os):
     """Test POST /api/rules creates a new automation rule."""
-    response = client.post("/api/rules", json={
-        "name": "Auto-tag work emails",
-        "trigger_event": "email.received",
-        "conditions": [{"field": "sender", "op": "contains", "value": "@work.com"}],
-        "actions": [{"type": "tag", "value": "work"}]
-    })
+    response = client.post(
+        "/api/rules",
+        json={
+            "name": "Auto-tag work emails",
+            "trigger_event": "email.received",
+            "conditions": [{"field": "sender", "op": "contains", "value": "@work.com"}],
+            "actions": [{"type": "tag", "value": "work"}],
+        },
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["rule_id"] == "rule-123"
@@ -771,6 +797,7 @@ def test_delete_rule(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # User Model
 # ---------------------------------------------------------------------------
+
 
 def test_get_user_model(client, mock_life_os):
     """Test GET /api/user-model returns full user model summary."""
@@ -812,6 +839,7 @@ def test_delete_fact(client, mock_life_os):
 
 def test_get_mood(client, mock_life_os):
     """Test GET /api/user-model/mood returns current mood state."""
+
     # Use a simple object that doesn't have .dict() to test manual serialization
     class SimpleMood:
         energy_level = 0.7
@@ -849,6 +877,7 @@ def test_get_mood_with_pydantic_model(client, mock_life_os):
 # Insights
 # ---------------------------------------------------------------------------
 
+
 def test_insights_summary(client, mock_life_os):
     """Test GET /api/insights/summary aggregates signal profiles."""
     response = client.get("/api/insights/summary")
@@ -877,6 +906,7 @@ def test_list_insights(client, mock_life_os):
 def test_insight_feedback(client, mock_life_os):
     """Test POST /api/insights/{id}/feedback records user feedback."""
     from unittest.mock import MagicMock
+
     mock_conn = MagicMock()
     # The route fetches the insight row and accesses row["category"].
     # Use a dict-like return value so subscript access works correctly.
@@ -897,6 +927,7 @@ def test_insight_feedback_invalid(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Preferences
 # ---------------------------------------------------------------------------
+
 
 def test_get_preferences(client, mock_life_os):
     """Test GET /api/preferences returns all user preferences."""
@@ -936,6 +967,7 @@ def test_update_preference_publishes_event(client, mock_life_os):
 # Feedback
 # ---------------------------------------------------------------------------
 
+
 def test_submit_feedback(client, mock_life_os):
     """Test POST /api/feedback submits user feedback."""
     response = client.post("/api/feedback", json={"message": "Great feature!"})
@@ -947,6 +979,7 @@ def test_submit_feedback(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
+
 
 def test_list_events(client, mock_life_os):
     """Test GET /api/events lists events with optional filters."""
@@ -964,6 +997,7 @@ def test_list_events(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Connectors
 # ---------------------------------------------------------------------------
+
 
 def test_list_connectors(client, mock_life_os):
     """Test GET /api/connectors lists all connectors with health status."""
@@ -1002,17 +1036,17 @@ def test_browser_vault_sites(client, mock_life_os):
 # Context API (iOS)
 # ---------------------------------------------------------------------------
 
+
 def test_submit_context_event(client, mock_life_os):
     """Test POST /api/context/event ingests a single context event."""
-    response = client.post("/api/context/event", json={
-        "type": "context.location",
-        "source": "ios_app",
-        "payload": {
-            "latitude": 37.7749,
-            "longitude": -122.4194,
-            "place_name": "San Francisco"
-        }
-    })
+    response = client.post(
+        "/api/context/event",
+        json={
+            "type": "context.location",
+            "source": "ios_app",
+            "payload": {"latitude": 37.7749, "longitude": -122.4194, "place_name": "San Francisco"},
+        },
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "received"
@@ -1022,20 +1056,23 @@ def test_submit_context_event(client, mock_life_os):
 
 def test_submit_context_batch(client, mock_life_os):
     """Test POST /api/context/batch ingests multiple context events."""
-    response = client.post("/api/context/batch", json={
-        "events": [
-            {
-                "type": "context.location",
-                "source": "ios_app",
-                "payload": {"latitude": 37.7749, "longitude": -122.4194}
-            },
-            {
-                "type": "context.device_nearby",
-                "source": "ios_app",
-                "payload": {"device_name": "iPhone", "signal_strength": -50}
-            }
-        ]
-    })
+    response = client.post(
+        "/api/context/batch",
+        json={
+            "events": [
+                {
+                    "type": "context.location",
+                    "source": "ios_app",
+                    "payload": {"latitude": 37.7749, "longitude": -122.4194},
+                },
+                {
+                    "type": "context.device_nearby",
+                    "source": "ios_app",
+                    "payload": {"device_name": "iPhone", "signal_strength": -50},
+                },
+            ]
+        },
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "received"
@@ -1050,7 +1087,7 @@ def test_get_context_summary(client, mock_life_os):
             "id": "e1",
             "payload": {"latitude": 37.7749, "longitude": -122.4194, "place_name": "SF"},
             "metadata": {"mobile_event_type": "context.location"},
-            "timestamp": "2026-02-15T12:00:00Z"
+            "timestamp": "2026-02-15T12:00:00Z",
         }
     ]
 
@@ -1064,9 +1101,7 @@ def test_get_context_summary(client, mock_life_os):
 def test_get_context_places(client, mock_life_os):
     """Test GET /api/context/places returns learned places."""
     mock_conn = Mock()
-    mock_conn.execute.return_value.fetchall.return_value = [
-        {"id": "p1", "name": "Home", "visit_count": 100}
-    ]
+    mock_conn.execute.return_value.fetchall.return_value = [{"id": "p1", "name": "Home", "visit_count": 100}]
     mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
 
     response = client.get("/api/context/places")
@@ -1078,6 +1113,7 @@ def test_get_context_places(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Admin — Connector Management
 # ---------------------------------------------------------------------------
+
 
 def test_admin_connector_registry(client, mock_life_os):
     """Test GET /api/admin/connectors/registry returns connector schemas."""
@@ -1123,9 +1159,7 @@ def test_admin_list_connectors(client, mock_life_os):
 
 def test_admin_save_config(client, mock_life_os):
     """Test PUT /api/admin/connectors/{id}/config saves configuration."""
-    response = client.put("/api/admin/connectors/test/config", json={
-        "config": {"api_key": "secret"}
-    })
+    response = client.put("/api/admin/connectors/test/config", json={"config": {"api_key": "secret"}})
     assert response.status_code == 200
     assert response.json()["status"] == "saved"
     mock_life_os.save_connector_config.assert_called_once()
@@ -1133,9 +1167,7 @@ def test_admin_save_config(client, mock_life_os):
 
 def test_admin_test_connector(client, mock_life_os):
     """Test POST /api/admin/connectors/{id}/test validates credentials."""
-    response = client.post("/api/admin/connectors/test/test", json={
-        "config": {"api_key": "secret"}
-    })
+    response = client.post("/api/admin/connectors/test/test", json={"config": {"api_key": "secret"}})
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
@@ -1161,6 +1193,7 @@ def test_admin_disable_connector(client, mock_life_os):
 # Admin — Database Viewer
 # ---------------------------------------------------------------------------
 
+
 def test_admin_db_schema(client, mock_life_os):
     """Test GET /api/admin/db returns database schema."""
     mock_conn = Mock()
@@ -1180,7 +1213,7 @@ def test_admin_db_query(client, mock_life_os):
     mock_conn.execute.return_value.fetchall.side_effect = [
         [{"name": "events"}],  # Table list
         [{"name": "id"}, {"name": "type"}],  # Columns
-        [{"id": "e1", "type": "email.received"}]  # Rows
+        [{"id": "e1", "type": "email.received"}],  # Rows
     ]
     mock_conn.execute.return_value.fetchone.return_value = {"c": 1}
     mock_life_os.db.get_connection.return_value.__enter__.return_value = mock_conn
@@ -1197,6 +1230,7 @@ def test_admin_db_query(client, mock_life_os):
 # Setup / Onboarding
 # ---------------------------------------------------------------------------
 
+
 def test_setup_status(client, mock_life_os):
     """Test GET /api/setup/status checks onboarding completion."""
     mock_conn = Mock()
@@ -1212,9 +1246,10 @@ def test_setup_status(client, mock_life_os):
 
 def test_setup_flow(client, mock_life_os):
     """Test GET /api/setup/flow returns onboarding phases."""
-    with patch("services.onboarding.manager.ONBOARDING_PHASES", [
-        {"id": "welcome", "title": "Welcome", "options": [{"label": "Next", "value": "next"}]}
-    ]):
+    with patch(
+        "services.onboarding.manager.ONBOARDING_PHASES",
+        [{"id": "welcome", "title": "Welcome", "options": [{"label": "Next", "value": "next"}]}],
+    ):
         response = client.get("/api/setup/flow")
         assert response.status_code == 200
         data = response.json()
@@ -1223,10 +1258,7 @@ def test_setup_flow(client, mock_life_os):
 
 def test_setup_submit(client, mock_life_os):
     """Test POST /api/setup/submit saves an onboarding answer."""
-    response = client.post("/api/setup/submit", json={
-        "step_id": "name",
-        "value": "John Doe"
-    })
+    response = client.post("/api/setup/submit", json={"step_id": "name", "value": "John Doe"})
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     mock_life_os.onboarding.submit_answer.assert_called_once()
@@ -1245,6 +1277,7 @@ def test_setup_finalize(client, mock_life_os):
 # ---------------------------------------------------------------------------
 # Web UI Routes
 # ---------------------------------------------------------------------------
+
 
 def test_index_redirects_to_setup_when_not_onboarded(client, mock_life_os):
     """Test GET / redirects to /setup if onboarding incomplete."""
@@ -1293,6 +1326,7 @@ def test_setup_page(client):
 # Calendar Events API  (/api/calendar/events)
 # ---------------------------------------------------------------------------
 
+
 def _make_cal_rows(*payloads):
     """Build mock DB row dicts for calendar.event.created events.
 
@@ -1300,8 +1334,10 @@ def _make_cal_rows(*payloads):
     returned by the ``events`` table.  The ``id`` field uses the event's own
     ``event_id`` value for convenience.
     """
-    return [{"id": p.get("event_id", f"db-{i}"), "payload": json.dumps(p), "timestamp": "2026-02-28T10:00:00Z"}
-            for i, p in enumerate(payloads)]
+    return [
+        {"id": p.get("event_id", f"db-{i}"), "payload": json.dumps(p), "timestamp": "2026-02-28T10:00:00Z"}
+        for i, p in enumerate(payloads)
+    ]
 
 
 def _set_cal_rows(mock_life_os, *payloads):
@@ -1487,16 +1523,18 @@ def test_dashboard_feed_calendar_topic(client, mock_life_os):
 
     # Set up the DB to return one future calendar event
     mock_conn = Mock()
-    future_payload = json.dumps({
-        "event_id": "cal-1",
-        "title": "Sprint Review",
-        "start_time": future_start,
-        "end_time": future_end,
-        "is_all_day": False,
-        "description": "Review sprint results",
-        "location": "Conference Room A",
-        "attendees": [],
-    })
+    future_payload = json.dumps(
+        {
+            "event_id": "cal-1",
+            "title": "Sprint Review",
+            "start_time": future_start,
+            "end_time": future_end,
+            "is_all_day": False,
+            "description": "Review sprint results",
+            "location": "Conference Room A",
+            "attendees": [],
+        }
+    )
     mock_conn.execute.return_value.fetchall.return_value = [
         {"id": "db-cal-1", "payload": future_payload, "timestamp": now.isoformat()}
     ]
@@ -1523,27 +1561,33 @@ def test_dashboard_feed_calendar_filters_past_events(client, mock_life_os):
     future_start = (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     future_end = (now + timedelta(days=2, hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
-    past_payload = json.dumps({
-        "event_id": "past-evt",
-        "title": "Past Meeting",
-        "start_time": "2025-01-01T10:00:00+00:00",
-        "end_time": "2025-01-01T11:00:00+00:00",
-        "is_all_day": False,
-    })
-    future_payload = json.dumps({
-        "event_id": "future-evt",
-        "title": "Upcoming Standup",
-        "start_time": future_start,
-        "end_time": future_end,
-        "is_all_day": False,
-    })
-    far_future_payload = json.dumps({
-        "event_id": "far-future-evt",
-        "title": "Far Future",
-        "start_time": "2027-06-01T10:00:00+00:00",
-        "end_time": "2027-06-01T11:00:00+00:00",
-        "is_all_day": False,
-    })
+    past_payload = json.dumps(
+        {
+            "event_id": "past-evt",
+            "title": "Past Meeting",
+            "start_time": "2025-01-01T10:00:00+00:00",
+            "end_time": "2025-01-01T11:00:00+00:00",
+            "is_all_day": False,
+        }
+    )
+    future_payload = json.dumps(
+        {
+            "event_id": "future-evt",
+            "title": "Upcoming Standup",
+            "start_time": future_start,
+            "end_time": future_end,
+            "is_all_day": False,
+        }
+    )
+    far_future_payload = json.dumps(
+        {
+            "event_id": "far-future-evt",
+            "title": "Far Future",
+            "start_time": "2027-06-01T10:00:00+00:00",
+            "end_time": "2027-06-01T11:00:00+00:00",
+            "is_all_day": False,
+        }
+    )
 
     mock_conn = Mock()
     mock_conn.execute.return_value.fetchall.return_value = [
@@ -1637,9 +1681,7 @@ def test_backfill_status_returns_updated_at(client, mock_life_os):
 
 def test_briefing_returns_200_on_ai_failure(client, mock_life_os):
     """Test GET /api/briefing returns 200 with error field when AI engine fails."""
-    mock_life_os.ai_engine.generate_briefing = AsyncMock(
-        side_effect=RuntimeError("Ollama connection refused")
-    )
+    mock_life_os.ai_engine.generate_briefing = AsyncMock(side_effect=RuntimeError("Ollama connection refused"))
     response = client.get("/api/briefing")
     assert response.status_code == 200
     data = response.json()
@@ -1750,12 +1792,10 @@ def test_classify_notification_source_prediction_returns_none(client, mock_life_
     """
     # Set up the mock DB to return a prediction-domain notification with no source event
     mock_conn = Mock()
-    mock_conn.execute = Mock(return_value=Mock(
-        fetchone=Mock(return_value={"source_event_id": None, "domain": "prediction"})
-    ))
-    mock_life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    mock_conn.execute = Mock(
+        return_value=Mock(fetchone=Mock(return_value={"source_event_id": None, "domain": "prediction"}))
     )
+    mock_life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
 
     # Dismiss the notification — this triggers _classify_notification_source internally
     mock_life_os.source_weight_manager = Mock()
@@ -1777,12 +1817,10 @@ def test_feedback_skips_weight_update_for_unclassified_source(client, mock_life_
     """
     # Set up the mock DB to return a prediction-domain notification with no source event
     mock_conn = Mock()
-    mock_conn.execute = Mock(return_value=Mock(
-        fetchone=Mock(return_value={"source_event_id": None, "domain": "prediction"})
-    ))
-    mock_life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    mock_conn.execute = Mock(
+        return_value=Mock(fetchone=Mock(return_value={"source_event_id": None, "domain": "prediction"}))
     )
+    mock_life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
 
     mock_life_os.source_weight_manager = Mock()
     mock_life_os.source_weight_manager.record_engagement = Mock()

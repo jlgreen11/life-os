@@ -23,16 +23,16 @@ def mock_life_os():
     life_os.db = Mock()
     mock_conn = Mock()
     mock_conn.execute = Mock()
-    life_os.db.get_connection = Mock(
-        return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock())
+    life_os.db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=mock_conn), __exit__=Mock()))
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
     )
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
 
     # Mock event bus
     life_os.event_bus = Mock()
@@ -99,9 +99,7 @@ def client(mock_life_os):
 
 def test_command_briefing_returns_error_on_ai_failure(client, mock_life_os):
     """POST /api/command with 'briefing' returns type='error' when AI engine fails."""
-    mock_life_os.ai_engine.generate_briefing = AsyncMock(
-        side_effect=ConnectionError("Ollama connection refused")
-    )
+    mock_life_os.ai_engine.generate_briefing = AsyncMock(side_effect=ConnectionError("Ollama connection refused"))
     response = client.post("/api/command", json={"text": "briefing"})
 
     assert response.status_code == 200
@@ -113,9 +111,7 @@ def test_command_briefing_returns_error_on_ai_failure(client, mock_life_os):
 
 def test_command_briefing_returns_error_on_runtime_error(client, mock_life_os):
     """POST /api/command with 'briefing' handles RuntimeError gracefully."""
-    mock_life_os.ai_engine.generate_briefing = AsyncMock(
-        side_effect=RuntimeError("model not found")
-    )
+    mock_life_os.ai_engine.generate_briefing = AsyncMock(side_effect=RuntimeError("model not found"))
     response = client.post("/api/command", json={"text": "briefing"})
 
     assert response.status_code == 200
@@ -131,9 +127,7 @@ def test_command_briefing_returns_error_on_runtime_error(client, mock_life_os):
 
 def test_command_draft_returns_error_on_ai_failure(client, mock_life_os):
     """POST /api/command with 'draft' returns type='error' when AI engine fails."""
-    mock_life_os.ai_engine.draft_reply = AsyncMock(
-        side_effect=ConnectionError("Ollama connection refused")
-    )
+    mock_life_os.ai_engine.draft_reply = AsyncMock(side_effect=ConnectionError("Ollama connection refused"))
     response = client.post("/api/command", json={"text": "draft reply to John about the meeting"})
 
     assert response.status_code == 200
@@ -145,9 +139,7 @@ def test_command_draft_returns_error_on_ai_failure(client, mock_life_os):
 
 def test_command_draft_returns_error_on_timeout(client, mock_life_os):
     """POST /api/command with 'draft' handles TimeoutError gracefully."""
-    mock_life_os.ai_engine.draft_reply = AsyncMock(
-        side_effect=TimeoutError("request timed out")
-    )
+    mock_life_os.ai_engine.draft_reply = AsyncMock(side_effect=TimeoutError("request timed out"))
     response = client.post("/api/command", json={"text": "draft reply to the email"})
 
     assert response.status_code == 200
@@ -163,9 +155,7 @@ def test_command_draft_returns_error_on_timeout(client, mock_life_os):
 
 def test_command_fallback_returns_error_on_ai_failure(client, mock_life_os):
     """POST /api/command fallback returns type='error' when AI engine fails."""
-    mock_life_os.ai_engine.search_life = AsyncMock(
-        side_effect=ConnectionError("Ollama connection refused")
-    )
+    mock_life_os.ai_engine.search_life = AsyncMock(side_effect=ConnectionError("Ollama connection refused"))
     response = client.post("/api/command", json={"text": "what happened last week?"})
 
     assert response.status_code == 200
@@ -177,9 +167,7 @@ def test_command_fallback_returns_error_on_ai_failure(client, mock_life_os):
 
 def test_command_fallback_returns_error_on_value_error(client, mock_life_os):
     """POST /api/command fallback handles ValueError gracefully."""
-    mock_life_os.ai_engine.search_life = AsyncMock(
-        side_effect=ValueError("invalid model response")
-    )
+    mock_life_os.ai_engine.search_life = AsyncMock(side_effect=ValueError("invalid model response"))
     response = client.post("/api/command", json={"text": "summarize my day"})
 
     assert response.status_code == 200

@@ -146,15 +146,8 @@ async def test_broadcast_with_complex_message(manager, mock_websocket):
 
     complex_message = {
         "type": "notification",
-        "data": {
-            "id": "n123",
-            "title": "Test",
-            "metadata": {
-                "tags": ["urgent", "work"],
-                "priority": 1
-            }
-        },
-        "timestamp": "2026-02-15T12:00:00Z"
+        "data": {"id": "n123", "title": "Test", "metadata": {"tags": ["urgent", "work"], "priority": 1}},
+        "timestamp": "2026-02-15T12:00:00Z",
     }
 
     await manager.broadcast(complex_message)
@@ -210,6 +203,7 @@ def test_module_singleton_exists():
 def test_module_singleton_is_shared():
     """Test that importing ws_manager returns the same instance."""
     from web.websocket import ws_manager as ws_manager2
+
     assert ws_manager is ws_manager2
 
 
@@ -308,11 +302,7 @@ async def test_multiple_clients_notification_scenario(manager):
     # Broadcast notification to all
     notification = {
         "type": "notification.created",
-        "payload": {
-            "id": "n123",
-            "title": "New email from John",
-            "priority": "high"
-        }
+        "payload": {"id": "n123", "title": "New email from John", "priority": "high"},
     }
     await manager.broadcast(notification)
 

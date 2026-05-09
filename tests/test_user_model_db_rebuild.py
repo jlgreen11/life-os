@@ -25,6 +25,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _create_test_user_model(path: str) -> None:
     """Create a schema-correct user_model.db for rebuild tests.
 
@@ -76,9 +77,7 @@ def _make_life_os(data_dir: Path):
     db = DatabaseManager(str(data_dir))
     obj = MagicMock()
     obj.db = db
-    obj._rebuild_user_model_db_if_corrupted = (
-        LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
-    )
+    obj._rebuild_user_model_db_if_corrupted = LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
     return obj
 
 
@@ -150,9 +149,7 @@ def _make_corrupting_life_os(data_dir: Path):
     # so this assignment takes precedence without touching the class.
     db.get_connection = patched_get_connection
 
-    obj._rebuild_user_model_db_if_corrupted = (
-        LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
-    )
+    obj._rebuild_user_model_db_if_corrupted = LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
     return obj
 
 
@@ -209,15 +206,14 @@ def _make_table_corrupting_life_os(data_dir: Path, corrupted_table_patterns: lis
 
     db.get_connection = patched_get_connection
 
-    obj._rebuild_user_model_db_if_corrupted = (
-        LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
-    )
+    obj._rebuild_user_model_db_if_corrupted = LifeOS._rebuild_user_model_db_if_corrupted.__get__(obj)
     return obj
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def healthy_data_dir(tmp_path):
@@ -237,6 +233,7 @@ def simulated_corrupt_data_dir(tmp_path):
 # Tests: healthy DB → no-op
 # ---------------------------------------------------------------------------
 
+
 class TestHealthyDatabase:
     @pytest.mark.asyncio
     async def test_no_rebuild_when_healthy(self, healthy_data_dir):
@@ -245,8 +242,9 @@ class TestHealthyDatabase:
         await life_os._rebuild_user_model_db_if_corrupted()
 
         # No archive file should exist — confirms no rebuild happened
-        assert not list(healthy_data_dir.glob("user_model.db.corrupted*")), \
+        assert not list(healthy_data_dir.glob("user_model.db.corrupted*")), (
             "Archive should not exist when DB is healthy"
+        )
 
     @pytest.mark.asyncio
     async def test_data_intact_after_healthy_probe(self, healthy_data_dir):
@@ -263,6 +261,7 @@ class TestHealthyDatabase:
 # ---------------------------------------------------------------------------
 # Tests: simulated corruption → rebuild
 # ---------------------------------------------------------------------------
+
 
 class TestCorruptedDatabase:
     @pytest.mark.asyncio
@@ -299,9 +298,7 @@ class TestCorruptedDatabase:
         await life_os._rebuild_user_model_db_if_corrupted()
 
         conn = sqlite3.connect(str(simulated_corrupt_data_dir / "user_model.db"))
-        rows = conn.execute(
-            "SELECT id, interaction_type, content_summary FROM episodes ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT id, interaction_type, content_summary FROM episodes ORDER BY id").fetchall()
         conn.close()
 
         assert len(rows) == 2, f"Expected 2 episodes after rebuild, got {len(rows)}"
@@ -319,9 +316,7 @@ class TestCorruptedDatabase:
         await life_os._rebuild_user_model_db_if_corrupted()
 
         conn = sqlite3.connect(str(simulated_corrupt_data_dir / "user_model.db"))
-        facts = conn.execute(
-            "SELECT category, key, value, confidence FROM semantic_facts"
-        ).fetchall()
+        facts = conn.execute("SELECT category, key, value, confidence FROM semantic_facts").fetchall()
         conn.close()
 
         assert len(facts) == 1, f"Expected 1 fact, got {len(facts)}"
@@ -340,8 +335,7 @@ class TestCorruptedDatabase:
         conn.close()
 
         assert count == 0, (
-            f"signal_profiles should be empty after rebuild (got {count}); "
-            "backfills will repopulate it on next startup"
+            f"signal_profiles should be empty after rebuild (got {count}); backfills will repopulate it on next startup"
         )
 
     @pytest.mark.asyncio
@@ -361,8 +355,9 @@ class TestCorruptedDatabase:
 
         # No new archive should have been created (no second rebuild happened)
         archives_after_second = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
-        assert len(archives_after_second) == archive_count_after_first, \
+        assert len(archives_after_second) == archive_count_after_first, (
             "New archive created — second rebuild should not have fired"
+        )
 
     @pytest.mark.asyncio
     async def test_rebuilt_db_readable_without_wal(self, simulated_corrupt_data_dir):
@@ -395,9 +390,7 @@ class TestCorruptedDatabase:
         # The DB must be fully readable without its WAL file.
         conn = sqlite3.connect(str(db_path))
         try:
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
             assert len(tables) > 0, "Schema should be readable without WAL"
 
             # All core tables must be queryable — this is the regression guard.
@@ -412,6 +405,7 @@ class TestCorruptedDatabase:
 # Tests: corruption in non-episode/signal_profiles tables triggers rebuild
 # ---------------------------------------------------------------------------
 
+
 class TestBroadCorruptionDetection:
     """Verify that corruption in ANY probed table triggers the rebuild.
 
@@ -424,9 +418,7 @@ class TestBroadCorruptionDetection:
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_semantic_facts_corruption(self, simulated_corrupt_data_dir):
         """Corruption in semantic_facts triggers a rebuild."""
-        life_os = _make_table_corrupting_life_os(
-            simulated_corrupt_data_dir, ["semantic_facts"]
-        )
+        life_os = _make_table_corrupting_life_os(simulated_corrupt_data_dir, ["semantic_facts"])
         await life_os._rebuild_user_model_db_if_corrupted()
 
         archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
@@ -435,9 +427,7 @@ class TestBroadCorruptionDetection:
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_routines_corruption(self, simulated_corrupt_data_dir):
         """Corruption in routines triggers a rebuild."""
-        life_os = _make_table_corrupting_life_os(
-            simulated_corrupt_data_dir, ["routines"]
-        )
+        life_os = _make_table_corrupting_life_os(simulated_corrupt_data_dir, ["routines"])
         await life_os._rebuild_user_model_db_if_corrupted()
 
         archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
@@ -446,9 +436,7 @@ class TestBroadCorruptionDetection:
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_mood_history_corruption(self, simulated_corrupt_data_dir):
         """Corruption in mood_history triggers a rebuild."""
-        life_os = _make_table_corrupting_life_os(
-            simulated_corrupt_data_dir, ["mood_history"]
-        )
+        life_os = _make_table_corrupting_life_os(simulated_corrupt_data_dir, ["mood_history"])
         await life_os._rebuild_user_model_db_if_corrupted()
 
         archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
@@ -457,9 +445,7 @@ class TestBroadCorruptionDetection:
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_predictions_corruption(self, simulated_corrupt_data_dir):
         """Corruption in predictions triggers a rebuild."""
-        life_os = _make_table_corrupting_life_os(
-            simulated_corrupt_data_dir, ["predictions"]
-        )
+        life_os = _make_table_corrupting_life_os(simulated_corrupt_data_dir, ["predictions"])
         await life_os._rebuild_user_model_db_if_corrupted()
 
         archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
@@ -468,9 +454,7 @@ class TestBroadCorruptionDetection:
     @pytest.mark.asyncio
     async def test_rebuild_triggered_by_insights_corruption(self, simulated_corrupt_data_dir):
         """Corruption in insights triggers a rebuild."""
-        life_os = _make_table_corrupting_life_os(
-            simulated_corrupt_data_dir, ["insights"]
-        )
+        life_os = _make_table_corrupting_life_os(simulated_corrupt_data_dir, ["insights"])
         await life_os._rebuild_user_model_db_if_corrupted()
 
         archives = list(simulated_corrupt_data_dir.glob("user_model.db.corrupted.*"))
@@ -479,9 +463,7 @@ class TestBroadCorruptionDetection:
     @pytest.mark.asyncio
     async def test_rebuild_recovers_data_after_table_corruption(self, simulated_corrupt_data_dir):
         """After rebuild triggered by non-episode corruption, episode data is still recovered."""
-        life_os = _make_table_corrupting_life_os(
-            simulated_corrupt_data_dir, ["semantic_facts"]
-        )
+        life_os = _make_table_corrupting_life_os(simulated_corrupt_data_dir, ["semantic_facts"])
         await life_os._rebuild_user_model_db_if_corrupted()
 
         db_path = simulated_corrupt_data_dir / "user_model.db"

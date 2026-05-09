@@ -139,9 +139,7 @@ class TestImprovementLoopHealthCheck:
         """When Life OS is running and code hasn't changed, do nothing."""
         with patch("subprocess.run") as mock_run:
             # Simulate: Life OS container is running
-            mock_run.return_value = Mock(
-                returncode=0, stdout="lifeos ... Up ..."
-            )
+            mock_run.return_value = Mock(returncode=0, stdout="lifeos ... Up ...")
 
             # Simulate git state: no code change
             old_head = "abc123"
@@ -171,8 +169,7 @@ class TestImprovementLoopHealthCheck:
         # Remove docker-compose.yml to simulate local deployment
         (project_dir / "docker-compose.yml").unlink()
 
-        with patch("subprocess.run") as mock_run, \
-             patch("subprocess.Popen") as mock_popen:
+        with patch("subprocess.run") as mock_run, patch("subprocess.Popen") as mock_popen:
             # Simulate: no Life OS process running
             mock_run.return_value = Mock(returncode=1, stdout="")  # pgrep returns nothing
             mock_popen.return_value = Mock(pid=12345)
@@ -206,9 +203,11 @@ class TestImprovementLoopHealthCheck:
         # Remove docker-compose.yml to simulate local deployment
         (project_dir / "docker-compose.yml").unlink()
 
-        with patch("subprocess.run") as mock_run, \
-             patch("subprocess.Popen") as mock_popen, \
-             patch("os.kill") as mock_kill:
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("subprocess.Popen") as mock_popen,
+            patch("os.kill") as mock_kill,
+        ):
             # Simulate: Life OS process is running (PID 12345)
             mock_run.return_value = Mock(returncode=0, stdout="12345")
             mock_popen.return_value = Mock(pid=54321)
@@ -229,6 +228,7 @@ class TestImprovementLoopHealthCheck:
             if is_running and code_updated:
                 # Kill old process
                 import os
+
                 old_pid = 12345
                 os.kill(old_pid, 15)  # SIGTERM
 
@@ -293,9 +293,11 @@ class TestImprovementLoopHealthCheck:
         # Remove docker-compose.yml
         (project_dir / "docker-compose.yml").unlink()
 
-        with patch("subprocess.run") as mock_run, \
-             patch("subprocess.Popen") as mock_popen, \
-             patch("os.kill") as mock_kill:
+        with (
+            patch("subprocess.run") as mock_run,
+            patch("subprocess.Popen") as mock_popen,
+            patch("os.kill") as mock_kill,
+        ):
             # Simulate: process starts but crashes immediately
             mock_run.return_value = Mock(returncode=1, stdout="")  # pgrep finds nothing
             mock_process = Mock(pid=12345)
@@ -307,6 +309,7 @@ class TestImprovementLoopHealthCheck:
             try:
                 # Start process
                 import os
+
                 subprocess.Popen(
                     ["python", "main.py"],
                     stdout=subprocess.PIPE,
@@ -343,20 +346,21 @@ class TestImprovementLoopHealthCheck:
 
         # Validate key improvements are present.
         # The script comment uses lowercase "ensure" — match exactly.
-        assert "ensure Life OS is running" in script_content, \
-            "Script should check Life OS health on every iteration"
+        assert "ensure Life OS is running" in script_content, "Script should check Life OS health on every iteration"
 
-        assert "CODE_UPDATED=false" in script_content, \
-            "Script should track whether code changed"
+        assert "CODE_UPDATED=false" in script_content, "Script should track whether code changed"
 
-        assert "Life OS container is offline. Starting it..." in script_content, \
+        assert "Life OS container is offline. Starting it..." in script_content, (
             "Script should start offline Docker container"
+        )
 
-        assert "Life OS process not found. Starting it..." in script_content, \
+        assert "Life OS process not found. Starting it..." in script_content, (
             "Script should start offline local process"
+        )
 
-        assert "no code changes, skipping restart" in script_content, \
+        assert "no code changes, skipping restart" in script_content, (
             "Script should skip restart when running and no code changes"
+        )
 
         # Validate the logic flow: check status BEFORE checking code changes
         # The improved script should check if Life OS is running first,
@@ -367,8 +371,7 @@ class TestImprovementLoopHealthCheck:
 
         # The status check should come AFTER we determine if code changed
         # (we set CODE_UPDATED first, then check status and act accordingly)
-        assert code_check_idx < check_idx, \
-            "Script should determine code change status before checking Life OS health"
+        assert code_check_idx < check_idx, "Script should determine code change status before checking Life OS health"
 
     def test_every_iteration_health_check_workflow(self, mock_script_env):
         """Test the complete workflow: every iteration checks and ensures Life OS runs.
@@ -451,5 +454,6 @@ class TestImprovementLoopHealthCheck:
                     action = "skip"
 
                 # Verify expected action
-                assert action == scenario["expected_action"], \
+                assert action == scenario["expected_action"], (
                     f"Scenario {scenario['name']} failed: expected {scenario['expected_action']}, got {action}"
+                )

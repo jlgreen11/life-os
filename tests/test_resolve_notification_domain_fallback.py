@@ -19,6 +19,7 @@ from services.insight_engine.source_weights import SourceWeightManager
 # Fixtures
 # -------------------------------------------------------------------
 
+
 @pytest.fixture()
 def source_weight_manager(db):
     """A SourceWeightManager with default weights seeded."""
@@ -62,6 +63,7 @@ def _make_lifeos_stub(db, source_weight_manager):
 # -------------------------------------------------------------------
 # Tests
 # -------------------------------------------------------------------
+
 
 class TestDomainFallback:
     """Tests for domain-based fallback in _resolve_notification_source_key."""

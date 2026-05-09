@@ -20,8 +20,9 @@ def swm(db):
     return manager
 
 
-def _insert_source(db, source_key, interactions=0, engagements=0, dismissals=0,
-                   ai_drift=0.0, user_weight=0.5, ai_updated_at=None):
+def _insert_source(
+    db, source_key, interactions=0, engagements=0, dismissals=0, ai_drift=0.0, user_weight=0.5, ai_updated_at=None
+):
     """Insert a source weight row directly for test setup."""
     now = datetime.now(timezone.utc).isoformat()
     with db.get_connection("preferences") as conn:
@@ -30,8 +31,18 @@ def _insert_source(db, source_key, interactions=0, engagements=0, dismissals=0,
                (source_key, category, label, description, user_weight,
                 ai_drift, interactions, engagements, dismissals, ai_updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (source_key, "test", "Test", "", user_weight,
-             ai_drift, interactions, engagements, dismissals, ai_updated_at or now),
+            (
+                source_key,
+                "test",
+                "Test",
+                "",
+                user_weight,
+                ai_drift,
+                interactions,
+                engagements,
+                dismissals,
+                ai_updated_at or now,
+            ),
         )
 
 
@@ -41,11 +52,18 @@ class TestDiagnosticsStructure:
         diag = swm.get_diagnostics()
 
         expected_keys = {
-            "total_sources", "total_interactions", "total_engagements",
-            "total_dismissals", "sources_with_drift", "feedback_loop_health",
-            "per_source", "stale_sources", "drift_active",
+            "total_sources",
+            "total_interactions",
+            "total_engagements",
+            "total_dismissals",
+            "sources_with_drift",
+            "feedback_loop_health",
+            "per_source",
+            "stale_sources",
+            "drift_active",
             # Saturation diagnostics added to surface invisible user preferences
-            "saturated_sources", "drift_health",
+            "saturated_sources",
+            "drift_health",
         }
         assert expected_keys == set(diag.keys())
         assert diag["total_sources"] > 0

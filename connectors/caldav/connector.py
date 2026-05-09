@@ -111,9 +111,7 @@ class CalDAVConnector(BaseConnector):
             password = self.config["password"]
 
             # DAVClient handles the HTTP(S) transport and credential management.
-            self._client = caldav.DAVClient(
-                url=url, username=username, password=password
-            )
+            self._client = caldav.DAVClient(url=url, username=username, password=password)
             # The principal represents the authenticated user on the server.
             principal = self._client.principal()
             # Discover all calendars that belong to this principal.
@@ -123,10 +121,7 @@ class CalDAVConnector(BaseConnector):
             # this lets the user ignore shared/public calendars they don't need.
             cal_names = self.config.get("calendars")
             if cal_names:
-                self._calendars = [
-                    c for c in self._calendars
-                    if c.name in cal_names
-                ]
+                self._calendars = [c for c in self._calendars if c.name in cal_names]
 
             return True
         except Exception as e:
@@ -196,7 +191,7 @@ class CalDAVConnector(BaseConnector):
                         # a list and strip the "mailto:" URI prefix.
                         attendees = []
                         if hasattr(vevent, "attendee"):
-                            for a in (vevent.attendee if isinstance(vevent.attendee, list) else [vevent.attendee]):
+                            for a in vevent.attendee if isinstance(vevent.attendee, list) else [vevent.attendee]:
                                 attendees.append(str(a.value).replace("mailto:", ""))
 
                         # ORGANIZER follows the same "mailto:" convention.
@@ -234,7 +229,8 @@ class CalDAVConnector(BaseConnector):
                         # Publish to the event bus so other services can react
                         # (e.g., daily briefing builder, conflict detector).
                         await self.publish_event(
-                            "calendar.event.created", payload,
+                            "calendar.event.created",
+                            payload,
                             metadata=metadata,
                         )
                         count += 1
@@ -290,11 +286,11 @@ VERSION:2.0
 PRODID:-//LifeOS//CalDAV Connector//EN
 BEGIN:VEVENT
 UID:{uid}
-SUMMARY:{params['title']}
-DTSTART:{params['start_time']}
-DTEND:{params.get('end_time', params['start_time'])}
-DESCRIPTION:{params.get('description', '')}
-LOCATION:{params.get('location', '')}
+SUMMARY:{params["title"]}
+DTSTART:{params["start_time"]}
+DTEND:{params.get("end_time", params["start_time"])}
+DESCRIPTION:{params.get("description", "")}
+LOCATION:{params.get("location", "")}
 END:VEVENT
 END:VCALENDAR"""
 
@@ -497,8 +493,7 @@ END:VCALENDAR"""
         try:
             if self._client:
                 principal = self._client.principal()
-                return {"status": "ok", "connector": self.CONNECTOR_ID,
-                        "calendars": len(self._calendars)}
+                return {"status": "ok", "connector": self.CONNECTOR_ID, "calendars": len(self._calendars)}
             return {"status": "error", "details": "Not connected"}
         except Exception as e:
             return {"status": "error", "details": str(e)}

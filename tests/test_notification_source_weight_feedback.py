@@ -41,10 +41,17 @@ def life_os_with_weights(db, notification_manager, source_weight_manager):
     life_os.vector_store.get_stats = Mock(return_value={"total": 0, "dimensions": 384})
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable"
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
     life_os.feedback_collector = Mock()
     life_os.feedback_collector.get_feedback_summary = Mock(return_value={"total": 0})
     life_os.feedback_collector.process_explicit_feedback = AsyncMock()
@@ -106,6 +113,7 @@ def _get_weight_row(db, source_key):
 # Test: Acting on a notification records engagement
 # -------------------------------------------------------------------
 
+
 def test_act_on_notification_records_engagement(client, life_os_with_weights):
     """Acting on a notification with a source event should call record_engagement."""
     db = life_os_with_weights.db
@@ -130,6 +138,7 @@ def test_act_on_notification_records_engagement(client, life_os_with_weights):
 # Test: Dismissing a notification records dismissal
 # -------------------------------------------------------------------
 
+
 def test_dismiss_notification_records_dismissal(client, life_os_with_weights):
     """Dismissing a notification with a source event should call record_dismissal."""
     db = life_os_with_weights.db
@@ -152,6 +161,7 @@ def test_dismiss_notification_records_dismissal(client, life_os_with_weights):
 # Test: Notification without source_event_id uses domain fallback
 # -------------------------------------------------------------------
 
+
 def test_notification_without_source_event_uses_domain_fallback(client, life_os_with_weights):
     """Notifications without a source_event_id should fall back to domain-based classification."""
     db = life_os_with_weights.db
@@ -173,6 +183,7 @@ def test_notification_without_source_event_uses_domain_fallback(client, life_os_
 # Test: Notification without source_event_id or domain doesn't crash
 # -------------------------------------------------------------------
 
+
 def test_notification_without_source_or_domain_graceful(client, life_os_with_weights):
     """Notifications with neither source_event_id nor domain should not crash."""
     db = life_os_with_weights.db
@@ -188,6 +199,7 @@ def test_notification_without_source_or_domain_graceful(client, life_os_with_wei
 # -------------------------------------------------------------------
 # Test: Prediction-domain notification uses domain-based classification
 # -------------------------------------------------------------------
+
 
 def test_prediction_notification_skips_source_weight_update(client, life_os_with_weights):
     """Prediction notifications are cross-domain and should NOT update any source weight.
@@ -218,6 +230,7 @@ def test_prediction_notification_skips_source_weight_update(client, life_os_with
 # Test: Nonexistent notification doesn't crash
 # -------------------------------------------------------------------
 
+
 def test_nonexistent_notification_graceful(client, life_os_with_weights):
     """Attempting to act on a nonexistent notification should not crash the handler."""
     response = client.post("/api/notifications/nonexistent-id/act")
@@ -228,6 +241,7 @@ def test_nonexistent_notification_graceful(client, life_os_with_weights):
 # -------------------------------------------------------------------
 # Test: Source weight AI drift actually nudges after enough interactions
 # -------------------------------------------------------------------
+
 
 def test_engagement_nudges_drift_after_threshold(client, life_os_with_weights):
     """After MIN_INTERACTIONS, repeated engagements should nudge AI drift upward."""
@@ -258,6 +272,7 @@ def test_engagement_nudges_drift_after_threshold(client, life_os_with_weights):
 # -------------------------------------------------------------------
 # Test: Dismissal nudges drift downward after threshold
 # -------------------------------------------------------------------
+
 
 def test_dismissal_nudges_drift_after_threshold(client, life_os_with_weights):
     """After MIN_INTERACTIONS, repeated dismissals should nudge AI drift downward."""

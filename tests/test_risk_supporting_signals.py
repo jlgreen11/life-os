@@ -35,6 +35,7 @@ from models.user_model import Prediction
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_engine(db):
     """Construct a PredictionEngine with minimal mocked dependencies.
 
@@ -63,20 +64,26 @@ def _make_transaction_row(category: str, amount: float, days_ago: int = 5) -> Ma
         A MagicMock that behaves like a sqlite3.Row when accessed by key.
     """
     ts = (datetime.now(timezone.utc) - timedelta(days=days_ago)).isoformat()
-    payload = json.dumps({
-        "category": category,
-        "amount": -abs(amount),   # Expenses are negative in the source data
-        "date": ts,
-    })
+    payload = json.dumps(
+        {
+            "category": category,
+            "amount": -abs(amount),  # Expenses are negative in the source data
+            "date": ts,
+        }
+    )
     row = MagicMock()
-    row.__getitem__ = MagicMock(side_effect=lambda k: {
-        "payload": payload,
-        "timestamp": ts,
-    }[k])
-    row.get = MagicMock(side_effect=lambda k, d=None: {
-        "payload": payload,
-        "timestamp": ts,
-    }.get(k, d))
+    row.__getitem__ = MagicMock(
+        side_effect=lambda k: {
+            "payload": payload,
+            "timestamp": ts,
+        }[k]
+    )
+    row.get = MagicMock(
+        side_effect=lambda k, d=None: {
+            "payload": payload,
+            "timestamp": ts,
+        }.get(k, d)
+    )
     return row
 
 
@@ -94,6 +101,7 @@ def _build_transactions(category_amounts: dict[str, float]) -> list[MagicMock]:
 # ---------------------------------------------------------------------------
 # Core signal presence tests
 # ---------------------------------------------------------------------------
+
 
 class TestRiskPredictionSignals:
     """_check_spending_patterns() must populate supporting_signals on every risk prediction."""
@@ -128,8 +136,7 @@ class TestRiskPredictionSignals:
         pred = risk_preds[0]
         assert pred.supporting_signals is not None, "supporting_signals must not be None"
         assert "category" in pred.supporting_signals, (
-            "risk prediction must include 'category' so "
-            "_infer_risk_accuracy() can identify the flagged spend category"
+            "risk prediction must include 'category' so _infer_risk_accuracy() can identify the flagged spend category"
         )
         assert pred.supporting_signals["category"] == "groceries"
 
@@ -160,9 +167,7 @@ class TestRiskPredictionSignals:
         signals = risk_preds[0].supporting_signals
         assert "amount" in signals, "risk prediction must include 'amount'"
         # Amount should be close to 500 (within float rounding)
-        assert abs(signals["amount"] - 500.0) < 1.0, (
-            f"Expected amount ~500, got {signals['amount']}"
-        )
+        assert abs(signals["amount"] - 500.0) < 1.0, f"Expected amount ~500, got {signals['amount']}"
 
     @pytest.mark.asyncio
     async def test_risk_prediction_includes_percentage(self, db):
@@ -192,9 +197,7 @@ class TestRiskPredictionSignals:
         signals = risk_preds[0].supporting_signals
         assert "percentage" in signals, "risk prediction must include 'percentage'"
         # Expect ~75% (300/400) — allow ±2 for floating point
-        assert 70 <= signals["percentage"] <= 80, (
-            f"Expected percentage ~75, got {signals['percentage']}"
-        )
+        assert 70 <= signals["percentage"] <= 80, f"Expected percentage ~75, got {signals['percentage']}"
 
     @pytest.mark.asyncio
     async def test_risk_prediction_includes_total_spending(self, db):
@@ -281,15 +284,11 @@ class TestRiskPredictionSignals:
             predictions = await engine._check_spending_patterns({})
 
         risk_preds = [p for p in predictions if p.prediction_type == "risk"]
-        assert len(risk_preds) >= 2, (
-            "Expected at least 2 risk predictions when both dining and entertainment dominate"
-        )
+        assert len(risk_preds) >= 2, "Expected at least 2 risk predictions when both dining and entertainment dominate"
 
         categories_in_signals = {p.supporting_signals["category"] for p in risk_preds}
         assert "dining" in categories_in_signals, "dining risk prediction must include category"
-        assert "entertainment" in categories_in_signals, (
-            "entertainment risk prediction must include category"
-        )
+        assert "entertainment" in categories_in_signals, "entertainment risk prediction must include category"
 
         # Every prediction must have supporting_signals
         for pred in risk_preds:
@@ -302,6 +301,7 @@ class TestRiskPredictionSignals:
 # ---------------------------------------------------------------------------
 # Tracker integration: signals arrive in the format _infer_risk_accuracy() expects
 # ---------------------------------------------------------------------------
+
 
 class TestRiskSignalsTrackerCompatibility:
     """Verify signals match exactly what BehavioralAccuracyTracker._infer_risk_accuracy() reads."""
@@ -366,8 +366,7 @@ class TestRiskSignalsTrackerCompatibility:
         category = pred.supporting_signals["category"]
         # The description format is: "Spending alert: $NNN on 'CATEGORY' this month ..."
         assert f"on '{category}'" in pred.description, (
-            f"supporting_signals['category']={category!r} not found in description: "
-            f"{pred.description!r}"
+            f"supporting_signals['category']={category!r} not found in description: {pred.description!r}"
         )
 
     def test_prediction_model_stores_risk_signals(self):

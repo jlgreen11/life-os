@@ -72,7 +72,6 @@ def setup_relationship_test_data(db, user_model_store):
                 "interaction_timestamps": alice_timestamps,
                 "last_inbound_timestamp": alice_timestamps[-1],
             },
-
             # Marketing sender — should be filtered out by _is_marketing_or_noreply
             "hello@email.rei.com": {
                 "interaction_count": 100,
@@ -84,7 +83,6 @@ def setup_relationship_test_data(db, user_model_store):
                 "interaction_timestamps": marketing_timestamps[-10:],
                 "last_inbound_timestamp": marketing_timestamps[0],
             },
-
             # Another marketing pattern — no-reply sender
             "noreply@service.com": {
                 "interaction_count": 50,
@@ -93,12 +91,9 @@ def setup_relationship_test_data(db, user_model_store):
                 "channels_used": ["google"],
                 "avg_message_length": 1500,
                 "last_interaction": (now - timedelta(days=30)).isoformat(),
-                "interaction_timestamps": [
-                    (now - timedelta(days=i)).isoformat() for i in range(30, 35)
-                ],
+                "interaction_timestamps": [(now - timedelta(days=i)).isoformat() for i in range(30, 35)],
                 "last_inbound_timestamp": (now - timedelta(days=30)).isoformat(),
             },
-
             # Real human, contacted recently — should NOT trigger
             "bob@company.com": {
                 "interaction_count": 5,
@@ -110,7 +105,6 @@ def setup_relationship_test_data(db, user_model_store):
                 "interaction_timestamps": bob_timestamps,
                 "last_inbound_timestamp": bob_timestamps[-1],
             },
-
             # Real human, exactly at minimum threshold, overdue
             "charlie@startup.io": {
                 "interaction_count": 5,
@@ -122,7 +116,6 @@ def setup_relationship_test_data(db, user_model_store):
                 "interaction_timestamps": charlie_timestamps,
                 "last_inbound_timestamp": charlie_timestamps[-1],
             },
-
             # Contact with too few interactions — should be skipped
             "david@email.com": {
                 "interaction_count": 3,
@@ -173,34 +166,40 @@ async def test_relationship_maintenance_filters_marketing(db, user_model_store, 
     pred_contacts = [p.relevant_contacts[0] for p in predictions if p.relevant_contacts]
 
     # Verify Alice is included (real contact, overdue)
-    assert setup_relationship_test_data["alice"] in pred_contacts, \
+    assert setup_relationship_test_data["alice"] in pred_contacts, (
         "Alice should generate a relationship maintenance prediction (real contact, overdue)"
+    )
 
     # Verify Charlie is included (real contact, overdue, at minimum threshold)
-    assert setup_relationship_test_data["charlie"] in pred_contacts, \
+    assert setup_relationship_test_data["charlie"] in pred_contacts, (
         "Charlie should generate a prediction (real contact, overdue, exactly 5 interactions)"
+    )
 
     # Verify marketing senders are excluded
-    assert setup_relationship_test_data["marketing_rei"] not in pred_contacts, \
+    assert setup_relationship_test_data["marketing_rei"] not in pred_contacts, (
         "Marketing sender (email.rei.com domain) should be filtered out"
+    )
 
-    assert setup_relationship_test_data["marketing_noreply"] not in pred_contacts, \
+    assert setup_relationship_test_data["marketing_noreply"] not in pred_contacts, (
         "No-reply sender should be filtered out"
+    )
 
     # Verify Bob is excluded (contacted recently)
-    assert setup_relationship_test_data["bob"] not in pred_contacts, \
+    assert setup_relationship_test_data["bob"] not in pred_contacts, (
         "Bob should not generate a prediction (contacted recently)"
+    )
 
     # Verify David is excluded (too few interactions)
-    assert setup_relationship_test_data["david"] not in pred_contacts, \
+    assert setup_relationship_test_data["david"] not in pred_contacts, (
         "David should not generate a prediction (too few interactions)"
+    )
 
     # Verify prediction types are correct
     for pred in predictions:
-        assert pred.prediction_type == "opportunity", \
+        assert pred.prediction_type == "opportunity", (
             "Relationship maintenance predictions should be type 'opportunity'"
-        assert pred.suggested_action.startswith("Reach out to"), \
-            "Suggested action should recommend reaching out"
+        )
+        assert pred.suggested_action.startswith("Reach out to"), "Suggested action should recommend reaching out"
 
 
 @pytest.mark.asyncio
@@ -211,19 +210,22 @@ async def test_relationship_maintenance_confidence_scaling(db, user_model_store,
     predictions = await engine._check_relationship_maintenance({})
 
     # Find Alice's prediction (she's more overdue than Charlie)
-    alice_pred = next((p for p in predictions
-                      if p.relevant_contacts and p.relevant_contacts[0] == setup_relationship_test_data["alice"]),
-                     None)
+    alice_pred = next(
+        (
+            p
+            for p in predictions
+            if p.relevant_contacts and p.relevant_contacts[0] == setup_relationship_test_data["alice"]
+        ),
+        None,
+    )
 
     assert alice_pred is not None, "Alice should have a prediction"
 
     # Confidence should be above minimum threshold (0.3) since she's overdue
-    assert alice_pred.confidence >= 0.3, \
-        "Confidence should meet SUGGEST threshold for overdue contacts"
+    assert alice_pred.confidence >= 0.3, "Confidence should meet SUGGEST threshold for overdue contacts"
 
     # Confidence should be capped at 0.6 per the implementation
-    assert alice_pred.confidence <= 0.6, \
-        "Confidence should be capped at 0.6 for relationship maintenance"
+    assert alice_pred.confidence <= 0.6, "Confidence should be capped at 0.6 for relationship maintenance"
 
 
 @pytest.mark.asyncio
@@ -235,8 +237,7 @@ async def test_relationship_maintenance_empty_profile(db, user_model_store):
     predictions = await engine._check_relationship_maintenance({})
 
     # Should return empty list, not crash
-    assert predictions == [], \
-        "Should return empty list when no relationships profile exists"
+    assert predictions == [], "Should return empty list when no relationships profile exists"
 
 
 @pytest.mark.asyncio
@@ -245,9 +246,7 @@ async def test_relationship_maintenance_no_overdue_contacts(db, user_model_store
     now = datetime.now(timezone.utc)
 
     # All contacts contacted very recently
-    recent_timestamps = [
-        (now - timedelta(days=i)).isoformat() for i in range(5)
-    ]
+    recent_timestamps = [(now - timedelta(days=i)).isoformat() for i in range(5)]
 
     relationships_profile = {
         "contacts": {
@@ -282,8 +281,7 @@ async def test_relationship_maintenance_no_overdue_contacts(db, user_model_store
     engine = PredictionEngine(db, user_model_store)
     predictions = await engine._check_relationship_maintenance({})
 
-    assert len(predictions) == 0, \
-        "Should not generate predictions when all contacts are current"
+    assert len(predictions) == 0, "Should not generate predictions when all contacts are current"
 
 
 @pytest.mark.asyncio
@@ -319,5 +317,4 @@ async def test_relationship_maintenance_malformed_timestamps(db, user_model_stor
     # Should not crash, should skip this contact due to parsing errors
     predictions = await engine._check_relationship_maintenance({})
 
-    assert len(predictions) == 0, \
-        "Should skip contacts with malformed timestamps"
+    assert len(predictions) == 0, "Should skip contacts with malformed timestamps"

@@ -147,13 +147,15 @@ class TestRoutineDetectorPruning:
         for day_offset in range(2):
             day_start = base_date.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
 
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "two_day_coffee",
-                "content_summary": "Coffee run",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "two_day_coffee",
+                    "content_summary": "Coffee run",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 

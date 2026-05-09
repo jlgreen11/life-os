@@ -63,10 +63,12 @@ def _insert_reminder_prediction(
                 "suggest",
                 "24_hours",
                 f"Reply to {contact_email}",
-                json.dumps({
-                    "contact_email": contact_email,
-                    "contact_name": contact_name,
-                }),
+                json.dumps(
+                    {
+                        "contact_email": contact_email,
+                        "contact_name": contact_name,
+                    }
+                ),
                 1,
                 created_at.isoformat(),
             ),
@@ -139,9 +141,7 @@ async def test_reminder_accurate_when_contact_in_cc(db):
 
     stats = await tracker.run_inference_cycle()
 
-    assert stats["marked_accurate"] >= 1, (
-        "Expected reminder to be ACCURATE when contact was in CC of sent email"
-    )
+    assert stats["marked_accurate"] >= 1, "Expected reminder to be ACCURATE when contact was in CC of sent email"
 
     with db.get_connection("user_model") as conn:
         row = conn.execute(
@@ -254,9 +254,7 @@ async def test_reminder_inaccurate_when_contact_not_in_any_field(db):
         ).fetchone()
 
     assert row is not None
-    assert row["was_accurate"] == 0, (
-        "Email to unrelated contact should leave reminder INACCURATE after 48h timeout"
-    )
+    assert row["was_accurate"] == 0, "Email to unrelated contact should leave reminder INACCURATE after 48h timeout"
 
 
 @pytest.mark.asyncio
@@ -291,9 +289,7 @@ async def test_reminder_accurate_via_legacy_to_field(db):
         ).fetchone()
 
     assert row is not None
-    assert row["was_accurate"] == 1, (
-        "Legacy 'to' string field should still yield ACCURATE reminder"
-    )
+    assert row["was_accurate"] == 1, "Legacy 'to' string field should still yield ACCURATE reminder"
 
 
 @pytest.mark.asyncio
@@ -328,9 +324,7 @@ async def test_reminder_accurate_when_contact_in_multiple_recipient_fields(db):
         ).fetchone()
 
     assert row is not None
-    assert row["was_accurate"] == 1, (
-        "Contact in both To and CC should yield ACCURATE reminder (no double-count error)"
-    )
+    assert row["was_accurate"] == 1, "Contact in both To and CC should yield ACCURATE reminder (no double-count error)"
 
 
 @pytest.mark.asyncio
@@ -362,7 +356,5 @@ async def test_reminder_still_pending_within_window_no_matching_email(db):
 
     assert row is not None
     # Should remain unresolved — was_accurate=None and resolved_at=None
-    assert row["was_accurate"] is None, (
-        "Reminder within 48h window with no matching email should remain unresolved"
-    )
+    assert row["was_accurate"] is None, "Reminder within 48h window with no matching email should remain unresolved"
     assert row["resolved_at"] is None

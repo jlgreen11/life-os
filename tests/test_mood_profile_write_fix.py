@@ -42,6 +42,7 @@ from services.signal_extractor.mood import MoodInferenceEngine
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _email_received(body: str, hour: int = 10) -> dict:
     """Build a synthetic email.received event.
 
@@ -66,6 +67,7 @@ def _make_engine(db, user_model_store) -> MoodInferenceEngine:
 # 1. Serialization guard
 # ---------------------------------------------------------------------------
 
+
 class TestSerializationGuard:
     """Verify that non-serializable data is caught before the write and logged."""
 
@@ -85,9 +87,7 @@ class TestSerializationGuard:
         """
         events = [
             _email_received("Good morning, hope you're well.", hour=9),
-            _email_received(
-                "I'm frustrated and stressed about this urgent problem.", hour=14
-            ),
+            _email_received("I'm frustrated and stressed about this urgent problem.", hour=14),
             {
                 "type": EventType.SLEEP_RECORDED.value,
                 "timestamp": datetime(2024, 6, 15, 6, 30, 0, tzinfo=timezone.utc).isoformat(),
@@ -137,7 +137,7 @@ class TestSerializationGuard:
             "recent_signals": [
                 {
                     "signal_type": "bad_signal",
-                    "value": {1, 2, 3},        # set — not JSON-serializable
+                    "value": {1, 2, 3},  # set — not JSON-serializable
                     "delta_from_baseline": 0.0,
                     "weight": 0.5,
                     "source": "test",
@@ -145,9 +145,7 @@ class TestSerializationGuard:
             ]
         }
 
-        with patch.object(
-            engine.ums, "get_signal_profile", return_value={"data": bad_data}
-        ):
+        with patch.object(engine.ums, "get_signal_profile", return_value={"data": bad_data}):
             with caplog.at_level(logging.ERROR, logger="services.signal_extractor.mood"):
                 # Process a real event so _update_mood_state is called.
                 engine.extract(_email_received("Test email body here.", hour=10))
@@ -155,9 +153,7 @@ class TestSerializationGuard:
         error_msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
         # Search case-insensitively — the log message uses "non-JSON-serializable"
         # (mixed case) but we want a robust match regardless of capitalisation.
-        serialization_errors = [
-            m for m in error_msgs if "non-json-serializable" in m.lower()
-        ]
+        serialization_errors = [m for m in error_msgs if "non-json-serializable" in m.lower()]
         assert len(serialization_errors) >= 1, (
             "Serialization guard must emit logger.error when data contains "
             "non-JSON-serializable types; no such log was found. "
@@ -174,7 +170,7 @@ class TestSerializationGuard:
             "recent_signals": [
                 {
                     "signal_type": "datetime_signal",
-                    "value": datetime(2024, 1, 1),    # datetime — not JSON-serializable
+                    "value": datetime(2024, 1, 1),  # datetime — not JSON-serializable
                     "delta_from_baseline": 0.0,
                     "weight": 0.5,
                     "source": "test",
@@ -182,9 +178,7 @@ class TestSerializationGuard:
             ]
         }
 
-        with patch.object(
-            engine.ums, "get_signal_profile", return_value={"data": bad_data}
-        ):
+        with patch.object(engine.ums, "get_signal_profile", return_value={"data": bad_data}):
             with caplog.at_level(logging.ERROR, logger="services.signal_extractor.mood"):
                 engine.extract(_email_received("Short email.", hour=10))
 
@@ -206,6 +200,7 @@ class TestSerializationGuard:
 # ---------------------------------------------------------------------------
 # 2. Ring buffer cap at 500
 # ---------------------------------------------------------------------------
+
 
 class TestRingBufferCap500:
     """Verify the ring buffer is capped at 500 entries (increased from 200)."""
@@ -237,11 +232,13 @@ class TestRingBufferCap500:
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": initial_signals})
 
         # Process two signals (sleep_quality + sleep_duration) → total = 501.
-        engine.extract({
-            "type": EventType.SLEEP_RECORDED.value,
-            "timestamp": datetime(2024, 6, 15, 7, 0, 0, tzinfo=timezone.utc).isoformat(),
-            "payload": {"duration_hours": 7.0, "quality_score": 0.75},
-        })
+        engine.extract(
+            {
+                "type": EventType.SLEEP_RECORDED.value,
+                "timestamp": datetime(2024, 6, 15, 7, 0, 0, tzinfo=timezone.utc).isoformat(),
+                "payload": {"duration_hours": 7.0, "quality_score": 0.75},
+            }
+        )
 
         profile = user_model_store.get_signal_profile("mood_signals")
         assert profile is not None
@@ -273,20 +270,20 @@ class TestRingBufferCap500:
 
         # Add one more signal → should evict signal at index 0 (value=0.0)
         # and one from index 1 (value=1.0) because sleep adds 2 signals.
-        engine.extract({
-            "type": EventType.SLEEP_RECORDED.value,
-            "timestamp": datetime(2024, 6, 15, 7, 0, 0, tzinfo=timezone.utc).isoformat(),
-            "payload": {"duration_hours": 8.0, "quality_score": 0.9},
-        })
+        engine.extract(
+            {
+                "type": EventType.SLEEP_RECORDED.value,
+                "timestamp": datetime(2024, 6, 15, 7, 0, 0, tzinfo=timezone.utc).isoformat(),
+                "payload": {"duration_hours": 8.0, "quality_score": 0.9},
+            }
+        )
 
         profile = user_model_store.get_signal_profile("mood_signals")
         assert profile is not None
         recent = profile["data"]["recent_signals"]
         # The 2 oldest entries (value=0.0 and value=1.0) should be gone.
         values = [s["value"] for s in recent if s["signal_type"] == "index_signal"]
-        assert 0.0 not in values, (
-            "Oldest signal (value=0.0) must have been evicted when buffer exceeded 500."
-        )
+        assert 0.0 not in values, "Oldest signal (value=0.0) must have been evicted when buffer exceeded 500."
 
     def test_ring_buffer_unchanged_below_cap(self, engine, user_model_store):
         """Processing a few events must not evict signals when well below the cap."""
@@ -303,25 +300,25 @@ class TestRingBufferCap500:
         ]
         user_model_store.update_signal_profile("mood_signals", {"recent_signals": initial_signals})
 
-        engine.extract({
-            "type": EventType.SLEEP_RECORDED.value,
-            "timestamp": datetime(2024, 6, 15, 7, 0, 0, tzinfo=timezone.utc).isoformat(),
-            "payload": {"duration_hours": 7.5, "quality_score": 0.7},
-        })
+        engine.extract(
+            {
+                "type": EventType.SLEEP_RECORDED.value,
+                "timestamp": datetime(2024, 6, 15, 7, 0, 0, tzinfo=timezone.utc).isoformat(),
+                "payload": {"duration_hours": 7.5, "quality_score": 0.7},
+            }
+        )
 
         profile = user_model_store.get_signal_profile("mood_signals")
         assert profile is not None
-        values = [s["value"] for s in profile["data"]["recent_signals"]
-                  if s["signal_type"] == "keep_signal"]
+        values = [s["value"] for s in profile["data"]["recent_signals"] if s["signal_type"] == "keep_signal"]
         # All 10 original signals must still be present.
-        assert 0.0 in values and 9.0 in values, (
-            "Original signals must be retained when total count is below 500."
-        )
+        assert 0.0 in values and 9.0 in values, "Original signals must be retained when total count is below 500."
 
 
 # ---------------------------------------------------------------------------
 # 3. WAL checkpoint retry
 # ---------------------------------------------------------------------------
+
 
 class TestWALCheckpointRetry:
     """Verify the retry-after-checkpoint logic fires when read-back returns None."""
@@ -375,21 +372,19 @@ class TestWALCheckpointRetry:
     def test_no_retry_error_when_write_succeeds(self, engine, user_model_store, caplog):
         """No retry error must be logged when the write-and-read-back succeeds normally."""
         with caplog.at_level(logging.ERROR, logger="services.signal_extractor.mood"):
-            engine.extract(_email_received(
-                "Quick update: the project is on track for delivery.", hour=10
-            ))
+            engine.extract(_email_received("Quick update: the project is on track for delivery.", hour=10))
 
         error_msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
         retry_errors = [m for m in error_msgs if "FAILED to persist" in m or "STILL missing" in m]
         assert len(retry_errors) == 0, (
-            "No retry/failure errors should appear when the write succeeds normally. "
-            f"Unexpected errors: {retry_errors}"
+            f"No retry/failure errors should appear when the write succeeds normally. Unexpected errors: {retry_errors}"
         )
 
 
 # ---------------------------------------------------------------------------
 # 4. Basic persistence round-trip: 5 events → profile exists
 # ---------------------------------------------------------------------------
+
 
 class TestBasicPersistenceRoundTrip:
     """End-to-end: process 5 mood-bearing events and verify the profile is readable."""
@@ -425,8 +420,7 @@ class TestBasicPersistenceRoundTrip:
         assert "data" in profile
         assert "recent_signals" in profile["data"]
         assert len(profile["data"]["recent_signals"]) >= 5, (
-            "At least 5 signals (one circadian_energy per event minimum) must "
-            "be in the persisted profile."
+            "At least 5 signals (one circadian_energy per event minimum) must be in the persisted profile."
         )
 
     def test_profile_data_is_json_serializable_after_five_events(self, engine, user_model_store):
@@ -484,8 +478,7 @@ class TestBasicPersistenceRoundTrip:
         signal_types = {s["signal_type"] for s in profile["data"]["recent_signals"]}
 
         assert "circadian_energy" in signal_types, (
-            "circadian_energy signal must be present after processing email events "
-            "with valid timestamps."
+            "circadian_energy signal must be present after processing email events with valid timestamps."
         )
         assert "incoming_negative_language" in signal_types, (
             "incoming_negative_language signal must be present after processing "
@@ -499,8 +492,7 @@ class TestBasicPersistenceRoundTrip:
         COALESCE upsert.  A count of 0 or 1 after 5 events would indicate
         the writes are somehow creating new rows instead of incrementing.
         """
-        events = [_email_received(f"Email number {i} body text.", hour=10 + i)
-                  for i in range(5)]
+        events = [_email_received(f"Email number {i} body text.", hour=10 + i) for i in range(5)]
 
         for event in events:
             engine.extract(event)

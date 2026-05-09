@@ -41,18 +41,20 @@ def _make_prediction(**overrides) -> Prediction:
 
 def _insert_event(event_store):
     """Insert a generic event to advance the cursor so generate_predictions runs."""
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {
-            "from_address": "test@example.com",
-            "subject": "Test",
-            "message_id": str(uuid.uuid4()),
-        },
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {
+                "from_address": "test@example.com",
+                "subject": "Test",
+                "message_id": str(uuid.uuid4()),
+            },
+            "metadata": {},
+        }
+    )
 
 
 async def _run_engine_with_fake_predictions(engine, predictions):
@@ -88,9 +90,7 @@ async def _run_engine_with_fake_predictions(engine, predictions):
         reasoning="test",
         proposed_action="surface",
     )
-    reaction_patch = patch.object(
-        engine, "predict_reaction", new_callable=AsyncMock, return_value=helpful_reaction
-    )
+    reaction_patch = patch.object(engine, "predict_reaction", new_callable=AsyncMock, return_value=helpful_reaction)
     patches.append(reaction_patch)
 
     for p in patches:
@@ -128,9 +128,7 @@ class TestGetPersistenceDiagnostics:
             "count_mismatch",
             "schema_status",
         }
-        assert required_keys.issubset(diag.keys()), (
-            f"Missing keys: {required_keys - diag.keys()}"
-        )
+        assert required_keys.issubset(diag.keys()), f"Missing keys: {required_keys - diag.keys()}"
 
     def test_fresh_engine_defaults(self, db, user_model_store):
         """Fresh engine diagnostics should show zero failures and healthy schema."""
@@ -163,9 +161,7 @@ class TestGetPersistenceDiagnostics:
         assert len(diag["last_store_errors"]) == 1
 
     @pytest.mark.asyncio
-    async def test_prediction_count_reflects_stored_predictions(
-        self, db, event_store, user_model_store
-    ):
+    async def test_prediction_count_reflects_stored_predictions(self, db, event_store, user_model_store):
         """current_prediction_count matches actual rows in the predictions table."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)
@@ -177,9 +173,7 @@ class TestGetPersistenceDiagnostics:
         diag = engine.get_persistence_diagnostics()
 
         # Verify prediction count is positive (at least 1 stored)
-        assert diag["current_prediction_count"] >= 1, (
-            "Prediction count should reflect stored rows"
-        )
+        assert diag["current_prediction_count"] >= 1, "Prediction count should reflect stored rows"
         # Schema should still be ok
         assert diag["schema_status"] == "ok"
 
@@ -230,14 +224,16 @@ class TestGetPersistenceDiagnostics:
     def test_count_mismatch_when_events_but_no_predictions(self, db, user_model_store, event_store):
         """count_mismatch is True when generation events exist but predictions table is empty."""
         # Insert a fake 'usermodel.prediction.generated' event
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "usermodel.prediction.generated",
-            "source": "prediction_engine",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {"count": 5},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "usermodel.prediction.generated",
+                "source": "prediction_engine",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": {"count": 5},
+                "metadata": {},
+            }
+        )
 
         engine = PredictionEngine(db=db, ums=user_model_store)
         diag = engine.get_persistence_diagnostics()
@@ -293,9 +289,7 @@ class TestRecoveryAttemptCount:
         assert engine._recovery_attempt_count == 0
 
     @pytest.mark.asyncio
-    async def test_count_increments_each_recovery_entry(
-        self, db, event_store, user_model_store
-    ):
+    async def test_count_increments_each_recovery_entry(self, db, event_store, user_model_store):
         """_recovery_attempt_count increments by 1 each time recovery block runs."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)
@@ -304,18 +298,14 @@ class TestRecoveryAttemptCount:
         engine._persistence_failure_detected = True
 
         await _run_engine_with_fake_predictions(engine, [_make_prediction()])
-        assert engine._recovery_attempt_count == 1, (
-            "First recovery entry should set count to 1"
-        )
+        assert engine._recovery_attempt_count == 1, "First recovery entry should set count to 1"
 
         # Run a second cycle with the flag re-set to simulate repeated failures
         _insert_event(event_store)
         engine._persistence_failure_detected = True
 
         await _run_engine_with_fake_predictions(engine, [_make_prediction()])
-        assert engine._recovery_attempt_count == 2, (
-            "Second recovery entry should set count to 2"
-        )
+        assert engine._recovery_attempt_count == 2, "Second recovery entry should set count to 2"
 
     @pytest.mark.asyncio
     async def test_count_in_persistence_diagnostics(self, db, event_store, user_model_store):
@@ -327,9 +317,7 @@ class TestRecoveryAttemptCount:
         assert diag["recovery_attempt_count"] == 5
 
     @pytest.mark.asyncio
-    async def test_critical_log_after_repeated_failures(
-        self, db, event_store, user_model_store
-    ):
+    async def test_critical_log_after_repeated_failures(self, db, event_store, user_model_store):
         """CRITICAL is logged when recovery_attempt_count > 3 and DB write fails."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)
@@ -344,9 +332,7 @@ class TestRecoveryAttemptCount:
 
         import logging
 
-        with patch.object(
-            logging.getLogger("services.prediction_engine.engine"), "critical"
-        ) as mock_critical:
+        with patch.object(logging.getLogger("services.prediction_engine.engine"), "critical") as mock_critical:
             result = await engine.generate_predictions({})
 
         # Cycle should be skipped (empty list) since DB write test fails
@@ -355,9 +341,7 @@ class TestRecoveryAttemptCount:
         assert mock_critical.called, "CRITICAL should be logged after 4+ failed recoveries"
 
     @pytest.mark.asyncio
-    async def test_no_critical_log_on_first_three_failures(
-        self, db, event_store, user_model_store
-    ):
+    async def test_no_critical_log_on_first_three_failures(self, db, event_store, user_model_store):
         """No CRITICAL escalation for the first 3 recovery attempts."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)
@@ -372,21 +356,14 @@ class TestRecoveryAttemptCount:
 
         import logging
 
-        with patch.object(
-            logging.getLogger("services.prediction_engine.engine"), "critical"
-        ) as mock_critical:
+        with patch.object(logging.getLogger("services.prediction_engine.engine"), "critical") as mock_critical:
             await engine.generate_predictions({})
 
         # The first failure logs 'logger.critical(...)' even without escalation,
         # so we check that the escalation message (containing the count) is absent.
         # Extract call args to check the message content.
-        escalation_calls = [
-            call for call in mock_critical.call_args_list
-            if "recovery attempted" in str(call)
-        ]
-        assert len(escalation_calls) == 0, (
-            "Escalation CRITICAL should not fire on first attempt"
-        )
+        escalation_calls = [call for call in mock_critical.call_args_list if "recovery attempted" in str(call)]
+        assert len(escalation_calls) == 0, "Escalation CRITICAL should not fire on first attempt"
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +375,7 @@ class TestSchemaCheckInRecovery:
     """Tests for the schema verification that runs after a successful DB write test."""
 
     @pytest.mark.asyncio
-    async def test_schema_check_passes_with_valid_schema(
-        self, db, event_store, user_model_store
-    ):
+    async def test_schema_check_passes_with_valid_schema(self, db, event_store, user_model_store):
         """No CRITICAL log for schema mismatch when table has all expected columns."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)
@@ -408,27 +383,18 @@ class TestSchemaCheckInRecovery:
 
         import logging
 
-        with patch.object(
-            logging.getLogger("services.prediction_engine.engine"), "critical"
-        ) as mock_critical:
+        with patch.object(logging.getLogger("services.prediction_engine.engine"), "critical") as mock_critical:
             await _run_engine_with_fake_predictions(engine, [_make_prediction()])
 
         # Flag should be cleared (DB healthy)
         assert engine._persistence_failure_detected is False
 
         # No schema CRITICAL should have been logged
-        schema_criticals = [
-            call for call in mock_critical.call_args_list
-            if "schema mismatch" in str(call)
-        ]
-        assert len(schema_criticals) == 0, (
-            "No schema CRITICAL should be logged when table columns are all present"
-        )
+        schema_criticals = [call for call in mock_critical.call_args_list if "schema mismatch" in str(call)]
+        assert len(schema_criticals) == 0, "No schema CRITICAL should be logged when table columns are all present"
 
     @pytest.mark.asyncio
-    async def test_schema_check_logs_critical_for_missing_columns(
-        self, db, event_store, user_model_store
-    ):
+    async def test_schema_check_logs_critical_for_missing_columns(self, db, event_store, user_model_store):
         """CRITICAL is logged when predictions table is missing store_prediction() columns.
 
         The recovery block DB write test uses a minimal INSERT
@@ -465,16 +431,11 @@ class TestSchemaCheckInRecovery:
 
         import logging
 
-        with patch.object(
-            logging.getLogger("services.prediction_engine.engine"), "critical"
-        ) as mock_critical:
+        with patch.object(logging.getLogger("services.prediction_engine.engine"), "critical") as mock_critical:
             await engine.generate_predictions({})
 
         # Schema CRITICAL should be present
-        schema_criticals = [
-            call for call in mock_critical.call_args_list
-            if "schema mismatch" in str(call)
-        ]
+        schema_criticals = [call for call in mock_critical.call_args_list if "schema mismatch" in str(call)]
         assert len(schema_criticals) >= 1, (
             "CRITICAL should fire when predictions table is missing store_prediction() columns"
         )
@@ -489,9 +450,7 @@ class TestPreVerificationWalCheckpoint:
     """Tests for the WAL checkpoint injected before the post-store verification query."""
 
     @pytest.mark.asyncio
-    async def test_checkpoint_called_before_verification(
-        self, db, event_store, user_model_store
-    ):
+    async def test_checkpoint_called_before_verification(self, db, event_store, user_model_store):
         """checkpoint_wal is called at least twice when predictions are stored:
         once after storage and once before the verification query."""
         engine = PredictionEngine(db=db, ums=user_model_store)
@@ -517,9 +476,7 @@ class TestPreVerificationWalCheckpoint:
         )
 
     @pytest.mark.asyncio
-    async def test_checkpoint_failure_before_verification_does_not_crash(
-        self, db, event_store, user_model_store
-    ):
+    async def test_checkpoint_failure_before_verification_does_not_crash(self, db, event_store, user_model_store):
         """A failing pre-verification checkpoint logs a warning but does not abort the cycle."""
         engine = PredictionEngine(db=db, ums=user_model_store)
         _insert_event(event_store)

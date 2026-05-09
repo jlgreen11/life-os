@@ -35,8 +35,7 @@ class ConfigEncryptor:
         os.chmod(self._key_path, 0o600)
         return key
 
-    def encrypt_config(self, config: dict[str, Any],
-                       sensitive_fields: set[str]) -> dict[str, Any]:
+    def encrypt_config(self, config: dict[str, Any], sensitive_fields: set[str]) -> dict[str, Any]:
         """Encrypt sensitive field values, returning a new dict."""
         result = {}
         for key, value in config.items():
@@ -47,20 +46,18 @@ class ConfigEncryptor:
                 result[key] = value
         return result
 
-    def decrypt_config(self, config: dict[str, Any],
-                       sensitive_fields: set[str]) -> dict[str, Any]:
+    def decrypt_config(self, config: dict[str, Any], sensitive_fields: set[str]) -> dict[str, Any]:
         """Decrypt ENC:-prefixed values, returning a new dict."""
         result = {}
         for key, value in config.items():
             if key in sensitive_fields and isinstance(value, str) and value.startswith(self.PREFIX):
-                token = value[len(self.PREFIX):]
+                token = value[len(self.PREFIX) :]
                 result[key] = self._fernet.decrypt(token.encode()).decode()
             else:
                 result[key] = value
         return result
 
-    def mask_config(self, config: dict[str, Any],
-                    sensitive_fields: set[str]) -> dict[str, Any]:
+    def mask_config(self, config: dict[str, Any], sensitive_fields: set[str]) -> dict[str, Any]:
         """Replace sensitive field values with ******** for API responses."""
         result = {}
         for key, value in config.items():

@@ -37,9 +37,7 @@ class TestTimeBased:
     """Test that time-based predictions run even without new events."""
 
     @pytest.mark.asyncio
-    async def test_time_based_predictions_run_without_new_events(
-        self, db, user_model_store
-    ):
+    async def test_time_based_predictions_run_without_new_events(self, db, user_model_store):
         """
         Time-based predictions should run every 15 minutes even if no new events.
 
@@ -63,9 +61,7 @@ class TestTimeBased:
         assert engine._last_event_cursor == 0  # No events processed
 
     @pytest.mark.asyncio
-    async def test_event_based_predictions_skip_without_new_events(
-        self, db, event_store, user_model_store
-    ):
+    async def test_event_based_predictions_skip_without_new_events(self, db, event_store, user_model_store):
         """
         Event-based predictions should skip if no new events since last run.
 
@@ -82,20 +78,23 @@ class TestTimeBased:
 
         # Add an email event
         import uuid
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "priority": "normal",
-            "payload": {
-                "message_id": "<test@example.com>",
-                "from_address": "human@example.com",
-                "subject": "Test",
-                "is_reply": False,
-            },
-            "metadata": {},
-        })
+
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "message_id": "<test@example.com>",
+                    "from_address": "human@example.com",
+                    "subject": "Test",
+                    "is_reply": False,
+                },
+                "metadata": {},
+            }
+        )
 
         # First run: should process the event
         predictions1 = await engine.generate_predictions({})
@@ -113,9 +112,7 @@ class TestTimeBased:
         assert engine._last_time_based_run == time_after_first  # Time unchanged
 
     @pytest.mark.asyncio
-    async def test_time_based_predictions_run_after_15_minutes(
-        self, db, user_model_store
-    ):
+    async def test_time_based_predictions_run_after_15_minutes(self, db, user_model_store):
         """
         Time-based predictions should run again after 15 minutes.
 
@@ -166,20 +163,23 @@ class TestTimeBased:
 
         # Add new events
         import uuid
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "priority": "normal",
-            "payload": {
-                "message_id": "<test2@example.com>",
-                "from_address": "human@example.com",
-                "subject": "Test 2",
-                "is_reply": False,
-            },
-            "metadata": {},
-        })
+
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "priority": "normal",
+                "payload": {
+                    "message_id": "<test2@example.com>",
+                    "from_address": "human@example.com",
+                    "subject": "Test 2",
+                    "is_reply": False,
+                },
+                "metadata": {},
+            }
+        )
 
         # Run predictions - both triggers should be active
         predictions = await engine.generate_predictions({})
@@ -205,9 +205,7 @@ class TestRelationshipMaintenance:
     """
 
     @pytest.mark.asyncio
-    async def test_relationship_maintenance_without_new_events(
-        self, db, user_model_store
-    ):
+    async def test_relationship_maintenance_without_new_events(self, db, user_model_store):
         """
         Relationship maintenance should detect stale contacts even without new events.
 
@@ -233,8 +231,7 @@ class TestRelationshipMaintenance:
                     "interaction_count": 10,
                     "last_interaction": sixty_days_ago,
                     "interaction_timestamps": [
-                        (datetime.now(timezone.utc) - timedelta(days=60 + i * 30)).isoformat()
-                        for i in range(10)
+                        (datetime.now(timezone.utc) - timedelta(days=60 + i * 30)).isoformat() for i in range(10)
                     ][::-1],  # Reverse to get chronological order
                 }
             }
@@ -267,9 +264,7 @@ class TestRoutineDeviations:
     """
 
     @pytest.mark.asyncio
-    async def test_routine_deviations_run_without_new_events(
-        self, db, user_model_store
-    ):
+    async def test_routine_deviations_run_without_new_events(self, db, user_model_store):
         """
         Routine deviation detection should run on time-based triggers.
 
@@ -362,9 +357,7 @@ class TestCalendarConflicts:
     """
 
     @pytest.mark.asyncio
-    async def test_calendar_conflicts_run_without_new_events(
-        self, db, user_model_store
-    ):
+    async def test_calendar_conflicts_run_without_new_events(self, db, user_model_store):
         """
         Calendar conflict detection should run on time-based triggers.
 

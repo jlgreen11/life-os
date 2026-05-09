@@ -308,12 +308,25 @@ async def test_correlator_stats_contain_all_correlator_names(insight_engine):
 
     stats = insight_engine.get_diagnostics()["last_correlator_stats"]
     expected_names = {
-        "place_frequency", "contact_gap", "relationship_intelligence",
-        "email_volume", "email_peak_hour", "meeting_density",
-        "communication_style", "inbound_style", "actionable_alert",
-        "temporal_pattern", "mood_trend", "spending_pattern",
-        "decision_pattern", "topic_interest", "cadence_response",
-        "routine", "spatial", "workflow_pattern", "connector_health",
+        "place_frequency",
+        "contact_gap",
+        "relationship_intelligence",
+        "email_volume",
+        "email_peak_hour",
+        "meeting_density",
+        "communication_style",
+        "inbound_style",
+        "actionable_alert",
+        "temporal_pattern",
+        "mood_trend",
+        "spending_pattern",
+        "decision_pattern",
+        "topic_interest",
+        "cadence_response",
+        "routine",
+        "spatial",
+        "workflow_pattern",
+        "connector_health",
     }
     assert expected_names == set(stats.keys())
 
@@ -388,8 +401,6 @@ async def test_generate_insights_logs_correlator_stats(insight_engine, caplog):
     with caplog.at_level(logging.INFO, logger="services.insight_engine.engine"):
         await insight_engine.generate_insights()
 
-    correlator_messages = [
-        r for r in caplog.records if "correlator results" in r.message
-    ]
+    correlator_messages = [r for r in caplog.records if "correlator results" in r.message]
     assert len(correlator_messages) == 1
     assert "place_frequency" in correlator_messages[0].message

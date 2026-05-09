@@ -111,7 +111,9 @@ def _create_user_model_db(
     """)
     conn.execute("CREATE TABLE IF NOT EXISTS insights (id INTEGER PRIMARY KEY, type TEXT, feedback TEXT)")
     conn.execute("CREATE TABLE IF NOT EXISTS episodes (id INTEGER PRIMARY KEY, interaction_type TEXT)")
-    conn.execute("CREATE TABLE IF NOT EXISTS semantic_facts (id INTEGER PRIMARY KEY, category TEXT, key TEXT, value TEXT, confidence REAL)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS semantic_facts (id INTEGER PRIMARY KEY, category TEXT, key TEXT, value TEXT, confidence REAL)"
+    )
     conn.execute("CREATE TABLE IF NOT EXISTS routines (id INTEGER PRIMARY KEY)")
     conn.execute("CREATE TABLE IF NOT EXISTS workflows (id INTEGER PRIMARY KEY)")
     conn.execute("CREATE TABLE IF NOT EXISTS communication_templates (id INTEGER PRIMARY KEY)")
@@ -232,8 +234,15 @@ class TestProfileEventTypes:
     def test_all_expected_profiles_present(self):
         """All 9 expected signal profile types have entries."""
         expected = {
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "temporal", "topics", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "temporal",
+            "topics",
+            "spatial",
+            "decision",
         }
         assert expected == set(PROFILE_EVENT_TYPES.keys())
 
@@ -330,10 +339,7 @@ class TestMissingProfileSeverity:
         missing_anomalies = [a for a in anomalies if a["category"] == "missing_profile"]
         assert len(missing_anomalies) == 3
 
-        by_profile = {
-            a["message"].split("'")[1]: a["severity"]
-            for a in missing_anomalies
-        }
+        by_profile = {a["message"].split("'")[1]: a["severity"] for a in missing_anomalies}
         assert by_profile["linguistic"] == "info"
         assert by_profile["cadence"] == "warning"
         assert by_profile["topics"] == "info"
@@ -649,6 +655,4 @@ class TestAnalyzeMissingProfileDetail:
         report = analyze(str(tmp_path))
         sp = report["sections"].get("signal_profiles", {})
 
-        assert "missing_profile_detail" in sp, (
-            "signal_profiles section should always include missing_profile_detail"
-        )
+        assert "missing_profile_detail" in sp, "signal_profiles section should always include missing_profile_detail"

@@ -56,11 +56,13 @@ async def test_need_accuracy_event_occurred(db):
                 "default",
                 "24_hours",
                 "Check packing list and confirm reservations",
-                json.dumps({
-                    "event_id": "cal-123",
-                    "event_title": "Flight to Boston",
-                    "event_start_time": event_start_time.isoformat()
-                }),
+                json.dumps(
+                    {
+                        "event_id": "cal-123",
+                        "event_title": "Flight to Boston",
+                        "event_start_time": event_start_time.isoformat(),
+                    }
+                ),
                 1,
                 prediction_created.isoformat(),
             ),
@@ -74,18 +76,20 @@ async def test_need_accuracy_event_occurred(db):
         "id": prediction_id,
         "prediction_type": "need",
         "description": "Upcoming travel in 36h: 'Flight to Boston'. Time to prepare.",
-        "supporting_signals": json.dumps({
-            "event_id": "cal-123",
-            "event_title": "Flight to Boston",
-            "event_start_time": (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
-        }),
+        "supporting_signals": json.dumps(
+            {
+                "event_id": "cal-123",
+                "event_title": "Flight to Boston",
+                "event_start_time": (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat(),
+            }
+        ),
         "created_at": (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat(),
     }
 
     result = await tracker._infer_need_accuracy(
         prediction,
         json.loads(prediction["supporting_signals"]),
-        datetime.fromisoformat(prediction["created_at"].replace('Z', '+00:00'))
+        datetime.fromisoformat(prediction["created_at"].replace("Z", "+00:00")),
     )
 
     # Event occurred (time has passed) and no cancellation → ACCURATE
@@ -122,18 +126,14 @@ async def test_need_accuracy_event_cancelled(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "need",
         "description": "Upcoming travel in 36h: 'Flight to Boston'. Time to prepare.",
-        "supporting_signals": json.dumps({
-            "event_id": "cal-123",
-            "event_title": "Flight to Boston",
-            "event_start_time": event_start_time.isoformat()
-        }),
+        "supporting_signals": json.dumps(
+            {"event_id": "cal-123", "event_title": "Flight to Boston", "event_start_time": event_start_time.isoformat()}
+        ),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_need_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # Event was cancelled before it happened → INACCURATE
@@ -161,11 +161,13 @@ async def test_need_accuracy_event_rescheduled(db):
                 "caldav_connector",
                 (prediction_created + timedelta(hours=12)).isoformat(),
                 "normal",
-                json.dumps({
-                    "event_id": "cal-123",
-                    "title": "Flight to Boston",
-                    "start_time": (event_start_time + timedelta(days=7)).isoformat()
-                }),
+                json.dumps(
+                    {
+                        "event_id": "cal-123",
+                        "title": "Flight to Boston",
+                        "start_time": (event_start_time + timedelta(days=7)).isoformat(),
+                    }
+                ),
                 "{}",
             ),
         )
@@ -174,18 +176,14 @@ async def test_need_accuracy_event_rescheduled(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "need",
         "description": "Upcoming travel in 36h: 'Flight to Boston'. Time to prepare.",
-        "supporting_signals": json.dumps({
-            "event_id": "cal-123",
-            "event_title": "Flight to Boston",
-            "event_start_time": event_start_time.isoformat()
-        }),
+        "supporting_signals": json.dumps(
+            {"event_id": "cal-123", "event_title": "Flight to Boston", "event_start_time": event_start_time.isoformat()}
+        ),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_need_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # Event was rescheduled to different day → INACCURATE
@@ -205,18 +203,14 @@ async def test_need_accuracy_wait_for_event_time(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "need",
         "description": "Upcoming travel in 12h: 'Flight to Boston'. Time to prepare.",
-        "supporting_signals": json.dumps({
-            "event_id": "cal-123",
-            "event_title": "Flight to Boston",
-            "event_start_time": event_start_time.isoformat()
-        }),
+        "supporting_signals": json.dumps(
+            {"event_id": "cal-123", "event_title": "Flight to Boston", "event_start_time": event_start_time.isoformat()}
+        ),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_need_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # Event hasn't happened yet → can't determine accuracy
@@ -247,10 +241,12 @@ async def test_opportunity_accuracy_contact_made(db):
                 "google_connector",
                 (prediction_created + timedelta(days=2)).isoformat(),
                 "normal",
-                json.dumps({
-                    "to_addresses": ["alice@example.com"],
-                    "subject": "Hey, how have you been?",
-                }),
+                json.dumps(
+                    {
+                        "to_addresses": ["alice@example.com"],
+                        "subject": "Hey, how have you been?",
+                    }
+                ),
                 "{}",
             ),
         )
@@ -259,17 +255,12 @@ async def test_opportunity_accuracy_contact_made(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "opportunity",
         "description": "Reach out to alice@example.com — it's been 45 days",
-        "supporting_signals": json.dumps({
-            "contact_email": "alice@example.com",
-            "days_since_last_contact": 45
-        }),
+        "supporting_signals": json.dumps({"contact_email": "alice@example.com", "days_since_last_contact": 45}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_opportunity_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # User DID reach out within 7 days → ACCURATE
@@ -288,17 +279,12 @@ async def test_opportunity_accuracy_no_contact_made(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "opportunity",
         "description": "Reach out to alice@example.com — it's been 45 days",
-        "supporting_signals": json.dumps({
-            "contact_email": "alice@example.com",
-            "days_since_last_contact": 45
-        }),
+        "supporting_signals": json.dumps({"contact_email": "alice@example.com", "days_since_last_contact": 45}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_opportunity_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # 7+ days passed with no contact → INACCURATE
@@ -317,17 +303,12 @@ async def test_opportunity_accuracy_wait_within_window(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "opportunity",
         "description": "Reach out to alice@example.com — it's been 45 days",
-        "supporting_signals": json.dumps({
-            "contact_email": "alice@example.com",
-            "days_since_last_contact": 45
-        }),
+        "supporting_signals": json.dumps({"contact_email": "alice@example.com", "days_since_last_contact": 45}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_opportunity_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # Still within 7-day window → can't determine yet
@@ -353,10 +334,12 @@ async def test_opportunity_accuracy_name_based_matching(db):
                 "imessage_connector",
                 (prediction_created + timedelta(days=2)).isoformat(),
                 "normal",
-                json.dumps({
-                    "to": "Alice Johnson",
-                    "content": "Hey! How's everything?",
-                }),
+                json.dumps(
+                    {
+                        "to": "Alice Johnson",
+                        "content": "Hey! How's everything?",
+                    }
+                ),
                 "{}",
             ),
         )
@@ -365,17 +348,12 @@ async def test_opportunity_accuracy_name_based_matching(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "opportunity",
         "description": "Consider reaching out to Alice Johnson — last contact was 60 days ago",
-        "supporting_signals": json.dumps({
-            "contact_name": "Alice Johnson",
-            "days_since_last_contact": 60
-        }),
+        "supporting_signals": json.dumps({"contact_name": "Alice Johnson", "days_since_last_contact": 60}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_opportunity_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # User DID reach out (by name match) → ACCURATE
@@ -398,18 +376,12 @@ async def test_risk_accuracy_high_spending_flagged(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "risk",
         "description": "Spending alert: $450 on 'groceries' this month (35% of total)",
-        "supporting_signals": json.dumps({
-            "category": "groceries",
-            "amount": 450.0,
-            "percentage": 0.35
-        }),
+        "supporting_signals": json.dumps({"category": "groceries", "amount": 450.0, "percentage": 0.35}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_risk_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # High spending (>$200) was correctly identified → ACCURATE
@@ -428,18 +400,12 @@ async def test_risk_accuracy_low_spending_false_alarm(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "risk",
         "description": "Spending alert: $150 on 'coffee' this month (25% of total)",
-        "supporting_signals": json.dumps({
-            "category": "coffee",
-            "amount": 150.0,
-            "percentage": 0.25
-        }),
+        "supporting_signals": json.dumps({"category": "coffee", "amount": 150.0, "percentage": 0.25}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_risk_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # Low spending (<$200) → likely false alarm → INACCURATE
@@ -458,18 +424,12 @@ async def test_risk_accuracy_wait_14_days(db):
         "id": str(uuid.uuid4()),
         "prediction_type": "risk",
         "description": "Spending alert: $450 on 'groceries' this month (35% of total)",
-        "supporting_signals": json.dumps({
-            "category": "groceries",
-            "amount": 450.0,
-            "percentage": 0.35
-        }),
+        "supporting_signals": json.dumps({"category": "groceries", "amount": 450.0, "percentage": 0.35}),
         "created_at": prediction_created.isoformat(),
     }
 
     result = await tracker._infer_risk_accuracy(
-        prediction,
-        json.loads(prediction["supporting_signals"]),
-        prediction_created
+        prediction, json.loads(prediction["supporting_signals"]), prediction_created
     )
 
     # Less than 14 days → can't determine yet
@@ -492,11 +452,7 @@ async def test_risk_accuracy_extract_from_description(db):
         "created_at": prediction_created.isoformat(),
     }
 
-    result = await tracker._infer_risk_accuracy(
-        prediction,
-        {},
-        prediction_created
-    )
+    result = await tracker._infer_risk_accuracy(prediction, {}, prediction_created)
 
     # Should extract category='dining' and amount=550 from description
     # Amount is >$200 → ACCURATE
@@ -530,10 +486,7 @@ async def test_full_inference_cycle_all_types(db):
                 "Upcoming travel: 'Flight to NYC'",
                 0.75,
                 "default",
-                json.dumps({
-                    "event_title": "Flight to NYC",
-                    "event_start_time": need_start_time.isoformat()
-                }),
+                json.dumps({"event_title": "Flight to NYC", "event_start_time": need_start_time.isoformat()}),
                 1,
                 need_created.isoformat(),
             ),
@@ -594,9 +547,9 @@ async def test_full_inference_cycle_all_types(db):
 
     # The need prediction (3 days old, event occurred 2 days ago) should be resolved
     # as ACCURATE (event occurred as planned)
-    assert stats['surfaced'] == 1
-    assert stats['marked_accurate'] == 1
-    assert stats['marked_inaccurate'] == 0
+    assert stats["surfaced"] == 1
+    assert stats["marked_accurate"] == 1
+    assert stats["marked_inaccurate"] == 0
 
     # Verify database updates
     with db.get_connection("user_model") as conn:

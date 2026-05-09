@@ -73,17 +73,13 @@ def test_tracker_mail_prefix_is_automated():
         "mail@mail2.creditkarma.com",
     ]
     for addr in automated:
-        assert tracker._is_automated_sender(addr), (
-            f"Expected mail@ address to be detected as automated: {addr!r}"
-        )
+        assert tracker._is_automated_sender(addr), f"Expected mail@ address to be detected as automated: {addr!r}"
 
 
 def test_tracker_alumni_prefix_is_automated():
     """alumni@ prefix indicates mass university/college mailing list, never a person."""
     tracker = _make_tracker()
-    assert tracker._is_automated_sender("alumni@mst.edu"), (
-        "Expected alumni@mst.edu to be automated"
-    )
+    assert tracker._is_automated_sender("alumni@mst.edu"), "Expected alumni@mst.edu to be automated"
     assert tracker._is_automated_sender("alumni@harvard.edu")
     assert tracker._is_automated_sender("alumni@stanford.edu")
 
@@ -108,9 +104,7 @@ def test_tracker_stay_prefix_is_automated():
 def test_tracker_msftpc_prefix_is_automated():
     """msftpc@ is Microsoft's PC-fleet management automated sender."""
     tracker = _make_tracker()
-    assert tracker._is_automated_sender("msftpc@microsoft.com"), (
-        "Expected msftpc@microsoft.com to be automated"
-    )
+    assert tracker._is_automated_sender("msftpc@microsoft.com"), "Expected msftpc@microsoft.com to be automated"
 
 
 def test_tracker_irrigation_prefix_is_automated():
@@ -294,6 +288,5 @@ def test_tracker_and_prediction_engine_agree_on_new_patterns():
         tracker_result = tracker._is_automated_sender(addr)
         engine_result = PredictionEngine._is_marketing_or_noreply(addr, {})
         assert tracker_result == engine_result, (
-            f"Filter disagreement for {addr!r}: "
-            f"tracker={tracker_result}, engine={engine_result}"
+            f"Filter disagreement for {addr!r}: tracker={tracker_result}, engine={engine_result}"
         )

@@ -53,10 +53,7 @@ HUMAN_CONTACTS = [
 
 def _build_relationship_profile(contacts_dict: dict) -> dict:
     """Build a signal profile payload that mimics the live relationships profile."""
-    total_samples = sum(
-        c.get("inbound_count", 0) + c.get("outbound_count", 0)
-        for c in contacts_dict.values()
-    )
+    total_samples = sum(c.get("inbound_count", 0) + c.get("outbound_count", 0) for c in contacts_dict.values())
     return {
         "samples_count": total_samples,
         "data": {"contacts": contacts_dict},
@@ -137,9 +134,7 @@ class TestPurgeMarketingRelationshipFacts:
 
         facts = _get_facts(ums)
         for addr in MARKETING_CONTACTS:
-            assert f"relationship_priority_{addr}" not in facts, (
-                f"Marketing fact for {addr} should have been purged"
-            )
+            assert f"relationship_priority_{addr}" not in facts, f"Marketing fact for {addr} should have been purged"
         assert deleted == len(MARKETING_CONTACTS)
 
     def test_purge_removes_marketing_balance_facts(self, db):
@@ -183,9 +178,7 @@ class TestPurgeMarketingRelationshipFacts:
 
         facts = _get_facts(ums)
         for addr in HUMAN_CONTACTS:
-            assert f"relationship_priority_{addr}" in facts, (
-                f"Human contact fact for {addr} must not be purged"
-            )
+            assert f"relationship_priority_{addr}" in facts, f"Human contact fact for {addr} must not be purged"
         assert deleted == 0
 
     def test_purge_preserves_user_corrected_facts(self, db):
@@ -210,9 +203,7 @@ class TestPurgeMarketingRelationshipFacts:
         deleted = inferrer._purge_marketing_relationship_facts()
 
         facts = _get_facts(ums)
-        assert f"relationship_priority_{addr}" in facts, (
-            "User-corrected marketing fact must not be purged"
-        )
+        assert f"relationship_priority_{addr}" in facts, "User-corrected marketing fact must not be purged"
         assert deleted == 0
 
     def test_purge_returns_zero_when_nothing_to_purge(self, db):

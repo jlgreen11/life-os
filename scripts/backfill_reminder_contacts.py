@@ -39,7 +39,6 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 
 def extract_contact_info(description: str) -> dict[str, str]:
@@ -59,9 +58,7 @@ def extract_contact_info(description: str) -> dict[str, str]:
     # Pattern 1: "Unreplied message from EMAIL" (most common)
     # Example: "Unreplied message from alice@example.com: \"Subject\" (3 hours ago)"
     # Handles complex emails: john.doe+work@company-name.co.uk
-    email_match = re.search(
-        r'from\s+([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)', description, re.IGNORECASE
-    )
+    email_match = re.search(r"from\s+([\w\.\-\+]+@[\w\.\-]+\.[\w\.]+)", description, re.IGNORECASE)
     if email_match:
         contact_info["contact_email"] = email_match.group(1)
 
@@ -70,13 +67,11 @@ def extract_contact_info(description: str) -> dict[str, str]:
     # Two-stage match: trigger phrase is case-insensitive, but name must be
     # properly capitalized to avoid false matches (e.g., "Grace" not "about")
     if not contact_info.get("contact_email"):
-        trigger_match = re.search(
-            r'(reply to|follow up with|message)\s+', description, re.IGNORECASE
-        )
+        trigger_match = re.search(r"(reply to|follow up with|message)\s+", description, re.IGNORECASE)
         if trigger_match:
             # Extract properly capitalized name after the trigger
-            rest = description[trigger_match.end():]
-            name_match = re.match(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', rest)
+            rest = description[trigger_match.end() :]
+            name_match = re.match(r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", rest)
             if name_match:
                 contact_info["contact_name"] = name_match.group(1)
 
@@ -174,9 +169,7 @@ def backfill_reminder_contacts(data_dir: str, dry_run: bool = False) -> dict:
 
 def main():
     """CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Backfill contact information for reminder predictions"
-    )
+    parser = argparse.ArgumentParser(description="Backfill contact information for reminder predictions")
     parser.add_argument(
         "--data-dir",
         default="./data",

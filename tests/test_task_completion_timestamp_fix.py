@@ -35,6 +35,7 @@ from services.task_completion_detector.detector import TaskCompletionDetector
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def detector(db, event_bus):
     """TaskCompletionDetector with a mocked task manager."""
@@ -49,8 +50,7 @@ def now():
     return datetime.now(timezone.utc)
 
 
-def _insert_task(db, task_id: str, title: str, created_at: datetime,
-                 status: str = "pending") -> None:
+def _insert_task(db, task_id: str, title: str, created_at: datetime, status: str = "pending") -> None:
     """Insert a task row directly into the state database."""
     with db.get_connection("state") as conn:
         conn.execute(
@@ -62,8 +62,7 @@ def _insert_task(db, task_id: str, title: str, created_at: datetime,
         )
 
 
-def _insert_event(db, event_type: str, payload: dict,
-                  timestamp: datetime) -> str:
+def _insert_event(db, event_type: str, payload: dict, timestamp: datetime) -> str:
     """Insert a synthetic event row into the events database."""
     event_id = str(uuid.uuid4())
     with db.get_connection("events") as conn:
@@ -80,6 +79,7 @@ def _insert_event(db, event_type: str, payload: dict,
 # Activity-based detection — verifying the single-param fix
 # ---------------------------------------------------------------------------
 
+
 class TestActivityDetectionTimestampFix:
     """Verify that activity detection only uses task's created_at as the cutoff."""
 
@@ -95,16 +95,19 @@ class TestActivityDetectionTimestampFix:
         _insert_task(db, task_id, "Submit budget report quarterly", created_at=created_at)
 
         # Email sent 3 hours ago — BEFORE the task was created 2 hours ago
-        _insert_event(db, "email.sent", {
-            "subject": "Budget report submitted quarterly",
-            "body_plain": "The quarterly budget report is submitted and completed.",
-        }, timestamp=now - timedelta(hours=3))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Budget report submitted quarterly",
+                "body_plain": "The quarterly budget report is submitted and completed.",
+            },
+            timestamp=now - timedelta(hours=3),
+        )
 
         completed = await detector._detect_activity_based_completion()
 
-        assert completed == 0, (
-            "Email sent before task creation must not trigger completion"
-        )
+        assert completed == 0, "Email sent before task creation must not trigger completion"
         detector.task_manager.complete_task.assert_not_called()
 
     @pytest.mark.asyncio
@@ -119,10 +122,15 @@ class TestActivityDetectionTimestampFix:
         _insert_task(db, task_id, "Submit budget report quarterly", created_at=created_at)
 
         # Email sent 1 hour ago — AFTER task created 3 hours ago
-        _insert_event(db, "email.sent", {
-            "subject": "Budget Report Submission",
-            "body_plain": "Just submitted the quarterly budget report as requested. Completed!",
-        }, timestamp=now - timedelta(hours=1))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Budget Report Submission",
+                "body_plain": "Just submitted the quarterly budget report as requested. Completed!",
+            },
+            timestamp=now - timedelta(hours=1),
+        )
 
         completed = await detector._detect_activity_based_completion()
 
@@ -149,10 +157,15 @@ class TestActivityDetectionTimestampFix:
         # Email sent 10 minutes ago — after task creation.
         # "kickoff" and "meeting" are exact matches (score ≥ 2) + "done" is the
         # completion keyword.
-        _insert_event(db, "email.sent", {
-            "subject": "Kickoff Meeting Done",
-            "body_plain": "The kickoff meeting budget is done. Everything is ready.",
-        }, timestamp=now - timedelta(minutes=10))
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "subject": "Kickoff Meeting Done",
+                "body_plain": "The kickoff meeting budget is done. Everything is ready.",
+            },
+            timestamp=now - timedelta(minutes=10),
+        )
 
         completed = await detector._detect_activity_based_completion()
 
@@ -163,6 +176,7 @@ class TestActivityDetectionTimestampFix:
 # ---------------------------------------------------------------------------
 # Inactivity-based detection — verifying the single-param fix
 # ---------------------------------------------------------------------------
+
 
 class TestInactivityDetectionTimestampFix:
     """Verify that inactivity detection uses task age as the only completion signal.
@@ -189,10 +203,15 @@ class TestInactivityDetectionTimestampFix:
         _insert_task(db, task_id, "Old dormant task", created_at=created_at)
 
         # Recent email completely unrelated to the task — must NOT block completion.
-        _insert_event(db, "email.received", {
-            "subject": "Newsletter digest",
-            "body_plain": "Totally unrelated content.",
-        }, timestamp=now - timedelta(days=2))
+        _insert_event(
+            db,
+            "email.received",
+            {
+                "subject": "Newsletter digest",
+                "body_plain": "Totally unrelated content.",
+            },
+            timestamp=now - timedelta(days=2),
+        )
 
         completed = await detector._detect_inactivity_based_completion()
 
@@ -214,16 +233,19 @@ class TestInactivityDetectionTimestampFix:
         _insert_task(db, task_id, "Forgotten task", created_at=created_at)
 
         # Old email (10 days ago) — outside the 7-day inactivity window
-        _insert_event(db, "email.received", {
-            "subject": "Old email",
-            "body_plain": "Something from a while back.",
-        }, timestamp=now - timedelta(days=10))
+        _insert_event(
+            db,
+            "email.received",
+            {
+                "subject": "Old email",
+                "body_plain": "Something from a while back.",
+            },
+            timestamp=now - timedelta(days=10),
+        )
 
         completed = await detector._detect_inactivity_based_completion()
 
-        assert completed == 1, (
-            "Activity older than threshold should not block inactivity completion"
-        )
+        assert completed == 1, "Activity older than threshold should not block inactivity completion"
         detector.task_manager.complete_task.assert_called_once_with(task_id)
 
     @pytest.mark.asyncio
@@ -249,10 +271,15 @@ class TestInactivityDetectionTimestampFix:
 
         # Event exactly at the 7-day cutoff boundary
         cutoff = now - timedelta(days=7)
-        _insert_event(db, "email.received", {
-            "subject": "Boundary email",
-            "body_plain": "Exactly at threshold.",
-        }, timestamp=cutoff)
+        _insert_event(
+            db,
+            "email.received",
+            {
+                "subject": "Boundary email",
+                "body_plain": "Exactly at threshold.",
+            },
+            timestamp=cutoff,
+        )
 
         completed = await detector._detect_inactivity_based_completion()
 
@@ -264,6 +291,7 @@ class TestInactivityDetectionTimestampFix:
 # SQL parameter count — whitebox correctness verification
 # ---------------------------------------------------------------------------
 
+
 class TestSqlParamCounts:
     """Whitebox tests: verify that neither query passes a redundant timestamp param.
 
@@ -273,9 +301,7 @@ class TestSqlParamCounts:
     """
 
     @pytest.mark.asyncio
-    async def test_activity_detection_executes_single_timestamp_param(
-        self, detector, db, now
-    ):
+    async def test_activity_detection_executes_single_timestamp_param(self, detector, db, now):
         """_detect_activity_based_completion must use exactly one timestamp per task query."""
         executed_queries = []
 
@@ -317,14 +343,11 @@ class TestSqlParamCounts:
                 # Count occurrences of "timestamp > ?" in the SQL
                 timestamp_clauses = sql.count("timestamp > ?")
                 assert timestamp_clauses == 1, (
-                    f"Expected exactly 1 timestamp > ? clause in activity query, "
-                    f"found {timestamp_clauses}.\nSQL: {sql}"
+                    f"Expected exactly 1 timestamp > ? clause in activity query, found {timestamp_clauses}.\nSQL: {sql}"
                 )
 
     @pytest.mark.asyncio
-    async def test_inactivity_detection_no_events_query_in_source(
-        self, detector, db, now
-    ):
+    async def test_inactivity_detection_no_events_query_in_source(self, detector, db, now):
         """_detect_inactivity_based_completion must NOT contain an events timestamp query.
 
         The original bug involved a global ``COUNT(*) FROM events WHERE timestamp > ?``

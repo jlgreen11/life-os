@@ -101,11 +101,15 @@ def test_diagnostics_quiet_hours_active_when_configured(db, mock_event_bus):
     # Configure quiet hours covering ALL days and ALL hours (00:00–23:59)
     now = datetime.now(timezone.utc)
     current_day = now.strftime("%A").lower()
-    quiet_hours_config = json.dumps([{
-        "start": "00:00",
-        "end": "23:59",
-        "days": [current_day],
-    }])
+    quiet_hours_config = json.dumps(
+        [
+            {
+                "start": "00:00",
+                "end": "23:59",
+                "days": [current_day],
+            }
+        ]
+    )
 
     with db.get_connection("preferences") as conn:
         conn.execute(
@@ -126,6 +130,7 @@ def test_diagnostics_quiet_hours_active_when_configured(db, mock_event_bus):
 def test_template_contains_notif_mode_element():
     """Dashboard HTML should contain the notifMode span element."""
     from web.template import HTML_TEMPLATE
+
     html = HTML_TEMPLATE
     assert 'id="notifMode"' in html
 
@@ -133,6 +138,7 @@ def test_template_contains_notif_mode_element():
 def test_template_contains_notif_separator():
     """Dashboard HTML should contain the notification separator element."""
     from web.template import HTML_TEMPLATE
+
     html = HTML_TEMPLATE
     assert 'id="notifSep"' in html
 
@@ -140,6 +146,7 @@ def test_template_contains_notif_separator():
 def test_template_contains_diagnostics_fetch():
     """Dashboard JS should fetch the diagnostics endpoint for notification mode."""
     from web.template import HTML_TEMPLATE
+
     html = HTML_TEMPLATE
     assert "/api/diagnostics/user-model" in html
 
@@ -147,6 +154,7 @@ def test_template_contains_diagnostics_fetch():
 def test_template_contains_mode_labels():
     """Dashboard JS should contain labels for each notification mode."""
     from web.template import HTML_TEMPLATE
+
     html = HTML_TEMPLATE
     assert "All notifications" in html
     assert "Batched" in html
@@ -157,6 +165,7 @@ def test_template_contains_mode_labels():
 def test_template_contains_diag_cache_guard():
     """Dashboard JS should cache diagnostics fetch with a timestamp guard."""
     from web.template import HTML_TEMPLATE
+
     html = HTML_TEMPLATE
     assert "_lastDiagFetch" in html
     assert "290000" in html

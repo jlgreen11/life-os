@@ -84,11 +84,12 @@ class TestTransientFailureRetry:
         transport_error = google_exceptions.TransportError("Connection reset by peer")
         mock_creds.refresh.side_effect = [transport_error, transport_error, None]
 
-        with patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds), \
-             patch("google.auth.transport.requests.Request"), \
-             patch("time.sleep") as mock_sleep, \
-             patch("builtins.open", MagicMock()):
-
+        with (
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+            patch("time.sleep") as mock_sleep,
+            patch("builtins.open", MagicMock()),
+        ):
             result = connector._load_credentials()
 
             assert result is mock_creds
@@ -109,10 +110,11 @@ class TestTransientFailureRetry:
         transport_error = google_exceptions.TransportError("DNS resolution failed")
         mock_creds.refresh.side_effect = transport_error
 
-        with patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds), \
-             patch("google.auth.transport.requests.Request"), \
-             patch("time.sleep") as mock_sleep:
-
+        with (
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+            patch("time.sleep") as mock_sleep,
+        ):
             with pytest.raises(ValueError, match="after 3 attempts"):
                 connector._load_credentials()
 
@@ -133,10 +135,11 @@ class TestTransientFailureRetry:
         refresh_error = google_exceptions.RefreshError("Token has been revoked")
         mock_creds.refresh.side_effect = refresh_error
 
-        with patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds), \
-             patch("google.auth.transport.requests.Request"), \
-             patch("time.sleep") as mock_sleep:
-
+        with (
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+            patch("time.sleep") as mock_sleep,
+        ):
             with pytest.raises(ValueError, match="re-authenticate via /admin connector panel"):
                 connector._load_credentials()
 
@@ -155,11 +158,12 @@ class TestTransientFailureRetry:
         # Refresh succeeds immediately
         mock_creds.refresh.return_value = None
 
-        with patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds), \
-             patch("google.auth.transport.requests.Request"), \
-             patch("time.sleep") as mock_sleep, \
-             patch("builtins.open", MagicMock()):
-
+        with (
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+            patch("time.sleep") as mock_sleep,
+            patch("builtins.open", MagicMock()),
+        ):
             result = connector._load_credentials()
 
             assert result is mock_creds

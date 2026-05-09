@@ -207,10 +207,14 @@ async def test_null_interaction_type_is_reclassified(db: DatabaseManager):
 @pytest.mark.asyncio
 async def test_unknown_interaction_type_is_reclassified(db: DatabaseManager):
     """Episodes with interaction_type='unknown' should be reclassified."""
-    event_id = _insert_event(db, "email.sent", {
-        "to_addresses": ["bob@example.com"],
-        "subject": "Test",
-    })
+    event_id = _insert_event(
+        db,
+        "email.sent",
+        {
+            "to_addresses": ["bob@example.com"],
+            "subject": "Test",
+        },
+    )
     episode_id = _insert_episode(db, event_id, interaction_type="unknown")
 
     assert _get_interaction_type(db, episode_id) == "unknown"
@@ -224,10 +228,14 @@ async def test_unknown_interaction_type_is_reclassified(db: DatabaseManager):
 @pytest.mark.asyncio
 async def test_communication_interaction_type_still_reclassified(db: DatabaseManager):
     """Episodes with interaction_type='communication' should still be reclassified (existing behavior)."""
-    event_id = _insert_event(db, "message.received", {
-        "from_address": "alice@example.com",
-        "snippet": "Hey!",
-    })
+    event_id = _insert_event(
+        db,
+        "message.received",
+        {
+            "from_address": "alice@example.com",
+            "snippet": "Hey!",
+        },
+    )
     episode_id = _insert_episode(db, event_id, interaction_type="communication")
 
     assert _get_interaction_type(db, episode_id) == "communication"

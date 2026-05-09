@@ -85,6 +85,7 @@ def test_auth_diagnosis_missing_token_file(connector):
     The credentials JSON was downloaded but the user never opened the
     OAuth consent screen to generate a token.
     """
+
     def exists_side_effect(path):
         # Only the credentials file exists; token file does not.
         return path == connector._credentials_file
@@ -111,9 +112,10 @@ def test_auth_diagnosis_expired_token_with_refresh_token(connector):
     mock_creds.expired = True
     mock_creds.refresh_token = "valid_refresh_token"
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+    ):
         result = connector._compute_auth_diagnosis()
 
     assert result["token_file_exists"] is True
@@ -137,9 +139,10 @@ def test_auth_diagnosis_expired_token_without_refresh_token(connector):
     mock_creds.expired = True
     mock_creds.refresh_token = None
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+    ):
         result = connector._compute_auth_diagnosis()
 
     assert result["token_file_exists"] is True
@@ -156,9 +159,13 @@ def test_auth_diagnosis_corrupt_token_file(connector):
     The token file was created but its content is not valid Credentials
     JSON (e.g. truncated write, manual edit, schema mismatch).
     """
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               side_effect=Exception("Invalid JSON at line 3")):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch(
+            "google.oauth2.credentials.Credentials.from_authorized_user_file",
+            side_effect=Exception("Invalid JSON at line 3"),
+        ),
+    ):
         result = connector._compute_auth_diagnosis()
 
     assert result["token_file_exists"] is True
@@ -182,9 +189,10 @@ def test_auth_diagnosis_valid_token_no_root_cause(connector):
     mock_creds.expired = False
     mock_creds.refresh_token = "valid_refresh_token"
 
-    with patch("os.path.exists", return_value=True), \
-         patch("google.oauth2.credentials.Credentials.from_authorized_user_file",
-               return_value=mock_creds):
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
+    ):
         result = connector._compute_auth_diagnosis()
 
     assert result["token_file_exists"] is True
@@ -242,9 +250,7 @@ async def test_health_check_includes_auth_diagnosis_on_mid_session_api_failure(c
     caller can distinguish root causes programmatically.
     """
     connector._gmail_service = MagicMock()
-    connector._gmail_service.users().getProfile().execute.side_effect = RuntimeError(
-        "mid-session network failure"
-    )
+    connector._gmail_service.users().getProfile().execute.side_effect = RuntimeError("mid-session network failure")
 
     with patch("os.path.exists", return_value=False):
         result = await connector.health_check()
@@ -274,16 +280,15 @@ async def test_start_publishes_auth_diagnosis_in_error_event(connector):
         "credentials_file_exists": True,
     }
 
-    with patch.object(connector, "authenticate", return_value=False), \
-         patch.object(connector, "_compute_auth_diagnosis", return_value=expected_diagnosis):
+    with (
+        patch.object(connector, "authenticate", return_value=False),
+        patch.object(connector, "_compute_auth_diagnosis", return_value=expected_diagnosis),
+    ):
         await connector.start()
 
     # Find the system.connector.error event published to the bus.
     publish_calls = connector.bus.publish.call_args_list
-    error_events = [
-        call for call in publish_calls
-        if call.args[0] == "system.connector.error"
-    ]
+    error_events = [call for call in publish_calls if call.args[0] == "system.connector.error"]
     assert len(error_events) >= 1, "Expected at least one system.connector.error publish"
 
     payload = error_events[0].args[1]
@@ -307,15 +312,14 @@ async def test_start_does_not_publish_error_when_auth_succeeds(connector):
         connector._people_service = mock_people
         return True
 
-    with patch.object(connector, "authenticate", side_effect=fake_authenticate), \
-         patch.object(connector, "_sync_loop", new_callable=AsyncMock):
+    with (
+        patch.object(connector, "authenticate", side_effect=fake_authenticate),
+        patch.object(connector, "_sync_loop", new_callable=AsyncMock),
+    ):
         await connector.start()
 
     publish_calls = connector.bus.publish.call_args_list
-    error_events = [
-        call for call in publish_calls
-        if call.args[0] == "system.connector.error"
-    ]
+    error_events = [call for call in publish_calls if call.args[0] == "system.connector.error"]
     assert len(error_events) == 0, "No error event should be published on successful auth"
 
 

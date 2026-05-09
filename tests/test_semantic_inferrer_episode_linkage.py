@@ -68,9 +68,7 @@ def _get_fact_source_episode(ums, key: str):
         List of episode IDs linked to the fact, or [] if not found
     """
     with ums.db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT source_episodes FROM semantic_facts WHERE key = ?", (key,)
-        ).fetchone()
+        row = conn.execute("SELECT source_episodes FROM semantic_facts WHERE key = ?", (key,)).fetchone()
     if not row:
         return []
     return json.loads(row["source_episodes"])
@@ -89,9 +87,12 @@ class TestInferrerEpisodeLinkageAfterBackfill:
         episode_id = _insert_episode(db, "email_sent")
 
         # Set up a linguistic profile with a very casual formality score
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.1, "emoji_rate": 0.0, "hedge_rate": 0.1, "exclamation_rate": 0.0},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.1, "emoji_rate": 0.0, "hedge_rate": 0.1, "exclamation_rate": 0.0},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 5)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -118,9 +119,12 @@ class TestInferrerEpisodeLinkageAfterBackfill:
         # Insert an episode with the OLD 'communication' type (should NOT be found)
         _insert_episode(db, "communication")
 
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.1, "emoji_rate": 0.0, "hedge_rate": 0.1, "exclamation_rate": 0.0},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.1, "emoji_rate": 0.0, "hedge_rate": 0.1, "exclamation_rate": 0.0},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 5)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -160,9 +164,7 @@ class TestInferrerEpisodeLinkageAfterBackfill:
         )
 
         # Also verify the stale filter returns nothing for this episode
-        old_filter_results = inferrer._get_recent_episodes(
-            interaction_type="communication", limit=5
-        )
+        old_filter_results = inferrer._get_recent_episodes(interaction_type="communication", limit=5)
         assert episode_id not in old_filter_results, (
             "The stale 'communication' filter should NOT find an 'email_received' episode."
         )
@@ -176,9 +178,12 @@ class TestInferrerEpisodeLinkageAfterBackfill:
 
         # Set up a cadence profile where the user only works in business hours
         hourly = {str(h): 10 for h in range(9, 17)}  # 9am-5pm only
-        user_model_store.update_signal_profile("cadence", {
-            "hourly_activity": hourly,
-        })
+        user_model_store.update_signal_profile(
+            "cadence",
+            {
+                "hourly_activity": hourly,
+            },
+        )
         _set_samples(user_model_store, "cadence", 50)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -211,9 +216,8 @@ class TestInferrerEpisodeLinkageAfterBackfill:
         # the migration, NOT as an argument to _get_recent_episodes().
         # We check that _get_recent_episodes is not called with interaction_type="communication"
         import re
-        bad_pattern = re.compile(
-            r'_get_recent_episodes\s*\([^)]*interaction_type\s*=\s*["\']communication["\']'
-        )
+
+        bad_pattern = re.compile(r'_get_recent_episodes\s*\([^)]*interaction_type\s*=\s*["\']communication["\']')
         matches = bad_pattern.findall(source)
         assert not matches, (
             f"Found {len(matches)} call(s) to _get_recent_episodes with "

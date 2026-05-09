@@ -71,12 +71,25 @@ class TestTemporalInferenceKeyFix:
         _seed_temporal_profile(
             user_model_store,
             activity_by_hour={
-                "6": 20, "7": 30, "8": 40, "9": 35, "10": 25,  # 150 morning
-                "14": 20, "15": 15, "16": 10, "20": 10, "21": 5,  # 60 other
+                "6": 20,
+                "7": 30,
+                "8": 40,
+                "9": 35,
+                "10": 25,  # 150 morning
+                "14": 20,
+                "15": 15,
+                "16": 10,
+                "20": 10,
+                "21": 5,  # 60 other
             },
             activity_by_day={
-                "monday": 30, "tuesday": 35, "wednesday": 40,
-                "thursday": 30, "friday": 25, "saturday": 5, "sunday": 5,
+                "monday": 30,
+                "tuesday": 35,
+                "wednesday": 40,
+                "thursday": 30,
+                "friday": 25,
+                "saturday": 5,
+                "sunday": 5,
             },
             samples=100,
         )
@@ -103,12 +116,22 @@ class TestTemporalInferenceKeyFix:
         _seed_temporal_profile(
             user_model_store,
             activity_by_hour={
-                "9": 10, "10": 8, "14": 12,   # 30 daytime
-                "20": 25, "21": 30, "22": 20, "23": 15,  # 90 evening
+                "9": 10,
+                "10": 8,
+                "14": 12,  # 30 daytime
+                "20": 25,
+                "21": 30,
+                "22": 20,
+                "23": 15,  # 90 evening
             },
             activity_by_day={
-                "monday": 15, "tuesday": 18, "wednesday": 20,
-                "thursday": 18, "friday": 20, "saturday": 12, "sunday": 10,
+                "monday": 15,
+                "tuesday": 18,
+                "wednesday": 20,
+                "thursday": 18,
+                "friday": 20,
+                "saturday": 12,
+                "sunday": 10,
             },
             samples=75,
         )
@@ -132,9 +155,12 @@ class TestTemporalInferenceKeyFix:
         _seed_temporal_profile(
             user_model_store,
             activity_by_hour={
-                "9": 10, "10": 12, "11": 15,
+                "9": 10,
+                "10": 12,
+                "11": 15,
                 "14": 60,  # Clear peak
-                "15": 20, "16": 18,
+                "15": 20,
+                "16": 18,
             },
             activity_by_day={"monday": 20, "tuesday": 25},
             samples=55,
@@ -160,9 +186,13 @@ class TestTemporalInferenceKeyFix:
             user_model_store,
             activity_by_hour={"9": 10, "10": 15, "14": 20},
             activity_by_day={
-                "monday": 20, "tuesday": 22, "wednesday": 25,
-                "thursday": 20, "friday": 18,
-                "saturday": 2, "sunday": 1,
+                "monday": 20,
+                "tuesday": 22,
+                "wednesday": 25,
+                "thursday": 20,
+                "friday": 18,
+                "saturday": 2,
+                "sunday": 1,
             },
             samples=60,
         )
@@ -194,12 +224,9 @@ class TestTemporalInferenceKeyFix:
 
         facts = user_model_store.get_semantic_facts()
         temporal_facts = [
-            f for f in facts
-            if f["key"] in ("chronotype", "peak_productivity_hour", "temporal_work_boundaries")
+            f for f in facts if f["key"] in ("chronotype", "peak_productivity_hour", "temporal_work_boundaries")
         ]
-        assert len(temporal_facts) == 0, (
-            "Should not infer temporal facts when samples_count < 25"
-        )
+        assert len(temporal_facts) == 0, "Should not infer temporal facts when samples_count < 25"
 
     def test_ambiguous_distribution_produces_no_chronotype(self, user_model_store):
         """
@@ -210,8 +237,7 @@ class TestTemporalInferenceKeyFix:
         _seed_temporal_profile(
             user_model_store,
             activity_by_hour={str(h): 14 for h in range(6, 22)},  # 16 hours, equal weight
-            activity_by_day={"monday": 20, "tuesday": 20, "wednesday": 20,
-                             "thursday": 20, "friday": 20},
+            activity_by_day={"monday": 20, "tuesday": 20, "wednesday": 20, "thursday": 20, "friday": 20},
             samples=80,
         )
 
@@ -240,7 +266,6 @@ class TestTemporalInferenceKeyFix:
 
         facts = user_model_store.get_semantic_facts()
         temporal_facts = [
-            f for f in facts
-            if f["key"] in ("chronotype", "peak_productivity_hour", "temporal_work_boundaries")
+            f for f in facts if f["key"] in ("chronotype", "peak_productivity_hour", "temporal_work_boundaries")
         ]
         assert len(temporal_facts) == 0

@@ -16,10 +16,7 @@ from services.semantic_fact_inferrer.inferrer import SemanticFactInferrer
 def _set_samples(ums, profile_type, count):
     """Helper to manually set samples_count for a profile."""
     with ums.db.get_connection("user_model") as conn:
-        conn.execute(
-            "UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?",
-            (count, profile_type)
-        )
+        conn.execute("UPDATE signal_profiles SET samples_count = ? WHERE profile_type = ?", (count, profile_type))
 
 
 class TestSemanticFactInferrer:
@@ -248,7 +245,8 @@ class TestSemanticFactInferrer:
         profile_data = {
             "hourly_activity": {
                 # 100 messages during business hours (9-17), small off-hours count
-                str(h): 100 if 9 <= h <= 17 else 0 for h in range(24)
+                str(h): 100 if 9 <= h <= 17 else 0
+                for h in range(24)
             }
         }
         # Add a few off-hours to make it realistic but still >90% in-hours
@@ -279,10 +277,7 @@ class TestSemanticFactInferrer:
         of recent signals are negative-language signals.
         """
         # All 10 signals are positive (no negative_language) → stress_ratio = 0
-        recent_signals = [
-            {"signal_type": "positive_language", "value": 0.8}
-            for _ in range(10)
-        ]
+        recent_signals = [{"signal_type": "positive_language", "value": 0.8} for _ in range(10)]
         profile_data = {"recent_signals": recent_signals}
         user_model_store.update_signal_profile("mood_signals", profile_data)
         _set_samples(user_model_store, "mood_signals", 100)
@@ -302,31 +297,37 @@ class TestSemanticFactInferrer:
     def test_run_all_inference_across_profiles(self, user_model_store):
         """Run inference across all profiles in a single call."""
         # Set up minimal data for each profile type
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 25)
 
         # Use a high interaction_count (60) so alice exceeds the high-priority
         # threshold (avg * 2 = 60 * 2 = 120... wait, with one contact avg IS 60,
         # so threshold is 120 > 60).  Use two contacts so the avg is lower.
-        user_model_store.update_signal_profile("relationships", {
-            # Two contacts so avg_interactions = (60+10)/2 = 35; threshold = 70.
-            # alice (60) < 70, so no high_priority fact is created.
-            # Instead the test relies on the linguistic profile producing a fact.
-            "contacts": {
-                "alice@example.com": {
-                    "interaction_count": 10,
-                    "avg_response_time_seconds": 1800,
-                    "outbound_count": 5,  # bidirectional — required by inbound-only filter (PR #204)
-                },
-                "bob@example.com": {
-                    "interaction_count": 5,
-                    "avg_response_time_seconds": 3600,
-                    "outbound_count": 2,  # bidirectional
-                },
-            }
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                # Two contacts so avg_interactions = (60+10)/2 = 35; threshold = 70.
+                # alice (60) < 70, so no high_priority fact is created.
+                # Instead the test relies on the linguistic profile producing a fact.
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 10,
+                        "avg_response_time_seconds": 1800,
+                        "outbound_count": 5,  # bidirectional — required by inbound-only filter (PR #204)
+                    },
+                    "bob@example.com": {
+                        "interaction_count": 5,
+                        "avg_response_time_seconds": 3600,
+                        "outbound_count": 2,  # bidirectional
+                    },
+                }
+            },
+        )
         _set_samples(user_model_store, "relationships", 15)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -409,9 +410,12 @@ class TestSemanticFactInferrer:
         other 7 profiles are still collected.
         """
         # Set up linguistic data so it produces a real result
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.2, "emoji_rate": 0.02, "hedge_rate": 0.1, "exclamation_rate": 0.1},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 25)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -461,9 +465,12 @@ class TestSemanticFactInferrer:
 
     def test_run_all_inference_normal_operation_unchanged(self, user_model_store):
         """Normal operation (no exceptions) produces the same results as before."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.8, "emoji_rate": 0.0, "hedge_rate": 0.05, "exclamation_rate": 0.0},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.8, "emoji_rate": 0.0, "hedge_rate": 0.05, "exclamation_rate": 0.0},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 25)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -488,9 +495,9 @@ class TestSemanticFactInferrer:
         """
         profile_data = {
             "topic_counts": {
-                "python": 100,           # 50% frequency
+                "python": 100,  # 50% frequency
                 "machine_learning": 50,  # 25% frequency
-                "react": 30,            # 15% frequency
+                "react": 30,  # 15% frequency
             },
             "recent_topics": [],
         }
@@ -521,8 +528,8 @@ class TestSemanticFactInferrer:
         """
         profile_data = {
             "topic_counts": {
-                "shop": 80,    # In TOPIC_NOISE_BLOCKLIST — should be filtered
-                "sale": 60,    # In TOPIC_NOISE_BLOCKLIST — should be filtered
+                "shop": 80,  # In TOPIC_NOISE_BLOCKLIST — should be filtered
+                "sale": 60,  # In TOPIC_NOISE_BLOCKLIST — should be filtered
                 "python": 50,  # Legitimate topic — should produce a fact
             },
         }
@@ -583,7 +590,7 @@ class TestSemanticFactInferrer:
         """
         profile_data = {
             "topic_counts": {
-                "python": 50,      # 25% frequency — should produce expertise fact
+                "python": 50,  # 25% frequency — should produce expertise fact
                 "javascript": 40,  # 20% frequency — should produce expertise fact
             },
         }

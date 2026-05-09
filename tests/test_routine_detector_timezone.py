@@ -58,21 +58,25 @@ class TestTemporalRoutineTimezone:
         # Insert 5 episodes at 12:00 UTC = 7:00 AM Eastern (UTC-5 in winter)
         for day_offset in range(5):
             utc_time = base_date + timedelta(days=day_offset, hours=12)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": utc_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "check_email",
-                "content_summary": "Morning email check",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": utc_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "check_email",
+                    "content_summary": "Morning email check",
+                }
+            )
             # Second action shortly after for the routine to have multiple steps
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (utc_time + timedelta(minutes=15)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "review_calendar",
-                "content_summary": "Review calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (utc_time + timedelta(minutes=15)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "review_calendar",
+                    "content_summary": "Review calendar",
+                }
+            )
 
         routines = detector._detect_temporal_routines(lookback_days=30)
 
@@ -81,16 +85,13 @@ class TestTemporalRoutineTimezone:
         midday_routines = [r for r in routines if r["trigger"] == "midday"]
 
         assert len(morning_routines) >= 1, (
-            "Expected 'morning' routine for 7 AM Eastern activities; "
-            f"got triggers: {[r['trigger'] for r in routines]}"
+            f"Expected 'morning' routine for 7 AM Eastern activities; got triggers: {[r['trigger'] for r in routines]}"
         )
         # Midday should NOT contain these actions
         midday_actions = set()
         for r in midday_routines:
             midday_actions.update(s["action"] for s in r["steps"])
-        assert "check_email" not in midday_actions, (
-            "check_email at 7 AM local should NOT appear in midday bucket"
-        )
+        assert "check_email" not in midday_actions, "check_email at 7 AM local should NOT appear in midday bucket"
 
     def test_utc_midnight_is_evening_in_utc_minus5(self, db, user_model_store):
         """Episodes at 00:00 UTC = 7:00 PM Eastern (UTC-5) should bucket as
@@ -102,20 +103,24 @@ class TestTemporalRoutineTimezone:
 
         for day_offset in range(5):
             utc_time = base_date + timedelta(days=day_offset, hours=0)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": utc_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "evening_reading",
-                "content_summary": "Evening reading",
-            })
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (utc_time + timedelta(minutes=20)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "evening_journaling",
-                "content_summary": "Evening journaling",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": utc_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "evening_reading",
+                    "content_summary": "Evening reading",
+                }
+            )
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (utc_time + timedelta(minutes=20)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "evening_journaling",
+                    "content_summary": "Evening journaling",
+                }
+            )
 
         routines = detector._detect_temporal_routines(lookback_days=30)
 
@@ -136,20 +141,24 @@ class TestTemporalRoutineTimezone:
         # Episodes at 08:00 UTC → should be 'morning' in UTC
         for day_offset in range(5):
             utc_time = base_date + timedelta(days=day_offset, hours=8)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": utc_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "default_tz_action",
-                "content_summary": "Default TZ action",
-            })
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (utc_time + timedelta(minutes=10)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "default_tz_followup",
-                "content_summary": "Default TZ followup",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": utc_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "default_tz_action",
+                    "content_summary": "Default TZ action",
+                }
+            )
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (utc_time + timedelta(minutes=10)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "default_tz_followup",
+                    "content_summary": "Default TZ followup",
+                }
+            )
 
         routines = detector._detect_temporal_routines(lookback_days=30)
 
@@ -170,27 +179,30 @@ class TestTemporalRoutineTimezone:
         # 22:00 UTC = 07:00 JST next day → morning bucket
         for day_offset in range(5):
             utc_time = base_date + timedelta(days=day_offset, hours=22)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": utc_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "tokyo_morning_email",
-                "content_summary": "Tokyo morning email",
-            })
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (utc_time + timedelta(minutes=15)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "tokyo_morning_calendar",
-                "content_summary": "Tokyo morning calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": utc_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "tokyo_morning_email",
+                    "content_summary": "Tokyo morning email",
+                }
+            )
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (utc_time + timedelta(minutes=15)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "tokyo_morning_calendar",
+                    "content_summary": "Tokyo morning calendar",
+                }
+            )
 
         routines = detector._detect_temporal_routines(lookback_days=30)
 
         morning_routines = [r for r in routines if r["trigger"] == "morning"]
         assert len(morning_routines) >= 1, (
-            "Expected 'morning' routine for 7 AM Tokyo (22:00 UTC); "
-            f"got triggers: {[r['trigger'] for r in routines]}"
+            f"Expected 'morning' routine for 7 AM Tokyo (22:00 UTC); got triggers: {[r['trigger'] for r in routines]}"
         )
         # Verify the actions are NOT in evening (22 UTC would be evening without tz conversion)
         evening_actions = set()
@@ -212,27 +224,30 @@ class TestTemporalRoutineTimezone:
 
         for day_offset in range(5):
             utc_time = base_date + timedelta(days=day_offset, hours=14)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": utc_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "morning_standup",
-                "content_summary": "Morning standup meeting",
-            })
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (utc_time + timedelta(minutes=10)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "morning_notes",
-                "content_summary": "Morning notes",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": utc_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "morning_standup",
+                    "content_summary": "Morning standup meeting",
+                }
+            )
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (utc_time + timedelta(minutes=10)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "morning_notes",
+                    "content_summary": "Morning notes",
+                }
+            )
 
         routines = detector._detect_temporal_routines(lookback_days=30)
 
         morning_routines = [r for r in routines if r["trigger"] == "morning"]
         assert len(morning_routines) >= 1, (
-            "Expected 'morning' routine for 9 AM Eastern (14:00 UTC); "
-            f"got triggers: {[r['trigger'] for r in routines]}"
+            f"Expected 'morning' routine for 9 AM Eastern (14:00 UTC); got triggers: {[r['trigger'] for r in routines]}"
         )
 
     def test_full_detect_routines_with_timezone(self, db, user_model_store):
@@ -244,27 +259,30 @@ class TestTemporalRoutineTimezone:
         # Create 7 AM local (12:00 UTC) morning routine over 5 days
         for day_offset in range(5):
             utc_time = base_date + timedelta(days=day_offset, hours=12)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": utc_time.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "full_test_email",
-                "content_summary": "Full test email",
-            })
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (utc_time + timedelta(minutes=15)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "full_test_calendar",
-                "content_summary": "Full test calendar",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": utc_time.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "full_test_email",
+                    "content_summary": "Full test email",
+                }
+            )
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (utc_time + timedelta(minutes=15)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "full_test_calendar",
+                    "content_summary": "Full test calendar",
+                }
+            )
 
         routines = detector.detect_routines(lookback_days=30)
 
         morning_routines = [r for r in routines if r["trigger"] == "morning"]
         assert len(morning_routines) >= 1, (
-            "End-to-end detect_routines() should find morning routine for "
-            "7 AM Eastern activities"
+            "End-to-end detect_routines() should find morning routine for 7 AM Eastern activities"
         )
 
     def test_timestamps_without_tzinfo_treated_as_utc(self, db, user_model_store):
@@ -276,25 +294,28 @@ class TestTemporalRoutineTimezone:
         # Insert naive timestamps (no +00:00 suffix) at 12:00 = 7 AM Eastern
         for day_offset in range(5):
             naive_time = base_date + timedelta(days=day_offset, hours=12)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": naive_time.isoformat(),  # No timezone suffix
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "naive_ts_action",
-                "content_summary": "Naive timestamp action",
-            })
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": (naive_time + timedelta(minutes=10)).isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "naive_ts_followup",
-                "content_summary": "Naive timestamp followup",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": naive_time.isoformat(),  # No timezone suffix
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "naive_ts_action",
+                    "content_summary": "Naive timestamp action",
+                }
+            )
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": (naive_time + timedelta(minutes=10)).isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "naive_ts_followup",
+                    "content_summary": "Naive timestamp followup",
+                }
+            )
 
         routines = detector._detect_temporal_routines(lookback_days=30)
 
         morning_routines = [r for r in routines if r["trigger"] == "morning"]
         assert len(morning_routines) >= 1, (
-            "Naive timestamps should be treated as UTC and converted; "
-            "12:00 naive → 7 AM Eastern → morning bucket"
+            "Naive timestamps should be treated as UTC and converted; 12:00 naive → 7 AM Eastern → morning bucket"
         )

@@ -204,12 +204,8 @@ class TestVerifyIntegrityAfterFreshStart:
         with lifeos_instance.db.get_connection("user_model") as conn:
             conn.execute("SELECT content_full FROM episodes LIMIT 1").fetchone()
             conn.execute("SELECT SUM(LENGTH(data)) FROM signal_profiles").fetchone()
-            conn.execute(
-                "SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts"
-            ).fetchone()
-            conn.execute(
-                "SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines"
-            ).fetchone()
+            conn.execute("SELECT SUM(LENGTH(value)) + SUM(LENGTH(source_episodes)) FROM semantic_facts").fetchone()
+            conn.execute("SELECT SUM(LENGTH(steps)) + SUM(LENGTH(variations)) FROM routines").fetchone()
             conn.execute("SELECT SUM(LENGTH(contributing_signals)) FROM mood_history").fetchone()
             conn.execute("SELECT SUM(LENGTH(supporting_signals)) FROM predictions").fetchone()
             conn.execute("SELECT SUM(LENGTH(evidence)) FROM insights").fetchone()
@@ -231,9 +227,7 @@ class TestHealthLoopFreshStartIntegration:
         def corrupted_connection(db_name):
             if db_name == "user_model":
                 mock_conn = MagicMock()
-                mock_conn.execute.side_effect = sqlite3.DatabaseError(
-                    "database disk image is malformed"
-                )
+                mock_conn.execute.side_effect = sqlite3.DatabaseError("database disk image is malformed")
                 yield mock_conn
             else:
                 with original_get_connection(db_name) as conn:
@@ -247,12 +241,8 @@ class TestHealthLoopFreshStartIntegration:
 
         with (
             patch.object(lifeos_instance.db, "get_connection", side_effect=corrupted_connection),
-            patch.object(
-                lifeos_instance, "_fresh_start_user_model_db", return_value=True
-            ) as mock_fresh_start,
-            patch.object(
-                lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
-            ) as mock_backfill,
+            patch.object(lifeos_instance, "_fresh_start_user_model_db", return_value=True) as mock_fresh_start,
+            patch.object(lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock) as mock_backfill,
             patch("main.ws_manager"),
             patch("asyncio.sleep", side_effect=sleep_then_shutdown),
         ):
@@ -281,9 +271,7 @@ class TestHealthLoopFreshStartIntegration:
         def corrupted_connection(db_name):
             if db_name == "user_model":
                 mock_conn = MagicMock()
-                mock_conn.execute.side_effect = sqlite3.DatabaseError(
-                    "database disk image is malformed"
-                )
+                mock_conn.execute.side_effect = sqlite3.DatabaseError("database disk image is malformed")
                 yield mock_conn
             else:
                 with original_get_connection(db_name) as conn:
@@ -297,12 +285,8 @@ class TestHealthLoopFreshStartIntegration:
 
         with (
             patch.object(lifeos_instance.db, "get_connection", side_effect=corrupted_connection),
-            patch.object(
-                lifeos_instance, "_fresh_start_user_model_db", return_value=False
-            ) as mock_fresh_start,
-            patch.object(
-                lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
-            ) as mock_backfill,
+            patch.object(lifeos_instance, "_fresh_start_user_model_db", return_value=False) as mock_fresh_start,
+            patch.object(lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock) as mock_backfill,
             patch("main.ws_manager"),
             patch("asyncio.sleep", side_effect=sleep_then_shutdown),
         ):

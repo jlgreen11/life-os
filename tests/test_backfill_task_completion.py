@@ -42,20 +42,18 @@ def create_task(db, title: str, description: str = "", created_at: datetime = No
     task_id = str(uuid4())
 
     with db.get_connection("state") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, description, status, created_at, source)
             VALUES (?, ?, ?, 'pending', ?, 'test')
-        """, (task_id, title, description, created_at.isoformat()))
+        """,
+            (task_id, title, description, created_at.isoformat()),
+        )
 
     return task_id
 
 
-def create_sent_email(
-    db,
-    subject: str,
-    body: str,
-    timestamp: datetime = None
-) -> str:
+def create_sent_email(db, subject: str, body: str, timestamp: datetime = None) -> str:
     """Helper to create a sent email event.
 
     Args:
@@ -73,17 +71,20 @@ def create_sent_email(
     event_id = str(uuid4())
 
     payload = {
-        'subject': subject,
-        'body_plain': body,
-        'to_address': 'recipient@example.com',
-        'from_address': 'user@example.com'
+        "subject": subject,
+        "body_plain": body,
+        "to_address": "recipient@example.com",
+        "from_address": "user@example.com",
     }
 
     with db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
             VALUES (?, 'email.sent', 'test', ?, 'normal', ?, '{}')
-        """, (event_id, timestamp.isoformat(), json.dumps(payload)))
+        """,
+            (event_id, timestamp.isoformat(), json.dumps(payload)),
+        )
 
     return event_id
 
@@ -114,9 +115,7 @@ def count_completion_events(db) -> int:
         Number of task.completed events
     """
     with db.get_connection("events") as conn:
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE type = 'task.completed'"
-        )
+        cursor = conn.execute("SELECT COUNT(*) FROM events WHERE type = 'task.completed'")
         return cursor.fetchone()[0]
 
 
@@ -127,9 +126,9 @@ class TestTaskCompletionBackfill:
         """Should handle empty task list gracefully."""
         stats = backfill.run()
 
-        assert stats['tasks_checked'] == 0
-        assert stats['tasks_completed'] == 0
-        assert stats['events_published'] == 0
+        assert stats["tasks_checked"] == 0
+        assert stats["tasks_completed"] == 0
+        assert stats["events_published"] == 0
 
     def test_task_with_no_sent_messages(self, backfill, db):
         """Should leave task pending if no sent messages reference it."""
@@ -137,19 +136,15 @@ class TestTaskCompletionBackfill:
 
         stats = backfill.run()
 
-        assert stats['tasks_checked'] == 1
-        assert stats['tasks_completed'] == 0
-        assert get_task_status(db, task_id) == 'pending'
+        assert stats["tasks_checked"] == 1
+        assert stats["tasks_completed"] == 0
+        assert get_task_status(db, task_id) == "pending"
 
     def test_task_completed_exact_match(self, backfill, db):
         """Should mark task complete when sent email has exact keyword match + completion signal."""
         # Create task at T0
         created_at = datetime.now(timezone.utc) - timedelta(hours=2)
-        task_id = create_task(
-            db,
-            "Submit expense report",
-            created_at=created_at
-        )
+        task_id = create_task(db, "Submit expense report", created_at=created_at)
 
         # Create sent email at T0 + 1 hour with exact match
         sent_at = created_at + timedelta(hours=1)
@@ -157,24 +152,20 @@ class TestTaskCompletionBackfill:
             db,
             subject="RE: Expense Report",
             body="Hi, I've submitted the expense report. It's done and ready for review.",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         stats = backfill.run()
 
-        assert stats['tasks_checked'] == 1
-        assert stats['tasks_completed'] == 1
-        assert get_task_status(db, task_id) == 'completed'
+        assert stats["tasks_checked"] == 1
+        assert stats["tasks_completed"] == 1
+        assert get_task_status(db, task_id) == "completed"
         assert count_completion_events(db) == 1
 
     def test_task_completed_stem_match(self, backfill, db):
         """Should detect completion via stem matching (submit/submitted)."""
         created_at = datetime.now(timezone.utc) - timedelta(hours=3)
-        task_id = create_task(
-            db,
-            "Submit quarterly presentation",
-            created_at=created_at
-        )
+        task_id = create_task(db, "Submit quarterly presentation", created_at=created_at)
 
         # Email uses "submitted" (past tense) vs task "submit" (present)
         sent_at = created_at + timedelta(hours=1)
@@ -182,22 +173,18 @@ class TestTaskCompletionBackfill:
             db,
             subject="Quarterly presentation submitted",
             body="The presentation has been submitted and is ready for the meeting. Done!",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 1
-        assert get_task_status(db, task_id) == 'completed'
+        assert stats["tasks_completed"] == 1
+        assert get_task_status(db, task_id) == "completed"
 
     def test_task_not_completed_missing_completion_keyword(self, backfill, db):
         """Should NOT mark complete if email lacks completion signal words."""
         created_at = datetime.now(timezone.utc) - timedelta(hours=2)
-        task_id = create_task(
-            db,
-            "Review budget proposal",
-            created_at=created_at
-        )
+        task_id = create_task(db, "Review budget proposal", created_at=created_at)
 
         # Email references task but has no completion keyword
         sent_at = created_at + timedelta(hours=1)
@@ -205,37 +192,28 @@ class TestTaskCompletionBackfill:
             db,
             subject="RE: Budget Proposal",
             body="I'm working on reviewing the budget proposal. Will send updates soon.",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 0
-        assert get_task_status(db, task_id) == 'pending'
+        assert stats["tasks_completed"] == 0
+        assert get_task_status(db, task_id) == "pending"
 
     def test_task_not_completed_insufficient_keyword_overlap(self, backfill, db):
         """Should NOT mark complete if keyword overlap < 2.0."""
         created_at = datetime.now(timezone.utc) - timedelta(hours=2)
-        task_id = create_task(
-            db,
-            "Review quarterly budget proposal",
-            created_at=created_at
-        )
+        task_id = create_task(db, "Review quarterly budget proposal", created_at=created_at)
 
         # Email has only 1 matching keyword ("review") + completion word
         # Not enough overlap to avoid false positives
         sent_at = created_at + timedelta(hours=1)
-        create_sent_email(
-            db,
-            subject="Meeting done",
-            body="The review meeting is done.",
-            timestamp=sent_at
-        )
+        create_sent_email(db, subject="Meeting done", body="The review meeting is done.", timestamp=sent_at)
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 0
-        assert get_task_status(db, task_id) == 'pending'
+        assert stats["tasks_completed"] == 0
+        assert get_task_status(db, task_id) == "pending"
 
     def test_task_not_completed_sent_before_task_created(self, backfill, db):
         """Should NOT mark complete if sent email predates task creation."""
@@ -247,20 +225,16 @@ class TestTaskCompletionBackfill:
             db,
             subject="Invoice processed",
             body="The invoice processing is done and sent to accounting.",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         # Task created later
-        task_id = create_task(
-            db,
-            "Process monthly invoice",
-            created_at=created_at
-        )
+        task_id = create_task(db, "Process monthly invoice", created_at=created_at)
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 0
-        assert get_task_status(db, task_id) == 'pending'
+        assert stats["tasks_completed"] == 0
+        assert get_task_status(db, task_id) == "pending"
 
     def test_multiple_tasks_partial_completion(self, backfill, db):
         """Should handle mixed scenario: some tasks complete, others pending."""
@@ -273,7 +247,7 @@ class TestTaskCompletionBackfill:
             db,
             subject="Client proposal sent",
             body="Hi team, the client proposal has been sent. Done!",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         # Task 2: Will remain pending (no sent message)
@@ -286,16 +260,16 @@ class TestTaskCompletionBackfill:
             db,
             subject="RE: Project Timeline",
             body="I've updated the project timeline. Finished and shared with the team.",
-            timestamp=sent_at2
+            timestamp=sent_at2,
         )
 
         stats = backfill.run()
 
-        assert stats['tasks_checked'] == 3
-        assert stats['tasks_completed'] == 2
-        assert get_task_status(db, task1_id) == 'completed'
-        assert get_task_status(db, task2_id) == 'pending'
-        assert get_task_status(db, task3_id) == 'completed'
+        assert stats["tasks_checked"] == 3
+        assert stats["tasks_completed"] == 2
+        assert get_task_status(db, task1_id) == "completed"
+        assert get_task_status(db, task2_id) == "pending"
+        assert get_task_status(db, task3_id) == "completed"
         assert count_completion_events(db) == 2
 
     def test_completion_event_payload(self, backfill, db):
@@ -308,7 +282,7 @@ class TestTaskCompletionBackfill:
             db,
             subject="Feature deployed",
             body="The new feature has been deployed to production. Done!",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         backfill.run()
@@ -326,22 +300,18 @@ class TestTaskCompletionBackfill:
         payload = json.loads(row[0])
         metadata = json.loads(row[1])
 
-        assert payload['task_id'] == task_id
-        assert payload['title'] == "Deploy new feature"
-        assert payload['backfill'] is True
-        assert metadata['backfill_run'] is True
-        assert metadata['detection_method'] == 'behavioral_signal'
+        assert payload["task_id"] == task_id
+        assert payload["title"] == "Deploy new feature"
+        assert payload["backfill"] is True
+        assert metadata["backfill_run"] is True
+        assert metadata["detection_method"] == "behavioral_signal"
 
     def test_stop_words_filtered(self, backfill, db):
         """Should filter out stop words when matching keywords."""
         created_at = datetime.now(timezone.utc) - timedelta(hours=2)
 
         # Task with many stop words
-        task_id = create_task(
-            db,
-            "Review the quarterly report for the finance team",
-            created_at=created_at
-        )
+        task_id = create_task(db, "Review the quarterly report for the finance team", created_at=created_at)
 
         # Email with some matches (quarterly, report, finance)
         sent_at = created_at + timedelta(hours=1)
@@ -349,43 +319,48 @@ class TestTaskCompletionBackfill:
             db,
             subject="Finance quarterly report",
             body="The quarterly finance report review is done and sent to the team.",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         stats = backfill.run()
 
         # Should match because stop words are filtered correctly
-        assert stats['tasks_completed'] == 1
-        assert get_task_status(db, task_id) == 'completed'
+        assert stats["tasks_completed"] == 1
+        assert get_task_status(db, task_id) == "completed"
 
     def test_completion_keywords_variety(self, backfill, db):
         """Should recognize various completion signal keywords."""
         completion_words = [
-            'done', 'finished', 'completed', 'sent', 'submitted',
-            'delivered', 'shipped', 'resolved', 'closed', 'fixed',
-            'merged', 'deployed', 'published', 'launched', 'ready'
+            "done",
+            "finished",
+            "completed",
+            "sent",
+            "submitted",
+            "delivered",
+            "shipped",
+            "resolved",
+            "closed",
+            "fixed",
+            "merged",
+            "deployed",
+            "published",
+            "launched",
+            "ready",
         ]
 
         created_at = datetime.now(timezone.utc) - timedelta(hours=3)
 
         for idx, keyword in enumerate(completion_words[:5]):  # Test subset
-            task_id = create_task(
-                db,
-                f"Complete task number {idx}",
-                created_at=created_at
-            )
+            task_id = create_task(db, f"Complete task number {idx}", created_at=created_at)
 
             sent_at = created_at + timedelta(minutes=idx * 10)
             create_sent_email(
-                db,
-                subject=f"Task number {idx}",
-                body=f"The task number {idx} is {keyword}.",
-                timestamp=sent_at
+                db, subject=f"Task number {idx}", body=f"The task number {idx} is {keyword}.", timestamp=sent_at
             )
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 5
+        assert stats["tasks_completed"] == 5
 
     def test_task_with_description_matching(self, backfill, db):
         """Should extract keywords from task description as well as title."""
@@ -396,7 +371,7 @@ class TestTaskCompletionBackfill:
             db,
             "Weekly report",
             description="Submit the quarterly financial analysis to accounting team",
-            created_at=created_at
+            created_at=created_at,
         )
 
         sent_at = created_at + timedelta(hours=1)
@@ -404,7 +379,7 @@ class TestTaskCompletionBackfill:
             db,
             subject="Financial analysis",
             body="The quarterly financial analysis has been submitted. Done!",
-            timestamp=sent_at
+            timestamp=sent_at,
         )
 
         # Note: Current implementation only uses title for matching,
@@ -414,7 +389,7 @@ class TestTaskCompletionBackfill:
         # With current implementation, this should NOT complete because
         # keywords are in description, not title
         # If we enhance to use description, change this assertion
-        assert stats['tasks_completed'] == 0
+        assert stats["tasks_completed"] == 0
 
     def test_idempotency(self, backfill, db):
         """Should be idempotent - running twice doesn't create duplicate events."""
@@ -423,10 +398,7 @@ class TestTaskCompletionBackfill:
 
         sent_at = created_at + timedelta(hours=1)
         create_sent_email(
-            db,
-            subject="Contract finalized",
-            body="The contract has been finalized and sent. Done!",
-            timestamp=sent_at
+            db, subject="Contract finalized", body="The contract has been finalized and sent. Done!", timestamp=sent_at
         )
 
         # Run backfill twice
@@ -434,10 +406,10 @@ class TestTaskCompletionBackfill:
         stats2 = backfill.run()
 
         # First run completes the task
-        assert stats1['tasks_completed'] == 1
+        assert stats1["tasks_completed"] == 1
 
         # Second run finds no pending tasks (already completed)
-        assert stats2['tasks_completed'] == 0
+        assert stats2["tasks_completed"] == 0
 
         # Only one completion event exists (INSERT OR IGNORE prevents duplicates)
         assert count_completion_events(db) == 1
@@ -450,21 +422,21 @@ class TestTaskCompletionBackfill:
         # Create message.sent event (e.g., Signal, iMessage)
         event_id = str(uuid4())
         sent_at = created_at + timedelta(hours=1)
-        payload = {
-            'body_plain': 'Hi! The customer inquiry response has been sent. Done!',
-            'to_contact': 'Customer'
-        }
+        payload = {"body_plain": "Hi! The customer inquiry response has been sent. Done!", "to_contact": "Customer"}
 
         with db.get_connection("events") as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, 'message.sent', 'test', ?, 'normal', ?, '{}')
-            """, (event_id, sent_at.isoformat(), json.dumps(payload)))
+            """,
+                (event_id, sent_at.isoformat(), json.dumps(payload)),
+            )
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 1
-        assert get_task_status(db, task_id) == 'completed'
+        assert stats["tasks_completed"] == 1
+        assert get_task_status(db, task_id) == "completed"
 
     def test_short_task_title_no_keywords(self, backfill, db):
         """Should handle tasks with short titles that have no extractable keywords."""
@@ -474,18 +446,13 @@ class TestTaskCompletionBackfill:
         task_id = create_task(db, "Do it now", created_at=created_at)
 
         sent_at = created_at + timedelta(hours=1)
-        create_sent_email(
-            db,
-            subject="All done",
-            body="Everything is finished and complete!",
-            timestamp=sent_at
-        )
+        create_sent_email(db, subject="All done", body="Everything is finished and complete!", timestamp=sent_at)
 
         stats = backfill.run()
 
         # Should remain pending because no keywords to match
-        assert stats['tasks_completed'] == 0
-        assert get_task_status(db, task_id) == 'pending'
+        assert stats["tasks_completed"] == 0
+        assert get_task_status(db, task_id) == "pending"
 
     def test_case_insensitive_matching(self, backfill, db):
         """Should perform case-insensitive keyword matching."""
@@ -496,16 +463,13 @@ class TestTaskCompletionBackfill:
         # Email in mixed case
         sent_at = created_at + timedelta(hours=1)
         create_sent_email(
-            db,
-            subject="Invoice Sent",
-            body="The invoice has been sent to the client. Done!",
-            timestamp=sent_at
+            db, subject="Invoice Sent", body="The invoice has been sent to the client. Done!", timestamp=sent_at
         )
 
         stats = backfill.run()
 
-        assert stats['tasks_completed'] == 1
-        assert get_task_status(db, task_id) == 'completed'
+        assert stats["tasks_completed"] == 1
+        assert get_task_status(db, task_id) == "completed"
 
     def test_limit_100_sent_events(self, backfill, db):
         """Should limit search to 100 most recent sent events to avoid performance issues."""
@@ -518,21 +482,13 @@ class TestTaskCompletionBackfill:
             if i == 0:
                 # First email matches
                 create_sent_email(
-                    db,
-                    subject="Task review complete",
-                    body="The old task review is done!",
-                    timestamp=sent_at
+                    db, subject="Task review complete", body="The old task review is done!", timestamp=sent_at
                 )
             else:
                 # Others don't match
-                create_sent_email(
-                    db,
-                    subject=f"Unrelated email {i}",
-                    body=f"Some other content {i}",
-                    timestamp=sent_at
-                )
+                create_sent_email(db, subject=f"Unrelated email {i}", body=f"Some other content {i}", timestamp=sent_at)
 
         stats = backfill.run()
 
         # Should find the match even with 150 events because it's in the first 100
-        assert stats['tasks_completed'] == 1
+        assert stats["tasks_completed"] == 1

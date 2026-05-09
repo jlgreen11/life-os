@@ -465,9 +465,7 @@ class TestInsightEngineIntegration:
         # because location.visits weight is 0.1
         for i in insights:
             if i.category == "place":
-                assert i.confidence < 0.5, (
-                    f"Insight confidence {i.confidence} should be reduced by low weight"
-                )
+                assert i.confidence < 0.5, f"Insight confidence {i.confidence} should be reduced by low weight"
 
     @pytest.mark.asyncio
     async def test_zero_weight_filters_insights(self, db, user_model_store):
@@ -587,8 +585,7 @@ class TestDriftSaturation:
 
         # At least one saturation warning should have been emitted when drift == MAX_DRIFT
         saturation_warnings = [
-            r for r in caplog.records
-            if "saturated" in r.message.lower() and "email.work" in r.message
+            r for r in caplog.records if "saturated" in r.message.lower() and "email.work" in r.message
         ]
         assert len(saturation_warnings) >= 1, (
             f"Expected saturation WARNING for email.work; log records: {[r.message for r in caplog.records]}"
@@ -636,9 +633,7 @@ class TestDriftSaturation:
 
         diag = swm.get_diagnostics()
 
-        assert diag.get("drift_health") == "active", (
-            f"Expected drift_health='active'; got {diag.get('drift_health')}"
-        )
+        assert diag.get("drift_health") == "active", f"Expected drift_health='active'; got {diag.get('drift_health')}"
 
     def test_get_diagnostics_drift_health_inactive_when_no_drift(self, swm):
         """drift_health should be 'inactive' when no sources have any drift."""
@@ -681,8 +676,7 @@ class TestDriftSaturation:
                 swm.record_dismissal("email.marketing")
 
         saturation_warnings = [
-            r for r in caplog.records
-            if "saturated" in r.message.lower() and "email.marketing" in r.message
+            r for r in caplog.records if "saturated" in r.message.lower() and "email.marketing" in r.message
         ]
         assert len(saturation_warnings) >= 1, (
             f"Expected saturation WARNING for email.marketing; log records: {[r.message for r in caplog.records]}"

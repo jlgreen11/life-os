@@ -147,9 +147,9 @@ class TestTaskManagerHTMLProcessing:
             "payload": {
                 "subject": "Report request",
                 "body": "<html><body><p>Can you send the <b>Q4 report</b> by Friday?</p></body></html>",
-                "from_address": "alice@example.com"
+                "from_address": "alice@example.com",
             },
-            "timestamp": "2026-02-15T10:00:00Z"
+            "timestamp": "2026-02-15T10:00:00Z",
         }
 
         await task_manager.process_event(event)
@@ -178,10 +178,7 @@ class TestTaskManagerHTMLProcessing:
         event = {
             "id": "evt_456",
             "type": "email.received",
-            "payload": {
-                "subject": "Plain text",
-                "body": "Just a simple message with no HTML tags."
-            }
+            "payload": {"subject": "Plain text", "body": "Just a simple message with no HTML tags."},
         }
 
         await task_manager.process_event(event)
@@ -206,8 +203,8 @@ class TestTaskManagerHTMLProcessing:
             "payload": {
                 "subject": "Subject line",
                 # Snippet needs to be long enough (20+ chars) to trigger extraction
-                "snippet": "<p>Short preview text that is long enough</p>"
-            }
+                "snippet": "<p>Short preview text that is long enough</p>",
+            },
         }
 
         await task_manager.process_event(event)
@@ -228,11 +225,7 @@ class TestTaskManagerHTMLProcessing:
         task_manager = TaskManager(db, None, ai_engine)
 
         # Very short message
-        event = {
-            "id": "evt_short",
-            "type": "email.received",
-            "payload": {"body": "ok"}
-        }
+        event = {"id": "evt_short", "type": "email.received", "payload": {"body": "ok"}}
 
         await task_manager.process_event(event)
 
@@ -252,9 +245,7 @@ class TestTaskManagerHTMLProcessing:
         event = {
             "id": "evt_malformed",
             "type": "email.received",
-            "payload": {
-                "body": "< This is not valid HTML but contains angle brackets >"
-            }
+            "payload": {"body": "< This is not valid HTML but contains angle brackets >"},
         }
 
         # Should not crash
@@ -275,9 +266,7 @@ class TestTaskManagerHTMLProcessing:
         event = {
             "id": "evt_cal",
             "type": "calendar.event.created",
-            "payload": {
-                "description": "<p>Meeting agenda:<br>1. Review Q4<br>2. Plan Q1</p>"
-            }
+            "payload": {"description": "<p>Meeting agenda:<br>1. Review Q4<br>2. Plan Q1</p>"},
         }
 
         await task_manager.process_event(event)
@@ -297,19 +286,19 @@ class TestTaskManagerHTMLProcessing:
         db.get_connection = Mock(return_value=Mock(__enter__=Mock(return_value=Mock(execute=Mock())), __exit__=Mock()))
 
         ai_engine = AsyncMock()
-        ai_engine.extract_action_items = AsyncMock(return_value=[
-            {"title": "Review Q4 financials", "priority": "high", "due_hint": "2026-02-20"},
-            {"title": "Schedule team meeting", "priority": "normal"}
-        ])
+        ai_engine.extract_action_items = AsyncMock(
+            return_value=[
+                {"title": "Review Q4 financials", "priority": "high", "due_hint": "2026-02-20"},
+                {"title": "Schedule team meeting", "priority": "normal"},
+            ]
+        )
 
         task_manager = TaskManager(db, None, ai_engine)
 
         event = {
             "id": "evt_tasks",
             "type": "email.received",
-            "payload": {
-                "body": "<p>Please review Q4 financials by Feb 20 and schedule a team meeting.</p>"
-            }
+            "payload": {"body": "<p>Please review Q4 financials by Feb 20 and schedule a team meeting.</p>"},
         }
 
         await task_manager.process_event(event)

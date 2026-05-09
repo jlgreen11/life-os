@@ -110,11 +110,13 @@ class TestBuildContactsFromEvents:
 
         # Seed 6 inbound emails from the same contact (>= 5 threshold)
         for i in range(6):
-            event_store.store_event(_make_email_event(
-                from_address="alice@example.com",
-                subject=f"Email {i}",
-                timestamp=(now - timedelta(days=i * 5)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="alice@example.com",
+                    subject=f"Email {i}",
+                    timestamp=(now - timedelta(days=i * 5)).isoformat(),
+                )
+            )
 
         contacts = engine._build_contacts_from_events()
 
@@ -143,21 +145,25 @@ class TestBuildContactsFromEvents:
 
         # 3 inbound emails from bob
         for i in range(3):
-            event_store.store_event(_make_email_event(
-                from_address="bob@example.com",
-                subject=f"Inbound {i}",
-                timestamp=(now - timedelta(days=i * 3)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="bob@example.com",
+                    subject=f"Inbound {i}",
+                    timestamp=(now - timedelta(days=i * 3)).isoformat(),
+                )
+            )
 
         # 3 outbound emails to bob (total = 6, meets threshold)
         for i in range(3):
-            event_store.store_event(_make_email_event(
-                from_address="bob@example.com",
-                subject=f"Outbound {i}",
-                event_type="email.sent",
-                to_addresses=["bob@example.com"],
-                timestamp=(now - timedelta(days=i * 3 + 1)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="bob@example.com",
+                    subject=f"Outbound {i}",
+                    event_type="email.sent",
+                    to_addresses=["bob@example.com"],
+                    timestamp=(now - timedelta(days=i * 3 + 1)).isoformat(),
+                )
+            )
 
         contacts = engine._build_contacts_from_events()
 
@@ -175,19 +181,23 @@ class TestBuildContactsFromEvents:
 
         # 3 emails from sparse-contact (below threshold)
         for i in range(3):
-            event_store.store_event(_make_email_event(
-                from_address="sparse@example.com",
-                subject=f"Sparse {i}",
-                timestamp=(now - timedelta(days=i * 5)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="sparse@example.com",
+                    subject=f"Sparse {i}",
+                    timestamp=(now - timedelta(days=i * 5)).isoformat(),
+                )
+            )
 
         # 6 emails from frequent-contact (above threshold)
         for i in range(6):
-            event_store.store_event(_make_email_event(
-                from_address="frequent@example.com",
-                subject=f"Frequent {i}",
-                timestamp=(now - timedelta(days=i * 3)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="frequent@example.com",
+                    subject=f"Frequent {i}",
+                    timestamp=(now - timedelta(days=i * 3)).isoformat(),
+                )
+            )
 
         contacts = engine._build_contacts_from_events()
 
@@ -202,13 +212,15 @@ class TestBuildContactsFromEvents:
 
         # 5 outbound emails to this contact (no inbound)
         for i in range(5):
-            event_store.store_event(_make_email_event(
-                from_address="outbound-only@example.com",
-                subject=f"Sent {i}",
-                event_type="email.sent",
-                to_addresses=["outbound-only@example.com"],
-                timestamp=(now - timedelta(days=i * 3)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="outbound-only@example.com",
+                    subject=f"Sent {i}",
+                    event_type="email.sent",
+                    to_addresses=["outbound-only@example.com"],
+                    timestamp=(now - timedelta(days=i * 3)).isoformat(),
+                )
+            )
 
         contacts = engine._build_contacts_from_events()
 
@@ -247,19 +259,23 @@ class TestRelationshipMaintenanceFallback:
         # Seed 8 inbound + 2 outbound emails from alice (10 total, well above threshold)
         # Space them out so the average gap is ~7 days
         for i in range(8):
-            event_store.store_event(_make_email_event(
-                from_address="alice@example.com",
-                subject=f"Inbound {i}",
-                timestamp=(now - timedelta(days=60 + i * 7)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="alice@example.com",
+                    subject=f"Inbound {i}",
+                    timestamp=(now - timedelta(days=60 + i * 7)).isoformat(),
+                )
+            )
         for i in range(2):
-            event_store.store_event(_make_email_event(
-                from_address="alice@example.com",
-                subject=f"Outbound {i}",
-                event_type="email.sent",
-                to_addresses=["alice@example.com"],
-                timestamp=(now - timedelta(days=65 + i * 7)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="alice@example.com",
+                    subject=f"Outbound {i}",
+                    event_type="email.sent",
+                    to_addresses=["alice@example.com"],
+                    timestamp=(now - timedelta(days=65 + i * 7)).isoformat(),
+                )
+            )
 
         # Ensure signal profile returns None
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
@@ -281,19 +297,23 @@ class TestRelationshipMaintenanceFallback:
 
         # Seed sufficient interaction data
         for i in range(8):
-            event_store.store_event(_make_email_event(
-                from_address="colleague@work.com",
-                subject=f"Thread {i}",
-                timestamp=(now - timedelta(days=60 + i * 7)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="colleague@work.com",
+                    subject=f"Thread {i}",
+                    timestamp=(now - timedelta(days=60 + i * 7)).isoformat(),
+                )
+            )
         for i in range(2):
-            event_store.store_event(_make_email_event(
-                from_address="colleague@work.com",
-                subject=f"Reply {i}",
-                event_type="email.sent",
-                to_addresses=["colleague@work.com"],
-                timestamp=(now - timedelta(days=62 + i * 7)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="colleague@work.com",
+                    subject=f"Reply {i}",
+                    event_type="email.sent",
+                    to_addresses=["colleague@work.com"],
+                    timestamp=(now - timedelta(days=62 + i * 7)).isoformat(),
+                )
+            )
 
         # Simulate a corrupted user_model.db
         with patch.object(
@@ -316,18 +336,22 @@ class TestRelationshipMaintenanceFallback:
 
         # Seed noreply marketing contact with many interactions
         for i in range(10):
-            event_store.store_event(_make_email_event(
-                from_address="noreply@marketing.example.com",
-                subject=f"Sale {i}",
-                timestamp=(now - timedelta(days=50 + i * 3)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="noreply@marketing.example.com",
+                    subject=f"Sale {i}",
+                    timestamp=(now - timedelta(days=50 + i * 3)).isoformat(),
+                )
+            )
         # Add outbound so it won't be filtered by the inbound-only check
-        event_store.store_event(_make_email_event(
-            from_address="noreply@marketing.example.com",
-            event_type="email.sent",
-            to_addresses=["noreply@marketing.example.com"],
-            timestamp=(now - timedelta(days=55)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="noreply@marketing.example.com",
+                event_type="email.sent",
+                to_addresses=["noreply@marketing.example.com"],
+                timestamp=(now - timedelta(days=55)).isoformat(),
+            )
+        )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_relationship_maintenance({})
@@ -345,11 +369,13 @@ class TestRelationshipMaintenanceFallback:
 
         # Seed 8 inbound-only emails from this contact (zero outbound)
         for i in range(8):
-            event_store.store_event(_make_email_event(
-                from_address="inbound-only@example.com",
-                subject=f"Inbound {i}",
-                timestamp=(now - timedelta(days=50 + i * 5)).isoformat(),
-            ))
+            event_store.store_event(
+                _make_email_event(
+                    from_address="inbound-only@example.com",
+                    subject=f"Inbound {i}",
+                    timestamp=(now - timedelta(days=50 + i * 5)).isoformat(),
+                )
+            )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_relationship_maintenance({})
@@ -359,9 +385,7 @@ class TestRelationshipMaintenanceFallback:
         assert len(inbound_preds) == 0
 
     @pytest.mark.asyncio
-    async def test_only_contacts_exceeding_gap_threshold_generate_predictions(
-        self, db, event_store, user_model_store
-    ):
+    async def test_only_contacts_exceeding_gap_threshold_generate_predictions(self, db, event_store, user_model_store):
         """Only contacts whose current gap exceeds 1.5x the average gap
         should generate predictions."""
         engine = PredictionEngine(db, user_model_store)
@@ -370,32 +394,40 @@ class TestRelationshipMaintenanceFallback:
         # Contact A: recent interaction (gap NOT exceeded)
         # 6 interactions, average gap ~5 days, last interaction 3 days ago
         for i in range(6):
-            event_store.store_event(_make_email_event(
+            event_store.store_event(
+                _make_email_event(
+                    from_address="recent@example.com",
+                    subject=f"Recent {i}",
+                    timestamp=(now - timedelta(days=3 + i * 5)).isoformat(),
+                )
+            )
+        event_store.store_event(
+            _make_email_event(
                 from_address="recent@example.com",
-                subject=f"Recent {i}",
-                timestamp=(now - timedelta(days=3 + i * 5)).isoformat(),
-            ))
-        event_store.store_event(_make_email_event(
-            from_address="recent@example.com",
-            event_type="email.sent",
-            to_addresses=["recent@example.com"],
-            timestamp=(now - timedelta(days=5)).isoformat(),
-        ))
+                event_type="email.sent",
+                to_addresses=["recent@example.com"],
+                timestamp=(now - timedelta(days=5)).isoformat(),
+            )
+        )
 
         # Contact B: stale interaction (gap exceeded)
         # 6 interactions, average gap ~7 days, last interaction 50 days ago
         for i in range(6):
-            event_store.store_event(_make_email_event(
+            event_store.store_event(
+                _make_email_event(
+                    from_address="stale@example.com",
+                    subject=f"Stale {i}",
+                    timestamp=(now - timedelta(days=50 + i * 7)).isoformat(),
+                )
+            )
+        event_store.store_event(
+            _make_email_event(
                 from_address="stale@example.com",
-                subject=f"Stale {i}",
-                timestamp=(now - timedelta(days=50 + i * 7)).isoformat(),
-            ))
-        event_store.store_event(_make_email_event(
-            from_address="stale@example.com",
-            event_type="email.sent",
-            to_addresses=["stale@example.com"],
-            timestamp=(now - timedelta(days=55)).isoformat(),
-        ))
+                event_type="email.sent",
+                to_addresses=["stale@example.com"],
+                timestamp=(now - timedelta(days=55)).isoformat(),
+            )
+        )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_relationship_maintenance({})
@@ -436,12 +468,14 @@ class TestFollowUpNeedsFallback:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_email_event(
-            from_address="boss@company.com",
-            subject="Need the report ASAP",
-            message_id="msg-boss-1",
-            timestamp=(now - timedelta(hours=6)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="boss@company.com",
+                subject="Need the report ASAP",
+                message_id="msg-boss-1",
+                timestamp=(now - timedelta(hours=6)).isoformat(),
+            )
+        )
 
         # Force signal profile to return None (simulating corrupted user_model.db)
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
@@ -462,22 +496,26 @@ class TestFollowUpNeedsFallback:
         now = datetime.now(timezone.utc)
 
         # Inbound email
-        event_store.store_event(_make_email_event(
-            from_address="colleague@company.com",
-            subject="Question about API",
-            message_id="msg-q-1",
-            timestamp=(now - timedelta(hours=6)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="colleague@company.com",
+                subject="Question about API",
+                message_id="msg-q-1",
+                timestamp=(now - timedelta(hours=6)).isoformat(),
+            )
+        )
 
         # Our reply
-        event_store.store_event(_make_email_event(
-            from_address="colleague@company.com",
-            subject="Re: Question about API",
-            event_type="email.sent",
-            to_addresses=["colleague@company.com"],
-            in_reply_to="msg-q-1",
-            timestamp=(now - timedelta(hours=4)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="colleague@company.com",
+                subject="Re: Question about API",
+                event_type="email.sent",
+                to_addresses=["colleague@company.com"],
+                in_reply_to="msg-q-1",
+                timestamp=(now - timedelta(hours=4)).isoformat(),
+            )
+        )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_follow_up_needs({})
@@ -491,13 +529,15 @@ class TestFollowUpNeedsFallback:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_email_event(
-            from_address="no-reply@marketing.example.com",
-            subject="Big sale today!",
-            message_id="msg-marketing-1",
-            timestamp=(now - timedelta(hours=6)).isoformat(),
-            body_plain="Click here for deals. Unsubscribe: example.com/unsub",
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="no-reply@marketing.example.com",
+                subject="Big sale today!",
+                message_id="msg-marketing-1",
+                timestamp=(now - timedelta(hours=6)).isoformat(),
+                body_plain="Click here for deals. Unsubscribe: example.com/unsub",
+            )
+        )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_follow_up_needs({})
@@ -511,12 +551,14 @@ class TestFollowUpNeedsFallback:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_email_event(
-            from_address="team@company.com",
-            subject="Quick question",
-            message_id="msg-recent-1",
-            timestamp=(now - timedelta(hours=1)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="team@company.com",
+                subject="Quick question",
+                message_id="msg-recent-1",
+                timestamp=(now - timedelta(hours=1)).isoformat(),
+            )
+        )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_follow_up_needs({})
@@ -530,12 +572,14 @@ class TestFollowUpNeedsFallback:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_email_event(
-            from_address="partner@company.com",
-            subject="Contract review needed",
-            message_id="msg-contract-1",
-            timestamp=(now - timedelta(hours=8)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="partner@company.com",
+                subject="Contract review needed",
+                message_id="msg-contract-1",
+                timestamp=(now - timedelta(hours=8)).isoformat(),
+            )
+        )
 
         with patch.object(
             user_model_store,
@@ -557,12 +601,14 @@ class TestFollowUpNeedsFallback:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_email_event(
-            from_address="vp@company.com",
-            subject="Strategy discussion",
-            message_id="msg-old-1",
-            timestamp=(now - timedelta(hours=30)).isoformat(),
-        ))
+        event_store.store_event(
+            _make_email_event(
+                from_address="vp@company.com",
+                subject="Strategy discussion",
+                message_id="msg-old-1",
+                timestamp=(now - timedelta(hours=30)).isoformat(),
+            )
+        )
 
         with patch.object(user_model_store, "get_signal_profile", return_value=None):
             predictions = await engine._check_follow_up_needs({})
@@ -588,18 +634,22 @@ class TestCalendarConflictsFromEvents:
         now = datetime.now(timezone.utc)
 
         # Event 1: 2:00 PM - 3:00 PM
-        event_store.store_event(_make_calendar_event(
-            title="Team standup",
-            start_dt=now + timedelta(hours=2),
-            end_dt=now + timedelta(hours=3),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Team standup",
+                start_dt=now + timedelta(hours=2),
+                end_dt=now + timedelta(hours=3),
+            )
+        )
 
         # Event 2: 2:30 PM - 3:30 PM (overlaps by 30 minutes)
-        event_store.store_event(_make_calendar_event(
-            title="Client call",
-            start_dt=now + timedelta(hours=2, minutes=30),
-            end_dt=now + timedelta(hours=3, minutes=30),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Client call",
+                start_dt=now + timedelta(hours=2, minutes=30),
+                end_dt=now + timedelta(hours=3, minutes=30),
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
 
@@ -618,19 +668,23 @@ class TestCalendarConflictsFromEvents:
         tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # All-day event tomorrow
-        event_store.store_event(_make_calendar_event(
-            title="Conference Day",
-            start_dt=tomorrow,
-            end_dt=tomorrow + timedelta(days=1),
-            is_all_day=True,
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Conference Day",
+                start_dt=tomorrow,
+                end_dt=tomorrow + timedelta(days=1),
+                is_all_day=True,
+            )
+        )
 
         # Timed meeting during the all-day event
-        event_store.store_event(_make_calendar_event(
-            title="Internal sync",
-            start_dt=tomorrow + timedelta(hours=10),
-            end_dt=tomorrow + timedelta(hours=11),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Internal sync",
+                start_dt=tomorrow + timedelta(hours=10),
+                end_dt=tomorrow + timedelta(hours=11),
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
 
@@ -650,18 +704,22 @@ class TestCalendarConflictsFromEvents:
         tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Two all-day events on the same day
-        event_store.store_event(_make_calendar_event(
-            title="Birthday",
-            start_dt=tomorrow,
-            end_dt=tomorrow + timedelta(days=1),
-            is_all_day=True,
-        ))
-        event_store.store_event(_make_calendar_event(
-            title="Travel Day",
-            start_dt=tomorrow,
-            end_dt=tomorrow + timedelta(days=1),
-            is_all_day=True,
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Birthday",
+                start_dt=tomorrow,
+                end_dt=tomorrow + timedelta(days=1),
+                is_all_day=True,
+            )
+        )
+        event_store.store_event(
+            _make_calendar_event(
+                title="Travel Day",
+                start_dt=tomorrow,
+                end_dt=tomorrow + timedelta(days=1),
+                is_all_day=True,
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
 
@@ -675,18 +733,22 @@ class TestCalendarConflictsFromEvents:
         now = datetime.now(timezone.utc)
 
         # Event 1: 2:00 PM - 3:00 PM
-        event_store.store_event(_make_calendar_event(
-            title="Morning meeting",
-            start_dt=now + timedelta(hours=2),
-            end_dt=now + timedelta(hours=3),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Morning meeting",
+                start_dt=now + timedelta(hours=2),
+                end_dt=now + timedelta(hours=3),
+            )
+        )
 
         # Event 2: 5:00 PM - 6:00 PM (2 hour gap — no conflict)
-        event_store.store_event(_make_calendar_event(
-            title="Afternoon sync",
-            start_dt=now + timedelta(hours=5),
-            end_dt=now + timedelta(hours=6),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Afternoon sync",
+                start_dt=now + timedelta(hours=5),
+                end_dt=now + timedelta(hours=6),
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
         assert len(predictions) == 0
@@ -697,11 +759,13 @@ class TestCalendarConflictsFromEvents:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_calendar_event(
-            title="Solo meeting",
-            start_dt=now + timedelta(hours=2),
-            end_dt=now + timedelta(hours=3),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Solo meeting",
+                start_dt=now + timedelta(hours=2),
+                end_dt=now + timedelta(hours=3),
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
         assert len(predictions) == 0
@@ -713,18 +777,22 @@ class TestCalendarConflictsFromEvents:
         now = datetime.now(timezone.utc)
 
         # Event 1: 2:00 PM - 3:00 PM
-        event_store.store_event(_make_calendar_event(
-            title="Design review",
-            start_dt=now + timedelta(hours=2),
-            end_dt=now + timedelta(hours=3),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Design review",
+                start_dt=now + timedelta(hours=2),
+                end_dt=now + timedelta(hours=3),
+            )
+        )
 
         # Event 2: 3:05 PM - 4:00 PM (only 5 min gap)
-        event_store.store_event(_make_calendar_event(
-            title="Sprint planning",
-            start_dt=now + timedelta(hours=3, minutes=5),
-            end_dt=now + timedelta(hours=4),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Sprint planning",
+                start_dt=now + timedelta(hours=3, minutes=5),
+                end_dt=now + timedelta(hours=4),
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
 
@@ -748,16 +816,20 @@ class TestCalendarConflictsFromEvents:
         engine = PredictionEngine(db, user_model_store)
         now = datetime.now(timezone.utc)
 
-        event_store.store_event(_make_calendar_event(
-            title="Meeting A",
-            start_dt=now + timedelta(hours=2),
-            end_dt=now + timedelta(hours=3),
-        ))
-        event_store.store_event(_make_calendar_event(
-            title="Meeting B",
-            start_dt=now + timedelta(hours=2, minutes=30),
-            end_dt=now + timedelta(hours=3, minutes=30),
-        ))
+        event_store.store_event(
+            _make_calendar_event(
+                title="Meeting A",
+                start_dt=now + timedelta(hours=2),
+                end_dt=now + timedelta(hours=3),
+            )
+        )
+        event_store.store_event(
+            _make_calendar_event(
+                title="Meeting B",
+                start_dt=now + timedelta(hours=2, minutes=30),
+                end_dt=now + timedelta(hours=3, minutes=30),
+            )
+        )
 
         predictions = await engine._check_calendar_conflicts({})
 

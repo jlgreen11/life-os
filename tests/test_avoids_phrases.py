@@ -224,6 +224,7 @@ class TestIntegrationWithTemplateExtraction:
 
         # Seed an existing template for alice with 4 samples (below threshold)
         import hashlib
+
         alice_template_id = hashlib.sha256("alice@example.com:email:out".encode()).hexdigest()[:16]
         with db.get_connection("user_model") as conn:
             conn.execute(
@@ -274,6 +275,7 @@ class TestIntegrationWithTemplateExtraction:
 
         # Seed an existing inbound template for alice with 10 samples
         import hashlib
+
         alice_in_id = hashlib.sha256("alice@example.com:email:in".encode()).hexdigest()[:16]
         with db.get_connection("user_model") as conn:
             conn.execute(

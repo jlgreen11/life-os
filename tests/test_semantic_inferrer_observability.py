@@ -42,9 +42,12 @@ class TestInferenceStatusDicts:
 
     def test_linguistic_processed_returns_status(self, user_model_store):
         """Linguistic method returns processed status when profile has data."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.5},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.5},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 5)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -166,9 +169,12 @@ class TestSkipLogsAtInfoLevel:
 
     def test_processed_profile_logs_at_info(self, user_model_store, caplog):
         """When a profile has data, the 'Inferred semantic facts' message is at INFO."""
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.2},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.2},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 5)
 
         inferrer = SemanticFactInferrer(user_model_store)
@@ -207,15 +213,27 @@ class TestInferenceSummary:
 
         # All 8 types should appear in the skipped portion
         assert "processed: none" in summary
-        for profile_type in ["linguistic", "relationship", "topic", "cadence", "mood", "temporal", "spatial", "decision"]:
+        for profile_type in [
+            "linguistic",
+            "relationship",
+            "topic",
+            "cadence",
+            "mood",
+            "temporal",
+            "spatial",
+            "decision",
+        ]:
             assert profile_type in summary, f"Expected '{profile_type}' in summary: {summary}"
 
     def test_mixed_processed_and_skipped_summary(self, user_model_store, caplog):
         """When some profiles have data, summary shows both processed and skipped."""
         # Set up linguistic with data (threshold is 1 sample)
-        user_model_store.update_signal_profile("linguistic", {
-            "averages": {"formality": 0.5},
-        })
+        user_model_store.update_signal_profile(
+            "linguistic",
+            {
+                "averages": {"formality": 0.5},
+            },
+        )
         _set_samples(user_model_store, "linguistic", 5)
 
         inferrer = SemanticFactInferrer(user_model_store)

@@ -53,8 +53,8 @@ def test_relationship_extractor_uses_email_date(db, user_model_store, event_bus)
     # Simulate three emails from Alice spread over 30 days
     emails = [
         {"timestamp": "2026-02-16T10:00:00+00:00", "email_date": "2026-01-01T10:00:00+00:00"},  # Day 1
-        {"timestamp": "2026-02-16T10:05:00+00:00", "email_date": "2026-01-15T10:00:00+00:00"}, # Day 15
-        {"timestamp": "2026-02-16T10:10:00+00:00", "email_date": "2026-02-01T10:00:00+00:00"}, # Day 32
+        {"timestamp": "2026-02-16T10:05:00+00:00", "email_date": "2026-01-15T10:00:00+00:00"},  # Day 15
+        {"timestamp": "2026-02-16T10:10:00+00:00", "email_date": "2026-02-01T10:00:00+00:00"},  # Day 32
     ]
 
     extractor = RelationshipExtractor(db, user_model_store)

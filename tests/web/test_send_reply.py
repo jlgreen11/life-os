@@ -8,6 +8,7 @@ appropriate messaging connector and handles all error cases gracefully:
   - error forwarding when the connector returns an error result
   - sent status and connector attribution on success
 """
+
 from __future__ import annotations
 
 import pytest
@@ -55,6 +56,7 @@ def error_connector():
 # Import-level smoke test
 # ---------------------------------------------------------------------------
 
+
 def test_send_message_request_schema_importable():
     """SendMessageRequest is importable and validates required fields."""
     from web.schemas import SendMessageRequest
@@ -76,6 +78,7 @@ def test_send_message_request_default_channel():
 # ---------------------------------------------------------------------------
 # Endpoint routing tests (via create_app factory)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_send_no_connector_returns_no_connector_status(db):
@@ -312,6 +315,7 @@ async def test_send_connector_error_forwarded(db, error_connector):
 # ---------------------------------------------------------------------------
 # JS template smoke test
 # ---------------------------------------------------------------------------
+
 
 def test_send_quick_reply_js_in_template():
     """sendQuickReply function and quick-reply CSS are present in HTML_TEMPLATE."""

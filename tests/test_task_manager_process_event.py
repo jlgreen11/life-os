@@ -52,11 +52,13 @@ async def test_process_event_skips_non_actionable_types(task_manager, mock_ai_en
         "context.location.updated",
     ]
     for event_type in non_actionable_types:
-        await task_manager.process_event({
-            "id": f"evt-{event_type}",
-            "type": event_type,
-            "payload": {"body": "This is a substantial body text that is well over twenty characters."},
-        })
+        await task_manager.process_event(
+            {
+                "id": f"evt-{event_type}",
+                "type": event_type,
+                "payload": {"body": "This is a substantial body text that is well over twenty characters."},
+            }
+        )
 
     mock_ai_engine.extract_action_items.assert_not_called()
 
@@ -66,11 +68,13 @@ async def test_process_event_skips_non_actionable_types(task_manager, mock_ai_en
 
 async def test_process_event_skips_short_text(task_manager, mock_ai_engine):
     """Messages shorter than 20 characters should not reach the AI engine."""
-    await task_manager.process_event({
-        "id": "evt-short",
-        "type": "email.received",
-        "payload": {"body": "ok", "from_address": "alice@example.com"},
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-short",
+            "type": "email.received",
+            "payload": {"body": "ok", "from_address": "alice@example.com"},
+        }
+    )
 
     mock_ai_engine.extract_action_items.assert_not_called()
 
@@ -80,21 +84,23 @@ async def test_process_event_skips_short_text(task_manager, mock_ai_engine):
 
 async def test_process_event_skips_marketing_email(task_manager, mock_ai_engine):
     """Marketing/promotional emails should be filtered out before AI processing."""
-    await task_manager.process_event({
-        "id": "evt-marketing",
-        "type": "email.received",
-        "payload": {
-            "from_address": "noreply@marketing.example.com",
-            "subject": "50% off everything this week!",
-            "body": (
-                "Shop our biggest sale of the year! "
-                "Amazing deals on all categories. "
-                "Click here to browse our selection. "
-                "If you no longer wish to receive these emails, "
-                "click here to Unsubscribe."
-            ),
-        },
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-marketing",
+            "type": "email.received",
+            "payload": {
+                "from_address": "noreply@marketing.example.com",
+                "subject": "50% off everything this week!",
+                "body": (
+                    "Shop our biggest sale of the year! "
+                    "Amazing deals on all categories. "
+                    "Click here to browse our selection. "
+                    "If you no longer wish to receive these emails, "
+                    "click here to Unsubscribe."
+                ),
+            },
+        }
+    )
 
     mock_ai_engine.extract_action_items.assert_not_called()
 
@@ -112,14 +118,16 @@ async def test_process_event_strips_html(task_manager, mock_ai_engine):
         "</body></html>"
     )
 
-    await task_manager.process_event({
-        "id": "evt-html",
-        "type": "email.received",
-        "payload": {
-            "from_address": "colleague@company.com",
-            "body": html_body,
-        },
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-html",
+            "type": "email.received",
+            "payload": {
+                "from_address": "colleague@company.com",
+                "body": html_body,
+            },
+        }
+    )
 
     mock_ai_engine.extract_action_items.assert_called_once()
     text_arg = mock_ai_engine.extract_action_items.call_args[0][0]
@@ -146,15 +154,17 @@ async def test_process_event_email_received_calls_ai(task_manager, mock_ai_engin
     extracted = [{"title": "Review report", "due_hint": "Friday", "priority": "normal"}]
     mock_ai_engine.extract_action_items.return_value = extracted
 
-    await task_manager.process_event({
-        "id": "evt-email-recv",
-        "type": "email.received",
-        "payload": {
-            "from_address": "boss@company.com",
-            "subject": "Q3 Report",
-            "body": "Hi, please review the Q3 report and send me your feedback by end of week.",
-        },
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-email-recv",
+            "type": "email.received",
+            "payload": {
+                "from_address": "boss@company.com",
+                "subject": "Q3 Report",
+                "body": "Hi, please review the Q3 report and send me your feedback by end of week.",
+            },
+        }
+    )
 
     # AI engine was called
     mock_ai_engine.extract_action_items.assert_called_once()
@@ -175,14 +185,16 @@ async def test_process_event_email_received_calls_ai(task_manager, mock_ai_engin
 async def test_process_event_email_sent(task_manager, mock_ai_engine):
     """Sent emails should also reach the AI engine — they may contain
     completion signals like 'I sent the report yesterday'."""
-    await task_manager.process_event({
-        "id": "evt-email-sent",
-        "type": "email.sent",
-        "payload": {
-            "from_address": "me@company.com",
-            "body": "Hi Alice, I have completed the quarterly financial review and attached the report.",
-        },
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-email-sent",
+            "type": "email.sent",
+            "payload": {
+                "from_address": "me@company.com",
+                "body": "Hi Alice, I have completed the quarterly financial review and attached the report.",
+            },
+        }
+    )
 
     mock_ai_engine.extract_action_items.assert_called_once()
     assert mock_ai_engine.extract_action_items.call_args[0][1] == "email.sent"
@@ -193,17 +205,21 @@ async def test_process_event_email_sent(task_manager, mock_ai_engine):
 
 async def test_process_event_message_types(task_manager, mock_ai_engine):
     """Both inbound and outbound messages should reach the AI engine."""
-    await task_manager.process_event({
-        "id": "evt-msg-recv",
-        "type": "message.received",
-        "payload": {"body": "Can you send me the project timeline by tomorrow morning?"},
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-msg-recv",
+            "type": "message.received",
+            "payload": {"body": "Can you send me the project timeline by tomorrow morning?"},
+        }
+    )
 
-    await task_manager.process_event({
-        "id": "evt-msg-sent",
-        "type": "message.sent",
-        "payload": {"body": "Sure, I will prepare the project timeline and send it tonight."},
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-msg-sent",
+            "type": "message.sent",
+            "payload": {"body": "Sure, I will prepare the project timeline and send it tonight."},
+        }
+    )
 
     assert mock_ai_engine.extract_action_items.call_count == 2
 
@@ -218,14 +234,16 @@ async def test_process_event_message_types(task_manager, mock_ai_engine):
 
 async def test_process_event_calendar_event(task_manager, mock_ai_engine):
     """Calendar events should extract action items from the description field."""
-    await task_manager.process_event({
-        "id": "evt-cal",
-        "type": "calendar.event.created",
-        "payload": {
-            "summary": "Sprint Planning",
-            "description": "Agenda: Review backlog items, assign story points, identify blockers for next sprint.",
-        },
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-cal",
+            "type": "calendar.event.created",
+            "payload": {
+                "summary": "Sprint Planning",
+                "description": "Agenda: Review backlog items, assign story points, identify blockers for next sprint.",
+            },
+        }
+    )
 
     mock_ai_engine.extract_action_items.assert_called_once()
     text_arg = mock_ai_engine.extract_action_items.call_args[0][0]
@@ -242,14 +260,16 @@ async def test_process_event_ai_engine_failure(task_manager, mock_ai_engine):
     mock_ai_engine.extract_action_items.side_effect = RuntimeError("Model unavailable")
 
     # Should NOT raise — fail-open behavior
-    await task_manager.process_event({
-        "id": "evt-fail",
-        "type": "email.received",
-        "payload": {
-            "from_address": "colleague@company.com",
-            "body": "Please complete the compliance training module by end of month.",
-        },
-    })
+    await task_manager.process_event(
+        {
+            "id": "evt-fail",
+            "type": "email.received",
+            "payload": {
+                "from_address": "colleague@company.com",
+                "body": "Please complete the compliance training module by end of month.",
+            },
+        }
+    )
 
     mock_ai_engine.extract_action_items.assert_called_once()
 
@@ -263,14 +283,16 @@ async def test_process_event_no_ai_engine(db):
     manager = TaskManager(db=db, event_bus=None, ai_engine=None)
 
     # Should NOT raise — early return when ai_engine is None
-    await manager.process_event({
-        "id": "evt-no-ai",
-        "type": "email.received",
-        "payload": {
-            "from_address": "alice@example.com",
-            "body": "This is a real email with enough text to pass the length filter easily.",
-        },
-    })
+    await manager.process_event(
+        {
+            "id": "evt-no-ai",
+            "type": "email.received",
+            "payload": {
+                "from_address": "alice@example.com",
+                "body": "This is a real email with enough text to pass the length filter easily.",
+            },
+        }
+    )
 
     # No crash, no tasks created
     tasks = manager.get_pending_tasks()

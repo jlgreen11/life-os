@@ -27,38 +27,53 @@ from web.app import create_web_app
 # ---------------------------------------------------------------------------
 
 
-def _make_email_row(row_id, subject="Test Email", from_addr="alice@example.com",
-                    to_addr="user@example.com", snippet="Hello world",
-                    has_attachments=False, timestamp="2026-03-03T10:00:00Z"):
+def _make_email_row(
+    row_id,
+    subject="Test Email",
+    from_addr="alice@example.com",
+    to_addr="user@example.com",
+    snippet="Hello world",
+    has_attachments=False,
+    timestamp="2026-03-03T10:00:00Z",
+):
     """Create a fake events DB row for an email.received event."""
-    payload = json.dumps({
-        "subject": subject,
-        "from_address": from_addr,
-        "from_name": from_addr.split("@")[0].title(),
-        "to_addresses": [to_addr],
-        "snippet": snippet,
-        "body": snippet,
-        "has_attachments": has_attachments,
-        "thread_id": f"thread-{row_id}",
-        "message_id": f"msg-{row_id}",
-        "timestamp": timestamp,
-    })
+    payload = json.dumps(
+        {
+            "subject": subject,
+            "from_address": from_addr,
+            "from_name": from_addr.split("@")[0].title(),
+            "to_addresses": [to_addr],
+            "snippet": snippet,
+            "body": snippet,
+            "has_attachments": has_attachments,
+            "thread_id": f"thread-{row_id}",
+            "message_id": f"msg-{row_id}",
+            "timestamp": timestamp,
+        }
+    )
     return {"id": row_id, "payload": payload, "timestamp": timestamp}
 
 
-def _make_message_row(row_id, contact="Bob", body="Hey there",
-                      channel="imessage", from_addr="bob@example.com",
-                      timestamp="2026-03-03T11:00:00Z"):
+def _make_message_row(
+    row_id,
+    contact="Bob",
+    body="Hey there",
+    channel="imessage",
+    from_addr="bob@example.com",
+    timestamp="2026-03-03T11:00:00Z",
+):
     """Create a fake events DB row for a message.received event."""
-    payload = json.dumps({
-        "contact_name": contact,
-        "from_address": from_addr,
-        "body": body,
-        "channel": channel,
-        "is_group": False,
-        "message_id": f"msg-{row_id}",
-        "timestamp": timestamp,
-    })
+    payload = json.dumps(
+        {
+            "contact_name": contact,
+            "from_address": from_addr,
+            "body": body,
+            "channel": channel,
+            "is_group": False,
+            "message_id": f"msg-{row_id}",
+            "timestamp": timestamp,
+        }
+    )
     return {"id": row_id, "payload": payload, "timestamp": timestamp}
 
 
@@ -113,8 +128,13 @@ def mock_life_os():
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
     life_os.signal_extractor.get_current_mood = Mock(
         return_value=Mock(
-            energy_level=0.5, stress_level=0.3, social_battery=0.4,
-            cognitive_load=0.3, emotional_valence=0.5, confidence=0.6, trend="stable"
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.4,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.6,
+            trend="stable",
         )
     )
 
@@ -206,8 +226,7 @@ def client(mock_life_os):
 def test_email_events_returned_when_no_notifications(mock_marketing, mock_life_os, client):
     """With 0 notifications and email events in DB, feed returns email items."""
     email_rows = [
-        _make_email_row(f"evt-{i}", subject=f"Email {i}", from_addr=f"sender{i}@example.com")
-        for i in range(5)
+        _make_email_row(f"evt-{i}", subject=f"Email {i}", from_addr=f"sender{i}@example.com") for i in range(5)
     ]
     _setup_db_returning_rows(mock_life_os, email_rows)
 
@@ -224,13 +243,15 @@ def test_email_events_returned_when_no_notifications(mock_marketing, mock_life_o
 @patch("services.signal_extractor.marketing_filter.is_marketing_or_noreply", return_value=False)
 def test_email_events_metadata_includes_from_and_subject(mock_marketing, mock_life_os, client):
     """Email event items include correct metadata (from, to, subject)."""
-    rows = [_make_email_row(
-        "evt-1",
-        subject="Important Meeting",
-        from_addr="boss@company.com",
-        to_addr="me@company.com",
-        has_attachments=True,
-    )]
+    rows = [
+        _make_email_row(
+            "evt-1",
+            subject="Important Meeting",
+            from_addr="boss@company.com",
+            to_addr="me@company.com",
+            has_attachments=True,
+        )
+    ]
     _setup_db_returning_rows(mock_life_os, rows)
 
     response = client.get("/api/dashboard/feed?topic=email")
@@ -249,26 +270,28 @@ def test_email_events_metadata_includes_from_and_subject(mock_marketing, mock_li
 def test_notifications_not_duplicated_by_email_events(mock_marketing, mock_life_os, client):
     """When email notifications exist, matching events are deduplicated."""
     # Set up 2 email notifications
-    mock_life_os.notification_manager.get_pending = Mock(return_value=[
-        {
-            "id": "notif-1",
-            "domain": "email",
-            "title": "Email from Alice",
-            "body": "Hello",
-            "priority": "normal",
-            "created_at": "2026-03-03T10:00:00Z",
-            "source_event_id": "evt-1",
-        },
-        {
-            "id": "notif-2",
-            "domain": "email",
-            "title": "Email from Bob",
-            "body": "Hey",
-            "priority": "normal",
-            "created_at": "2026-03-03T09:00:00Z",
-            "source_event_id": "evt-2",
-        },
-    ])
+    mock_life_os.notification_manager.get_pending = Mock(
+        return_value=[
+            {
+                "id": "notif-1",
+                "domain": "email",
+                "title": "Email from Alice",
+                "body": "Hello",
+                "priority": "normal",
+                "created_at": "2026-03-03T10:00:00Z",
+                "source_event_id": "evt-1",
+            },
+            {
+                "id": "notif-2",
+                "domain": "email",
+                "title": "Email from Bob",
+                "body": "Hey",
+                "priority": "normal",
+                "created_at": "2026-03-03T09:00:00Z",
+                "source_event_id": "evt-2",
+            },
+        ]
+    )
 
     # Email events in DB include the same events that triggered notifications
     email_rows = [
@@ -334,10 +357,7 @@ def test_email_body_truncated_to_300_chars(mock_marketing, mock_life_os, client)
 @patch("services.signal_extractor.marketing_filter.is_marketing_or_noreply", return_value=False)
 def test_message_events_returned_when_no_notifications(mock_marketing, mock_life_os, client):
     """With 0 message notifications and message events in DB, feed returns message items."""
-    msg_rows = [
-        _make_message_row(f"msg-{i}", contact=f"Contact {i}")
-        for i in range(3)
-    ]
+    msg_rows = [_make_message_row(f"msg-{i}", contact=f"Contact {i}") for i in range(3)]
     _setup_db_returning_rows(mock_life_os, msg_rows)
 
     response = client.get("/api/dashboard/feed?topic=messages")
@@ -351,13 +371,15 @@ def test_message_events_returned_when_no_notifications(mock_marketing, mock_life
 @patch("services.signal_extractor.marketing_filter.is_marketing_or_noreply", return_value=False)
 def test_message_events_include_channel_metadata(mock_marketing, mock_life_os, client):
     """Message event items include correct channel and contact metadata."""
-    rows = [_make_message_row(
-        "msg-1",
-        contact="Alice",
-        body="Hey, want to grab lunch?",
-        channel="signal",
-        from_addr="alice@signal.org",
-    )]
+    rows = [
+        _make_message_row(
+            "msg-1",
+            contact="Alice",
+            body="Hey, want to grab lunch?",
+            channel="signal",
+            from_addr="alice@signal.org",
+        )
+    ]
     _setup_db_returning_rows(mock_life_os, rows)
 
     response = client.get("/api/dashboard/feed?topic=messages")
@@ -393,9 +415,7 @@ def test_marketing_emails_filtered_out(mock_marketing, mock_life_os, client):
 @patch("services.signal_extractor.marketing_filter.is_marketing_or_noreply", return_value=False)
 def test_email_feed_db_error_handled_gracefully(mock_marketing, mock_life_os, client):
     """If the events DB query raises, the endpoint still returns 200."""
-    mock_life_os.db.get_connection = Mock(
-        side_effect=RuntimeError("events DB unavailable")
-    )
+    mock_life_os.db.get_connection = Mock(side_effect=RuntimeError("events DB unavailable"))
 
     response = client.get("/api/dashboard/feed?topic=email")
     assert response.status_code == 200
@@ -408,13 +428,15 @@ def test_email_feed_db_error_handled_gracefully(mock_marketing, mock_life_os, cl
 @patch("services.signal_extractor.marketing_filter.is_marketing_or_noreply", return_value=False)
 def test_email_no_subject_fallback(mock_marketing, mock_life_os, client):
     """Emails with no subject field display a fallback title."""
-    payload = json.dumps({
-        "from_address": "alice@example.com",
-        "from_name": "Alice",
-        "to_addresses": ["user@example.com"],
-        "snippet": "Check this out",
-        "timestamp": "2026-03-03T10:00:00Z",
-    })
+    payload = json.dumps(
+        {
+            "from_address": "alice@example.com",
+            "from_name": "Alice",
+            "to_addresses": ["user@example.com"],
+            "snippet": "Check this out",
+            "timestamp": "2026-03-03T10:00:00Z",
+        }
+    )
     rows = [{"id": "evt-no-subj", "payload": payload, "timestamp": "2026-03-03T10:00:00Z"}]
     _setup_db_returning_rows(mock_life_os, rows)
 

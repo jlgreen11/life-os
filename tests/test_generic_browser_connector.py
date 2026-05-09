@@ -31,6 +31,7 @@ from connectors.browser.generic import GenericBrowserConnector, create_browser_c
 # Test Fixtures
 # ===========================================================================
 
+
 @pytest.fixture
 def mock_browser_engine():
     """Mock BrowserEngine with page navigation and JS evaluation."""
@@ -97,19 +98,22 @@ def login_required_config():
 def generic_connector(event_bus, db, basic_config, mock_browser_engine, mock_credential_vault):
     """GenericBrowserConnector instance with mocked dependencies."""
     connector = GenericBrowserConnector(
-        event_bus, db, basic_config,
+        event_bus,
+        db,
+        basic_config,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
 
     # Initialize connector state row (normally done by BaseConnector.start())
     from datetime import datetime, timezone
+
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT OR IGNORE INTO connector_state
                (connector_id, status, last_sync, error_count, sync_cursor, updated_at)
                VALUES (?, 'inactive', NULL, 0, NULL, ?)""",
-            (connector.CONNECTOR_ID, datetime.now(timezone.utc).isoformat())
+            (connector.CONNECTOR_ID, datetime.now(timezone.utc).isoformat()),
         )
 
     return connector
@@ -119,11 +123,16 @@ def generic_connector(event_bus, db, basic_config, mock_browser_engine, mock_cre
 # 1. Initialization & Configuration Override
 # ===========================================================================
 
-def test_initialization_overrides_class_constants_from_config(event_bus, db, basic_config, mock_browser_engine, mock_credential_vault):
+
+def test_initialization_overrides_class_constants_from_config(
+    event_bus, db, basic_config, mock_browser_engine, mock_credential_vault
+):
     """CONNECTOR_ID, DISPLAY_NAME, SITE_ID, LOGIN_URL, and SYNC_INTERVAL
     are set from config BEFORE BaseConnector.__init__ runs."""
     connector = GenericBrowserConnector(
-        event_bus, db, basic_config,
+        event_bus,
+        db,
+        basic_config,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -148,10 +157,14 @@ def test_initialization_extracts_feed_url_and_selectors(generic_connector):
     assert generic_connector._max_items == 30
 
 
-def test_initialization_detects_login_required(event_bus, db, login_required_config, mock_browser_engine, mock_credential_vault):
+def test_initialization_detects_login_required(
+    event_bus, db, login_required_config, mock_browser_engine, mock_credential_vault
+):
     """If login_url is present in config, _requires_login is set to True."""
     connector = GenericBrowserConnector(
-        event_bus, db, login_required_config,
+        event_bus,
+        db,
+        login_required_config,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -167,7 +180,9 @@ def test_initialization_defaults_for_missing_config(event_bus, db, mock_browser_
     }
 
     connector = GenericBrowserConnector(
-        event_bus, db, minimal_config,
+        event_bus,
+        db,
+        minimal_config,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -183,10 +198,15 @@ def test_initialization_defaults_for_missing_config(event_bus, db, mock_browser_
 # 2. Login Selector Customization
 # ===========================================================================
 
-def test_get_login_selectors_returns_custom_selectors_when_provided(event_bus, db, login_required_config, mock_browser_engine, mock_credential_vault):
+
+def test_get_login_selectors_returns_custom_selectors_when_provided(
+    event_bus, db, login_required_config, mock_browser_engine, mock_credential_vault
+):
     """Custom login selectors from config override BaseConnector defaults."""
     connector = GenericBrowserConnector(
-        event_bus, db, login_required_config,
+        event_bus,
+        db,
+        login_required_config,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -210,6 +230,7 @@ def test_get_login_selectors_falls_back_to_base_when_not_provided(generic_connec
 # 3. Authentication Modes
 # ===========================================================================
 
+
 @pytest.mark.asyncio
 async def test_authenticate_starts_browser_for_public_sites(generic_connector):
     """Public sites (no login_url) start browser and create context without login flow."""
@@ -222,10 +243,14 @@ async def test_authenticate_starts_browser_for_public_sites(generic_connector):
 
 
 @pytest.mark.asyncio
-async def test_authenticate_delegates_to_base_for_login_sites(event_bus, db, login_required_config, mock_browser_engine, mock_credential_vault):
+async def test_authenticate_delegates_to_base_for_login_sites(
+    event_bus, db, login_required_config, mock_browser_engine, mock_credential_vault
+):
     """Sites requiring login delegate to BaseConnector.authenticate()."""
     connector = GenericBrowserConnector(
-        event_bus, db, login_required_config,
+        event_bus,
+        db,
+        login_required_config,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -244,12 +269,10 @@ async def test_authenticate_delegates_to_base_for_login_sites(event_bus, db, log
 # 4. CSS Selector Extraction (Text vs. Attribute)
 # ===========================================================================
 
+
 def test_build_extraction_js_extracts_text_content_by_default(generic_connector):
     """Selectors without @ extract textContent from matched elements."""
-    js_code = generic_connector._build_extraction_js(
-        ".post",
-        {"title": ".post-title", "author": ".author-name"}
-    )
+    js_code = generic_connector._build_extraction_js(".post", {"title": ".post-title", "author": ".author-name"})
 
     assert "textContent" in js_code
     assert 'querySelector(".post-title")' in js_code
@@ -259,8 +282,7 @@ def test_build_extraction_js_extracts_text_content_by_default(generic_connector)
 def test_build_extraction_js_extracts_attributes_with_at_syntax(generic_connector):
     """Selectors with @ syntax (e.g., 'a@href') extract the specified attribute."""
     js_code = generic_connector._build_extraction_js(
-        ".link-item",
-        {"url": "a@href", "image": "img@src", "data_id": "div@data-id"}
+        ".link-item", {"url": "a@href", "image": "img@src", "data_id": "div@data-id"}
     )
 
     assert 'getAttribute("href")' in js_code
@@ -275,25 +297,22 @@ def test_build_extraction_js_handles_mixed_selectors(generic_connector):
     js_code = generic_connector._build_extraction_js(
         ".item",
         {
-            "title": ".title",           # text
-            "url": "a.link@href",        # attribute
-            "score": ".score",           # text
-            "thumbnail": "img@src",      # attribute
-        }
+            "title": ".title",  # text
+            "url": "a.link@href",  # attribute
+            "score": ".score",  # text
+            "thumbnail": "img@src",  # attribute
+        },
     )
 
     assert 'querySelector(".title")' in js_code
-    assert 'textContent' in js_code
+    assert "textContent" in js_code
     assert 'getAttribute("href")' in js_code
     assert 'getAttribute("src")' in js_code
 
 
 def test_build_extraction_js_produces_valid_javascript(generic_connector):
     """Generated JS is syntactically valid (no extra commas, brackets balanced)."""
-    js_code = generic_connector._build_extraction_js(
-        ".entry",
-        {"title": ".entry-title", "link": "a@href"}
-    )
+    js_code = generic_connector._build_extraction_js(".entry", {"title": ".entry-title", "link": "a@href"})
 
     # Check it's wrapped in an IIFE
     assert js_code.strip().startswith("() => {")
@@ -305,22 +324,17 @@ def test_build_extraction_js_produces_valid_javascript(generic_connector):
 # 5. JavaScript Code Generation
 # ===========================================================================
 
+
 def test_build_extraction_js_filters_empty_items(generic_connector):
     """Generated JS only includes items with at least one non-empty field."""
-    js_code = generic_connector._build_extraction_js(
-        ".post",
-        {"title": ".title", "content": ".content"}
-    )
+    js_code = generic_connector._build_extraction_js(".post", {"title": ".title", "content": ".content"})
 
     assert "Object.values(extracted).some(v => v && v.trim())" in js_code
 
 
 def test_build_extraction_js_handles_element_not_found(generic_connector):
     """Generated JS returns empty string if querySelector returns null."""
-    js_code = generic_connector._build_extraction_js(
-        ".item",
-        {"title": ".missing-selector"}
-    )
+    js_code = generic_connector._build_extraction_js(".item", {"title": ".missing-selector"})
 
     # Check for null-safe navigation
     assert 'el ? el.textContent?.trim() || "" : ""' in js_code or "el ?" in js_code
@@ -329,6 +343,7 @@ def test_build_extraction_js_handles_element_not_found(generic_connector):
 # ===========================================================================
 # 6. Hash-Based Deduplication
 # ===========================================================================
+
 
 def test_get_seen_hashes_returns_empty_set_when_no_cursor(generic_connector):
     """If no sync cursor exists, _get_seen_hashes returns an empty set."""
@@ -352,11 +367,9 @@ def test_update_seen_hashes_persists_to_sync_cursor(generic_connector, db):
     generic_connector._update_seen_hashes(["new_hash_1", "new_hash_2"])
 
     import json
+
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?",
-            ("hackernews",)
-        ).fetchone()
+        row = conn.execute("SELECT sync_cursor FROM connector_state WHERE connector_id = ?", ("hackernews",)).fetchone()
 
         if row and row["sync_cursor"]:
             hashes = set(json.loads(row["sync_cursor"]))
@@ -369,6 +382,7 @@ def test_update_seen_hashes_caps_at_2000_entries(generic_connector):
     # Seed with 1950 existing hashes
     existing = [f"hash_{i}" for i in range(1950)]
     import json
+
     generic_connector.set_sync_cursor(json.dumps(existing))
 
     # Add 100 more
@@ -412,6 +426,7 @@ def test_hash_deduplication_skips_already_seen_items(generic_connector):
 # 7. Item Filtering
 # ===========================================================================
 
+
 @pytest.mark.asyncio
 async def test_browser_sync_respects_max_items_limit(generic_connector):
     """Only the first max_items are processed, even if more are extracted."""
@@ -443,6 +458,7 @@ async def test_browser_sync_skips_items_with_no_non_empty_fields(generic_connect
 # ===========================================================================
 # 8. Event Publishing
 # ===========================================================================
+
 
 @pytest.mark.asyncio
 async def test_browser_sync_publishes_events_with_correct_type(generic_connector):
@@ -537,7 +553,10 @@ async def test_browser_sync_publishes_events_with_metadata(generic_connector):
 # 9. Factory Pattern
 # ===========================================================================
 
-def test_create_browser_connectors_creates_multiple_connectors(event_bus, db, mock_browser_engine, mock_credential_vault):
+
+def test_create_browser_connectors_creates_multiple_connectors(
+    event_bus, db, mock_browser_engine, mock_credential_vault
+):
     """Factory creates one connector per config entry."""
     configs = [
         {
@@ -555,7 +574,9 @@ def test_create_browser_connectors_creates_multiple_connectors(event_bus, db, mo
     ]
 
     connectors = create_browser_connectors(
-        event_bus, db, configs,
+        event_bus,
+        db,
+        configs,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -573,7 +594,9 @@ def test_create_browser_connectors_shares_browser_engine(event_bus, db, mock_bro
     ]
 
     connectors = create_browser_connectors(
-        event_bus, db, configs,
+        event_bus,
+        db,
+        configs,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -590,7 +613,9 @@ def test_create_browser_connectors_shares_credential_vault(event_bus, db, mock_b
     ]
 
     connectors = create_browser_connectors(
-        event_bus, db, configs,
+        event_bus,
+        db,
+        configs,
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -602,7 +627,9 @@ def test_create_browser_connectors_shares_credential_vault(event_bus, db, mock_b
 def test_create_browser_connectors_handles_empty_config_list(event_bus, db, mock_browser_engine, mock_credential_vault):
     """Factory returns empty list when given no configs."""
     connectors = create_browser_connectors(
-        event_bus, db, [],
+        event_bus,
+        db,
+        [],
         browser_engine=mock_browser_engine,
         credential_vault=mock_credential_vault,
     )
@@ -613,6 +640,7 @@ def test_create_browser_connectors_handles_empty_config_list(event_bus, db, mock
 # ===========================================================================
 # 10. Edge Cases
 # ===========================================================================
+
 
 @pytest.mark.asyncio
 async def test_browser_sync_handles_page_evaluation_failure(generic_connector):
@@ -677,7 +705,7 @@ def test_build_extraction_js_handles_selector_with_multiple_at_signs(generic_con
     """Selector with multiple @ signs uses the last one as attribute delimiter."""
     js_code = generic_connector._build_extraction_js(
         ".item",
-        {"special": "a.link@data-track@value"}  # Edge case: attribute name contains @
+        {"special": "a.link@data-track@value"},  # Edge case: attribute name contains @
     )
 
     # Should split on the LAST @
@@ -715,19 +743,19 @@ async def test_browser_sync_navigates_to_feed_url_with_rate_limiting(generic_con
 
     await generic_connector.browser_sync(mock_page, mock_human, mock_interactor)
 
-    generic_connector.navigate_with_rate_limit.assert_called_once_with(
-        mock_page, "https://news.ycombinator.com/"
-    )
+    generic_connector.navigate_with_rate_limit.assert_called_once_with(mock_page, "https://news.ycombinator.com/")
 
 
 @pytest.mark.asyncio
 async def test_browser_sync_updates_seen_hashes_after_processing_new_items(generic_connector):
     """After processing new items, their hashes are persisted to sync cursor."""
     mock_page = AsyncMock()
-    mock_page.evaluate = AsyncMock(return_value=[
-        {"title": "New Item 1", "url": "http://example.com/1"},
-        {"title": "New Item 2", "url": "http://example.com/2"},
-    ])
+    mock_page.evaluate = AsyncMock(
+        return_value=[
+            {"title": "New Item 1", "url": "http://example.com/1"},
+            {"title": "New Item 2", "url": "http://example.com/2"},
+        ]
+    )
     mock_human = AsyncMock()
     mock_interactor = Mock()
 
@@ -752,8 +780,7 @@ def test_get_seen_hashes_handles_invalid_json_in_cursor(generic_connector, db):
     """If sync cursor contains invalid JSON, _get_seen_hashes returns empty set."""
     with db.get_connection("state") as conn:
         conn.execute(
-            "UPDATE connector_state SET sync_cursor = ? WHERE connector_id = ?",
-            ("not valid json", "hackernews")
+            "UPDATE connector_state SET sync_cursor = ? WHERE connector_id = ?", ("not valid json", "hackernews")
         )
 
     seen = generic_connector._get_seen_hashes()

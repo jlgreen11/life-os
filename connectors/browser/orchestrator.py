@@ -76,9 +76,7 @@ class BrowserOrchestrator:
         # sites can be browsed concurrently via an asyncio semaphore.
         self._last_global_request = 0
         self._global_rate_limit = self.config.get("global_rate_limit", 2.0)
-        self._semaphore = asyncio.Semaphore(
-            self.config.get("max_concurrent_contexts", 3)
-        )
+        self._semaphore = asyncio.Semaphore(self.config.get("max_concurrent_contexts", 3))
 
     @property
     def is_enabled(self) -> bool:
@@ -102,9 +100,7 @@ class BrowserOrchestrator:
         logger.info("Chromium launched (stealth mode)")
 
         # Load credentials
-        self._vault = CredentialVault(
-            vault_path=str(Path(self._data_dir) / "credentials")
-        )
+        self._vault = CredentialVault(vault_path=str(Path(self._data_dir) / "credentials"))
 
         cred_source = self.config.get("credential_source", "manual")
 
@@ -134,25 +130,37 @@ class BrowserOrchestrator:
         # appears in the config, and receives the shared engine + vault.
         if "whatsapp" in connector_configs:
             from connectors.browser.whatsapp import WhatsAppConnector
+
             c = WhatsAppConnector(
-                self.event_bus, self.db, connector_configs["whatsapp"],
-                browser_engine=self._engine, credential_vault=self._vault,
+                self.event_bus,
+                self.db,
+                connector_configs["whatsapp"],
+                browser_engine=self._engine,
+                credential_vault=self._vault,
             )
             self._connectors.append(c)
 
         if "youtube" in connector_configs:
             from connectors.browser.youtube import YouTubeConnector
+
             c = YouTubeConnector(
-                self.event_bus, self.db, connector_configs["youtube"],
-                browser_engine=self._engine, credential_vault=self._vault,
+                self.event_bus,
+                self.db,
+                connector_configs["youtube"],
+                browser_engine=self._engine,
+                credential_vault=self._vault,
             )
             self._connectors.append(c)
 
         if "reddit" in connector_configs:
             from connectors.browser.reddit import RedditConnector
+
             c = RedditConnector(
-                self.event_bus, self.db, connector_configs["reddit"],
-                browser_engine=self._engine, credential_vault=self._vault,
+                self.event_bus,
+                self.db,
+                connector_configs["reddit"],
+                browser_engine=self._engine,
+                credential_vault=self._vault,
             )
             self._connectors.append(c)
 
@@ -162,8 +170,11 @@ class BrowserOrchestrator:
         generic_configs = connector_configs.get("generic_sources", [])
         if generic_configs:
             generics = create_browser_connectors(
-                self.event_bus, self.db, generic_configs,
-                browser_engine=self._engine, credential_vault=self._vault,
+                self.event_bus,
+                self.db,
+                generic_configs,
+                browser_engine=self._engine,
+                credential_vault=self._vault,
             )
             self._connectors.extend(generics)
 
@@ -232,10 +243,11 @@ class BrowserOrchestrator:
 # API Fallback Wrapper
 # ===========================================================================
 
+
 class APIFallbackWrapper:
     """
     Wraps an existing API-based connector and adds browser fallback.
-    
+
     Usage:
         proton_connector = ProtonMailConnector(...)
         wrapped = APIFallbackWrapper(
@@ -247,10 +259,13 @@ class APIFallbackWrapper:
         # Now `wrapped` tries API first, falls back to browser
     """
 
-    def __init__(self, api_connector: Any,
-                 browser_engine: BrowserEngine,
-                 credential_vault: CredentialVault,
-                 fallback_config: dict):
+    def __init__(
+        self,
+        api_connector: Any,
+        browser_engine: BrowserEngine,
+        credential_vault: CredentialVault,
+        fallback_config: dict,
+    ):
         # Wraps an existing API connector and adds browser fallback on failure
         self.api_connector = api_connector
         self._browser_engine = browser_engine

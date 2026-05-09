@@ -183,9 +183,7 @@ class HomeAssistantConnector(BaseConnector):
                         # ---- Event Classification ----
                         # Map the raw state transition to a semantic event type
                         # (e.g., "home.arrived") and priority level.
-                        event_type, priority = self._classify_state_change(
-                            entity_id, last_state, current_state
-                        )
+                        event_type, priority = self._classify_state_change(entity_id, last_state, current_state)
 
                         payload = {
                             "entity_id": entity_id,
@@ -198,7 +196,9 @@ class HomeAssistantConnector(BaseConnector):
                         }
 
                         await self.publish_event(
-                            event_type, payload, priority=priority,
+                            event_type,
+                            payload,
+                            priority=priority,
                         )
                         count += 1
 
@@ -225,8 +225,7 @@ class HomeAssistantConnector(BaseConnector):
               any HA service by specifying ``domain``, ``service``, and ``data``.
         """
         async with httpx.AsyncClient(timeout=10) as client:
-            headers = {"Authorization": f"Bearer {self._token}",
-                       "Content-Type": "application/json"}
+            headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
 
             if action == "turn_on":
                 # POST to the generic turn_on service; HA resolves the correct
@@ -271,8 +270,7 @@ class HomeAssistantConnector(BaseConnector):
                     headers={"Authorization": f"Bearer {self._token}"},
                 )
                 resp.raise_for_status()
-                return {"status": "ok", "connector": self.CONNECTOR_ID,
-                        "entities_watched": len(self._watched)}
+                return {"status": "ok", "connector": self.CONNECTOR_ID, "entities_watched": len(self._watched)}
         except Exception as e:
             return {"status": "error", "details": str(e)}
 

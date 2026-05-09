@@ -20,6 +20,7 @@ from services.conflict_detector import ConflictDetector
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _future_iso(hours_from_now: float) -> str:
     """Return an ISO 8601 UTC timestamp *hours_from_now* in the future."""
     return (datetime.now(timezone.utc) + timedelta(hours=hours_from_now)).isoformat()
@@ -63,7 +64,9 @@ def _insert_calendar_event(
     return eid
 
 
-def _insert_published_conflict(db, id_a: str, id_b: str, source: str = "conflict_detector", detected_at: str | None = None):
+def _insert_published_conflict(
+    db, id_a: str, id_b: str, source: str = "conflict_detector", detected_at: str | None = None
+):
     """Directly insert a row into the published_conflicts table."""
     ids = sorted([id_a, id_b])
     ts = detected_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -78,9 +81,7 @@ def _count_published_conflicts(db, source: str | None = None) -> int:
     """Count rows in the published_conflicts table, optionally filtered by source."""
     with db.get_connection("state") as conn:
         if source:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM published_conflicts WHERE source = ?", (source,)
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM published_conflicts WHERE source = ?", (source,)).fetchone()
         else:
             row = conn.execute("SELECT COUNT(*) FROM published_conflicts").fetchone()
     return row[0]
@@ -89,6 +90,7 @@ def _count_published_conflicts(db, source: str | None = None) -> int:
 # ---------------------------------------------------------------------------
 # ConflictDetector persistence tests
 # ---------------------------------------------------------------------------
+
 
 class TestConflictDetectorPersistence:
     """Tests for ConflictDetector persisting dedup state to state.db."""
@@ -199,6 +201,7 @@ class TestConflictDetectorPersistence:
 # CalDAV connector persistence tests
 # ---------------------------------------------------------------------------
 
+
 class TestCalDAVConnectorPersistence:
     """Tests for CalDAVConnector persisting conflict dedup state to state.db."""
 
@@ -229,9 +232,7 @@ class TestCalDAVConnectorPersistence:
         assert _count_published_conflicts(db, source="caldav") == 1
 
         with db.get_connection("state") as conn:
-            row = conn.execute(
-                "SELECT event_id_a, event_id_b, source FROM published_conflicts"
-            ).fetchone()
+            row = conn.execute("SELECT event_id_a, event_id_b, source FROM published_conflicts").fetchone()
             # Should be stored in sorted order
             assert row[0] == "evt-x"
             assert row[1] == "evt-y"

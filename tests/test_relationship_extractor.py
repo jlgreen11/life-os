@@ -364,10 +364,7 @@ class TestRelationshipExtractor:
         # Verify template was created (outbound direction)
         template_id = hashlib.sha256(b"alice@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT greeting FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT greeting FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         assert row is not None
         # Extractor captures the greeting pattern, which may vary slightly
@@ -390,10 +387,7 @@ class TestRelationshipExtractor:
 
         template_id = hashlib.sha256(b"bob@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT greeting FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT greeting FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         # Extractor captures the greeting pattern, which may vary slightly
         assert row["greeting"].startswith("Dear")
@@ -415,10 +409,7 @@ class TestRelationshipExtractor:
 
         template_id = hashlib.sha256(b"charlie@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT closing FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT closing FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         assert row["closing"] == "Best regards"
 
@@ -439,10 +430,7 @@ class TestRelationshipExtractor:
 
         template_id = hashlib.sha256(b"dave@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT closing FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT closing FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         # Extractor captures the closing pattern
         assert row["closing"].startswith("Thanks")
@@ -470,10 +458,7 @@ class TestRelationshipExtractor:
 
         template_id = hashlib.sha256(b"formal@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT formality FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT formality FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         # Formal message should have high formality score (> 0.7)
         assert row["formality"] > 0.7
@@ -500,10 +485,7 @@ class TestRelationshipExtractor:
 
         template_id = hashlib.sha256(b"casual@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT formality FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT formality FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         # Casual message should have low formality score (< 0.4)
         assert row["formality"] < 0.4
@@ -525,10 +507,7 @@ class TestRelationshipExtractor:
 
         template_id = hashlib.sha256(b"emoji@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT uses_emoji FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT uses_emoji FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         assert row["uses_emoji"] == 1  # SQLite stores boolean as int
 
@@ -555,8 +534,7 @@ class TestRelationshipExtractor:
         template_id = hashlib.sha256(b"evolving@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row1 = conn.execute(
-                "SELECT formality, samples_analyzed FROM communication_templates WHERE id = ?",
-                (template_id,)
+                "SELECT formality, samples_analyzed FROM communication_templates WHERE id = ?", (template_id,)
             ).fetchone()
 
         initial_formality = row1["formality"]
@@ -577,8 +555,7 @@ class TestRelationshipExtractor:
 
         with extractor.db.get_connection("user_model") as conn:
             row2 = conn.execute(
-                "SELECT formality, samples_analyzed FROM communication_templates WHERE id = ?",
-                (template_id,)
+                "SELECT formality, samples_analyzed FROM communication_templates WHERE id = ?", (template_id,)
             ).fetchone()
 
         # Formality should have decreased (blended with casual message)
@@ -616,11 +593,11 @@ class TestRelationshipExtractor:
         template_id = hashlib.sha256(b"phrases@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
             row = conn.execute(
-                "SELECT common_phrases FROM communication_templates WHERE id = ?",
-                (template_id,)
+                "SELECT common_phrases FROM communication_templates WHERE id = ?", (template_id,)
             ).fetchone()
 
         import json
+
         phrases = json.loads(row["common_phrases"])
 
         # "thanks" and "project" should appear in top phrases (appeared twice)
@@ -645,10 +622,7 @@ class TestRelationshipExtractor:
         # Verify no template was created
         template_id = hashlib.sha256(b"short@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row = conn.execute(
-                "SELECT id FROM communication_templates WHERE id = ?",
-                (template_id,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM communication_templates WHERE id = ?", (template_id,)).fetchone()
 
         assert row is None
 
@@ -670,10 +644,7 @@ class TestRelationshipExtractor:
 
         template_id1 = hashlib.sha256(b"fallback1@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row1 = conn.execute(
-                "SELECT greeting FROM communication_templates WHERE id = ?",
-                (template_id1,)
-            ).fetchone()
+            row1 = conn.execute("SELECT greeting FROM communication_templates WHERE id = ?", (template_id1,)).fetchone()
 
         # Should extract from body_plain (not HTML)
         assert row1["greeting"].startswith("Hi")
@@ -693,10 +664,7 @@ class TestRelationshipExtractor:
 
         template_id2 = hashlib.sha256(b"fallback2@example.com:email:out").hexdigest()[:16]
         with extractor.db.get_connection("user_model") as conn:
-            row2 = conn.execute(
-                "SELECT greeting FROM communication_templates WHERE id = ?",
-                (template_id2,)
-            ).fetchone()
+            row2 = conn.execute("SELECT greeting FROM communication_templates WHERE id = ?", (template_id2,)).fetchone()
 
         # Should fall back to body field
         assert row2["greeting"].startswith("Hey")
@@ -735,7 +703,7 @@ class TestRelationshipExtractor:
         with extractor.db.get_connection("user_model") as conn:
             count = conn.execute(
                 "SELECT COUNT(*) as cnt FROM communication_templates WHERE id IN (?, ?)",
-                (template_id_email, template_id_slack)
+                (template_id_email, template_id_slack),
             ).fetchone()
 
         assert count["cnt"] == 2

@@ -289,9 +289,7 @@ class TestRestoreFromBackup:
             # Verify the archive contains the pre-restore data (including "modified_data")
             archive_conn = sqlite3.connect(str(archive_path))
             archive_conn.row_factory = sqlite3.Row
-            row = archive_conn.execute(
-                "SELECT value FROM semantic_facts WHERE key = 'modified_data'"
-            ).fetchone()
+            row = archive_conn.execute("SELECT value FROM semantic_facts WHERE key = 'modified_data'").fetchone()
             assert row is not None
             assert row["value"] == "modified"
             archive_conn.close()

@@ -39,53 +39,59 @@ def test_email_workflow_detection_with_low_response_rate(db, user_model_store, e
     # Create 100 marketing emails with no responses
     base_time = datetime.now(timezone.utc) - timedelta(days=15)
     for i in range(100):
-        event_store.store_event({
-            "id": f"marketing-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i)).isoformat(),
-            "priority": 3,
-            "payload": {
-                "from_address": "marketing@example.com",
-                "subject": f"Special Offer {i}",
-                "body": "Buy now!",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"marketing-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(hours=i)).isoformat(),
+                "priority": 3,
+                "payload": {
+                    "from_address": "marketing@example.com",
+                    "subject": f"Special Offer {i}",
+                    "body": "Buy now!",
+                },
+                "metadata": {},
+            }
+        )
 
     # Create 10 boss emails with 5 responses
     for i in range(10):
         receive_time = base_time + timedelta(days=i)
-        event_store.store_event({
-            "id": f"boss-email-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": receive_time.isoformat(),
-            "priority": 1,
-            "payload": {
-                "from_address": "boss@company.com",
-                "subject": f"Project Update {i}",
-                "body": "Please review the attached report.",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"boss-email-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": receive_time.isoformat(),
+                "priority": 1,
+                "payload": {
+                    "from_address": "boss@company.com",
+                    "subject": f"Project Update {i}",
+                    "body": "Please review the attached report.",
+                },
+                "metadata": {},
+            }
+        )
 
         # Respond to every other email (50% response rate)
         if i % 2 == 0:
             response_time = receive_time + timedelta(hours=1)
-            event_store.store_event({
-                "id": f"boss-response-{i}",
-                "type": "email.sent",
-                "source": "gmail",
-                "timestamp": response_time.isoformat(),
-                "priority": 2,
-                "payload": {
-                    "to_addresses": ["boss@company.com"],
-                    "subject": f"Re: Project Update {i}",
-                    "body": "Reviewed and approved.",
-                },
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": f"boss-response-{i}",
+                    "type": "email.sent",
+                    "source": "gmail",
+                    "timestamp": response_time.isoformat(),
+                    "priority": 2,
+                    "payload": {
+                        "to_addresses": ["boss@company.com"],
+                        "subject": f"Re: Project Update {i}",
+                        "body": "Reviewed and approved.",
+                    },
+                    "metadata": {},
+                }
+            )
 
     # Run detection
     workflows = detector.detect_workflows(lookback_days=30)
@@ -118,35 +124,39 @@ def test_workflow_detection_filters_pure_noise(db, user_model_store, event_store
 
     # 100 emails from sender A
     for i in range(100):
-        event_store.store_event({
-            "id": f"email-a-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i * 6)).isoformat(),  # Every 6 hours
-            "priority": 3,
-            "payload": {
-                "from_address": "sender-a@example.com",
-                "subject": f"Newsletter {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"email-a-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(hours=i * 6)).isoformat(),  # Every 6 hours
+                "priority": 3,
+                "payload": {
+                    "from_address": "sender-a@example.com",
+                    "subject": f"Newsletter {i}",
+                },
+                "metadata": {},
+            }
+        )
 
     # 3 random sent emails NOT correlated with sender A (sent to different recipient)
     for i in range(3):
         # Send these at times that DON'T align with the received emails
         random_time = base_time + timedelta(hours=i * 100 + 10)  # Every 100h, offset by 10h
-        event_store.store_event({
-            "id": f"random-sent-{i}",
-            "type": "email.sent",
-            "source": "gmail",
-            "timestamp": random_time.isoformat(),
-            "priority": 2,
-            "payload": {
-                "to_addresses": ["unrelated@example.com"],  # Different recipient
-                "subject": "Unrelated message",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"random-sent-{i}",
+                "type": "email.sent",
+                "source": "gmail",
+                "timestamp": random_time.isoformat(),
+                "priority": 2,
+                "payload": {
+                    "to_addresses": ["unrelated@example.com"],  # Different recipient
+                    "subject": "Unrelated message",
+                },
+                "metadata": {},
+            }
+        )
 
     # Run detection
     workflows = detector.detect_workflows(lookback_days=30)
@@ -174,97 +184,109 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
 
     # 800 marketing emails (no responses)
     for i in range(800):
-        event_store.store_event({
-            "id": f"marketing-bulk-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i * 0.5)).isoformat(),
-            "priority": 3,
-            "payload": {
-                "from_address": f"promo{i % 20}@marketing.com",  # 20 different senders
-                "subject": f"Deal of the Day {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"marketing-bulk-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(hours=i * 0.5)).isoformat(),
+                "priority": 3,
+                "payload": {
+                    "from_address": f"promo{i % 20}@marketing.com",  # 20 different senders
+                    "subject": f"Deal of the Day {i}",
+                },
+                "metadata": {},
+            }
+        )
 
     # 150 newsletter emails (no responses)
     for i in range(150):
-        event_store.store_event({
-            "id": f"newsletter-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(days=i * 0.1)).isoformat(),
-            "priority": 3,
-            "payload": {
-                "from_address": "newsletter@substack.com",
-                "subject": f"Weekly Digest {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"newsletter-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(days=i * 0.1)).isoformat(),
+                "priority": 3,
+                "payload": {
+                    "from_address": "newsletter@substack.com",
+                    "subject": f"Weekly Digest {i}",
+                },
+                "metadata": {},
+            }
+        )
 
     # 40 work emails, respond to 8 of them (20% response rate)
     for i in range(40):
         receive_time = base_time + timedelta(days=i * 0.5)
-        event_store.store_event({
-            "id": f"work-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": receive_time.isoformat(),
-            "priority": 1,
-            "payload": {
-                "from_address": "colleague@work.com",
-                "subject": f"Work Item {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"work-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": receive_time.isoformat(),
+                "priority": 1,
+                "payload": {
+                    "from_address": "colleague@work.com",
+                    "subject": f"Work Item {i}",
+                },
+                "metadata": {},
+            }
+        )
 
         # Respond to 20% (every 5th email)
         if i % 5 == 0:
             response_time = receive_time + timedelta(hours=2)
-            event_store.store_event({
-                "id": f"work-response-{i}",
-                "type": "email.sent",
-                "source": "gmail",
-                "timestamp": response_time.isoformat(),
-                "priority": 2,
-                "payload": {
-                    "to_addresses": ["colleague@work.com"],
-                    "subject": f"Re: Work Item {i}",
-                },
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": f"work-response-{i}",
+                    "type": "email.sent",
+                    "source": "gmail",
+                    "timestamp": response_time.isoformat(),
+                    "priority": 2,
+                    "payload": {
+                        "to_addresses": ["colleague@work.com"],
+                        "subject": f"Re: Work Item {i}",
+                    },
+                    "metadata": {},
+                }
+            )
 
     # 10 family emails, respond to 1 of them (< min_completions=2)
     for i in range(10):
         receive_time = base_time + timedelta(days=i * 2)
-        event_store.store_event({
-            "id": f"family-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": receive_time.isoformat(),
-            "priority": 1,
-            "payload": {
-                "from_address": "mom@family.com",
-                "subject": f"Family Update {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"family-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": receive_time.isoformat(),
+                "priority": 1,
+                "payload": {
+                    "from_address": "mom@family.com",
+                    "subject": f"Family Update {i}",
+                },
+                "metadata": {},
+            }
+        )
 
         # Respond to 1 email (i=0 only) — below min_completions=2
         if i == 0:
             response_time = receive_time + timedelta(hours=3)
-            event_store.store_event({
-                "id": f"family-response-{i}",
-                "type": "email.sent",
-                "source": "gmail",
-                "timestamp": response_time.isoformat(),
-                "priority": 2,
-                "payload": {
-                    "to_addresses": ["mom@family.com"],
-                    "subject": f"Re: Family Update {i}",
-                },
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": f"family-response-{i}",
+                    "type": "email.sent",
+                    "source": "gmail",
+                    "timestamp": response_time.isoformat(),
+                    "priority": 2,
+                    "payload": {
+                        "to_addresses": ["mom@family.com"],
+                        "subject": f"Re: Family Update {i}",
+                    },
+                    "metadata": {},
+                }
+            )
 
     # Total: 1000 received, 10 sent
     # With absolute count: colleague@work.com (8 completions >= 3) detected,
@@ -279,9 +301,7 @@ def test_workflow_detection_with_realistic_inbox(db, user_model_store, event_sto
 
     # mom@family.com should NOT be detected (1 completion < 2)
     family_workflows = [w for w in workflows if "mom@family.com" in w["name"]]
-    assert len(family_workflows) == 0, (
-        "Should NOT detect mom@family.com workflow (1 completion < min_completions=2)"
-    )
+    assert len(family_workflows) == 0, "Should NOT detect mom@family.com workflow (1 completion < min_completions=2)"
 
     # Marketing senders should NOT be detected (0 completions)
     marketing_workflows = [w for w in workflows if "marketing.com" in w.get("name", "")]
@@ -302,52 +322,60 @@ def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_stor
 
     # Case 1: 3 completions out of many received (0.3% rate but 3 absolute)
     for i in range(100):
-        event_store.store_event({
-            "id": f"boundary-above-recv-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i)).isoformat(),
-            "priority": 3,
-            "payload": {"from_address": "above-boundary@test.com"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"boundary-above-recv-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(hours=i)).isoformat(),
+                "priority": 3,
+                "payload": {"from_address": "above-boundary@test.com"},
+                "metadata": {},
+            }
+        )
 
     # 3 responses within time window
     for i in range(3):
-        event_store.store_event({
-            "id": f"boundary-above-resp-{i}",
-            "type": "email.sent",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(hours=i * 2 + 1)).isoformat(),
-            "priority": 2,
-            "payload": {"to_addresses": ["above-boundary@test.com"]},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"boundary-above-resp-{i}",
+                "type": "email.sent",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(hours=i * 2 + 1)).isoformat(),
+                "priority": 2,
+                "payload": {"to_addresses": ["above-boundary@test.com"]},
+                "metadata": {},
+            }
+        )
 
     # Case 2: 1 completion out of 10 received (10% rate but only 1 absolute)
     # Space received emails 1 day apart so each sent matches only 1 received
     for i in range(10):
-        event_store.store_event({
-            "id": f"boundary-below-recv-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(days=i)).isoformat(),
-            "priority": 3,
-            "payload": {"from_address": "below-boundary@test.com"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"boundary-below-recv-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(days=i)).isoformat(),
+                "priority": 3,
+                "payload": {"from_address": "below-boundary@test.com"},
+                "metadata": {},
+            }
+        )
 
     # 1 reply, 1h after a received email (within 12h gap, but only 1 match)
     for i in range(1):
-        event_store.store_event({
-            "id": f"boundary-below-resp-{i}",
-            "type": "email.sent",
-            "source": "gmail",
-            "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
-            "priority": 2,
-            "payload": {"to_addresses": ["below-boundary@test.com"]},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"boundary-below-resp-{i}",
+                "type": "email.sent",
+                "source": "gmail",
+                "timestamp": (base_time + timedelta(days=i, hours=1)).isoformat(),
+                "priority": 2,
+                "payload": {"to_addresses": ["below-boundary@test.com"]},
+                "metadata": {},
+            }
+        )
 
     workflows = detector.detect_workflows(lookback_days=30)
 
@@ -355,14 +383,11 @@ def test_workflow_absolute_count_boundary_cases(db, user_model_store, event_stor
     below_workflows = [w for w in workflows if "below-boundary@test.com" in w["name"]]
 
     # 3 completions >= min_completions → detected
-    assert len(above_workflows) >= 1, (
-        "Should detect workflow with 3 completions (>= min_completions=2)"
-    )
+    assert len(above_workflows) >= 1, "Should detect workflow with 3 completions (>= min_completions=2)"
 
     # 1 completion < min_completions → NOT detected, even with 10% success rate
     assert len(below_workflows) == 0, (
-        "Should NOT detect workflow with only 1 completion (< min_completions=2), "
-        "even though success rate is 10%"
+        "Should NOT detect workflow with only 1 completion (< min_completions=2), even though success rate is 10%"
     )
 
 
@@ -381,48 +406,54 @@ def test_multi_step_workflow_detection(db, user_model_store, event_store):
         receive_time = base_time + timedelta(days=i)
 
         # Email received
-        event_store.store_event({
-            "id": f"multistep-email-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": receive_time.isoformat(),
-            "priority": 1,
-            "payload": {
-                "from_address": "client@business.com",
-                "subject": f"Request {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"multistep-email-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": receive_time.isoformat(),
+                "priority": 1,
+                "payload": {
+                    "from_address": "client@business.com",
+                    "subject": f"Request {i}",
+                },
+                "metadata": {},
+            }
+        )
 
         # Task created 30min later
         task_time = receive_time + timedelta(minutes=30)
-        event_store.store_event({
-            "id": f"multistep-task-{i}",
-            "type": "task.created",
-            "source": "ai_extracted",
-            "timestamp": task_time.isoformat(),
-            "priority": 2,
-            "payload": {
-                "title": f"Handle Request {i}",
-                "source": "email",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"multistep-task-{i}",
+                "type": "task.created",
+                "source": "ai_extracted",
+                "timestamp": task_time.isoformat(),
+                "priority": 2,
+                "payload": {
+                    "title": f"Handle Request {i}",
+                    "source": "email",
+                },
+                "metadata": {},
+            }
+        )
 
         # Email sent 2h later
         send_time = receive_time + timedelta(hours=2)
-        event_store.store_event({
-            "id": f"multistep-response-{i}",
-            "type": "email.sent",
-            "source": "gmail",
-            "timestamp": send_time.isoformat(),
-            "priority": 2,
-            "payload": {
-                "to_addresses": ["client@business.com"],
-                "subject": f"Re: Request {i}",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"multistep-response-{i}",
+                "type": "email.sent",
+                "source": "gmail",
+                "timestamp": send_time.isoformat(),
+                "priority": 2,
+                "payload": {
+                    "to_addresses": ["client@business.com"],
+                    "subject": f"Re: Request {i}",
+                },
+                "metadata": {},
+            }
+        )
 
     workflows = detector.detect_workflows(lookback_days=30)
 
@@ -454,27 +485,31 @@ def test_workflow_storage_integration(db, user_model_store, event_store):
     # Create a simple workflow pattern (5 emails, 3 responses = 3 completions >= min)
     for i in range(5):
         receive_time = base_time + timedelta(days=i)
-        event_store.store_event({
-            "id": f"storage-email-{i}",
-            "type": "email.received",
-            "source": "gmail",
-            "timestamp": receive_time.isoformat(),
-            "priority": 1,
-            "payload": {"from_address": "storage-test@example.com"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": f"storage-email-{i}",
+                "type": "email.received",
+                "source": "gmail",
+                "timestamp": receive_time.isoformat(),
+                "priority": 1,
+                "payload": {"from_address": "storage-test@example.com"},
+                "metadata": {},
+            }
+        )
 
         if i < 3:  # Respond to first 3
             response_time = receive_time + timedelta(hours=1)
-            event_store.store_event({
-                "id": f"storage-response-{i}",
-                "type": "email.sent",
-                "source": "gmail",
-                "timestamp": response_time.isoformat(),
-                "priority": 2,
-                "payload": {"to_addresses": ["storage-test@example.com"]},
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": f"storage-response-{i}",
+                    "type": "email.sent",
+                    "source": "gmail",
+                    "timestamp": response_time.isoformat(),
+                    "priority": 2,
+                    "payload": {"to_addresses": ["storage-test@example.com"]},
+                    "metadata": {},
+                }
+            )
 
     # Detect and store
     workflows = detector.detect_workflows(lookback_days=30)

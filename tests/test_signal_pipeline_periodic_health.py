@@ -46,8 +46,15 @@ class TestPeriodicHealthCheck:
         stale check's meaningful-keys and empty-container guards both pass.
         """
         expected_profiles = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
         for ptype in expected_profiles:
             for _ in range(6):
@@ -265,10 +272,13 @@ class TestGetProfileHealthLinguisticAnnotation:
         a 'note' key is added to the linguistic health entry explaining the expected behavior."""
         # Populate linguistic_inbound with 6 samples to exceed the stale threshold.
         for _ in range(6):
-            user_model_store.update_signal_profile("linguistic_inbound", {
-                "avg_sentence_length": 12.5,
-                "vocabulary_richness": 0.65,
-            })
+            user_model_store.update_signal_profile(
+                "linguistic_inbound",
+                {
+                    "avg_sentence_length": 12.5,
+                    "vocabulary_richness": 0.65,
+                },
+            )
         # Leave 'linguistic' (outbound) absent.
 
         health = pipeline.get_profile_health()
@@ -295,10 +305,13 @@ class TestGetProfileHealthLinguisticAnnotation:
     def test_linguistic_ok_has_no_annotation(self, pipeline, user_model_store):
         """When 'linguistic' itself has healthy data, no note is added."""
         for _ in range(6):
-            user_model_store.update_signal_profile("linguistic", {
-                "avg_sentence_length": 14.0,
-                "vocabulary_richness": 0.75,
-            })
+            user_model_store.update_signal_profile(
+                "linguistic",
+                {
+                    "avg_sentence_length": 14.0,
+                    "vocabulary_richness": 0.75,
+                },
+            )
 
         health = pipeline.get_profile_health()
 
@@ -314,10 +327,13 @@ class TestGetProfileHealthLinguisticAnnotation:
         # Write only 1 sample — stale threshold requires >= 5.
         user_model_store.update_signal_profile("linguistic", {"avg_sentence_length": 12.0})
         for _ in range(6):
-            user_model_store.update_signal_profile("linguistic_inbound", {
-                "avg_sentence_length": 12.5,
-                "vocabulary_richness": 0.65,
-            })
+            user_model_store.update_signal_profile(
+                "linguistic_inbound",
+                {
+                    "avg_sentence_length": 12.5,
+                    "vocabulary_richness": 0.65,
+                },
+            )
 
         health = pipeline.get_profile_health()
 
@@ -329,9 +345,12 @@ class TestGetProfileHealthLinguisticAnnotation:
     def test_annotation_note_references_inbound_health(self, pipeline, user_model_store):
         """The note text explicitly mentions inbound data being healthy."""
         for _ in range(6):
-            user_model_store.update_signal_profile("linguistic_inbound", {
-                "vocabulary_richness": 0.7,
-            })
+            user_model_store.update_signal_profile(
+                "linguistic_inbound",
+                {
+                    "vocabulary_richness": 0.7,
+                },
+            )
 
         health = pipeline.get_profile_health()
         note = health["linguistic"].get("note", "")
@@ -364,9 +383,11 @@ class TestPeriodicHealthCheckPersistentRetry:
 
     def _install_mock_rebuild(self, pipeline, call_log):
         """Replace check_and_rebuild_missing_profiles with a no-op that records calls."""
+
         def mock_rebuild():
             call_log.append(True)
             return {"missing_before": [], "rebuilt": [], "skipped": False}
+
         pipeline.check_and_rebuild_missing_profiles = mock_rebuild
 
     # --- Initial first-check behavior (regression guard) ---

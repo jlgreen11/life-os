@@ -25,129 +25,158 @@ def lifeos_with_tasks(db, event_bus, event_store, user_model_store):
     # Create some pending tasks (need >= 10 for backfill to run)
     with db.get_connection("state") as conn:
         # Task 1: Will be detected as completed (strong signals)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, description, status, created_at, source)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            'task-1',
-            'Review proposal document',
-            'Review the Q1 proposal',
-            'pending',
-            (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-1",
+                "Review proposal document",
+                "Review the Q1 proposal",
+                "pending",
+                (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+                "ai.extraction",
+            ),
+        )
 
         # Task 2: Will be detected as completed (different wording)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, description, status, created_at, source)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            'task-2',
-            'Send budget update',
-            'Email budget figures to the team',
-            'pending',
-            (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-2",
+                "Send budget update",
+                "Email budget figures to the team",
+                "pending",
+                (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+                "ai.extraction",
+            ),
+        )
 
         # Task 3: Will NOT be detected (no completion signals)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, description, status, created_at, source)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            'task-3',
-            'Schedule team meeting',
-            'Arrange the monthly sync',
-            'pending',
-            (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-3",
+                "Schedule team meeting",
+                "Arrange the monthly sync",
+                "pending",
+                (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+                "ai.extraction",
+            ),
+        )
 
         # Task 4: Will NOT be detected (weak keyword overlap)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, description, status, created_at, source)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            'task-4',
-            'Update documentation',
-            'Fix the README file',
-            'pending',
-            (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat(),
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-4",
+                "Update documentation",
+                "Fix the README file",
+                "pending",
+                (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat(),
+                "ai.extraction",
+            ),
+        )
 
         # Add 6 more filler tasks to reach the 10-task threshold
         for i in range(5, 11):
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO tasks (id, title, description, status, created_at, source)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                f'task-{i}',
-                f'Filler task {i}',
-                'Background noise',
-                'pending',
-                (datetime.now(timezone.utc) - timedelta(hours=5+i)).isoformat(),
-                'ai.extraction'
-            ))
+            """,
+                (
+                    f"task-{i}",
+                    f"Filler task {i}",
+                    "Background noise",
+                    "pending",
+                    (datetime.now(timezone.utc) - timedelta(hours=5 + i)).isoformat(),
+                    "ai.extraction",
+                ),
+            )
 
     # Add completion signals for task 1 and task 2
     with db.get_connection("events") as conn:
         # Completion signal for task 1 (strong match)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            'event-1',
-            'email.sent',
-            'proton_mail',
-            (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-            'normal',
-            json.dumps({
-                'subject': 'Re: Q1 Proposal Review',
-                'body_plain': 'I have reviewed the Q1 proposal document and it looks good. My feedback is attached. The proposal is ready for final approval.',
-                'to_addresses': ['boss@company.com']
-            }),
-            '{}'
-        ))
+        """,
+            (
+                "event-1",
+                "email.sent",
+                "proton_mail",
+                (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+                "normal",
+                json.dumps(
+                    {
+                        "subject": "Re: Q1 Proposal Review",
+                        "body_plain": "I have reviewed the Q1 proposal document and it looks good. My feedback is attached. The proposal is ready for final approval.",
+                        "to_addresses": ["boss@company.com"],
+                    }
+                ),
+                "{}",
+            ),
+        )
 
         # Completion signal for task 2 (strong match with different wording)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            'event-2',
-            'email.sent',
-            'proton_mail',
-            (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(),
-            'normal',
-            json.dumps({
-                'subject': 'Budget Update for Q1',
-                'body_plain': 'Hi team, I have sent the budget figures as requested. All numbers are finalized and ready for review.',
-                'to_addresses': ['team@company.com']
-            }),
-            '{}'
-        ))
+        """,
+            (
+                "event-2",
+                "email.sent",
+                "proton_mail",
+                (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(),
+                "normal",
+                json.dumps(
+                    {
+                        "subject": "Budget Update for Q1",
+                        "body_plain": "Hi team, I have sent the budget figures as requested. All numbers are finalized and ready for review.",
+                        "to_addresses": ["team@company.com"],
+                    }
+                ),
+                "{}",
+            ),
+        )
 
         # Weak signal for task 4 (only 1 keyword match, no completion keyword)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            'event-3',
-            'email.sent',
-            'proton_mail',
-            (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat(),
-            'normal',
-            json.dumps({
-                'subject': 'Quick question',
-                'body_plain': 'Hey, do you have time to chat about the project documentation?',
-                'to_addresses': ['colleague@company.com']
-            }),
-            '{}'
-        ))
+        """,
+            (
+                "event-3",
+                "email.sent",
+                "proton_mail",
+                (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat(),
+                "normal",
+                json.dumps(
+                    {
+                        "subject": "Quick question",
+                        "body_plain": "Hey, do you have time to chat about the project documentation?",
+                        "to_addresses": ["colleague@company.com"],
+                    }
+                ),
+                "{}",
+            ),
+        )
 
-    return LifeOS(db=db, event_bus=event_bus, event_store=event_store,
-                  user_model_store=user_model_store, config=config)
+    return LifeOS(db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store, config=config)
 
 
 @pytest.mark.asyncio
@@ -170,17 +199,17 @@ async def test_backfill_runs_on_startup(lifeos_with_tasks):
     # task-1 and task-2 should be completed (strong signals)
     # task-3 and task-4 should remain pending (no/weak signals)
     assert len(results) == 4
-    assert results[0][0] == 'task-1'
-    assert results[0][1] == 'completed'
+    assert results[0][0] == "task-1"
+    assert results[0][1] == "completed"
 
-    assert results[1][0] == 'task-2'
-    assert results[1][1] == 'completed'
+    assert results[1][0] == "task-2"
+    assert results[1][1] == "completed"
 
-    assert results[2][0] == 'task-3'
-    assert results[2][1] == 'pending'
+    assert results[2][0] == "task-3"
+    assert results[2][1] == "pending"
 
-    assert results[3][0] == 'task-4'
-    assert results[3][1] == 'pending'
+    assert results[3][0] == "task-4"
+    assert results[3][1] == "pending"
 
 
 @pytest.mark.asyncio
@@ -201,20 +230,20 @@ async def test_backfill_publishes_task_completed_events(lifeos_with_tasks):
     assert len(events) == 2
 
     # Verify event 1 (task-1)
-    assert events[0][0] == 'task-1-completion'
-    assert events[0][1] == 'task.completed'
+    assert events[0][0] == "task-1-completion"
+    assert events[0][1] == "task.completed"
     payload1 = json.loads(events[0][2])
-    assert payload1['task_id'] == 'task-1'
-    assert payload1['title'] == 'Review proposal document'
-    assert payload1['backfill'] is True
+    assert payload1["task_id"] == "task-1"
+    assert payload1["title"] == "Review proposal document"
+    assert payload1["backfill"] is True
 
     # Verify event 2 (task-2)
-    assert events[1][0] == 'task-2-completion'
-    assert events[1][1] == 'task.completed'
+    assert events[1][0] == "task-2-completion"
+    assert events[1][1] == "task.completed"
     payload2 = json.loads(events[1][2])
-    assert payload2['task_id'] == 'task-2'
-    assert payload2['title'] == 'Send budget update'
-    assert payload2['backfill'] is True
+    assert payload2["task_id"] == "task-2"
+    assert payload2["title"] == "Send budget update"
+    assert payload2["backfill"] is True
 
 
 @pytest.mark.asyncio
@@ -252,8 +281,9 @@ async def test_backfill_skips_if_no_pending_tasks(db, event_bus, event_store, us
         "web_port": 8080,
         "ai": {"use_cloud": False},
     }
-    lifeos = LifeOS(db=db, event_bus=event_bus, event_store=event_store,
-                    user_model_store=user_model_store, config=config)
+    lifeos = LifeOS(
+        db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store, config=config
+    )
 
     # Run backfill with no pending tasks
     await lifeos._backfill_task_completion_if_needed()
@@ -274,19 +304,17 @@ async def test_backfill_skips_if_few_pending_tasks(db, event_bus, event_store, u
     # Create only 5 pending tasks
     with db.get_connection("state") as conn:
         for i in range(5):
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO tasks (id, title, status, created_at, source)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                f'task-{i}',
-                f'Test task {i}',
-                'pending',
-                datetime.now(timezone.utc).isoformat(),
-                'ai.extraction'
-            ))
+            """,
+                (f"task-{i}", f"Test task {i}", "pending", datetime.now(timezone.utc).isoformat(), "ai.extraction"),
+            )
 
-    lifeos = LifeOS(db=db, event_bus=event_bus, event_store=event_store,
-                    user_model_store=user_model_store, config=config)
+    lifeos = LifeOS(
+        db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store, config=config
+    )
 
     # Run backfill
     await lifeos._backfill_task_completion_if_needed()
@@ -306,35 +334,43 @@ async def test_backfill_requires_strong_keyword_overlap(lifeos_with_tasks):
     """Verify that backfill requires >= 2.0 keyword overlap to avoid false positives."""
     # Add a task with only 1 keyword match
     with lifeos_with_tasks.db.get_connection("state") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, status, created_at, source)
             VALUES (?, ?, ?, ?, ?)
-        """, (
-            'task-weak',
-            'Fix the login bug',
-            'pending',
-            (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-weak",
+                "Fix the login bug",
+                "pending",
+                (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+                "ai.extraction",
+            ),
+        )
 
     # Add a sent email with only 1 keyword match (bug) but has completion keyword
     with lifeos_with_tasks.db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            'event-weak',
-            'email.sent',
-            'proton_mail',
-            (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-            'normal',
-            json.dumps({
-                'subject': 'Status update',
-                'body_plain': 'I fixed a bug in the payment module. It is done.',
-                'to_addresses': ['team@company.com']
-            }),
-            '{}'
-        ))
+        """,
+            (
+                "event-weak",
+                "email.sent",
+                "proton_mail",
+                (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+                "normal",
+                json.dumps(
+                    {
+                        "subject": "Status update",
+                        "body_plain": "I fixed a bug in the payment module. It is done.",
+                        "to_addresses": ["team@company.com"],
+                    }
+                ),
+                "{}",
+            ),
+        )
 
     await lifeos_with_tasks._backfill_task_completion_if_needed()
 
@@ -345,7 +381,7 @@ async def test_backfill_requires_strong_keyword_overlap(lifeos_with_tasks):
         """)
         status = cursor.fetchone()[0]
 
-    assert status == 'pending'
+    assert status == "pending"
 
 
 @pytest.mark.asyncio
@@ -353,35 +389,43 @@ async def test_backfill_requires_completion_keywords(lifeos_with_tasks):
     """Verify that backfill requires completion keywords, not just keyword overlap."""
     # Add a task with strong keyword overlap
     with lifeos_with_tasks.db.get_connection("state") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, status, created_at, source)
             VALUES (?, ?, ?, ?, ?)
-        """, (
-            'task-no-completion',
-            'Analyze quarterly sales trends',
-            'pending',
-            (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-no-completion",
+                "Analyze quarterly sales trends",
+                "pending",
+                (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+                "ai.extraction",
+            ),
+        )
 
     # Add a sent email with strong keyword overlap but NO completion keywords
     with lifeos_with_tasks.db.get_connection("events") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            'event-no-completion',
-            'email.sent',
-            'proton_mail',
-            (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-            'normal',
-            json.dumps({
-                'subject': 'Question about quarterly sales',
-                'body_plain': 'I am analyzing the quarterly sales trends and have a question about the spike in Q3. Can you provide more context on what drove that growth?',
-                'to_addresses': ['manager@company.com']
-            }),
-            '{}'
-        ))
+        """,
+            (
+                "event-no-completion",
+                "email.sent",
+                "proton_mail",
+                (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+                "normal",
+                json.dumps(
+                    {
+                        "subject": "Question about quarterly sales",
+                        "body_plain": "I am analyzing the quarterly sales trends and have a question about the spike in Q3. Can you provide more context on what drove that growth?",
+                        "to_addresses": ["manager@company.com"],
+                    }
+                ),
+                "{}",
+            ),
+        )
 
     await lifeos_with_tasks._backfill_task_completion_if_needed()
 
@@ -392,7 +436,7 @@ async def test_backfill_requires_completion_keywords(lifeos_with_tasks):
         """)
         status = cursor.fetchone()[0]
 
-    assert status == 'pending'
+    assert status == "pending"
 
 
 @pytest.mark.asyncio
@@ -404,21 +448,25 @@ async def test_backfill_handles_errors_gracefully(db, event_bus, event_store, us
         "web_port": 8080,
         "ai": {"use_cloud": False},
     }
-    lifeos = LifeOS(db=db, event_bus=event_bus, event_store=event_store,
-                    user_model_store=user_model_store, config=config)
+    lifeos = LifeOS(
+        db=db, event_bus=event_bus, event_store=event_store, user_model_store=user_model_store, config=config
+    )
 
     # Corrupt the database by creating a task with invalid JSON in created_at
     with db.get_connection("state") as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO tasks (id, title, status, created_at, source)
             VALUES (?, ?, ?, ?, ?)
-        """, (
-            'task-corrupt',
-            'Test task',
-            'pending',
-            'invalid-timestamp',  # This will cause errors during backfill
-            'ai.extraction'
-        ))
+        """,
+            (
+                "task-corrupt",
+                "Test task",
+                "pending",
+                "invalid-timestamp",  # This will cause errors during backfill
+                "ai.extraction",
+            ),
+        )
 
     # Run backfill - should handle error gracefully
     await lifeos._backfill_task_completion_if_needed()
@@ -448,8 +496,8 @@ async def test_backfill_sets_completed_at_timestamp(lifeos_with_tasks):
     assert results[1][1] is not None
 
     # Timestamps should be valid ISO format
-    datetime.fromisoformat(results[0][1].replace('Z', '+00:00'))
-    datetime.fromisoformat(results[1][1].replace('Z', '+00:00'))
+    datetime.fromisoformat(results[0][1].replace("Z", "+00:00"))
+    datetime.fromisoformat(results[1][1].replace("Z", "+00:00"))
 
 
 @pytest.mark.asyncio
@@ -467,22 +515,27 @@ async def test_backfill_searches_limited_events(lifeos_with_tasks):
     # from the fixture, which are within the first 100 events by timestamp
     with lifeos_with_tasks.db.get_connection("events") as conn:
         for i in range(150):
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                f'event-{i+10}',
-                'email.sent',
-                'proton_mail',
-                (datetime.now(timezone.utc) - timedelta(minutes=i)).isoformat(),
-                'normal',
-                json.dumps({
-                    'subject': f'Test email {i}',
-                    'body_plain': f'Content {i}',
-                    'to_addresses': ['test@example.com']
-                }),
-                '{}'
-            ))
+            """,
+                (
+                    f"event-{i + 10}",
+                    "email.sent",
+                    "proton_mail",
+                    (datetime.now(timezone.utc) - timedelta(minutes=i)).isoformat(),
+                    "normal",
+                    json.dumps(
+                        {
+                            "subject": f"Test email {i}",
+                            "body_plain": f"Content {i}",
+                            "to_addresses": ["test@example.com"],
+                        }
+                    ),
+                    "{}",
+                ),
+            )
 
     # Run backfill - should complete without issues and without scanning all 150 events
     # The key point of this test is that it doesn't crash or timeout even with 150+ events

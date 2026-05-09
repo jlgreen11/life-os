@@ -156,9 +156,7 @@ class TestSignalExtractorPipeline:
 
         # Now monkey-patch one extractor to blow up.
         original_extract = pipeline.extractors[0].extract
-        pipeline.extractors[0].extract = lambda e: (_ for _ in ()).throw(
-            RuntimeError("Simulated extractor failure")
-        )
+        pipeline.extractors[0].extract = lambda e: (_ for _ in ()).throw(RuntimeError("Simulated extractor failure"))
 
         try:
             signals = await pipeline.process_event(event)

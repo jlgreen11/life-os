@@ -72,9 +72,7 @@ def _insert_email_event(
 def _count_templates(db: DatabaseManager) -> int:
     """Return the total number of rows in communication_templates."""
     with db.get_connection("user_model") as conn:
-        return conn.execute(
-            "SELECT COUNT(*) FROM communication_templates"
-        ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM communication_templates").fetchone()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -95,18 +93,27 @@ class TestDbReuse:
         """
         # Insert 3 email events with substantial body text.
         _insert_email_event(
-            db, "evt-1", "email.received",
-            "alice@example.com", ["user@example.com"],
+            db,
+            "evt-1",
+            "email.received",
+            "alice@example.com",
+            ["user@example.com"],
             "Hey, can we meet tomorrow to discuss the project deliverables?",
         )
         _insert_email_event(
-            db, "evt-2", "email.sent",
-            "user@example.com", ["alice@example.com"],
+            db,
+            "evt-2",
+            "email.sent",
+            "user@example.com",
+            ["alice@example.com"],
             "Sure, 10am works for me. I'll send a calendar invite shortly.",
         )
         _insert_email_event(
-            db, "evt-3", "email.received",
-            "bob@example.com", ["user@example.com"],
+            db,
+            "evt-3",
+            "email.received",
+            "bob@example.com",
+            ["user@example.com"],
             "Please review the attached document before Friday's deadline.",
         )
 
@@ -123,8 +130,11 @@ class TestDbReuse:
     def test_creates_templates_when_only_db_passed(self, db):
         """Templates are created when only db is passed (ums constructed internally)."""
         _insert_email_event(
-            db, "evt-1", "email.sent",
-            "user@example.com", ["carol@example.com"],
+            db,
+            "evt-1",
+            "email.sent",
+            "user@example.com",
+            ["carol@example.com"],
             "Following up on our conversation from last week about the contract.",
         )
 
@@ -141,8 +151,11 @@ class TestDbReuse:
         DatabaseManager from data_dir.  This mode must still produce templates.
         """
         _insert_email_event(
-            db, "evt-1", "email.received",
-            "dave@example.com", ["user@example.com"],
+            db,
+            "evt-1",
+            "email.received",
+            "dave@example.com",
+            ["user@example.com"],
             "Could you send me the final report by end of day today please?",
         )
 
@@ -156,13 +169,19 @@ class TestDbReuse:
     def test_templates_created_reflects_actual_db_count(self, db, user_model_store):
         """stats['templates_created'] matches the real delta in communication_templates."""
         _insert_email_event(
-            db, "evt-1", "email.sent",
-            "user@example.com", ["eve@example.com"],
+            db,
+            "evt-1",
+            "email.sent",
+            "user@example.com",
+            ["eve@example.com"],
             "Just checking in — how is the new role going so far?",
         )
         _insert_email_event(
-            db, "evt-2", "email.sent",
-            "user@example.com", ["frank@example.com"],
+            db,
+            "evt-2",
+            "email.sent",
+            "user@example.com",
+            ["frank@example.com"],
             "Looking forward to collaborating with you on the upcoming sprint.",
         )
 
@@ -189,8 +208,11 @@ class TestEventFiltering:
         """
         # Insert one qualifying event and one with a short body.
         _insert_email_event(
-            db, "evt-long", "email.received",
-            "alice@example.com", ["user@example.com"],
+            db,
+            "evt-long",
+            "email.received",
+            "alice@example.com",
+            ["user@example.com"],
             "This message is definitely long enough to be analysed properly.",
         )
         with db.get_connection("events") as conn:
@@ -247,8 +269,11 @@ class TestDryRun:
     def test_dry_run_does_not_create_templates(self, db, user_model_store):
         """dry_run=True should count events but write nothing to user_model.db."""
         _insert_email_event(
-            db, "evt-1", "email.received",
-            "alice@example.com", ["user@example.com"],
+            db,
+            "evt-1",
+            "email.received",
+            "alice@example.com",
+            ["user@example.com"],
             "Can you send me the slides before the presentation tomorrow morning?",
         )
 
@@ -261,8 +286,11 @@ class TestDryRun:
         """dry_run stats should still accurately count events processed."""
         for i in range(4):
             _insert_email_event(
-                db, f"evt-{i}", "email.sent",
-                "user@example.com", [f"contact{i}@example.com"],
+                db,
+                f"evt-{i}",
+                "email.sent",
+                "user@example.com",
+                [f"contact{i}@example.com"],
                 f"Message number {i} — long enough to satisfy the length filter.",
             )
 
@@ -285,8 +313,11 @@ class TestBatching:
         """Backfill processes all events even with a batch_size of 1."""
         for i in range(5):
             _insert_email_event(
-                db, f"evt-{i}", "email.received",
-                f"contact{i}@example.com", ["user@example.com"],
+                db,
+                f"evt-{i}",
+                "email.received",
+                f"contact{i}@example.com",
+                ["user@example.com"],
                 f"Test message {i} — this body text is long enough to qualify for extraction.",
             )
 
@@ -300,8 +331,11 @@ class TestBatching:
         """limit parameter should cap the number of events processed."""
         for i in range(10):
             _insert_email_event(
-                db, f"evt-{i}", "email.received",
-                f"user{i}@example.com", ["me@example.com"],
+                db,
+                f"evt-{i}",
+                "email.received",
+                f"user{i}@example.com",
+                ["me@example.com"],
                 f"Email body number {i} — sufficient length for template extraction.",
             )
 
@@ -317,8 +351,11 @@ class TestBatching:
         update existing records, not insert new rows.
         """
         _insert_email_event(
-            db, "evt-1", "email.sent",
-            "user@example.com", ["alice@example.com"],
+            db,
+            "evt-1",
+            "email.sent",
+            "user@example.com",
+            ["alice@example.com"],
             "Looking forward to catching up at the conference next month.",
         )
 

@@ -54,8 +54,26 @@ class HTMLStripper(HTMLParser):
     # Block-level HTML elements that should have space inserted after them
     # to prevent word concatenation (e.g., </p><p> should insert space between)
     BLOCK_ELEMENTS = {
-        'p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'td', 'th',
-        'br', 'hr', 'blockquote', 'pre', 'section', 'article', 'header', 'footer'
+        "p",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "tr",
+        "td",
+        "th",
+        "br",
+        "hr",
+        "blockquote",
+        "pre",
+        "section",
+        "article",
+        "header",
+        "footer",
     }
 
     def __init__(self):
@@ -69,20 +87,20 @@ class HTMLStripper(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         """Track when entering <style> or <script> tags to skip their content."""
-        if tag == 'style':
+        if tag == "style":
             self._in_style = True
-        elif tag == 'script':
+        elif tag == "script":
             self._in_script = True
 
     def handle_endtag(self, tag):
         """Track when exiting <style> or <script> tags, add spacing for block elements."""
-        if tag == 'style':
+        if tag == "style":
             self._in_style = False
-        elif tag == 'script':
+        elif tag == "script":
             self._in_script = False
         # Add space after block-level elements to preserve word boundaries
         elif tag in self.BLOCK_ELEMENTS:
-            self.text_parts.append(' ')
+            self.text_parts.append(" ")
 
     def handle_data(self, data: str):
         """Collect visible text content from HTML elements, excluding style/script."""
@@ -98,9 +116,9 @@ class HTMLStripper(HTMLParser):
         multiple spaces/newlines to single space.
         """
         # Join with empty string to preserve natural word boundaries
-        text = ''.join(self.text_parts)
+        text = "".join(self.text_parts)
         # Normalize whitespace: collapse runs of spaces/tabs/newlines to single space
-        return re.sub(r'\s+', ' ', text).strip()
+        return re.sub(r"\s+", " ", text).strip()
 
 
 class TopicExtractor(BaseExtractor):
@@ -173,12 +191,7 @@ class TopicExtractor(BaseExtractor):
         # We only apply this check to email.received — outbound email is always
         # genuine, and direct messages (Signal/iMessage) are always human-to-human.
         if event.get("type") == EventType.EMAIL_RECEIVED.value:
-            from_addr = (
-                payload.get("from")
-                or payload.get("sender")
-                or payload.get("from_address")
-                or ""
-            )
+            from_addr = payload.get("from") or payload.get("sender") or payload.get("from_address") or ""
             if from_addr and is_marketing_or_noreply(from_addr, payload):
                 # Marketing/automated sender — skip topic extraction entirely.
                 # Returning an empty list is the correct no-op in the extractor
@@ -244,7 +257,7 @@ class TopicExtractor(BaseExtractor):
         # Match opening tags like <p>, <table>, <div>, etc.
         # This regex looks for < followed by a letter, then either > or space/attribute
         # This avoids matching email addresses like <user@example.com>
-        return bool(re.search(r'<[a-zA-Z]+[\s>]', text))
+        return bool(re.search(r"<[a-zA-Z]+[\s>]", text))
 
     def _strip_html(self, html_text: str) -> str:
         """
@@ -273,11 +286,9 @@ class TopicExtractor(BaseExtractor):
             # If HTML parsing fails (malformed HTML, invalid entities, etc.),
             # fall back to regex stripping so topic extraction still proceeds.
             # Log the error so production issues are diagnosable without crashing.
-            logger.warning(
-                "TopicExtractor: HTML parsing failed, using regex fallback: %s", e
-            )
-            text = re.sub(r'<[^>]+>', ' ', html_text)
-            text = re.sub(r'\s+', ' ', text).strip()
+            logger.warning("TopicExtractor: HTML parsing failed, using regex fallback: %s", e)
+            text = re.sub(r"<[^>]+>", " ", html_text)
+            text = re.sub(r"\s+", " ", text).strip()
 
         # Decode HTML entities (e.g., &nbsp; → space, &amp; → &)
         text = unescape(text)
@@ -304,26 +315,124 @@ class TopicExtractor(BaseExtractor):
         # Comprehensive English stop-word list covering common verbs, pronouns,
         # prepositions, and conjunctions that carry no topical signal.
         stop_words = {
-            "the", "be", "to", "of", "and", "a", "in", "that", "have",
-            "i", "it", "for", "not", "on", "with", "he", "as", "you",
-            "do", "at", "this", "but", "his", "by", "from", "they",
-            "we", "say", "her", "she", "or", "an", "will", "my",
-            "one", "all", "would", "there", "their", "what", "so",
-            "up", "out", "if", "about", "who", "get", "which", "go",
-            "me", "when", "make", "can", "like", "time", "no", "just",
-            "him", "know", "take", "people", "into", "year", "your",
-            "good", "some", "could", "them", "see", "other", "than",
-            "then", "now", "look", "only", "come", "its", "over",
-            "think", "also", "back", "after", "use", "two", "how",
-            "our", "work", "first", "well", "way", "even", "new",
-            "want", "because", "any", "these", "give", "day", "most",
-            "us", "is", "was", "are", "been", "has", "had", "did",
-            "am", "were", "does", "done", "being", "having",
+            "the",
+            "be",
+            "to",
+            "of",
+            "and",
+            "a",
+            "in",
+            "that",
+            "have",
+            "i",
+            "it",
+            "for",
+            "not",
+            "on",
+            "with",
+            "he",
+            "as",
+            "you",
+            "do",
+            "at",
+            "this",
+            "but",
+            "his",
+            "by",
+            "from",
+            "they",
+            "we",
+            "say",
+            "her",
+            "she",
+            "or",
+            "an",
+            "will",
+            "my",
+            "one",
+            "all",
+            "would",
+            "there",
+            "their",
+            "what",
+            "so",
+            "up",
+            "out",
+            "if",
+            "about",
+            "who",
+            "get",
+            "which",
+            "go",
+            "me",
+            "when",
+            "make",
+            "can",
+            "like",
+            "time",
+            "no",
+            "just",
+            "him",
+            "know",
+            "take",
+            "people",
+            "into",
+            "year",
+            "your",
+            "good",
+            "some",
+            "could",
+            "them",
+            "see",
+            "other",
+            "than",
+            "then",
+            "now",
+            "look",
+            "only",
+            "come",
+            "its",
+            "over",
+            "think",
+            "also",
+            "back",
+            "after",
+            "use",
+            "two",
+            "how",
+            "our",
+            "work",
+            "first",
+            "well",
+            "way",
+            "even",
+            "new",
+            "want",
+            "because",
+            "any",
+            "these",
+            "give",
+            "day",
+            "most",
+            "us",
+            "is",
+            "was",
+            "are",
+            "been",
+            "has",
+            "had",
+            "did",
+            "am",
+            "were",
+            "does",
+            "done",
+            "being",
+            "having",
         }
 
         # Extract only alphabetic tokens of 4+ characters to exclude short
         # noise words that slip past the stop-word set.
-        words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+        words = re.findall(r"\b[a-zA-Z]{4,}\b", text.lower())
         filtered = [w for w in words if w not in stop_words]
         # Return the top-10 most frequent content words.  The count >= 1 guard
         # is effectively a no-op here but makes the intent explicit: every
@@ -351,11 +460,13 @@ class TopicExtractor(BaseExtractor):
 
         # Append a timestamped snapshot so we can later slice by time window
         # to find "what has the user been talking about this week?"
-        data["recent_topics"].append({
-            "topics": signal["topics"],
-            "timestamp": signal["timestamp"],
-            "context": signal["context"],
-        })
+        data["recent_topics"].append(
+            {
+                "topics": signal["topics"],
+                "timestamp": signal["timestamp"],
+                "context": signal["context"],
+            }
+        )
 
         # Cap the recent-topics buffer to prevent unbounded growth while
         # retaining enough observations for meaningful trend detection.
@@ -385,9 +496,7 @@ class TopicExtractor(BaseExtractor):
                             try:
                                 json.dumps(count)
                             except (TypeError, ValueError):
-                                bad_fields.append(
-                                    f"topic_counts[{topic!r}]={type(count).__name__}"
-                                )
+                                bad_fields.append(f"topic_counts[{topic!r}]={type(count).__name__}")
                     else:
                         try:
                             json.dumps(val)
@@ -399,18 +508,13 @@ class TopicExtractor(BaseExtractor):
                     # and each field within it.
                     for idx, entry in enumerate(val if isinstance(val, list) else []):
                         if not isinstance(entry, dict):
-                            bad_fields.append(
-                                f"recent_topics[{idx}]={type(entry).__name__}"
-                            )
+                            bad_fields.append(f"recent_topics[{idx}]={type(entry).__name__}")
                             continue
                         for field, fval in entry.items():
                             try:
                                 json.dumps(fval)
                             except (TypeError, ValueError):
-                                bad_fields.append(
-                                    f"recent_topics[{idx}][{field!r}]"
-                                    f"={type(fval).__name__}"
-                                )
+                                bad_fields.append(f"recent_topics[{idx}][{field!r}]={type(fval).__name__}")
                 else:
                     try:
                         json.dumps(val)

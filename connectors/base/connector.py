@@ -1,13 +1,13 @@
 """
 Life OS — Base Connector Framework
 
-Every external service (email, calendar, messaging, finance, etc.) is 
+Every external service (email, calendar, messaging, finance, etc.) is
 integrated through a Connector. This module defines the base class and
 the lifecycle that all connectors follow.
 
 Connector Lifecycle:
     1. authenticate()  — Establish connection to the external service
-    2. sync()          — Pull new data, publish events to the bus  
+    2. sync()          — Pull new data, publish events to the bus
     3. execute(action)  — Perform an action (send message, create event, etc.)
     4. health_check()   — Verify the connection is alive
 
@@ -282,8 +282,7 @@ class BaseConnector(ABC):
         )
         await self._update_state("error", error_msg)
 
-    async def _update_state(self, status: str, error: Optional[str] = None,
-                            error_count_reset: bool = False):
+    async def _update_state(self, status: str, error: Optional[str] = None, error_count_reset: bool = False):
         """Update connector state in the database, preserving existing config."""
         now = datetime.now(timezone.utc).isoformat()
         with self.db.get_connection("state") as conn:
@@ -314,9 +313,12 @@ class BaseConnector(ABC):
                            error_count = error_count + 1,
                            updated_at = ?""",
                     (
-                        self.CONNECTOR_ID, status, error,
+                        self.CONNECTOR_ID,
+                        status,
+                        error,
                         datetime.now(timezone.utc).isoformat(),
-                        status, error,
+                        status,
+                        error,
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
@@ -352,8 +354,9 @@ class BaseConnector(ABC):
                 (cursor, datetime.now(timezone.utc).isoformat(), self.CONNECTOR_ID),
             )
 
-    async def publish_event(self, event_type: str, payload: dict,
-                            priority: str = "normal", metadata: Optional[dict] = None) -> str:
+    async def publish_event(
+        self, event_type: str, payload: dict, priority: str = "normal", metadata: Optional[dict] = None
+    ) -> str:
         """Convenience method to publish an event from this connector."""
         # Auto-sets the source field to this connector's CONNECTOR_ID so
         # downstream consumers always know which connector produced the event.

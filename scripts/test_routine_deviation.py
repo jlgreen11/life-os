@@ -4,14 +4,14 @@
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from services.prediction_engine.engine import PredictionEngine
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
-from services.prediction_engine.engine import PredictionEngine
 
 
 async def test_routine():
@@ -33,13 +33,13 @@ async def test_routine():
         print(f"  Consistency: {routine['consistency_score']}")
         print(f"  Times observed: {routine['times_observed']}")
 
-        steps = json.loads(routine['steps'])
+        steps = json.loads(routine["steps"])
         print(f"  Steps ({len(steps)}):")
         for i, step in enumerate(steps[:5]):
             print(f"    {i}. {step.get('action', 'unknown')}")
 
         # Check if routine was completed today
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Parse routine steps to get expected event types
         expected_actions = []
@@ -81,9 +81,9 @@ async def test_routine():
                 print(f"    {et}: {count} events today")
 
         # Check if routine trigger matches current time
-        trigger = routine['trigger_condition']
+        trigger = routine["trigger_condition"]
         print(f"\n  Trigger condition: '{trigger}'")
-        print(f"  Current hour (UTC): {datetime.now(timezone.utc).hour}")
+        print(f"  Current hour (UTC): {datetime.now(UTC).hour}")
 
         # Test if a prediction would be created
         engine = PredictionEngine(db, ums)

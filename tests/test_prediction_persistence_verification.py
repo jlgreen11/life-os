@@ -45,14 +45,16 @@ def _make_prediction(**overrides) -> Prediction:
 
 def _insert_event(event_store):
     """Insert a generic event to advance the cursor so generate_predictions runs."""
-    event_store.store_event({
-        "id": str(uuid.uuid4()),
-        "type": "email.received",
-        "source": "google",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": {"from_address": "test@test.com", "subject": "Test", "message_id": str(uuid.uuid4())},
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": str(uuid.uuid4()),
+            "type": "email.received",
+            "source": "google",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": {"from_address": "test@test.com", "subject": "Test", "message_id": str(uuid.uuid4())},
+            "metadata": {},
+        }
+    )
 
 
 async def _run_engine_with_fake_predictions(engine, predictions):
@@ -207,7 +209,5 @@ class TestPersistenceVerification:
 
         # Verify the prediction is indeed unresolved in DB
         with db.get_connection("user_model") as conn:
-            unresolved = conn.execute(
-                "SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL"
-            ).fetchone()[0]
+            unresolved = conn.execute("SELECT COUNT(*) FROM predictions WHERE resolved_at IS NULL").fetchone()[0]
         assert unresolved >= 1

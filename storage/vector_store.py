@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -48,9 +48,9 @@ class VectorStore:
         # ``model_name`` refers to a sentence-transformers model identifier.
         # all-MiniLM-L6-v2 is a good balance between speed and quality (384 dims).
         self.model_name = model_name
-        self._db = None          # LanceDB connection (or None if fallback)
-        self._table = None       # LanceDB table handle for the "documents" table
-        self._embedder = None    # SentenceTransformer model instance
+        self._db = None  # LanceDB connection (or None if fallback)
+        self._table = None  # LanceDB table handle for the "documents" table
+        self._embedder = None  # SentenceTransformer model instance
         self._use_lancedb = False  # Flag: True if LanceDB initialized successfully
 
         # Fallback: simple in-memory store backed by a JSON file on disk.
@@ -61,11 +61,11 @@ class VectorStore:
 
         # Observability tracking attributes — all recorded as ISO-8601 UTC strings
         # so they are JSON-serialisable without extra conversion.
-        self._initialized_at: str = datetime.now(timezone.utc).isoformat()
-        self._last_add_at: Optional[str] = None    # Timestamp of the most recent add_document call
-        self._last_search_at: Optional[str] = None  # Timestamp of the most recent search call
-        self._add_count: int = 0          # Total documents added this session
-        self._search_count: int = 0       # Total search calls this session
+        self._initialized_at: str = datetime.now(UTC).isoformat()
+        self._last_add_at: str | None = None  # Timestamp of the most recent add_document call
+        self._last_search_at: str | None = None  # Timestamp of the most recent search call
+        self._add_count: int = 0  # Total documents added this session
+        self._search_count: int = 0  # Total search calls this session
         self._search_error_count: int = 0  # Search calls that raised an exception this session
 
     def initialize(self):
@@ -84,6 +84,7 @@ class VectorStore:
         # --- Backend selection: prefer LanceDB, fall back to NumPy ---
         try:
             import lancedb
+
             self._db = lancedb.connect(str(self.db_path / "lance"))
             self._use_lancedb = True
             self._ensure_table()
@@ -97,12 +98,12 @@ class VectorStore:
         # The model is loaded once at startup and reused for all embed calls.
         try:
             from sentence_transformers import SentenceTransformer
+
             self._embedder = SentenceTransformer(self.model_name)
             logger.info("Embedding model: %s loaded", self.model_name)
         except ImportError:
             logger.warning(
-                "Embedding model: sentence-transformers not available — "
-                "install with: pip install sentence-transformers"
+                "Embedding model: sentence-transformers not available — install with: pip install sentence-transformers"
             )
             self._embedder = None
 
@@ -117,7 +118,6 @@ class VectorStore:
         if not self._use_lancedb or not self._db:
             return
 
-        import lancedb
         import pyarrow as pa
 
         table_name = "documents"
@@ -126,13 +126,15 @@ class VectorStore:
             self._table = self._db.open_table(table_name)
         except Exception:
             # Table does not exist yet — create with an explicit PyArrow schema.
-            schema = pa.schema([
-                pa.field("doc_id", pa.string()),
-                pa.field("text", pa.string()),
-                pa.field("metadata", pa.string()),
-                pa.field("vector", pa.list_(pa.float32(), 384)),  # MiniLM-L6-v2 output dimension
-                pa.field("created_at", pa.string()),
-            ])
+            schema = pa.schema(
+                [
+                    pa.field("doc_id", pa.string()),
+                    pa.field("text", pa.string()),
+                    pa.field("metadata", pa.string()),
+                    pa.field("vector", pa.list_(pa.float32(), 384)),  # MiniLM-L6-v2 output dimension
+                    pa.field("created_at", pa.string()),
+                ]
+            )
             self._table = self._db.create_table(
                 table_name,
                 schema=schema,
@@ -160,12 +162,15 @@ class VectorStore:
         """
         fallback_path = self.db_path / "fallback.json"
         with open(fallback_path, "w") as f:
-            json.dump({
-                "docs": self._fallback_docs,
-                "embeddings": self._fallback_embeddings,
-            }, f)
+            json.dump(
+                {
+                    "docs": self._fallback_docs,
+                    "embeddings": self._fallback_embeddings,
+                },
+                f,
+            )
 
-    def embed_text(self, text: str) -> Optional[list[float]]:
+    def embed_text(self, text: str) -> list[float] | None:
         """Generate an embedding for a text string.
 
         Returns None if the embedding model is not loaded, allowing callers
@@ -184,8 +189,7 @@ class VectorStore:
             logger.error("Embedding error: %s", e)
             return None
 
-    def add_document(self, doc_id: str, text: str,
-                     metadata: Optional[dict] = None) -> bool:
+    def add_document(self, doc_id: str, text: str, metadata: dict | None = None) -> bool:
         """
         Add a document to the vector store.
 
@@ -224,7 +228,7 @@ class VectorStore:
                 "text": chunk,
                 "metadata": json.dumps(metadata or {}),
                 "vector": embedding,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             }
 
             if self._use_lancedb and self._table is not None:
@@ -239,12 +243,14 @@ class VectorStore:
                     logger.error("LanceDB add error for chunk %d of %s: %s", i, doc_id, e)
                     continue
             else:
-                self._fallback_docs.append({
-                    "doc_id": chunk_id,
-                    "text": chunk,
-                    "metadata": metadata or {},
-                    "created_at": doc["created_at"],
-                })
+                self._fallback_docs.append(
+                    {
+                        "doc_id": chunk_id,
+                        "text": chunk,
+                        "metadata": metadata or {},
+                        "created_at": doc["created_at"],
+                    }
+                )
                 self._fallback_embeddings.append(embedding)
                 chunks_stored += 1
                 # Persist every 50 documents to balance write frequency against
@@ -257,12 +263,11 @@ class VectorStore:
             return False
 
         # Update session-level observability counters on successful storage.
-        self._last_add_at = datetime.now(timezone.utc).isoformat()
+        self._last_add_at = datetime.now(UTC).isoformat()
         self._add_count += 1
         return True
 
-    def search(self, query: str, limit: int = 10,
-               filter_metadata: Optional[dict] = None) -> list[dict]:
+    def search(self, query: str, limit: int = 10, filter_metadata: dict | None = None) -> list[dict]:
         """
         Semantic search across all stored documents.
 
@@ -275,7 +280,7 @@ class VectorStore:
             List of matching documents with scores
         """
         self._search_count += 1
-        self._last_search_at = datetime.now(timezone.utc).isoformat()
+        self._last_search_at = datetime.now(UTC).isoformat()
 
         try:
             # Embed the query text into the same vector space as the stored documents.
@@ -295,8 +300,7 @@ class VectorStore:
             logger.error("Search error: %s", e)
             return []
 
-    def _lancedb_search(self, query_embedding: list[float], limit: int,
-                        filter_metadata: Optional[dict]) -> list[dict]:
+    def _lancedb_search(self, query_embedding: list[float], limit: int, filter_metadata: dict | None) -> list[dict]:
         """Search using LanceDB's built-in vector search.
 
         When ``filter_metadata`` is provided, over-fetches by 3x and applies
@@ -309,12 +313,7 @@ class VectorStore:
             # post-retrieval metadata filtering removes non-matching rows.
             fetch_limit = limit * 3 if filter_metadata else limit
 
-            results = (
-                self._table
-                .search(query_embedding)
-                .limit(fetch_limit)
-                .to_list()
-            )
+            results = self._table.search(query_embedding).limit(fetch_limit).to_list()
 
             filtered: list[dict] = []
             for r in results:
@@ -338,13 +337,15 @@ class VectorStore:
                 if score < 0.1:
                     continue
 
-                filtered.append({
-                    "doc_id": r["doc_id"],
-                    "text": r["text"],
-                    "metadata": meta,
-                    "score": score,
-                    "created_at": r.get("created_at"),
-                })
+                filtered.append(
+                    {
+                        "doc_id": r["doc_id"],
+                        "text": r["text"],
+                        "metadata": meta,
+                        "score": score,
+                        "created_at": r.get("created_at"),
+                    }
+                )
 
                 if len(filtered) >= limit:
                     break
@@ -354,8 +355,7 @@ class VectorStore:
             logger.error("LanceDB search error: %s", e)
             return []
 
-    def _numpy_search(self, query_embedding: list[float], limit: int,
-                      filter_metadata: Optional[dict]) -> list[dict]:
+    def _numpy_search(self, query_embedding: list[float], limit: int, filter_metadata: dict | None) -> list[dict]:
         """Fallback search using NumPy cosine similarity.
 
         Because all embeddings are normalized to unit length (see ``embed_text``),
@@ -396,13 +396,15 @@ class VectorStore:
                 if not all(doc_meta.get(k) == v for k, v in filter_metadata.items()):
                     continue
 
-            results.append({
-                "doc_id": doc["doc_id"],
-                "text": doc["text"],
-                "metadata": doc.get("metadata", {}),
-                "score": score,
-                "created_at": doc.get("created_at"),
-            })
+            results.append(
+                {
+                    "doc_id": doc["doc_id"],
+                    "text": doc["text"],
+                    "metadata": doc.get("metadata", {}),
+                    "score": score,
+                    "created_at": doc.get("created_at"),
+                }
+            )
 
         return results
 
@@ -422,19 +424,20 @@ class VectorStore:
             # Score = fraction of query terms found in the document text.
             matches = sum(1 for term in query_terms if term in text_lower)
             if matches > 0:
-                results.append({
-                    "doc_id": doc["doc_id"],
-                    "text": doc["text"],
-                    "metadata": doc.get("metadata", {}),
-                    "score": matches / len(query_terms),
-                    "created_at": doc.get("created_at"),
-                })
+                results.append(
+                    {
+                        "doc_id": doc["doc_id"],
+                        "text": doc["text"],
+                        "metadata": doc.get("metadata", {}),
+                        "score": matches / len(query_terms),
+                        "created_at": doc.get("created_at"),
+                    }
+                )
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:limit]
 
-    def _chunk_text(self, text: str, max_chars: int = 1000,
-                    overlap: int = 100) -> list[str]:
+    def _chunk_text(self, text: str, max_chars: int = 1000, overlap: int = 100) -> list[str]:
         """Split text into overlapping chunks for embedding.
 
         Chunking strategy:
@@ -543,30 +546,36 @@ class VectorStore:
             health["backend"] = "lancedb"
             try:
                 count = self._table.count_rows()
-                health.update({
-                    "is_healthy": True,
-                    "document_count": count,
-                    "table_accessible": True,
-                    "error": None,
-                })
+                health.update(
+                    {
+                        "is_healthy": True,
+                        "document_count": count,
+                        "table_accessible": True,
+                        "error": None,
+                    }
+                )
             except Exception as e:
-                health.update({
-                    "is_healthy": False,
-                    "document_count": "unknown",
-                    "table_accessible": False,
-                    "error": str(e),
-                })
+                health.update(
+                    {
+                        "is_healthy": False,
+                        "document_count": "unknown",
+                        "table_accessible": False,
+                        "error": str(e),
+                    }
+                )
         else:
             # NumPy fallback backend
             fallback_path = self.db_path / "fallback.json"
             file_exists = fallback_path.exists()
-            health.update({
-                "backend": "numpy_fallback",
-                "is_healthy": True,  # In-memory fallback is always accessible
-                "document_count": len(self._fallback_docs),
-                "fallback_file_exists": file_exists,
-                "fallback_file_size_bytes": fallback_path.stat().st_size if file_exists else None,
-            })
+            health.update(
+                {
+                    "backend": "numpy_fallback",
+                    "is_healthy": True,  # In-memory fallback is always accessible
+                    "document_count": len(self._fallback_docs),
+                    "fallback_file_exists": file_exists,
+                    "fallback_file_size_bytes": fallback_path.stat().st_size if file_exists else None,
+                }
+            )
 
         return health
 
@@ -591,13 +600,13 @@ class VectorStore:
                   meaning age-based filtering is not possible
                 - threshold_hours (int): The max_age_hours value used
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
         stale_ids: list[str] = []
         stale_ages: list[float] = []
         total_checked = 0
         age_tracking_available = False
 
-        def _parse_timestamp(ts_str: str | None) -> Optional[datetime]:
+        def _parse_timestamp(ts_str: str | None) -> datetime | None:
             """Parse an ISO-8601 timestamp string, returning None on failure."""
             if not ts_str:
                 return None
@@ -605,7 +614,7 @@ class VectorStore:
                 dt = datetime.fromisoformat(ts_str)
                 # Ensure the datetime is timezone-aware so we can compare to cutoff.
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 return dt
             except (ValueError, TypeError):
                 return None
@@ -620,7 +629,7 @@ class VectorStore:
                     if created_at is not None:
                         age_tracking_available = True
                         if created_at < cutoff:
-                            age_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                            age_hours = (datetime.now(UTC) - created_at).total_seconds() / 3600
                             stale_ids.append(row["doc_id"])
                             stale_ages.append(round(age_hours, 2))
             except Exception as e:
@@ -633,7 +642,7 @@ class VectorStore:
                 if created_at is not None:
                     age_tracking_available = True
                     if created_at < cutoff:
-                        age_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
+                        age_hours = (datetime.now(UTC) - created_at).total_seconds() / 3600
                         stale_ids.append(doc["doc_id"])
                         stale_ages.append(round(age_hours, 2))
 
@@ -664,7 +673,8 @@ class VectorStore:
         else:
             # Collect indices of all matching documents (exact + chunk suffixes).
             indices_to_remove = [
-                i for i, d in enumerate(self._fallback_docs)
+                i
+                for i, d in enumerate(self._fallback_docs)
                 if d["doc_id"] == doc_id or d["doc_id"].startswith(f"{doc_id}_")
             ]
             # Remove in reverse order so that popping an element does not

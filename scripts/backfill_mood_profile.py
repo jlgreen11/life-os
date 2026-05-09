@@ -55,7 +55,6 @@ from services.signal_extractor.mood import MoodInferenceEngine
 from storage.manager import DatabaseManager
 from storage.user_model_store import UserModelStore
 
-
 # All event types that MoodInferenceEngine.can_process() accepts.
 MOOD_EVENT_TYPES = (
     "email.sent",
@@ -245,13 +244,10 @@ def backfill_mood_profile(
         "dry_run": dry_run,
     }
 
-    print(f"\n[backfill_mood] ===== BACKFILL COMPLETE =====")
+    print("\n[backfill_mood] ===== BACKFILL COMPLETE =====")
     print(f"[backfill_mood] Events processed: {events_processed}")
     print(f"[backfill_mood] Signals extracted: {signals_extracted}")
-    print(
-        f"[backfill_mood] Profile samples: {initial_samples} → {final_samples} "
-        f"(+{final_samples - initial_samples})"
-    )
+    print(f"[backfill_mood] Profile samples: {initial_samples} → {final_samples} (+{final_samples - initial_samples})")
     print(f"[backfill_mood] Errors: {errors}")
     print(
         f"[backfill_mood] Elapsed: {elapsed_seconds:.1f}s "
@@ -259,7 +255,7 @@ def backfill_mood_profile(
     )
 
     if dry_run:
-        print(f"[backfill_mood] DRY RUN — no changes written to database")
+        print("[backfill_mood] DRY RUN — no changes written to database")
 
     # Show signal type distribution for verification.
     if final_profile and not dry_run:
@@ -270,7 +266,7 @@ def backfill_mood_profile(
                 st = sig.get("signal_type", "unknown")
                 type_counts[st] = type_counts.get(st, 0) + 1
             top_types = sorted(type_counts.items(), key=lambda kv: kv[1], reverse=True)
-            print(f"\n[backfill_mood] ===== SIGNAL TYPE DISTRIBUTION =====")
+            print("\n[backfill_mood] ===== SIGNAL TYPE DISTRIBUTION =====")
             for sig_type, count in top_types:
                 print(f"  {sig_type}: {count}")
 

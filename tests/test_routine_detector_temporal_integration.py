@@ -108,9 +108,7 @@ class TestMorningEmailRoutineDetected:
         # Verify steps contain the email action
         steps = morning_routines[0]["steps"]
         step_actions = [s["action"] for s in steps]
-        assert "email_received" in step_actions, (
-            f"Expected 'email_received' in steps, got {step_actions}"
-        )
+        assert "email_received" in step_actions, f"Expected 'email_received' in steps, got {step_actions}"
 
 
 class TestEveningRoutineMultipleTypes:
@@ -211,16 +209,15 @@ class TestFallbackHandlesUnknownInteractionTypes:
 
             # Insert the episode with 'unknown' interaction_type (simulates stale data)
             _insert_episode(
-                db, ts,
+                db,
+                ts,
                 interaction_type="unknown",
                 event_id=event_id,
             )
 
         routines = detector.detect_routines(lookback_days=30)
 
-        assert len(routines) >= 1, (
-            f"Expected fallback to recover routines from 'unknown' episodes, got {len(routines)}"
-        )
+        assert len(routines) >= 1, f"Expected fallback to recover routines from 'unknown' episodes, got {len(routines)}"
         # The backfill should convert 'email.received' → 'email_received'
         all_step_actions = []
         for r in routines:

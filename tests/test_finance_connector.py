@@ -41,7 +41,7 @@ def mock_plaid_sync_request():
     mock_module = MagicMock()
     mock_module.TransactionsSyncRequest = mock_request_class
 
-    with patch.dict('sys.modules', {'plaid.model.transactions_sync_request': mock_module}):
+    with patch.dict("sys.modules", {"plaid.model.transactions_sync_request": mock_module}):
         yield mock_request_class
 
 
@@ -78,6 +78,7 @@ def mock_plaid_client():
 @pytest.fixture
 def mock_plaid_transaction():
     """Factory for creating mock Plaid transaction objects."""
+
     def _create(
         transaction_id: str,
         account_id: str,
@@ -130,7 +131,9 @@ async def test_authenticate_success(finance_connector, finance_config):
     mock_client = MagicMock()
     mock_plaid.api.plaid_api.PlaidApi.return_value = mock_client
 
-    with patch.dict('sys.modules', {'plaid': mock_plaid, 'plaid.api': mock_plaid.api, 'plaid.model.products': MagicMock()}):
+    with patch.dict(
+        "sys.modules", {"plaid": mock_plaid, "plaid.api": mock_plaid.api, "plaid.model.products": MagicMock()}
+    ):
         result = await finance_connector.authenticate()
 
     assert result is True
@@ -143,8 +146,8 @@ async def test_authenticate_success(finance_connector, finance_config):
 async def test_authenticate_failure_missing_plaid(finance_connector):
     """Verify that authenticate() fails gracefully when plaid SDK is missing."""
     # Simulate plaid module not being installed
-    with patch.dict('sys.modules', {'plaid': None}):
-        with patch('builtins.__import__', side_effect=ImportError("No module named 'plaid'")):
+    with patch.dict("sys.modules", {"plaid": None}):
+        with patch("builtins.__import__", side_effect=ImportError("No module named 'plaid'")):
             result = await finance_connector.authenticate()
 
     assert result is False
@@ -158,7 +161,9 @@ async def test_authenticate_failure_invalid_credentials(finance_connector):
     mock_plaid.Configuration.side_effect = ValueError("Invalid client_id")
     mock_plaid.Environment.Production = "https://production.plaid.com"
 
-    with patch.dict('sys.modules', {'plaid': mock_plaid, 'plaid.api': mock_plaid.api, 'plaid.model.products': MagicMock()}):
+    with patch.dict(
+        "sys.modules", {"plaid": mock_plaid, "plaid.api": mock_plaid.api, "plaid.model.products": MagicMock()}
+    ):
         result = await finance_connector.authenticate()
 
     assert result is False
@@ -181,9 +186,7 @@ async def test_sync_no_client(finance_connector):
 
 
 @pytest.mark.asyncio
-async def test_sync_initial_fetch_empty_cursor(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_initial_fetch_empty_cursor(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify initial sync with empty cursor fetches all recent transactions."""
     finance_connector._client = mock_plaid_client
     # Use a single token to simplify the count assertion
@@ -194,7 +197,7 @@ async def test_sync_initial_fetch_empty_cursor(
         conn.execute(
             """INSERT OR REPLACE INTO connector_state (connector_id, status, updated_at)
                VALUES (?, ?, ?)""",
-            (finance_connector.CONNECTOR_ID, "active", datetime.now(timezone.utc).isoformat())
+            (finance_connector.CONNECTOR_ID, "active", datetime.now(timezone.utc).isoformat()),
         )
 
     # Mock Plaid response with 3 new transactions
@@ -221,16 +224,13 @@ async def test_sync_initial_fetch_empty_cursor(
     # Verify cursor was persisted in the database
     with finance_connector.db.get_connection("state") as conn:
         row = conn.execute(
-            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?",
-            (finance_connector.CONNECTOR_ID,)
+            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?", (finance_connector.CONNECTOR_ID,)
         ).fetchone()
         assert row["sync_cursor"] == "cursor-abc123"
 
 
 @pytest.mark.asyncio
-async def test_sync_incremental_with_cursor(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_incremental_with_cursor(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify incremental sync uses stored cursor to fetch only new transactions."""
     finance_connector._client = mock_plaid_client
     finance_connector._access_tokens = ["test-token-1"]
@@ -240,7 +240,7 @@ async def test_sync_incremental_with_cursor(
         conn.execute(
             """INSERT OR REPLACE INTO connector_state (connector_id, status, sync_cursor, updated_at)
                VALUES (?, ?, ?, ?)""",
-            (finance_connector.CONNECTOR_ID, "active", "cursor-previous", datetime.now(timezone.utc).isoformat())
+            (finance_connector.CONNECTOR_ID, "active", "cursor-previous", datetime.now(timezone.utc).isoformat()),
         )
 
     # Mock response with 1 new transaction
@@ -263,8 +263,7 @@ async def test_sync_incremental_with_cursor(
     # Verify new cursor was persisted in the database
     with finance_connector.db.get_connection("state") as conn:
         row = conn.execute(
-            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?",
-            (finance_connector.CONNECTOR_ID,)
+            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?", (finance_connector.CONNECTOR_ID,)
         ).fetchone()
         assert row["sync_cursor"] == "cursor-new"
 
@@ -324,9 +323,7 @@ async def test_sync_normal_transaction_normal_priority(
 
 
 @pytest.mark.asyncio
-async def test_sync_event_payload_structure(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_event_payload_structure(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify published event payload contains all expected fields."""
     finance_connector._client = mock_plaid_client
 
@@ -378,9 +375,11 @@ async def test_sync_fallback_to_name_when_no_merchant(
     mock_response = MagicMock()
     mock_response.added = [
         mock_plaid_transaction(
-            "txn-no-merchant", "acct-1", -25.00,
+            "txn-no-merchant",
+            "acct-1",
+            -25.00,
             merchant_name=None,  # No enriched merchant name
-            name="Generic Store"
+            name="Generic Store",
         ),
     ]
     mock_response.modified = []
@@ -397,19 +396,13 @@ async def test_sync_fallback_to_name_when_no_merchant(
 
 
 @pytest.mark.asyncio
-async def test_sync_missing_category_none(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_missing_category_none(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify that category is None when Plaid doesn't provide one."""
     finance_connector._client = mock_plaid_client
 
     mock_response = MagicMock()
     mock_response.added = [
-        mock_plaid_transaction(
-            "txn-no-cat", "acct-1", -10.00,
-            merchant_name="Test",
-            category_primary=None
-        ),
+        mock_plaid_transaction("txn-no-cat", "acct-1", -10.00, merchant_name="Test", category_primary=None),
     ]
     mock_response.modified = []
     mock_response.removed = []
@@ -425,9 +418,7 @@ async def test_sync_missing_category_none(
 
 
 @pytest.mark.asyncio
-async def test_sync_currency_defaults_to_usd(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_currency_defaults_to_usd(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify that currency defaults to USD when iso_currency_code is missing."""
     finance_connector._client = mock_plaid_client
 
@@ -451,9 +442,7 @@ async def test_sync_currency_defaults_to_usd(
 
 
 @pytest.mark.asyncio
-async def test_sync_positive_amount_credit(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_positive_amount_credit(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify that positive amounts (credits/refunds) use normal priority."""
     finance_connector._client = mock_plaid_client
     finance_connector._access_tokens = ["test-token-1"]
@@ -481,9 +470,7 @@ async def test_sync_positive_amount_credit(
 
 
 @pytest.mark.asyncio
-async def test_sync_multiple_access_tokens(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_multiple_access_tokens(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify that sync() processes all configured access tokens."""
     finance_connector._client = mock_plaid_client
     finance_connector._access_tokens = ["token-1", "token-2"]
@@ -547,9 +534,7 @@ async def test_sync_error_one_token_continues_others(
 
 
 @pytest.mark.asyncio
-async def test_sync_cursor_persistence_per_token(
-    finance_connector, mock_plaid_client, mock_plaid_transaction
-):
+async def test_sync_cursor_persistence_per_token(finance_connector, mock_plaid_client, mock_plaid_transaction):
     """Verify that sync cursor is updated after processing all tokens."""
     finance_connector._client = mock_plaid_client
     finance_connector._access_tokens = ["token-1"]
@@ -559,7 +544,7 @@ async def test_sync_cursor_persistence_per_token(
         conn.execute(
             """INSERT OR REPLACE INTO connector_state (connector_id, status, updated_at)
                VALUES (?, ?, ?)""",
-            (finance_connector.CONNECTOR_ID, "active", datetime.now(timezone.utc).isoformat())
+            (finance_connector.CONNECTOR_ID, "active", datetime.now(timezone.utc).isoformat()),
         )
 
     mock_response = MagicMock()
@@ -575,16 +560,13 @@ async def test_sync_cursor_persistence_per_token(
     # Verify cursor was persisted in the database
     with finance_connector.db.get_connection("state") as conn:
         row = conn.execute(
-            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?",
-            (finance_connector.CONNECTOR_ID,)
+            "SELECT sync_cursor FROM connector_state WHERE connector_id = ?", (finance_connector.CONNECTOR_ID,)
         ).fetchone()
         assert row["sync_cursor"] == "new-cursor-value"
 
 
 @pytest.mark.asyncio
-async def test_sync_no_new_transactions(
-    finance_connector, mock_plaid_client, event_bus
-):
+async def test_sync_no_new_transactions(finance_connector, mock_plaid_client, event_bus):
     """Verify that sync() handles empty transaction list gracefully."""
     finance_connector._client = mock_plaid_client
 
@@ -660,9 +642,7 @@ async def test_sync_processes_modified_transactions(
 
 
 @pytest.mark.asyncio
-async def test_sync_processes_removed_transactions(
-    finance_connector, mock_plaid_client, event_bus
-):
+async def test_sync_processes_removed_transactions(finance_connector, mock_plaid_client, event_bus):
     """Verify that removed transactions are published with minimal payload.
 
     Plaid's removed transaction objects only contain a transaction_id — no
@@ -696,9 +676,7 @@ async def test_sync_processes_removed_transactions(
 
 
 @pytest.mark.asyncio
-async def test_sync_handles_all_three_lists(
-    finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus
-):
+async def test_sync_handles_all_three_lists(finance_connector, mock_plaid_client, mock_plaid_transaction, event_bus):
     """Verify that sync processes added, modified, and removed in one cycle.
 
     The total count returned should reflect all three lists, and each list
@@ -993,9 +971,7 @@ async def test_health_check_unknown_error_includes_message(finance_connector):
     finance_connector._access_tokens = ["token-1"]
 
     # An error without a structured body
-    finance_connector._client.item_get = MagicMock(
-        side_effect=RuntimeError("Something unexpected went wrong")
-    )
+    finance_connector._client.item_get = MagicMock(side_effect=RuntimeError("Something unexpected went wrong"))
 
     with mock_item_get_request():
         result = await finance_connector.health_check()

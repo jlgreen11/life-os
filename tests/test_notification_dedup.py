@@ -41,12 +41,8 @@ async def test_different_title_not_suppressed(notif_mgr, db):
 
 async def test_same_source_event_id_suppressed(notif_mgr, db):
     """Two notifications with the same source_event_id should be deduplicated."""
-    await notif_mgr.create_notification(
-        title="Prediction: rain", source_event_id="evt-1", domain="prediction"
-    )
-    await notif_mgr.create_notification(
-        title="Prediction: rain", source_event_id="evt-1", domain="prediction"
-    )
+    await notif_mgr.create_notification(title="Prediction: rain", source_event_id="evt-1", domain="prediction")
+    await notif_mgr.create_notification(title="Prediction: rain", source_event_id="evt-1", domain="prediction")
 
     with db.get_connection("state") as conn:
         count = conn.execute("SELECT COUNT(*) as cnt FROM notifications").fetchone()["cnt"]
@@ -56,12 +52,8 @@ async def test_same_source_event_id_suppressed(notif_mgr, db):
 
 async def test_dedup_returns_existing_id(notif_mgr):
     """The deduplicated call should return the ID of the first notification."""
-    first_id = await notif_mgr.create_notification(
-        title="Duplicate test", domain="test"
-    )
-    second_id = await notif_mgr.create_notification(
-        title="Duplicate test", domain="test"
-    )
+    first_id = await notif_mgr.create_notification(title="Duplicate test", domain="test")
+    second_id = await notif_mgr.create_notification(title="Duplicate test", domain="test")
 
     assert first_id is not None
     assert second_id is not None
@@ -71,9 +63,7 @@ async def test_dedup_returns_existing_id(notif_mgr):
 async def test_old_duplicate_not_suppressed(notif_mgr, db):
     """Notifications older than 10 minutes should not trigger deduplication."""
     # Create the first notification
-    first_id = await notif_mgr.create_notification(
-        title="Stale alert", domain="system"
-    )
+    first_id = await notif_mgr.create_notification(title="Stale alert", domain="system")
 
     # Backdate the first notification's created_at by 15 minutes so it falls
     # outside the 10-minute dedup window.
@@ -84,9 +74,7 @@ async def test_old_duplicate_not_suppressed(notif_mgr, db):
         )
 
     # Create a second notification with the same title+domain — should NOT be suppressed
-    second_id = await notif_mgr.create_notification(
-        title="Stale alert", domain="system"
-    )
+    second_id = await notif_mgr.create_notification(title="Stale alert", domain="system")
 
     assert second_id != first_id
 

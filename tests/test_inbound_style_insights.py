@@ -41,8 +41,7 @@ def _make_engine(db) -> InsightEngine:
     return InsightEngine(db=db, ums=ums)
 
 
-def _set_inbound_profile(ums: UserModelStore,
-                         per_contact_averages: dict) -> None:
+def _set_inbound_profile(ums: UserModelStore, per_contact_averages: dict) -> None:
     """Write a ``linguistic_inbound`` profile with given per-contact averages.
 
     Args:
@@ -69,11 +68,19 @@ def _set_outbound_profile(ums: UserModelStore, formality: float) -> None:
         formality: Average outbound formality score (0.0 = casual, 1.0 = formal).
     """
     data = {
-        "samples": [{"formality": formality, "avg_sentence_length": 10,
-                     "hedge_rate": 0.1, "assertion_rate": 0.1,
-                     "exclamation_rate": 0.0, "emoji_count": 0,
-                     "word_count": 20, "emoji_rate": 0.0,
-                     "profanity_rate": 0.0}],
+        "samples": [
+            {
+                "formality": formality,
+                "avg_sentence_length": 10,
+                "hedge_rate": 0.1,
+                "assertion_rate": 0.1,
+                "exclamation_rate": 0.0,
+                "emoji_count": 0,
+                "word_count": 20,
+                "emoji_rate": 0.0,
+                "profanity_rate": 0.0,
+            }
+        ],
         "averages": {
             "formality": formality,
             "avg_sentence_length": 10.0,
@@ -118,9 +125,12 @@ def test_skips_contact_with_fewer_than_5_samples(db):
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
     # 4 samples, gap of 0.6 — should still be skipped
-    _set_inbound_profile(engine.ums, {
-        "sparse@example.com": {"formality": 0.2, "samples_count": 4},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "sparse@example.com": {"formality": 0.2, "samples_count": 4},
+        },
+    )
     assert engine._inbound_style_insights() == []
 
 
@@ -128,9 +138,12 @@ def test_includes_contact_with_5_samples(db):
     """Contacts with exactly 5 inbound samples should be included."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "good@example.com": {"formality": 0.2, "samples_count": 5},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "good@example.com": {"formality": 0.2, "samples_count": 5},
+        },
+    )
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
 
@@ -144,9 +157,12 @@ def test_skips_noreply_sender(db):
     """Marketing/noreply addresses should be excluded."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "noreply@newsletter.com": {"formality": 0.1, "samples_count": 20},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "noreply@newsletter.com": {"formality": 0.1, "samples_count": 20},
+        },
+    )
     assert engine._inbound_style_insights() == []
 
 
@@ -154,9 +170,12 @@ def test_skips_newsletter_sender(db):
     """Addresses containing 'newsletter' should be excluded."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "updates@newsletter.co": {"formality": 0.1, "samples_count": 30},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "updates@newsletter.co": {"formality": 0.1, "samples_count": 30},
+        },
+    )
     assert engine._inbound_style_insights() == []
 
 
@@ -164,9 +183,12 @@ def test_includes_real_contact(db):
     """Real human contacts should not be filtered by the marketing filter."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "alice@gmail.com": {"formality": 0.1, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "alice@gmail.com": {"formality": 0.1, "samples_count": 10},
+        },
+    )
     assert len(engine._inbound_style_insights()) == 1
 
 
@@ -179,9 +201,12 @@ def test_no_insight_when_gap_below_threshold(db):
     """Gap <= 0.3 should not produce an insight (within noise threshold)."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.5)
-    _set_inbound_profile(engine.ums, {
-        "close@example.com": {"formality": 0.79, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "close@example.com": {"formality": 0.79, "samples_count": 10},
+        },
+    )
     # gap = |0.5 - 0.79| = 0.29 < 0.3 — below threshold, should NOT fire
     assert engine._inbound_style_insights() == []
 
@@ -190,9 +215,12 @@ def test_insight_fires_when_gap_just_above_threshold(db):
     """Gap > 0.3 should produce an insight."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.5)
-    _set_inbound_profile(engine.ums, {
-        "borderline@example.com": {"formality": 0.81, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "borderline@example.com": {"formality": 0.81, "samples_count": 10},
+        },
+    )
     # gap = |0.5 - 0.81| = 0.31 > 0.3
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
@@ -207,9 +235,12 @@ def test_casual_contact_direction(db):
     """Contact writing more casually than the user → 'casually' in summary."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "bob@example.com": {"formality": 0.2, "samples_count": 15},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "bob@example.com": {"formality": 0.2, "samples_count": 15},
+        },
+    )
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
     assert "casually" in insights[0].summary
@@ -221,9 +252,12 @@ def test_formal_contact_direction(db):
     """Contact writing more formally than the user → 'formally' in summary."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.3)
-    _set_inbound_profile(engine.ums, {
-        "professional@corp.com": {"formality": 0.9, "samples_count": 8},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "professional@corp.com": {"formality": 0.9, "samples_count": 8},
+        },
+    )
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
     assert "formally" in insights[0].summary
@@ -235,9 +269,12 @@ def test_insight_metadata(db):
     """Insight should have correct type, category, and entity."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "alice@example.com": {"formality": 0.1, "samples_count": 20},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "alice@example.com": {"formality": 0.1, "samples_count": 20},
+        },
+    )
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
     ins = insights[0]
@@ -253,9 +290,12 @@ def test_insight_confidence_scales_with_gap(db):
     _set_outbound_profile(engine.ums, formality=0.5)
 
     # Small gap (0.31)
-    _set_inbound_profile(engine.ums, {
-        "small@example.com": {"formality": 0.19, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "small@example.com": {"formality": 0.19, "samples_count": 10},
+        },
+    )
     small_insights = engine._inbound_style_insights()
     small_conf = small_insights[0].confidence if small_insights else 0.0
 
@@ -263,9 +303,12 @@ def test_insight_confidence_scales_with_gap(db):
     ums2 = UserModelStore(db)
     engine2 = InsightEngine(db=db, ums=ums2)
     _set_outbound_profile(engine2.ums, formality=0.9)
-    _set_inbound_profile(engine2.ums, {
-        "large@example.com": {"formality": 0.15, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine2.ums,
+        {
+            "large@example.com": {"formality": 0.15, "samples_count": 10},
+        },
+    )
     large_insights = engine2._inbound_style_insights()
     large_conf = large_insights[0].confidence if large_insights else 0.0
 
@@ -277,9 +320,12 @@ def test_confidence_capped_at_0_80(db):
     """Confidence should never exceed 0.80 regardless of gap size."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=1.0)
-    _set_inbound_profile(engine.ums, {
-        "extreme@example.com": {"formality": 0.0, "samples_count": 50},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "extreme@example.com": {"formality": 0.0, "samples_count": 50},
+        },
+    )
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
     assert insights[0].confidence <= 0.80
@@ -296,10 +342,7 @@ def test_caps_at_10_insights(db):
     _set_outbound_profile(engine.ums, formality=0.8)
 
     # Create 15 qualifying contacts
-    per_contact_avgs = {
-        f"contact{i}@example.com": {"formality": 0.1, "samples_count": 10}
-        for i in range(15)
-    }
+    per_contact_avgs = {f"contact{i}@example.com": {"formality": 0.1, "samples_count": 10} for i in range(15)}
     _set_inbound_profile(engine.ums, per_contact_avgs)
 
     insights = engine._inbound_style_insights()
@@ -311,10 +354,13 @@ def test_largest_gap_contacts_first(db):
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.5)
 
-    _set_inbound_profile(engine.ums, {
-        "big_gap@example.com": {"formality": 0.0, "samples_count": 10},
-        "small_gap@example.com": {"formality": 0.15, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "big_gap@example.com": {"formality": 0.0, "samples_count": 10},
+            "small_gap@example.com": {"formality": 0.15, "samples_count": 10},
+        },
+    )
     insights = engine._inbound_style_insights()
     assert len(insights) == 2
     # big_gap (0.5) should come before small_gap (0.35)
@@ -331,9 +377,12 @@ def test_fallback_user_formality_when_outbound_absent(db):
     """Should use 0.5 as user_formality when ``linguistic`` profile is absent."""
     engine = _make_engine(db)
     # No outbound profile set — only inbound
-    _set_inbound_profile(engine.ums, {
-        "formal@corp.com": {"formality": 0.9, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "formal@corp.com": {"formality": 0.9, "samples_count": 10},
+        },
+    )
     # gap = |0.5 - 0.9| = 0.4 > 0.3 → should fire
     insights = engine._inbound_style_insights()
     assert len(insights) == 1
@@ -349,11 +398,15 @@ def test_inbound_style_wired_into_generate_insights(db):
     """``_inbound_style_insights`` should be called by ``generate_insights``."""
     engine = _make_engine(db)
     _set_outbound_profile(engine.ums, formality=0.8)
-    _set_inbound_profile(engine.ums, {
-        "wire@example.com": {"formality": 0.1, "samples_count": 10},
-    })
+    _set_inbound_profile(
+        engine.ums,
+        {
+            "wire@example.com": {"formality": 0.1, "samples_count": 10},
+        },
+    )
 
     import asyncio
+
     insights = asyncio.run(engine.generate_insights())
     # At least one style_mismatch insight should appear in the output
     mismatch_insights = [i for i in insights if i.category == "style_mismatch"]
@@ -365,6 +418,7 @@ def test_style_mismatch_in_source_weight_map(db):
     engine = _make_engine(db)
     from services.insight_engine.engine import InsightEngine
     import inspect
+
     # Read the source code of _apply_source_weights to verify the mapping
     source = inspect.getsource(InsightEngine._apply_source_weights)
     assert "style_mismatch" in source

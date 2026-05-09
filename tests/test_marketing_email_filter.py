@@ -27,8 +27,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered as noreply"
+            )
 
     def test_mailer_daemon_is_filtered(self):
         """System mailer-daemon and postmaster addresses should be filtered."""
@@ -40,8 +41,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered as system sender"
+            )
 
     def test_bulk_localpart_patterns_are_filtered(self):
         """Common bulk sender local-parts should be filtered."""
@@ -61,8 +63,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered as bulk sender"
+            )
 
     def test_marketing_domain_patterns_are_filtered(self):
         """Marketing domain patterns should be filtered."""
@@ -78,8 +81,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered as marketing domain"
+            )
 
     def test_common_support_addresses_are_filtered(self):
         """Common support/info addresses are often automated and should be filtered."""
@@ -91,8 +95,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered as support address"
+            )
 
     def test_unsubscribe_in_body_is_filtered(self):
         """Emails with 'unsubscribe' plus bulk phrases in body/snippet should be filtered."""
@@ -104,8 +109,9 @@ class TestMarketingEmailFilter:
         ]
 
         for payload in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply("sender@example.com", payload) is True, \
+            assert PredictionEngine._is_marketing_or_noreply("sender@example.com", payload) is True, (
                 f"Expected email with unsubscribe in {list(payload.keys())} to be filtered"
+            )
 
     def test_personal_emails_are_not_filtered(self):
         """Personal email addresses should NOT be filtered."""
@@ -119,8 +125,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is False, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is False, (
                 f"Expected {addr} to NOT be filtered (personal email)"
+            )
 
     def test_case_insensitivity(self):
         """Filter should be case-insensitive."""
@@ -132,8 +139,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered (case insensitive)"
+            )
 
     def test_edge_cases(self):
         """Test edge cases and boundary conditions."""
@@ -158,8 +166,9 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in real_spam:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered (real production spam case)"
+            )
 
     def test_legitimate_emails_with_similar_patterns(self):
         """Ensure we don't over-filter legitimate emails with similar patterns.
@@ -171,15 +180,16 @@ class TestMarketingEmailFilter:
         """
         # These should NOT be filtered - patterns appear in middle, not at start
         legitimate = [
-            "john.email@company.com",   # has 'email@' but not at start
-            "sarah.reply@startup.io",   # has 'reply@' but not at start
-            "team.info@company.com",    # has 'info@' but not at start
+            "john.email@company.com",  # has 'email@' but not at start
+            "sarah.reply@startup.io",  # has 'reply@' but not at start
+            "team.info@company.com",  # has 'info@' but not at start
             "contact.hello@business.org",  # has 'hello@' but not at start
         ]
 
         for addr in legitimate:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is False, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is False, (
                 f"Expected {addr} to NOT be filtered (pattern not at start)"
+            )
 
         # But these SHOULD be filtered - patterns at the start
         bulk_senders = [
@@ -190,5 +200,6 @@ class TestMarketingEmailFilter:
         ]
 
         for addr in bulk_senders:
-            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, \
+            assert PredictionEngine._is_marketing_or_noreply(addr, {}) is True, (
                 f"Expected {addr} to be filtered (pattern at start)"
+            )

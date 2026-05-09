@@ -25,8 +25,10 @@ IMPACT:
 """
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
+
 from storage.manager import DatabaseManager
+
 
 def compute_circadian_energy(timestamp_str: str) -> float:
     """
@@ -70,19 +72,18 @@ def compute_circadian_energy(timestamp_str: str) -> float:
         # Malformed timestamp, return neutral energy
         return 0.5
 
+
 def main():
     """Backfill energy_level for all episodes with NULL energy_level."""
     print("Episode Energy Level Backfill")
     print("=" * 70)
 
-    db = DatabaseManager('data')
+    db = DatabaseManager("data")
     db.initialize_all()
 
     # Count episodes needing backfill
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NULL"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NULL").fetchone()
         total_null = row["count"]
 
     print(f"Episodes with NULL energy_level: {total_null:,}")
@@ -91,14 +92,12 @@ def main():
         print("✓ No episodes need backfilling")
         return
 
-    print(f"Computing proxy energy from circadian timestamps...")
+    print("Computing proxy energy from circadian timestamps...")
 
     # Backfill: compute energy_level from episode timestamp
     with db.get_connection("user_model") as conn:
         # Fetch all episodes with NULL energy_level
-        rows = conn.execute(
-            "SELECT id, timestamp FROM episodes WHERE energy_level IS NULL"
-        ).fetchall()
+        rows = conn.execute("SELECT id, timestamp FROM episodes WHERE energy_level IS NULL").fetchall()
 
         updated = 0
         failed = 0
@@ -112,14 +111,11 @@ def main():
                 energy = compute_circadian_energy(timestamp)
 
                 # Update episode
-                conn.execute(
-                    "UPDATE episodes SET energy_level = ? WHERE id = ?",
-                    (energy, episode_id)
-                )
+                conn.execute("UPDATE episodes SET energy_level = ? WHERE id = ?", (energy, episode_id))
                 updated += 1
 
                 if updated % 1000 == 0:
-                    print(f"  Processed {updated:,} episodes...", end='\r')
+                    print(f"  Processed {updated:,} episodes...", end="\r")
 
             except Exception as e:
                 print(f"Failed to process episode {episode_id}: {e}")
@@ -132,9 +128,7 @@ def main():
 
     # Verify the backfill
     with db.get_connection("user_model") as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NULL"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) as count FROM episodes WHERE energy_level IS NULL").fetchone()
         remaining_null = row["count"]
 
         row = conn.execute(
@@ -147,14 +141,14 @@ def main():
         max_energy = row["max_energy"]
         avg_energy = row["avg_energy"]
 
-    print(f"\nPost-backfill status:")
+    print("\nPost-backfill status:")
     print(f"  Episodes with energy_level: {total_with_energy:,}")
     print(f"  Episodes still NULL: {remaining_null:,}")
     print(f"  Energy range: {min_energy:.2f} - {max_energy:.2f}")
     print(f"  Average energy: {avg_energy:.2f}")
 
     # Show sample of backfilled data
-    print(f"\nSample of backfilled episodes:")
+    print("\nSample of backfilled episodes:")
     with db.get_connection("user_model") as conn:
         rows = conn.execute("""
             SELECT timestamp, energy_level, interaction_type
@@ -166,10 +160,13 @@ def main():
 
         for row in rows:
             dt = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
-            print(f"  {dt.strftime('%Y-%m-%d %H:%M')} UTC (hour {dt.hour:02d}): "
-                  f"energy={row['energy_level']:.2f} | {row['interaction_type']}")
+            print(
+                f"  {dt.strftime('%Y-%m-%d %H:%M')} UTC (hour {dt.hour:02d}): "
+                f"energy={row['energy_level']:.2f} | {row['interaction_type']}"
+            )
 
     print("\n✓ Backfill complete")
+
 
 if __name__ == "__main__":
     try:
@@ -180,5 +177,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Backfill failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

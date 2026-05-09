@@ -172,7 +172,7 @@ class OutboxRepository:
             if existing is not None:
                 if owns_txn:
                     self._conn.execute("COMMIT")
-                return existing["id"]
+                return str(existing["id"])
 
             target.execute(
                 """

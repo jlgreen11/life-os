@@ -40,9 +40,7 @@ def notification_manager(db, mock_event_bus):
 
 def _insert_notification(db, notif_id, status="pending", hours_ago=72):
     """Helper to insert a notification with a backdated created_at timestamp."""
-    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime(
-        "%Y-%m-%dT%H:%M:%S.000Z"
-    )
+    created_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     with db.get_connection("state") as conn:
         conn.execute(
             """INSERT INTO notifications
@@ -241,8 +239,7 @@ class TestGetDigestPublishesIgnoredEvents:
 
         # Find the notification.ignored publish call among all bus publishes
         ignored_calls = [
-            call for call in mock_event_bus.publish.call_args_list
-            if call.args[0] == "notification.ignored"
+            call for call in mock_event_bus.publish.call_args_list if call.args[0] == "notification.ignored"
         ]
         assert len(ignored_calls) == 1
         assert ignored_calls[0].args[1]["notification_id"] == "notif-stale"
@@ -255,7 +252,6 @@ class TestGetDigestPublishesIgnoredEvents:
         await notification_manager.get_digest()
 
         ignored_calls = [
-            call for call in mock_event_bus.publish.call_args_list
-            if call.args[0] == "notification.ignored"
+            call for call in mock_event_bus.publish.call_args_list if call.args[0] == "notification.ignored"
         ]
         assert len(ignored_calls) == 0

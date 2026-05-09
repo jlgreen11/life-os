@@ -335,13 +335,10 @@ class TestCalendarBelowThresholdNoRoutine:
 
         # Check that no routine exists where calendar_blocked is the dominant step.
         calendar_routines = [
-            r
-            for r in routines
-            if r.get("steps") and r["steps"][0].get("action") == "calendar_blocked"
+            r for r in routines if r.get("steps") and r["steps"][0].get("action") == "calendar_blocked"
         ]
         assert len(calendar_routines) == 0, (
-            f"Expected 0 calendar_blocked routines (sparse data, 6/30 active days), "
-            f"got {len(calendar_routines)}"
+            f"Expected 0 calendar_blocked routines (sparse data, 6/30 active days), got {len(calendar_routines)}"
         )
 
     def test_email_routine_still_detected_alongside_calendar(self, db, user_model_store):
@@ -373,17 +370,13 @@ class TestCalendarBelowThresholdNoRoutine:
         # Email morning routine should be detected.
         morning_routines = [r for r in routines if r.get("trigger") == "morning"]
         assert len(morning_routines) >= 1, (
-            f"Expected at least 1 morning routine for dense email data, "
-            f"got {len(routines)} total"
+            f"Expected at least 1 morning routine for dense email data, got {len(routines)} total"
         )
 
         # Calendar routine should NOT dominate any routine.
         calendar_routines = [
-            r
-            for r in routines
-            if r.get("steps") and r["steps"][0].get("action") == "calendar_blocked"
+            r for r in routines if r.get("steps") and r["steps"][0].get("action") == "calendar_blocked"
         ]
         assert len(calendar_routines) == 0, (
-            f"Sparse calendar (6/30 days) should not form its own routine, "
-            f"but got {len(calendar_routines)}"
+            f"Sparse calendar (6/30 days) should not form its own routine, but got {len(calendar_routines)}"
         )

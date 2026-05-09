@@ -49,16 +49,34 @@ Usage:
                                extra_domain_patterns=("@mail.",)):
         continue
 """
+
 from __future__ import annotations
 
-FREEMAIL_DOMAINS = frozenset({
-    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk",
-    "hotmail.com", "outlook.com", "live.com", "msn.com",
-    "aol.com", "icloud.com", "me.com", "mac.com",
-    "protonmail.com", "proton.me", "pm.me",
-    "mail.com", "zoho.com", "yandex.com", "gmx.com",
-    "fastmail.com", "tutanota.com",
-})
+FREEMAIL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "yahoo.com",
+        "yahoo.co.uk",
+        "hotmail.com",
+        "outlook.com",
+        "live.com",
+        "msn.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "mac.com",
+        "protonmail.com",
+        "proton.me",
+        "pm.me",
+        "mail.com",
+        "zoho.com",
+        "yandex.com",
+        "gmx.com",
+        "fastmail.com",
+        "tutanota.com",
+    }
+)
 
 
 def classify_email_domain(addr: str) -> str:
@@ -149,12 +167,23 @@ def is_marketing_or_noreply(
     #     "noreply" as the start of their personal address.
     # -----------------------------------------------------------------------
     noreply_patterns = (
-        "no-reply@", "no_reply@", "noreply@",
-        "do-not-reply@", "do_not_reply@", "donotreply@",
-        "no-reply+", "no_reply+", "noreply+",   # catches no-reply+ID@domain.com
-        "mailer-daemon@", "postmaster@", "daemon@",
-        "auto-reply@", "auto_reply@", "autoreply@",
-        "automated@", "automation@",
+        "no-reply@",
+        "no_reply@",
+        "noreply@",
+        "do-not-reply@",
+        "do_not_reply@",
+        "donotreply@",
+        "no-reply+",
+        "no_reply+",
+        "noreply+",  # catches no-reply+ID@domain.com
+        "mailer-daemon@",
+        "postmaster@",
+        "daemon@",
+        "auto-reply@",
+        "auto_reply@",
+        "autoreply@",
+        "automated@",
+        "automation@",
     )
     if any(pattern in addr_lower for pattern in noreply_patterns):
         return True
@@ -163,8 +192,12 @@ def is_marketing_or_noreply(
     # Extract the local part once so it can also be reused below.
     local_part_early = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
     noreply_stems = (
-        "no-reply", "no_reply", "noreply",
-        "do-not-reply", "do_not_reply", "donotreply",
+        "no-reply",
+        "no_reply",
+        "noreply",
+        "do-not-reply",
+        "do_not_reply",
+        "donotreply",
     )
     if any(local_part_early.startswith(stem) for stem in noreply_stems):
         return True
@@ -185,93 +218,145 @@ def is_marketing_or_noreply(
     # -----------------------------------------------------------------------
     bulk_localpart_patterns = (
         # Core marketing / notification patterns
-        "newsletter@", "notifications@", "notification@",
-        "updates@", "update@", "digest@",
-        "mailer@", "bulk@", "promo@", "marketing@",
-        "reply@", "email@", "news@",
-        "offers@", "offer@", "deals@",
-        "hello@", "info@", "support@", "help@",
-        "service@", "services@",
+        "newsletter@",
+        "notifications@",
+        "notification@",
+        "updates@",
+        "update@",
+        "digest@",
+        "mailer@",
+        "bulk@",
+        "promo@",
+        "marketing@",
+        "reply@",
+        "email@",
+        "news@",
+        "offers@",
+        "offer@",
+        "deals@",
+        "hello@",
+        "info@",
+        "support@",
+        "help@",
+        "service@",
+        "services@",
         "discover@",
-        "alert@", "alerts@",
+        "alert@",
+        "alerts@",
         "contactus@",
         # Transactional / automated senders
-        "orders@", "order@", "receipts@", "receipt@",
-        "auto-confirm@", "autoconfirm@", "confirmation@", "confirm@",
-        "shipment-tracking@", "shipping@", "delivery@",
-        "accountservice@", "account-service@", "account@",
-        "yourhealth@", "youraccount@",
-        "smartoption@", "quickalert@",
+        "orders@",
+        "order@",
+        "receipts@",
+        "receipt@",
+        "auto-confirm@",
+        "autoconfirm@",
+        "confirmation@",
+        "confirm@",
+        "shipment-tracking@",
+        "shipping@",
+        "delivery@",
+        "accountservice@",
+        "account-service@",
+        "account@",
+        "yourhealth@",
+        "youraccount@",
+        "smartoption@",
+        "quickalert@",
         # Organisational bulk senders
-        "communications@", "development@", "fundraising@",
+        "communications@",
+        "development@",
+        "fundraising@",
         # Loyalty / rewards programmes
-        "rewards@", "loyalty@",
+        "rewards@",
+        "loyalty@",
         # Financial / brokerage automated systems (iteration 171)
         #
         # These generate high-volume transactional emails (trade confirmations,
         # statements, alerts) that should NEVER trigger follow-up predictions.
         # Previously missing from the relationship extractor.
-        "fidelity.investments@", "fidelity@",
-        "schwab@", "vanguard@", "etrade@", "td.ameritrade@", "merrilledge@",
-        "robinhood@", "wealthfront@", "betterment@",
-        "chase.alerts@", "bankofamerica.alerts@", "citi.alerts@",
-        "wellsfargo.alerts@", "usbank.alerts@", "pnc.alerts@",
-        "paypal@", "venmo@", "stripe@", "square@",
-        "coinbase@", "binance@", "kraken@",
-        "experian@", "equifax@", "transunion@", "creditkarma@",
+        "fidelity.investments@",
+        "fidelity@",
+        "schwab@",
+        "vanguard@",
+        "etrade@",
+        "td.ameritrade@",
+        "merrilledge@",
+        "robinhood@",
+        "wealthfront@",
+        "betterment@",
+        "chase.alerts@",
+        "bankofamerica.alerts@",
+        "citi.alerts@",
+        "wellsfargo.alerts@",
+        "usbank.alerts@",
+        "pnc.alerts@",
+        "paypal@",
+        "venmo@",
+        "stripe@",
+        "square@",
+        "coinbase@",
+        "binance@",
+        "kraken@",
+        "experian@",
+        "equifax@",
+        "transunion@",
+        "creditkarma@",
         # Retail / hospitality transactional senders (iteration 178)
         #
         # Production data showed 135 unresolved opportunity predictions for
         # automated senders at hotel chains, airlines, retailers, and services.
         # Previously missing from the relationship extractor.
-        "customerservice@",   # e.g., Customerservice@nationalcar.com
-        "reservations@",      # e.g., reservations@nationalcar.com
-        "onlineservice@",     # e.g., onlineservice@fedex.com
-        "return@",            # e.g., return@amazon.com
-        "tracking@",          # e.g., tracking@shipstation.com
-        "transaction@",       # e.g., transaction@info.samsclub.com
-        "online.account@",    # e.g., online.account@marriott.com
-        "guestservices@",     # e.g., guestservices@boxoffice.axs.com
-        "drivers@",           # e.g., drivers@chargepoint.com
-        "gaming@",            # e.g., gaming@nvgaming.nvidia.com
-        "messenger@",         # e.g., messenger@messaging.squareup.com
-        "tickets@",           # e.g., tickets@transactions.axs.com
-        "walgreens@",         # e.g., walgreens@eml.walgreens.com
-        "rei@",               # e.g., rei@alerts.rei.com
-        "applecash@",         # e.g., applecash@insideapple.apple.com
-        "worldofhyatt@",      # e.g., worldofhyatt@loyalty.hyatt.com
+        "customerservice@",  # e.g., Customerservice@nationalcar.com
+        "reservations@",  # e.g., reservations@nationalcar.com
+        "onlineservice@",  # e.g., onlineservice@fedex.com
+        "return@",  # e.g., return@amazon.com
+        "tracking@",  # e.g., tracking@shipstation.com
+        "transaction@",  # e.g., transaction@info.samsclub.com
+        "online.account@",  # e.g., online.account@marriott.com
+        "guestservices@",  # e.g., guestservices@boxoffice.axs.com
+        "drivers@",  # e.g., drivers@chargepoint.com
+        "gaming@",  # e.g., gaming@nvgaming.nvidia.com
+        "messenger@",  # e.g., messenger@messaging.squareup.com
+        "tickets@",  # e.g., tickets@transactions.axs.com
+        "walgreens@",  # e.g., walgreens@eml.walgreens.com
+        "rei@",  # e.g., rei@alerts.rei.com
+        "applecash@",  # e.g., applecash@insideapple.apple.com
+        "worldofhyatt@",  # e.g., worldofhyatt@loyalty.hyatt.com
         "disneycruiseline@",  # e.g., disneycruiseline@vacations.disneydestinations.com
         # E-delivery / transactional confirmation local-part prefixes.
         # These are financial/brokerage document delivery systems that always
         # send statements, trade confirmations, and tax forms — never human mail.
         # Pattern: eDelivery@etradefrommorganstanley.com, econfirm@schwab.com
-        "edelivery@", "econfirm@", "enotice@",
+        "edelivery@",
+        "econfirm@",
+        "enotice@",
         # Plural variant of existing accountservice@ (both forms appear in prod data)
-        "accountservices@",       # e.g., accountservices@ncl.com (Norwegian Cruise Line)
+        "accountservices@",  # e.g., accountservices@ncl.com (Norwegian Cruise Line)
         # Hospitality / government automated senders observed in production data.
         # These are transactional systems that send booking confirmations, payment
         # notices, and service updates — they are never human correspondents.
-        "stay@",                  # e.g., stay@hotelvandivort.com (hotel booking system)
-        "claims@",                # e.g., claims@treasurer.mo.gov (government payment system)
-        "irrigation@",            # e.g., irrigation@ryanlawn.com (automated service alerts)
+        "stay@",  # e.g., stay@hotelvandivort.com (hotel booking system)
+        "claims@",  # e.g., claims@treasurer.mo.gov (government payment system)
+        "irrigation@",  # e.g., irrigation@ryanlawn.com (automated service alerts)
         # Retail / brand promotional senders
-        "top@",                   # e.g., top@raymore.com (store "top picks" promo mailer)
+        "top@",  # e.g., top@raymore.com (store "top picks" promo mailer)
         # University/college alumni mailing lists are automated bulk senders.
         # alumni@university.edu is a mailing list address, never a personal inbox.
         # Human contacts at educational institutions have personal addresses like
         # john.doe@university.edu — those are NOT matched by this prefix pattern.
-        "alumni@",                # e.g., alumni@mst.edu (university alumni mailing list)
+        "alumni@",  # e.g., alumni@mst.edu (university alumni mailing list)
         # Generic mailer address: mail@brand.com is a transactional or promotional
         # sender, never a personal address. Mail service providers use this prefix
         # for bulk delivery (e.g., mail@ifttt.com, mail@cardsagainsthumanity.com).
-        "mail@",                  # e.g., mail@cardsagainsthumanity.com (brand mailer)
+        "mail@",  # e.g., mail@cardsagainsthumanity.com (brand mailer)
         # System-generated sender local-parts that clearly identify automated accounts
-        "msftpc@",                # e.g., msftpc@microsoft.com (Microsoft PC automated system)
+        "msftpc@",  # e.g., msftpc@microsoft.com (Microsoft PC automated system)
         # Tagged notification senders: alerts+HASH@ is a common pattern used by
         # monitoring/alert systems (e.g. PrismIntelligence, PagerDuty) to route
         # outbound notifications.  The + tag makes each address unique but the stem
         # "alerts+" unambiguously identifies it as an automated alert sender.
-        "alerts+",                # e.g., alerts+Xe6Cu7@prismintelligence.com
+        "alerts+",  # e.g., alerts+Xe6Cu7@prismintelligence.com
     ) + extra_localparts
 
     if any(addr_lower.startswith(pattern) for pattern in bulk_localpart_patterns):
@@ -286,11 +371,16 @@ def is_marketing_or_noreply(
     local_part = addr_lower.split("@")[0] if "@" in addr_lower else addr_lower
 
     embedded_notification_patterns = (
-        "-notification", "-notifications", "-alert", "-alerts",
-        "-update", "-updates", "-digest",
-        "news",         # lafconews@, morningnews@, dailynews@, …
-        "no.reply",     # no.reply.alerts@chase.com
-        "do.not.reply", # do.not.reply@domain.com
+        "-notification",
+        "-notifications",
+        "-alert",
+        "-alerts",
+        "-update",
+        "-updates",
+        "-digest",
+        "news",  # lafconews@, morningnews@, dailynews@, …
+        "no.reply",  # no.reply.alerts@chase.com
+        "do.not.reply",  # do.not.reply@domain.com
     )
     if any(pattern in local_part for pattern in embedded_notification_patterns):
         return True
@@ -308,57 +398,75 @@ def is_marketing_or_noreply(
     # back via extra_domain_patterns=("@mail.",) if needed.
     # -----------------------------------------------------------------------
     marketing_domain_patterns = (
-        "@news-", "@email.", "@reply.", "@mailing.",
-        "@newsletters.", "@promo.", "@marketing.",
-        "@em.", "@mg.",
+        "@news-",
+        "@email.",
+        "@reply.",
+        "@mailing.",
+        "@newsletters.",
+        "@promo.",
+        "@marketing.",
+        "@em.",
+        "@mg.",
         "@m.",
-        "@engage.", "@iluv.", "@e.", "@e2.",
-        "@comms.", "@communications.",
+        "@engage.",
+        "@iluv.",
+        "@e.",
+        "@e2.",
+        "@comms.",
+        "@communications.",
         "@attn.",
-        "@notification.", "@notifications.",
-        "@txn.", "@transactional.",
-        "@deals.", "@offers.", "@promo-",
-        "@campaigns.", "@campaign.",
-        "@blast.", "@bulk.",
-        "@lists.", "@list.",
-        "@messages.", "@message.",
+        "@notification.",
+        "@notifications.",
+        "@txn.",
+        "@transactional.",
+        "@deals.",
+        "@offers.",
+        "@promo-",
+        "@campaigns.",
+        "@campaign.",
+        "@blast.",
+        "@bulk.",
+        "@lists.",
+        "@list.",
+        "@messages.",
+        "@message.",
         "@care.",
         "@mcmap.",
         "@soslprospect.",
         # Retail/hospitality subdomains (iteration 178)
-        "@alerts.",        # e.g., @alerts.rei.com, @alerts.chase.com
-        "@loyalty.",       # e.g., @loyalty.hyatt.com
-        "@vacations.",     # e.g., @vacations.disneydestinations.com
+        "@alerts.",  # e.g., @alerts.rei.com, @alerts.chase.com
+        "@loyalty.",  # e.g., @loyalty.hyatt.com
+        "@vacations.",  # e.g., @vacations.disneydestinations.com
         "@transactions.",  # e.g., @transactions.axs.com
-        "@eml.",           # e.g., @eml.walgreens.com
-        "@insideapple.",   # e.g., @insideapple.apple.com
-        "@card.",          # e.g., @card.southwest.com
-        "@odysseymail.",   # e.g., @odysseymail.tylertech.cloud
-        "@mc.",            # e.g., @mc.ihg.com
-        "@eg.",            # e.g., @eg.vrbo.com
+        "@eml.",  # e.g., @eml.walgreens.com
+        "@insideapple.",  # e.g., @insideapple.apple.com
+        "@card.",  # e.g., @card.southwest.com
+        "@odysseymail.",  # e.g., @odysseymail.tylertech.cloud
+        "@mc.",  # e.g., @mc.ihg.com
+        "@eg.",  # e.g., @eg.vrbo.com
         # E-commerce and brand mailer subdomains observed in production data.
-        "@ecomm.",         # e.g., lenovo@ecomm.lenovo.com (Lenovo e-commerce mailer)
-        "@e1.",            # e.g., AceRewards@e1.acehardware.com (ESP numeric routing)
-        "@mailcenter.",    # e.g., USAA.Customer.Service@mailcenter.usaa.com (bank bulk mailer)
-        "@news.",          # e.g., mr.m@news.monopolygo.com (promotional news subdomain)
+        "@ecomm.",  # e.g., lenovo@ecomm.lenovo.com (Lenovo e-commerce mailer)
+        "@e1.",  # e.g., AceRewards@e1.acehardware.com (ESP numeric routing)
+        "@mailcenter.",  # e.g., USAA.Customer.Service@mailcenter.usaa.com (bank bulk mailer)
+        "@news.",  # e.g., mr.m@news.monopolygo.com (promotional news subdomain)
         # @mail. subdomain — catches financial/brokerage bulk mailers that use
         # a dedicated "mail." subdomain (mail.fidelity.com, mail.schwab.com,
         # mail.instagram.com).  This does NOT false-positive on gmail.com,
         # hotmail.com, or protonmail.com because those addresses contain
         # "@gmail.com", "@hotmail.com", "@protonmail.com" — none of which
         # contain the substring "@mail." (the @ anchors to the user boundary).
-        "@mail.",          # e.g., benefitscenter@mail.fidelity.com
+        "@mail.",  # e.g., benefitscenter@mail.fidelity.com
         # Airline/travel automated mailer subdomains
-        "@ifly.",          # e.g., passenger@ifly.southwest.com (Southwest Airlines)
-        "@trx.",           # e.g., user@trx.company.com (transactional subdomain)
+        "@ifly.",  # e.g., passenger@ifly.southwest.com (Southwest Airlines)
+        "@trx.",  # e.g., user@trx.company.com (transactional subdomain)
         "@shareholderdocs.",  # e.g., Fidelity.Investments@shareholderdocs.fidelity.com
         "@investordelivery.",  # e.g., user@investordelivery.company.com
         # Compound subdomain patterns (no leading @; match anywhere in domain)
-        "info.email.",     # e.g., @info.email.aa.com
-        "points-mail.",    # e.g., points@points-mail.ihg.com (IHG loyalty)
+        "info.email.",  # e.g., @info.email.aa.com
+        "points-mail.",  # e.g., points@points-mail.ihg.com (IHG loyalty)
         # CRM/marketing platform routing subdomains observed in production data
-        "@customer.",      # e.g., national@customer.ehi.com (Enterprise Holdings)
-        "@rewards.",       # e.g., sproutsrewards@rewards.sprouts.com (loyalty program)
+        "@customer.",  # e.g., national@customer.ehi.com (Enterprise Holdings)
+        "@rewards.",  # e.g., sproutsrewards@rewards.sprouts.com (loyalty program)
     ) + extra_domain_patterns
 
     if any(pattern in addr_lower for pattern in marketing_domain_patterns):
@@ -395,28 +503,28 @@ def is_marketing_or_noreply(
         ".iterable.com",
         ".klaviyo.com",
         # Specific automated domains (iteration 178)
-        "shopifyemail.com",     # e.g., store+...@g.shopifyemail.com (Shopify email delivery)
-        "seatengine.com",       # e.g., venue@seatengine.com (event ticketing platform)
-        "proxyvote.com",        # Proxy voting (Broadridge Financial)
-        "playatmcd.com",        # McDonald's Monopoly promo
-        "facebookmail.com",     # Facebook automated notifications
-        ".smg.com",             # Service Management Group surveys
-        ".ms.aa.com",           # American Airlines info subdomain
+        "shopifyemail.com",  # e.g., store+...@g.shopifyemail.com (Shopify email delivery)
+        "seatengine.com",  # e.g., venue@seatengine.com (event ticketing platform)
+        "proxyvote.com",  # Proxy voting (Broadridge Financial)
+        "playatmcd.com",  # McDonald's Monopoly promo
+        "facebookmail.com",  # Facebook automated notifications
+        ".smg.com",  # Service Management Group surveys
+        ".ms.aa.com",  # American Airlines info subdomain
         # Newsletter/creator platforms — every address @substack.com or
         # @beehiiv.com is an automated publication, never a human replying.
         # Both apex and subdomain variants are caught: "substack.com" matches
         # both "bytebytego@substack.com" and "letter@publication.substack.com"
         # via str.endswith() because "publication.substack.com" ends with
         # "substack.com" as well.
-        "substack.com",         # Newsletter platform (e.g. bytebytego@substack.com)
-        "beehiiv.com",          # Newsletter platform (e.g. author@newsletter.beehiiv.com)
-        "ghost.io",             # Ghost newsletter platform (e.g. author@ghost.io)
-        "convertkit.com",       # ConvertKit creator marketing platform
-        "buttondown.email",     # Buttondown newsletter platform
+        "substack.com",  # Newsletter platform (e.g. bytebytego@substack.com)
+        "beehiiv.com",  # Newsletter platform (e.g. author@newsletter.beehiiv.com)
+        "ghost.io",  # Ghost newsletter platform (e.g. author@ghost.io)
+        "convertkit.com",  # ConvertKit creator marketing platform
+        "buttondown.email",  # Buttondown newsletter platform
         # Email marketing / CRM platforms observed in production data
-        "e-vanguard.com",       # e.g., flagship@eonline.e-vanguard.com (marketing ESP)
+        "e-vanguard.com",  # e.g., flagship@eonline.e-vanguard.com (marketing ESP)
         # Government transactional payment system (not a human correspondence address)
-        "directpay.irs.gov",    # e.g., mail@directpay.irs.gov (IRS Direct Pay system)
+        "directpay.irs.gov",  # e.g., mail@directpay.irs.gov (IRS Direct Pay system)
     )
     if any(domain.endswith(pattern) for pattern in marketing_service_patterns):
         return True
@@ -450,24 +558,37 @@ def is_marketing_or_noreply(
     # Only checked when a payload is supplied.
     # -----------------------------------------------------------------------
     if payload:
-        text = " ".join(filter(None, [
-            payload.get("body_plain", ""),
-            payload.get("snippet", ""),
-            payload.get("body", ""),
-        ])).lower()
+        text = " ".join(
+            filter(
+                None,
+                [
+                    payload.get("body_plain", ""),
+                    payload.get("snippet", ""),
+                    payload.get("body", ""),
+                ],
+            )
+        ).lower()
         if "unsubscribe" in text:
             # A single 'unsubscribe' in a footer isn't enough — require
             # additional marketing signals to reduce false positives from
             # personal emails sent via corporate email platforms that
             # auto-append unsubscribe links.
             bulk_phrases = (
-                "email preferences", "manage your subscription",
-                "opt out", "opt-out",
-                "you are receiving this", "you received this",
-                "you're receiving this", "sent to you because",
-                "subscription preferences", "communication preferences",
-                "manage preferences", "update your preferences",
-                "mailing list", "from our", "from future emails",
+                "email preferences",
+                "manage your subscription",
+                "opt out",
+                "opt-out",
+                "you are receiving this",
+                "you received this",
+                "you're receiving this",
+                "sent to you because",
+                "subscription preferences",
+                "communication preferences",
+                "manage preferences",
+                "update your preferences",
+                "mailing list",
+                "from our",
+                "from future emails",
                 "no longer wish to receive",
             )
             unsubscribe_count = text.count("unsubscribe")

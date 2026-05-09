@@ -64,9 +64,7 @@ class TestCorruptedUserModelDbRecovery:
 
         # The recovered main db should be functional.
         with manager.get_connection("user_model") as conn:
-            tables = [
-                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            ]
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
             assert "episodes" in tables
 
     def test_healthy_db_not_touched(self, tmp_path):
@@ -98,9 +96,7 @@ class TestCorruptedUserModelDbRecovery:
         assert db_file.exists()
 
         with manager.get_connection("user_model") as conn:
-            tables = [
-                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            ]
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
             assert "episodes" in tables
             assert "semantic_facts" in tables
             assert "routines" in tables
@@ -120,9 +116,7 @@ class TestCorruptedUserModelDbRecovery:
 
         # Verify events.db is healthy after normal init.
         with manager.get_connection("events") as conn:
-            tables = [
-                r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            ]
+            tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
             assert "events" in tables
 
         # Now corrupt user_model.db and re-initialise.

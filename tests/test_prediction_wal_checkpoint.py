@@ -69,35 +69,39 @@ class TestPredictionEngineWalCheckpoint:
         engine = PredictionEngine(db=db, ums=user_model_store)
 
         # Seed an event so the engine has something to process
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "google",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {
-                "from_address": "boss@company.com",
-                "subject": "Meeting tomorrow at 9am",
-                "message_id": "msg-wal-test",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "google",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": {
+                    "from_address": "boss@company.com",
+                    "subject": "Meeting tomorrow at 9am",
+                    "message_id": "msg-wal-test",
+                },
+                "metadata": {},
+            }
+        )
 
         # Seed some calendar events so conflict detection can produce predictions
         now = datetime.now(timezone.utc)
         for i in range(2):
-            event_store.store_event({
-                "id": str(uuid.uuid4()),
-                "type": "calendar.event.created",
-                "source": "caldav",
-                "timestamp": now.isoformat(),
-                "payload": {
-                    "title": f"Overlapping meeting {i}",
-                    "start": now.isoformat(),
-                    "end": (now).isoformat(),
-                    "calendar_id": "work",
-                },
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": "calendar.event.created",
+                    "source": "caldav",
+                    "timestamp": now.isoformat(),
+                    "payload": {
+                        "title": f"Overlapping meeting {i}",
+                        "start": now.isoformat(),
+                        "end": (now).isoformat(),
+                        "calendar_id": "work",
+                    },
+                    "metadata": {},
+                }
+            )
 
         with patch.object(db, "checkpoint_wal", wraps=db.checkpoint_wal) as mock_ckpt:
             predictions = await engine.generate_predictions({})
@@ -114,18 +118,20 @@ class TestPredictionEngineWalCheckpoint:
         engine = PredictionEngine(db=db, ums=user_model_store)
 
         # Seed an event
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "google",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "payload": {
-                "from_address": "test@example.com",
-                "subject": "Test",
-                "message_id": "msg-ckpt-fail",
-            },
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "google",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "payload": {
+                    "from_address": "test@example.com",
+                    "subject": "Test",
+                    "message_id": "msg-ckpt-fail",
+                },
+                "metadata": {},
+            }
+        )
 
         # Make checkpoint_wal raise an exception
         with patch.object(db, "checkpoint_wal", side_effect=Exception("WAL checkpoint simulated failure")):

@@ -59,7 +59,7 @@ async def test_no_top_5_cap_all_predictions_surface(mock_engine, db, user_model_
             was_accurate=None,
             created_at=datetime.now(timezone.utc).isoformat(),
             resolved_at=None,
-            filter_reason=None
+            filter_reason=None,
         )
         predictions.append(pred)
 
@@ -77,10 +77,7 @@ async def test_no_top_5_cap_all_predictions_surface(mock_engine, db, user_model_
     # Mock reaction prediction to approve all predictions
     mock_engine.predict_reaction = AsyncMock(
         return_value=ReactionPrediction(
-            proposed_action="Test action",
-            predicted_reaction="helpful",
-            confidence=0.8,
-            reasoning="Test approval"
+            proposed_action="Test action", predicted_reaction="helpful", confidence=0.8, reasoning="Test approval"
         )
     )
 
@@ -88,9 +85,8 @@ async def test_no_top_5_cap_all_predictions_surface(mock_engine, db, user_model_
     mock_engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("evt-1", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}")
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("evt-1", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}"),
         )
 
     # Generate predictions
@@ -109,9 +105,7 @@ async def test_no_top_5_cap_all_predictions_surface(mock_engine, db, user_model_
 
     # VERIFY: All predictions marked as surfaced
     with db.get_connection("user_model") as conn:
-        surfaced_count = conn.execute(
-            "SELECT COUNT(*) as count FROM predictions WHERE was_surfaced = 1"
-        ).fetchone()
+        surfaced_count = conn.execute("SELECT COUNT(*) as count FROM predictions WHERE was_surfaced = 1").fetchone()
         assert surfaced_count["count"] == 10, "All 10 predictions should be marked as surfaced"
 
 
@@ -138,7 +132,7 @@ async def test_predictions_sorted_by_confidence(mock_engine, db, user_model_stor
             was_accurate=None,
             created_at=datetime.now(timezone.utc).isoformat(),
             resolved_at=None,
-            filter_reason=None
+            filter_reason=None,
         ),
         Prediction(
             id="pred-high",
@@ -154,7 +148,7 @@ async def test_predictions_sorted_by_confidence(mock_engine, db, user_model_stor
             was_accurate=None,
             created_at=datetime.now(timezone.utc).isoformat(),
             resolved_at=None,
-            filter_reason=None
+            filter_reason=None,
         ),
         Prediction(
             id="pred-med",
@@ -170,7 +164,7 @@ async def test_predictions_sorted_by_confidence(mock_engine, db, user_model_stor
             was_accurate=None,
             created_at=datetime.now(timezone.utc).isoformat(),
             resolved_at=None,
-            filter_reason=None
+            filter_reason=None,
         ),
     ]
 
@@ -184,10 +178,7 @@ async def test_predictions_sorted_by_confidence(mock_engine, db, user_model_stor
     mock_engine._get_accuracy_multiplier = MagicMock(return_value=1.0)
     mock_engine.predict_reaction = AsyncMock(
         return_value=ReactionPrediction(
-            proposed_action="Test action",
-            predicted_reaction="helpful",
-            confidence=0.8,
-            reasoning="Test"
+            proposed_action="Test action", predicted_reaction="helpful", confidence=0.8, reasoning="Test"
         )
     )
 
@@ -195,9 +186,8 @@ async def test_predictions_sorted_by_confidence(mock_engine, db, user_model_stor
     mock_engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("evt-2", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}")
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("evt-2", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}"),
         )
 
     # Generate predictions
@@ -227,22 +217,24 @@ async def test_reaction_gating_still_filters(mock_engine, db, user_model_store):
     """
     predictions = []
     for i in range(5):
-        predictions.append(Prediction(
-            id=f"pred-{i}",
-            prediction_type="reminder",
-            description=f"Test {i}",
-            confidence=0.7,
-            confidence_gate=ConfidenceGate.DEFAULT,
-            time_horizon="1d",
-            suggested_action=f"Action {i}",
-            supporting_signals={},
-            was_surfaced=False,
-            user_response=None,
-            was_accurate=None,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            resolved_at=None,
-            filter_reason=None
-        ))
+        predictions.append(
+            Prediction(
+                id=f"pred-{i}",
+                prediction_type="reminder",
+                description=f"Test {i}",
+                confidence=0.7,
+                confidence_gate=ConfidenceGate.DEFAULT,
+                time_horizon="1d",
+                suggested_action=f"Action {i}",
+                supporting_signals={},
+                was_surfaced=False,
+                user_response=None,
+                was_accurate=None,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                resolved_at=None,
+                filter_reason=None,
+            )
+        )
 
     mock_engine._check_follow_up_needs = AsyncMock(return_value=predictions)
     mock_engine._check_calendar_conflicts = AsyncMock(return_value=[])
@@ -254,6 +246,7 @@ async def test_reaction_gating_still_filters(mock_engine, db, user_model_store):
 
     # Mock reaction to filter first 2 predictions (annoying), approve rest
     call_count = 0
+
     async def mock_reaction(pred, ctx):
         nonlocal call_count
         if call_count < 2:
@@ -262,14 +255,11 @@ async def test_reaction_gating_still_filters(mock_engine, db, user_model_store):
                 proposed_action="Test action",
                 predicted_reaction="annoying",
                 confidence=0.8,
-                reasoning="User is stressed"
+                reasoning="User is stressed",
             )
         call_count += 1
         return ReactionPrediction(
-            proposed_action="Test action",
-            predicted_reaction="helpful",
-            confidence=0.8,
-            reasoning="Good timing"
+            proposed_action="Test action", predicted_reaction="helpful", confidence=0.8, reasoning="Good timing"
         )
 
     mock_engine.predict_reaction = mock_reaction
@@ -278,9 +268,8 @@ async def test_reaction_gating_still_filters(mock_engine, db, user_model_store):
     mock_engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("evt-3", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}")
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("evt-3", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}"),
         )
 
     # Generate predictions
@@ -320,7 +309,7 @@ async def test_confidence_gating_still_filters(mock_engine, db, user_model_store
             was_accurate=None,
             created_at=datetime.now(timezone.utc).isoformat(),
             resolved_at=None,
-            filter_reason=None
+            filter_reason=None,
         ),
         Prediction(
             id="pred-above",
@@ -336,7 +325,7 @@ async def test_confidence_gating_still_filters(mock_engine, db, user_model_store
             was_accurate=None,
             created_at=datetime.now(timezone.utc).isoformat(),
             resolved_at=None,
-            filter_reason=None
+            filter_reason=None,
         ),
     ]
 
@@ -349,10 +338,7 @@ async def test_confidence_gating_still_filters(mock_engine, db, user_model_store
     mock_engine._get_accuracy_multiplier = MagicMock(return_value=1.0)
     mock_engine.predict_reaction = AsyncMock(
         return_value=ReactionPrediction(
-            proposed_action="Test action",
-            predicted_reaction="helpful",
-            confidence=0.8,
-            reasoning="Test"
+            proposed_action="Test action", predicted_reaction="helpful", confidence=0.8, reasoning="Test"
         )
     )
 
@@ -360,9 +346,8 @@ async def test_confidence_gating_still_filters(mock_engine, db, user_model_store
     mock_engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("evt-4", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}")
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("evt-4", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}"),
         )
 
     # Generate predictions
@@ -375,12 +360,11 @@ async def test_confidence_gating_still_filters(mock_engine, db, user_model_store
 
     # VERIFY: Filtered prediction has confidence filter_reason
     with db.get_connection("user_model") as conn:
-        confidence_filtered = conn.execute(
-            "SELECT filter_reason FROM predictions WHERE id = 'pred-below'"
-        ).fetchone()
+        confidence_filtered = conn.execute("SELECT filter_reason FROM predictions WHERE id = 'pred-below'").fetchone()
         assert confidence_filtered is not None
-        assert confidence_filtered["filter_reason"].startswith("confidence:"), \
+        assert confidence_filtered["filter_reason"].startswith("confidence:"), (
             f"Expected confidence filter_reason, got {confidence_filtered['filter_reason']}"
+        )
 
 
 @pytest.mark.asyncio
@@ -394,22 +378,24 @@ async def test_high_volume_predictions_all_surface(mock_engine, db, user_model_s
     # Create 50 predictions with confidence ≥ 0.3
     predictions = []
     for i in range(50):
-        predictions.append(Prediction(
-            id=f"pred-{i}",
-            prediction_type="reminder",
-            description=f"Test prediction {i}",
-            confidence=0.3 + (i * 0.01),  # 0.3 to 0.79
-            confidence_gate=ConfidenceGate.SUGGEST,
-            time_horizon="1d",
-            suggested_action=f"Action {i}",
-            supporting_signals={},
-            was_surfaced=False,
-            user_response=None,
-            was_accurate=None,
-            created_at=datetime.now(timezone.utc).isoformat(),
-            resolved_at=None,
-            filter_reason=None
-        ))
+        predictions.append(
+            Prediction(
+                id=f"pred-{i}",
+                prediction_type="reminder",
+                description=f"Test prediction {i}",
+                confidence=0.3 + (i * 0.01),  # 0.3 to 0.79
+                confidence_gate=ConfidenceGate.SUGGEST,
+                time_horizon="1d",
+                suggested_action=f"Action {i}",
+                supporting_signals={},
+                was_surfaced=False,
+                user_response=None,
+                was_accurate=None,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                resolved_at=None,
+                filter_reason=None,
+            )
+        )
 
     mock_engine._check_follow_up_needs = AsyncMock(return_value=predictions)
     mock_engine._check_calendar_conflicts = AsyncMock(return_value=[])
@@ -420,10 +406,7 @@ async def test_high_volume_predictions_all_surface(mock_engine, db, user_model_s
     mock_engine._get_accuracy_multiplier = MagicMock(return_value=1.0)
     mock_engine.predict_reaction = AsyncMock(
         return_value=ReactionPrediction(
-            proposed_action="Test action",
-            predicted_reaction="helpful",
-            confidence=0.8,
-            reasoning="Test"
+            proposed_action="Test action", predicted_reaction="helpful", confidence=0.8, reasoning="Test"
         )
     )
 
@@ -431,9 +414,8 @@ async def test_high_volume_predictions_all_surface(mock_engine, db, user_model_s
     mock_engine._last_event_cursor = 0
     with db.get_connection("events") as conn:
         conn.execute(
-            "INSERT INTO events (id, type, source, timestamp, priority, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("evt-5", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}")
+            "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("evt-5", "email.received", "test", datetime.now(timezone.utc).isoformat(), "medium", "{}"),
         )
 
     # Generate predictions
@@ -452,5 +434,6 @@ async def test_high_volume_predictions_all_surface(mock_engine, db, user_model_s
 
     # VERIFY: Sorted by confidence (descending)
     confidences = [p.confidence for p in surfaced]
-    assert confidences == sorted(confidences, reverse=True), \
+    assert confidences == sorted(confidences, reverse=True), (
         "Predictions should be sorted by confidence (highest first)"
+    )

@@ -59,6 +59,7 @@ def _make_calendar_event(
     """Build a minimal CALENDAR_EVENT_CREATED event dict for testing."""
     now = timestamp or datetime.now(timezone.utc)
     from datetime import timedelta
+
     start_time = now + timedelta(hours=start_offset_hours)
     payload: dict = {
         "summary": summary,
@@ -75,10 +76,7 @@ def _make_calendar_event(
 
 def _decision_signals_of_type(signals: list[dict], decision_type: str) -> list[dict]:
     """Return signals with type='decision_signal' and the given decision_type."""
-    return [
-        s for s in signals
-        if s.get("type") == "decision_signal" and s.get("decision_type") == decision_type
-    ]
+    return [s for s in signals if s.get("type") == "decision_signal" and s.get("decision_type") == decision_type]
 
 
 # ---------------------------------------------------------------------------
@@ -451,14 +449,18 @@ def test_profile_updated_with_decision_signal_confidence(db, user_model_store):
     extractor = DecisionExtractor(db, user_model_store)
 
     # Two urgency signals: first is subject-line (0.6), second is body-only (0.4)
-    extractor.extract(_make_email_event(
-        subject="URGENT: please respond",
-        body="We need your input immediately.",
-    ))
-    extractor.extract(_make_email_event(
-        subject="Follow-up on the proposal",
-        body="Please respond ASAP.",
-    ))
+    extractor.extract(
+        _make_email_event(
+            subject="URGENT: please respond",
+            body="We need your input immediately.",
+        )
+    )
+    extractor.extract(
+        _make_email_event(
+            subject="Follow-up on the proposal",
+            body="Please respond ASAP.",
+        )
+    )
 
     profile = user_model_store.get_signal_profile("decision")
     assert profile is not None

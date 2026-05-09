@@ -70,13 +70,15 @@ class TestZeroDetectionPruneGuard:
         base_date = datetime.now(timezone.utc) - timedelta(days=5)
         for day_offset in range(5):
             day_start = base_date.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": day_start.isoformat(),
-                "event_id": str(uuid.uuid4()),
-                "interaction_type": "email_check",
-                "content_summary": "Checking email",
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": day_start.isoformat(),
+                    "event_id": str(uuid.uuid4()),
+                    "interaction_type": "email_check",
+                    "content_summary": "Checking email",
+                }
+            )
 
         with patch.object(detector, "prune_stale_routines", return_value=0) as mock_prune:
             routines = detector.detect_routines(lookback_days=30)
@@ -103,11 +105,25 @@ class TestFallbackInternalTypeFilter:
         with db.get_connection("events") as conn:
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-                (internal_event_id, "usermodel.signal_profile.updated", "system", datetime.now(timezone.utc).isoformat(), "low", "{}"),
+                (
+                    internal_event_id,
+                    "usermodel.signal_profile.updated",
+                    "system",
+                    datetime.now(timezone.utc).isoformat(),
+                    "low",
+                    "{}",
+                ),
             )
             conn.execute(
                 "INSERT INTO events (id, type, source, timestamp, priority, payload) VALUES (?, ?, ?, ?, ?, ?)",
-                (normal_event_id, "email.received", "proton_mail", datetime.now(timezone.utc).isoformat(), "normal", "{}"),
+                (
+                    normal_event_id,
+                    "email.received",
+                    "proton_mail",
+                    datetime.now(timezone.utc).isoformat(),
+                    "normal",
+                    "{}",
+                ),
             )
 
         # Create episodes linking to these events with "unknown" interaction_type
@@ -117,13 +133,15 @@ class TestFallbackInternalTypeFilter:
             (internal_event_id, "Internal signal update"),
             (normal_event_id, "Email received"),
         ]:
-            user_model_store.store_episode({
-                "id": str(uuid.uuid4()),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "event_id": evt_id,
-                "interaction_type": "unknown",
-                "content_summary": summary,
-            })
+            user_model_store.store_episode(
+                {
+                    "id": str(uuid.uuid4()),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "event_id": evt_id,
+                    "interaction_type": "unknown",
+                    "content_summary": summary,
+                }
+            )
 
         # Run fallback classification
         result = detector._fallback_temporal_episodes(cutoff)
@@ -137,6 +155,4 @@ class TestFallbackInternalTypeFilter:
         )
 
         # Normal type should be present
-        assert "email_received" in activity_types, (
-            "Normal derived type 'email_received' should be present"
-        )
+        assert "email_received" in activity_types, "Normal derived type 'email_received' should be present"

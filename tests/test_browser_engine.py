@@ -31,6 +31,7 @@ from connectors.browser import engine
 # FIXTURES
 # ===========================================================================
 
+
 @pytest.fixture
 def temp_dir():
     """Temporary directory for test files."""
@@ -68,12 +69,14 @@ def mock_page():
 def mock_element():
     """Mock Playwright element object."""
     element = AsyncMock()
-    element.bounding_box = AsyncMock(return_value={
-        "x": 100,
-        "y": 100,
-        "width": 200,
-        "height": 50,
-    })
+    element.bounding_box = AsyncMock(
+        return_value={
+            "x": 100,
+            "y": 100,
+            "width": 200,
+            "height": 50,
+        }
+    )
     element.text_content = AsyncMock(return_value="Sample Text")
     return element
 
@@ -83,10 +86,12 @@ def mock_context():
     """Mock Playwright browser context."""
     context = AsyncMock()
     context.new_page = AsyncMock()
-    context.storage_state = AsyncMock(return_value={
-        "cookies": [],
-        "origins": [],
-    })
+    context.storage_state = AsyncMock(
+        return_value={
+            "cookies": [],
+            "origins": [],
+        }
+    )
     context.on = Mock()
     return context
 
@@ -113,6 +118,7 @@ def mock_playwright():
 # ===========================================================================
 # HUMANEMULATOR TESTS
 # ===========================================================================
+
 
 class TestHumanEmulator:
     """Test suite for HumanEmulator class (realistic interaction patterns)."""
@@ -285,6 +291,7 @@ class TestHumanEmulator:
 # SESSIONMANAGER TESTS
 # ===========================================================================
 
+
 class TestSessionManager:
     """Test suite for SessionManager (persistent browser sessions)."""
 
@@ -376,6 +383,7 @@ class TestSessionManager:
 # ===========================================================================
 # CREDENTIALVAULT TESTS
 # ===========================================================================
+
 
 class TestCredentialVault:
     """Test suite for CredentialVault (credential management)."""
@@ -535,6 +543,7 @@ class TestCredentialVault:
 # BROWSERENGINE TESTS
 # ===========================================================================
 
+
 class TestBrowserEngine:
     """Test suite for BrowserEngine (stealth browser management)."""
 
@@ -563,9 +572,7 @@ class TestBrowserEngine:
                 await browser.start()
 
     @pytest.mark.asyncio
-    async def test_start_launches_chromium_with_stealth_flags(
-        self, temp_dir, mock_playwright, mock_browser
-    ):
+    async def test_start_launches_chromium_with_stealth_flags(self, temp_dir, mock_playwright, mock_browser):
         """Test start launches Chromium with anti-detection flags."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
 
@@ -586,9 +593,7 @@ class TestBrowserEngine:
                 assert browser._browser is mock_browser
 
     @pytest.mark.asyncio
-    async def test_stop_closes_browser_and_playwright(
-        self, temp_dir, mock_playwright, mock_browser
-    ):
+    async def test_stop_closes_browser_and_playwright(self, temp_dir, mock_playwright, mock_browser):
         """Test stop closes browser and stops Playwright in correct order."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
         browser._browser = mock_browser
@@ -609,9 +614,7 @@ class TestBrowserEngine:
         await browser.stop()
 
     @pytest.mark.asyncio
-    async def test_create_context_starts_browser_lazily(
-        self, temp_dir, mock_playwright, mock_browser, mock_context
-    ):
+    async def test_create_context_starts_browser_lazily(self, temp_dir, mock_playwright, mock_browser, mock_context):
         """Test create_context lazy-starts browser if not running."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
         mock_browser.new_context.return_value = mock_context
@@ -631,9 +634,7 @@ class TestBrowserEngine:
                 assert context is mock_context
 
     @pytest.mark.asyncio
-    async def test_create_context_uses_random_viewport(
-        self, temp_dir, mock_browser, mock_context
-    ):
+    async def test_create_context_uses_random_viewport(self, temp_dir, mock_browser, mock_context):
         """Test create_context randomizes viewport size."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
         browser._browser = mock_browser
@@ -647,9 +648,7 @@ class TestBrowserEngine:
         assert viewport in engine.BrowserEngine.VIEWPORTS
 
     @pytest.mark.asyncio
-    async def test_create_context_uses_random_user_agent(
-        self, temp_dir, mock_browser, mock_context
-    ):
+    async def test_create_context_uses_random_user_agent(self, temp_dir, mock_browser, mock_context):
         """Test create_context randomizes user agent."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
         browser._browser = mock_browser
@@ -663,9 +662,7 @@ class TestBrowserEngine:
         assert user_agent in engine.BrowserEngine.USER_AGENTS
 
     @pytest.mark.asyncio
-    async def test_create_context_loads_saved_session(
-        self, temp_dir, mock_browser, mock_context
-    ):
+    async def test_create_context_loads_saved_session(self, temp_dir, mock_browser, mock_context):
         """Test create_context loads saved session state if available."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
         browser._browser = mock_browser
@@ -682,9 +679,7 @@ class TestBrowserEngine:
         assert call_kwargs["storage_state"] == str(session_path)
 
     @pytest.mark.asyncio
-    async def test_create_context_registers_stealth_handler(
-        self, temp_dir, mock_browser, mock_context
-    ):
+    async def test_create_context_registers_stealth_handler(self, temp_dir, mock_browser, mock_context):
         """Test create_context registers stealth script on page events."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
         browser._browser = mock_browser
@@ -723,9 +718,7 @@ class TestBrowserEngine:
         assert page is mock_page
 
     @pytest.mark.asyncio
-    async def test_save_session_delegates_to_session_manager(
-        self, temp_dir, mock_context
-    ):
+    async def test_save_session_delegates_to_session_manager(self, temp_dir, mock_context):
         """Test save_session delegates to SessionManager."""
         browser = engine.BrowserEngine(data_dir=temp_dir)
 
@@ -738,6 +731,7 @@ class TestBrowserEngine:
 # ===========================================================================
 # PAGEINTERACTOR TESTS
 # ===========================================================================
+
 
 class TestPageInteractor:
     """Test suite for PageInteractor (high-level page interactions)."""
@@ -781,6 +775,7 @@ class TestPageInteractor:
     @pytest.mark.asyncio
     async def test_login_presses_enter_when_submit_not_found(self, mock_page, mock_element):
         """Test login presses Enter as fallback when submit button not found."""
+
         # Make submit selector fail, but everything else succeed
         def wait_side_effect(selector, **kwargs):
             if "submit" in selector:

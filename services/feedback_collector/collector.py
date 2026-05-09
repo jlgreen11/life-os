@@ -40,9 +40,10 @@ class FeedbackCollector:
         - Explicit feedback ("that was helpful" / "don't do that")
     """
 
-    def __init__(self, db: DatabaseManager, ums: UserModelStore, event_bus: Any = None,
-                 source_weight_manager: Any = None):
-        self.db = db   # Database access for feedback_log and notification tables
+    def __init__(
+        self, db: DatabaseManager, ums: UserModelStore, event_bus: Any = None, source_weight_manager: Any = None
+    ):
+        self.db = db  # Database access for feedback_log and notification tables
         self.ums = ums  # User-model store for updating semantic facts from feedback
         self.bus = event_bus
         self.swm = source_weight_manager  # SourceWeightManager for updating source weights on feedback
@@ -52,10 +53,9 @@ class FeedbackCollector:
         if self.bus and self.bus.is_connected:
             await self.bus.publish(event_type, payload, source="feedback_collector")
 
-    async def process_notification_response(self, notification_id: str,
-                                             response_type: str,
-                                             response_time_seconds: float,
-                                             context: Optional[dict] = None):
+    async def process_notification_response(
+        self, notification_id: str, response_type: str, response_time_seconds: float, context: Optional[dict] = None
+    ):
         """
         Process how the user responded to a notification.
 
@@ -104,9 +104,9 @@ class FeedbackCollector:
         elif response_type == FeedbackType.IGNORED.value:
             self._learn_from_ignore(notif)
 
-    async def process_draft_edit(self, original_draft: str, final_message: str,
-                                  contact_id: Optional[str] = None,
-                                  channel: Optional[str] = None):
+    async def process_draft_edit(
+        self, original_draft: str, final_message: str, contact_id: Optional[str] = None, channel: Optional[str] = None
+    ):
         """
         Process the diff between an AI-generated draft and what the user
         actually sent. Every edit is a learning signal.
@@ -120,13 +120,15 @@ class FeedbackCollector:
         if original_draft == final_message:
             # User accepted the draft as-is — strong positive signal.
             # This means the AI's tone, length, and content were all on target.
-            await self._store_feedback({
-                "action_id": f"draft-{datetime.now(timezone.utc).isoformat()}",
-                "action_type": "draft",
-                "feedback_type": FeedbackType.ENGAGED.value,
-                "response_latency_seconds": 0,
-                "context": {"contact_id": contact_id, "channel": channel, "accepted_as_is": True},
-            })
+            await self._store_feedback(
+                {
+                    "action_id": f"draft-{datetime.now(timezone.utc).isoformat()}",
+                    "action_type": "draft",
+                    "feedback_type": FeedbackType.ENGAGED.value,
+                    "response_latency_seconds": 0,
+                    "context": {"contact_id": contact_id, "channel": channel, "accepted_as_is": True},
+                }
+            )
             return
 
         # --- Diff analysis: learn HOW the user edited the AI's draft ---
@@ -135,7 +137,7 @@ class FeedbackCollector:
         original_words = set(original_draft.lower().split())
         final_words = set(final_message.lower().split())
 
-        added_words = final_words - original_words   # Words the user injected
+        added_words = final_words - original_words  # Words the user injected
         removed_words = original_words - final_words  # Words the user deleted
 
         # Length change as a percentage tells us if the user tends to make
@@ -146,12 +148,30 @@ class FeedbackCollector:
         # Formality shift detection: check whether the user made the draft
         # more casual or more formal. Over time, this nudges the AI's
         # default tone for this contact/channel closer to the user's style.
-        informal_added = sum(1 for w in added_words if w in [
-            "hey", "yeah", "lol", "haha", "gonna", "wanna",
-        ])
-        formal_added = sum(1 for w in added_words if w in [
-            "regarding", "sincerely", "furthermore", "please",
-        ])
+        informal_added = sum(
+            1
+            for w in added_words
+            if w
+            in [
+                "hey",
+                "yeah",
+                "lol",
+                "haha",
+                "gonna",
+                "wanna",
+            ]
+        )
+        formal_added = sum(
+            1
+            for w in added_words
+            if w
+            in [
+                "regarding",
+                "sincerely",
+                "furthermore",
+                "please",
+            ]
+        )
 
         feedback = {
             "action_id": f"draft-{datetime.now(timezone.utc).isoformat()}",
@@ -164,9 +184,9 @@ class FeedbackCollector:
                 "length_change_pct": round(length_change_pct, 2),
                 "words_added": len(added_words),
                 "words_removed": len(removed_words),
-                "formality_shift": "more_informal" if informal_added > formal_added else (
-                    "more_formal" if formal_added > informal_added else "neutral"
-                ),
+                "formality_shift": "more_informal"
+                if informal_added > formal_added
+                else ("more_formal" if formal_added > informal_added else "neutral"),
             },
         }
 
@@ -177,13 +197,11 @@ class FeedbackCollector:
         # user's preferred style. This is the core of the feedback loop:
         #   AI drafts -> user edits -> template adjusts -> better drafts.
         if contact_id or channel:
-            self._update_template_from_edit(
-                contact_id, channel, original_draft, final_message, feedback["context"]
-            )
+            self._update_template_from_edit(contact_id, channel, original_draft, final_message, feedback["context"])
 
-    async def process_suggestion_response(self, suggestion_id: str,
-                                           accepted: bool,
-                                           user_alternative: Optional[str] = None):
+    async def process_suggestion_response(
+        self, suggestion_id: str, accepted: bool, user_alternative: Optional[str] = None
+    ):
         """
         Process whether the user accepted or rejected a proactive suggestion.
 
@@ -289,6 +307,7 @@ class FeedbackCollector:
 
                 if event_row:
                     import json as _json
+
                     event = {
                         "type": event_row["type"],
                         "payload": _json.loads(event_row["payload"] or "{}"),
@@ -420,10 +439,9 @@ class FeedbackCollector:
         # Update source weights — ignored is the strongest negative signal
         self._update_source_weight_dismissal(notification)
 
-    def _update_template_from_edit(self, contact_id: Optional[str],
-                                   channel: Optional[str],
-                                   original: str, final: str,
-                                   edit_context: dict):
+    def _update_template_from_edit(
+        self, contact_id: Optional[str], channel: Optional[str], original: str, final: str, edit_context: dict
+    ):
         """
         Update communication template based on how user edited a draft.
 
@@ -527,16 +545,21 @@ class FeedbackCollector:
                 ),
             )
 
-        logger.info("feedback: stored %s action=%s type=%s", feedback_id, feedback["action_id"], feedback["feedback_type"])
+        logger.info(
+            "feedback: stored %s action=%s type=%s", feedback_id, feedback["action_id"], feedback["feedback_type"]
+        )
 
-        await self._publish_telemetry("system.feedback.recorded", {
-            "feedback_id": feedback_id,
-            "action_id": feedback["action_id"],
-            "action_type": feedback["action_type"],
-            "feedback_type": feedback["feedback_type"],
-            "response_latency_seconds": feedback.get("response_latency_seconds"),
-            "recorded_at": now,
-        })
+        await self._publish_telemetry(
+            "system.feedback.recorded",
+            {
+                "feedback_id": feedback_id,
+                "action_id": feedback["action_id"],
+                "action_type": feedback["action_type"],
+                "feedback_type": feedback["feedback_type"],
+                "response_latency_seconds": feedback.get("response_latency_seconds"),
+                "recorded_at": now,
+            },
+        )
 
     def get_feedback_summary(self) -> dict:
         """
@@ -605,9 +628,7 @@ class FeedbackCollector:
                 result["feedback_last_24h"] = recent
 
                 # Most recent feedback timestamp
-                latest = conn.execute(
-                    "SELECT MAX(timestamp) as ts FROM feedback_log"
-                ).fetchone()["ts"]
+                latest = conn.execute("SELECT MAX(timestamp) as ts FROM feedback_log").fetchone()["ts"]
                 result["last_feedback_at"] = latest
 
                 # Semantic facts created from feedback (notification_preference category)

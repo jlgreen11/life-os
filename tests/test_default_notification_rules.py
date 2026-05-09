@@ -28,6 +28,7 @@ from services.rules_engine.engine import DEFAULT_RULES, RulesEngine, install_def
 # Helpers
 # ---------------------------------------------------------------
 
+
 def _make_email_event(
     subject: str = "Hello",
     body_plain: str = "Normal email content",
@@ -48,6 +49,7 @@ def _make_email_event(
 # ---------------------------------------------------------------
 # DEFAULT_RULES list tests
 # ---------------------------------------------------------------
+
 
 def test_urgent_rule_in_default_rules():
     """Verify 'Notify on urgent emails' is present in DEFAULT_RULES."""
@@ -70,6 +72,7 @@ def test_default_rules_count():
 # install_default_rules
 # ---------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_install_default_rules_installs_all_eight(db):
     """install_default_rules should create all 8 rules in the database."""
@@ -87,6 +90,7 @@ async def test_install_default_rules_installs_all_eight(db):
 # ---------------------------------------------------------------
 # Urgent email rule — matching
 # ---------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_urgent_rule_matches_uppercase_subject(db):
@@ -122,9 +126,15 @@ async def test_urgent_rule_matches_various_keywords(db):
     engine = RulesEngine(db)
 
     keywords = [
-        "urgent", "action required", "action needed",
-        "immediate", "asap", "time sensitive",
-        "deadline", "past due", "overdue",
+        "urgent",
+        "action required",
+        "action needed",
+        "immediate",
+        "asap",
+        "time sensitive",
+        "deadline",
+        "past due",
+        "overdue",
     ]
     for keyword in keywords:
         event = _make_email_event(subject=f"Re: {keyword} - project update")
@@ -152,6 +162,7 @@ async def test_urgent_rule_tags_as_urgent(db):
 # Urgent email rule — non-matching
 # ---------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_urgent_rule_does_not_match_normal_email(db):
     """A normal email without urgent keywords should NOT trigger the urgent rule."""
@@ -169,6 +180,7 @@ async def test_urgent_rule_does_not_match_normal_email(db):
 # Reply request rule — matching
 # ---------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_reply_rule_matches_please_reply(db):
     """The reply-request rule should match 'please reply' in body."""
@@ -178,7 +190,9 @@ async def test_reply_rule_matches_please_reply(db):
     event = _make_email_event(body_plain="Hi, please reply with your availability.")
     actions = await engine.evaluate(event)
 
-    notify_actions = [a for a in actions if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"]
+    notify_actions = [
+        a for a in actions if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"
+    ]
     assert len(notify_actions) == 1
     assert notify_actions[0]["priority"] == "medium"
 
@@ -190,18 +204,22 @@ async def test_reply_rule_matches_various_phrases(db):
     engine = RulesEngine(db)
 
     phrases = [
-        "please reply", "please respond", "let me know",
-        "can you confirm", "your thoughts",
-        "waiting for your", "need your input",
-        "rsvp", "please get back",
+        "please reply",
+        "please respond",
+        "let me know",
+        "can you confirm",
+        "your thoughts",
+        "waiting for your",
+        "need your input",
+        "rsvp",
+        "please get back",
     ]
     for phrase in phrases:
         event = _make_email_event(body_plain=f"Hello, {phrase} when you can. Thanks!")
         actions = await engine.evaluate(event)
 
         notify_actions = [
-            a for a in actions
-            if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"
+            a for a in actions if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"
         ]
         assert len(notify_actions) == 1, f"Failed to match phrase: {phrase}"
 
@@ -215,13 +233,16 @@ async def test_reply_rule_case_insensitive(db):
     event = _make_email_event(body_plain="PLEASE RESPOND to this request ASAP.")
     actions = await engine.evaluate(event)
 
-    notify_actions = [a for a in actions if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"]
+    notify_actions = [
+        a for a in actions if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"
+    ]
     assert len(notify_actions) == 1
 
 
 # ---------------------------------------------------------------
 # Reply request rule — non-matching
 # ---------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_reply_rule_does_not_match_normal_email(db):
@@ -233,8 +254,7 @@ async def test_reply_rule_does_not_match_normal_email(db):
     actions = await engine.evaluate(event)
 
     notify_actions = [
-        a for a in actions
-        if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"
+        a for a in actions if a["type"] == "notify" and a["rule_name"] == "Notify on direct reply requests"
     ]
     assert len(notify_actions) == 0
 
@@ -242,6 +262,7 @@ async def test_reply_rule_does_not_match_normal_email(db):
 # ---------------------------------------------------------------
 # Marketing email suppression
 # ---------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_marketing_email_triggers_suppress_action(db):
@@ -291,6 +312,7 @@ async def test_marketing_reply_request_triggers_suppress(db):
 # ---------------------------------------------------------------
 # Action structure validation
 # ---------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_urgent_notify_action_structure(db):

@@ -23,6 +23,7 @@ from services.task_manager.manager import TaskManager
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_life_os(db, event_bus):
     """Build a minimal LifeOS shell with real TaskManager and NotificationManager.
 

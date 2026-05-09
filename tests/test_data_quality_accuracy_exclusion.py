@@ -58,6 +58,7 @@ def _get_analyze():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_prediction_db(tmp_path: Path, predictions: list[dict]) -> str:
     """Create a minimal user_model.db in tmp_path with the given predictions.
 
@@ -142,6 +143,7 @@ def _make_prediction_db(tmp_path: Path, predictions: list[dict]) -> str:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestAccuracyExcludesAutomatedSenderFastPath:
     """The accuracy_rate must exclude automated_sender_fast_path resolutions."""
 
@@ -198,7 +200,8 @@ class TestAccuracyExcludesAutomatedSenderFastPath:
             # 5 real misses
             *[{"prediction_type": "opportunity", "was_accurate": 0, "resolution_reason": None}] * 5,
             # 10 automated-sender exclusions (should NOT count against accuracy)
-            *[{"prediction_type": "opportunity", "was_accurate": 0, "resolution_reason": "automated_sender_fast_path"}] * 10,
+            *[{"prediction_type": "opportunity", "was_accurate": 0, "resolution_reason": "automated_sender_fast_path"}]
+            * 10,
         ]
         data_dir = _make_prediction_db(tmp_path, predictions)
         report = analyze(data_dir)
@@ -276,19 +279,21 @@ class TestAccuracyExcludesAutomatedSenderFastPath:
         """total count includes all predictions: accurate + inaccurate + auto_excluded + unresolved."""
         analyze = _get_analyze()
         predictions = [
-            {"prediction_type": "opportunity", "was_accurate": 1},           # accurate
-            {"prediction_type": "opportunity", "was_accurate": 0},            # real miss
-            {"prediction_type": "opportunity", "was_accurate": 0, "resolution_reason": "automated_sender_fast_path"},  # excluded
-            {"prediction_type": "opportunity", "was_accurate": None},         # unresolved
+            {"prediction_type": "opportunity", "was_accurate": 1},  # accurate
+            {"prediction_type": "opportunity", "was_accurate": 0},  # real miss
+            {
+                "prediction_type": "opportunity",
+                "was_accurate": 0,
+                "resolution_reason": "automated_sender_fast_path",
+            },  # excluded
+            {"prediction_type": "opportunity", "was_accurate": None},  # unresolved
         ]
         data_dir = _make_prediction_db(tmp_path, predictions)
         report = analyze(data_dir)
 
         stats = report["sections"]["prediction_accuracy"]["opportunity"]
 
-        assert stats["total"] == 4, (
-            f"Expected total=4 (all predictions regardless of resolution), got {stats['total']}"
-        )
+        assert stats["total"] == 4, f"Expected total=4 (all predictions regardless of resolution), got {stats['total']}"
 
     def test_real_world_numbers_match_expected(self, tmp_path):
         """Simulates the actual production data scenario to verify the fix.
@@ -299,11 +304,17 @@ class TestAccuracyExcludesAutomatedSenderFastPath:
         """
         analyze = _get_analyze()
         predictions = (
-            [{"prediction_type": "opportunity", "was_accurate": 1}] * 41        # accurate
-            + [{"prediction_type": "opportunity", "was_accurate": 0}] * 74      # real misses
-            + [{"prediction_type": "opportunity", "was_accurate": 0,            # excluded
-                "resolution_reason": "automated_sender_fast_path"}] * 100
-            + [{"prediction_type": "opportunity", "was_accurate": None}] * 33   # unresolved
+            [{"prediction_type": "opportunity", "was_accurate": 1}] * 41  # accurate
+            + [{"prediction_type": "opportunity", "was_accurate": 0}] * 74  # real misses
+            + [
+                {
+                    "prediction_type": "opportunity",
+                    "was_accurate": 0,  # excluded
+                    "resolution_reason": "automated_sender_fast_path",
+                }
+            ]
+            * 100
+            + [{"prediction_type": "opportunity", "was_accurate": None}] * 33  # unresolved
         )
         data_dir = _make_prediction_db(tmp_path, predictions)
         report = analyze(data_dir)

@@ -26,10 +26,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_greeting_from_top_greeting(self, db, user_model_store):
         """When top_greeting is present, the context includes the preferred greeting."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "top_greeting": "Hey",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "top_greeting": "Hey",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -42,10 +45,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_greeting_from_greeting_detected(self, db, user_model_store):
         """Falls back to greeting_detected when top_greeting is absent."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "greeting_detected": "Hello",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "greeting_detected": "Hello",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -58,10 +64,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_closing_from_top_closing(self, db, user_model_store):
         """When top_closing is present, the context includes the preferred closing."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "top_closing": "Cheers",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "top_closing": "Cheers",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -74,11 +83,14 @@ class TestExtendedLinguisticDraftContext:
 
     def test_humor_rate_above_threshold(self, db, user_model_store):
         """When humor_rate > 0.02, the context includes a humor note."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.4,
-            "humor_rate": 0.08,
-            "top_humor_marker": "lol",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.4,
+                "humor_rate": 0.08,
+                "top_humor_marker": "lol",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -92,10 +104,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_humor_rate_without_marker(self, db, user_model_store):
         """Humor note works without a top_humor_marker."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "humor_rate": 0.05,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "humor_rate": 0.05,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -109,10 +124,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_humor_rate_below_threshold_omitted(self, db, user_model_store):
         """When humor_rate <= 0.02, no humor note appears."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "humor_rate": 0.01,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "humor_rate": 0.01,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -125,10 +143,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_oxford_comma_true(self, db, user_model_store):
         """When oxford_comma_preference is True, context includes 'Oxford comma: yes'."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.6,
-            "oxford_comma_preference": True,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.6,
+                "oxford_comma_preference": True,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -141,10 +162,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_oxford_comma_false(self, db, user_model_store):
         """When oxford_comma_preference is False, context includes 'Oxford comma: no'."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "oxford_comma_preference": False,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "oxford_comma_preference": False,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -157,9 +181,12 @@ class TestExtendedLinguisticDraftContext:
 
     def test_oxford_comma_absent_omitted(self, db, user_model_store):
         """When oxford_comma_preference is absent, no Oxford comma line appears."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -172,10 +199,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_assertion_rate_above_threshold(self, db, user_model_store):
         """When assertion_rate > 0.05, it appears in the style summary."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "assertion_rate": 0.12,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "assertion_rate": 0.12,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -188,10 +218,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_assertion_rate_below_threshold_omitted(self, db, user_model_store):
         """When assertion_rate <= 0.05, it does not appear in the context."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "assertion_rate": 0.03,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "assertion_rate": 0.03,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -204,10 +237,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_avg_word_length_surfaced(self, db, user_model_store):
         """When avg_word_length > 0, it appears in the style summary."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "avg_word_length": 5.3,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "avg_word_length": 5.3,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -220,10 +256,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_capitalization_style_surfaced(self, db, user_model_store):
         """When capitalization_style is set and not 'unknown', it appears."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "capitalization_style": "lowercase",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "capitalization_style": "lowercase",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -236,10 +275,13 @@ class TestExtendedLinguisticDraftContext:
 
     def test_capitalization_style_unknown_omitted(self, db, user_model_store):
         """When capitalization_style is 'unknown', it is omitted."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-            "capitalization_style": "unknown",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+                "capitalization_style": "unknown",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -252,17 +294,20 @@ class TestExtendedLinguisticDraftContext:
 
     def test_all_extended_features_together(self, db, user_model_store):
         """All extended features appear when all are present and above threshold."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.45,
-            "assertion_rate": 0.15,
-            "avg_word_length": 4.8,
-            "top_greeting": "Yo",
-            "top_closing": "Later",
-            "humor_rate": 0.10,
-            "top_humor_marker": "haha",
-            "oxford_comma_preference": True,
-            "capitalization_style": "sentence_case",
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.45,
+                "assertion_rate": 0.15,
+                "avg_word_length": 4.8,
+                "top_greeting": "Yo",
+                "top_closing": "Later",
+                "humor_rate": 0.10,
+                "top_humor_marker": "haha",
+                "oxford_comma_preference": True,
+                "capitalization_style": "sentence_case",
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(
@@ -282,9 +327,12 @@ class TestExtendedLinguisticDraftContext:
 
     def test_no_extended_features_when_absent(self, db, user_model_store):
         """None of the extended features appear when the profile has only basic data."""
-        _set_linguistic_profile(user_model_store, {
-            "formality": 0.5,
-        })
+        _set_linguistic_profile(
+            user_model_store,
+            {
+                "formality": 0.5,
+            },
+        )
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_draft_context(

@@ -45,9 +45,7 @@ class TestSchemaMigration:
 
             # Verify the legacy database has only one table
             conn = sqlite3.connect(legacy_db)
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-            ).fetchall()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
             conn.close()
             assert len(tables) == 1
             assert tables[0][0] == "episodes"
@@ -58,9 +56,7 @@ class TestSchemaMigration:
 
             # Step 3: Verify ALL tables from the current schema now exist
             with db.get_connection("user_model") as conn:
-                tables = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-                ).fetchall()
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
                 table_names = {t[0] for t in tables}
 
             # All tables from the current schema should exist
@@ -127,36 +123,28 @@ class TestSchemaMigration:
 
             # Check events.db
             with db.get_connection("events") as conn:
-                tables = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
                 table_names = {t[0] for t in tables}
                 assert "events" in table_names
                 assert "event_tags" in table_names
 
             # Check entities.db
             with db.get_connection("entities") as conn:
-                tables = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
                 table_names = {t[0] for t in tables}
                 assert "contacts" in table_names
                 assert "places" in table_names
 
             # Check state.db
             with db.get_connection("state") as conn:
-                tables = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
                 table_names = {t[0] for t in tables}
                 assert "tasks" in table_names
                 assert "notifications" in table_names
 
             # Check user_model.db (the critical one!)
             with db.get_connection("user_model") as conn:
-                tables = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
                 table_names = {t[0] for t in tables}
                 assert "predictions" in table_names
                 assert "episodes" in table_names
@@ -165,9 +153,7 @@ class TestSchemaMigration:
 
             # Check preferences.db
             with db.get_connection("preferences") as conn:
-                tables = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
+                tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
                 table_names = {t[0] for t in tables}
                 assert "rules" in table_names
                 assert "user_preferences" in table_names

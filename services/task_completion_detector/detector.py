@@ -74,9 +74,20 @@ class TaskCompletionDetector:
 
         # Completion keywords to look for in email/message content
         self.completion_keywords = {
-            'done', 'finished', 'completed', 'sent', 'submitted',
-            'delivered', 'shipped', 'resolved', 'closed', 'fixed',
-            'merged', 'deployed', 'published', 'launched'
+            "done",
+            "finished",
+            "completed",
+            "sent",
+            "submitted",
+            "delivered",
+            "shipped",
+            "resolved",
+            "closed",
+            "fixed",
+            "merged",
+            "deployed",
+            "published",
+            "launched",
         }
 
     async def detect_completions(self) -> int:
@@ -133,37 +144,81 @@ class TaskCompletionDetector:
 
         # Get all pending tasks
         with self.db.get_connection("state") as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT id, title, description, created_at, source
                 FROM tasks
                 WHERE status = 'pending'
                   AND created_at >= ?
                 ORDER BY created_at DESC
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
 
             tasks = [dict(row) for row in cursor.fetchall()]
 
         # For each task, look for sent emails/messages after creation that reference it
         for task in tasks:
-            task_id = task['id']
-            task_title = task['title'].lower() if task['title'] else ''
-            task_desc = task['description'].lower() if task['description'] else ''
-            created_at = task['created_at']
+            task_id = task["id"]
+            task_title = task["title"].lower() if task["title"] else ""
+            task_desc = task["description"].lower() if task["description"] else ""
+            created_at = task["created_at"]
 
             # Extract keywords from task title and description for matching
             # Remove common stop words and keep meaningful terms
             # Use simple stemming by taking first 4 characters to match word variants
             # (send/sent/sending, complete/completed/completing, etc.)
-            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
-                         'with', 'from', 'about', 'into', 'through', 'during', 'before',
-                         'after', 'above', 'below', 'between', 'under', 'again', 'further',
-                         'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how',
-                         'all', 'each', 'other', 'some', 'such', 'only', 'own', 'same',
-                         'than', 'too', 'very', 'just', 'should', 'would', 'could'}
-            title_words = {
-                word for word in re.findall(r'\w+', task_title)
-                if len(word) > 3 and word not in stop_words
+            stop_words = {
+                "the",
+                "a",
+                "an",
+                "and",
+                "or",
+                "but",
+                "in",
+                "on",
+                "at",
+                "to",
+                "for",
+                "with",
+                "from",
+                "about",
+                "into",
+                "through",
+                "during",
+                "before",
+                "after",
+                "above",
+                "below",
+                "between",
+                "under",
+                "again",
+                "further",
+                "then",
+                "once",
+                "here",
+                "there",
+                "when",
+                "where",
+                "why",
+                "how",
+                "all",
+                "each",
+                "other",
+                "some",
+                "such",
+                "only",
+                "own",
+                "same",
+                "than",
+                "too",
+                "very",
+                "just",
+                "should",
+                "would",
+                "could",
             }
+            title_words = {word for word in re.findall(r"\w+", task_title) if len(word) > 3 and word not in stop_words}
             # Also extract stems (first 4-5 chars) for better matching
             title_stems = {word[:4] for word in title_words if len(word) >= 4}
 
@@ -178,14 +233,17 @@ class TaskCompletionDetector:
             # redundant ``AND timestamp > cutoff`` clause is unnecessary and
             # was previously confusing the intent of the filter.
             with self.db.get_connection("events") as conn:
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT id, type, payload, timestamp
                     FROM events
                     WHERE type IN ('email.sent', 'message.sent')
                       AND timestamp > ?
                     ORDER BY timestamp ASC
                     LIMIT 50
-                """, (created_at,))
+                """,
+                    (created_at,),
+                )
 
                 sent_events = cursor.fetchall()
 
@@ -206,7 +264,7 @@ class TaskCompletionDetector:
 
                 # Count keyword matches between task and email content
                 # Match both full words and stems for better coverage
-                text_words = set(re.findall(r'\w+', text_content))
+                text_words = set(re.findall(r"\w+", text_content))
                 text_stems = {word[:4] for word in text_words if len(word) >= 4}
 
                 # Count exact word matches
@@ -217,9 +275,7 @@ class TaskCompletionDetector:
                 keyword_overlap = exact_matches + (stem_matches * 0.5)
 
                 # Check for completion signal keywords
-                has_completion_keyword = any(
-                    keyword in text_content for keyword in self.completion_keywords
-                )
+                has_completion_keyword = any(keyword in text_content for keyword in self.completion_keywords)
 
                 # If we have both keyword overlap AND completion signals, mark complete
                 # Require score >= 2.0 to avoid false positives (e.g., 2 exact or 1 exact + 2 stems)
@@ -263,24 +319,27 @@ class TaskCompletionDetector:
         # The WHERE clause alone is sufficient: any task that has survived
         # strategy 1 AND is older than `inactivity_days` should be closed.
         with self.db.get_connection("state") as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT id, title, created_at, source
                 FROM tasks
                 WHERE status = 'pending'
                   AND created_at < ?
                 ORDER BY created_at ASC
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
 
             inactive_tasks = [dict(row) for row in cursor.fetchall()]
 
         for task in inactive_tasks:
-            await self.task_manager.complete_task(task['id'])
+            await self.task_manager.complete_task(task["id"])
             self._update_episode_outcome(task.get("source"), "inactivity")
             completed_count += 1
             logger.debug(
-                "Auto-completed inactive task '%s' "
-                "(pending for %d+ days without completion signal)",
-                task['title'], self.inactivity_days,
+                "Auto-completed inactive task '%s' (pending for %d+ days without completion signal)",
+                task["title"],
+                self.inactivity_days,
             )
 
         return completed_count
@@ -300,24 +359,26 @@ class TaskCompletionDetector:
 
         # Find very old pending tasks
         with self.db.get_connection("state") as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT id, title, created_at, source
                 FROM tasks
                 WHERE status = 'pending'
                   AND created_at < ?
                 ORDER BY created_at ASC
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
 
             stale_tasks = [dict(row) for row in cursor.fetchall()]
 
         # Mark them all complete - they're too old to be actionable
         for task in stale_tasks:
-            await self.task_manager.complete_task(task['id'])
+            await self.task_manager.complete_task(task["id"])
             self._update_episode_outcome(task.get("source"), "stale")
             completed_count += 1
             logger.debug(
-                f"Archived stale task '{task['title']}' "
-                f"(created {task['created_at']}, {self.stale_days}+ days old)"
+                f"Archived stale task '{task['title']}' (created {task['created_at']}, {self.stale_days}+ days old)"
             )
 
         return completed_count
@@ -345,7 +406,9 @@ class TaskCompletionDetector:
             if row:
                 self.user_model_store.update_episode(row["id"], outcome=completion_method)
                 logger.debug(
-                    "Updated episode %s outcome to '%s'", row["id"], completion_method,
+                    "Updated episode %s outcome to '%s'",
+                    row["id"],
+                    completion_method,
                 )
         except Exception as e:
             logger.warning("Failed to update episode outcome for source %s: %s", task_source, e)
@@ -365,19 +428,19 @@ class TaskCompletionDetector:
         text_parts = []
 
         # Email/message fields
-        if payload.get('subject'):
-            text_parts.append(payload['subject'])
-        if payload.get('body_plain'):
-            text_parts.append(payload['body_plain'])
-        if payload.get('snippet'):
-            text_parts.append(payload['snippet'])
-        if payload.get('description'):
-            text_parts.append(payload['description'])
+        if payload.get("subject"):
+            text_parts.append(payload["subject"])
+        if payload.get("body_plain"):
+            text_parts.append(payload["body_plain"])
+        if payload.get("snippet"):
+            text_parts.append(payload["snippet"])
+        if payload.get("description"):
+            text_parts.append(payload["description"])
 
         # Calendar event fields
-        if payload.get('summary'):
-            text_parts.append(payload['summary'])
-        if payload.get('title'):
-            text_parts.append(payload['title'])
+        if payload.get("summary"):
+            text_parts.append(payload["summary"])
+        if payload.get("title"):
+            text_parts.append(payload["title"])
 
-        return ' '.join(text_parts)
+        return " ".join(text_parts)

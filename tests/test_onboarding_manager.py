@@ -460,9 +460,7 @@ def test_finalize_persists_to_database(db):
 
     # Verify preferences were written to DB
     with db.get_connection("preferences") as conn:
-        row = conn.execute(
-            "SELECT value FROM user_preferences WHERE key = 'verbosity'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM user_preferences WHERE key = 'verbosity'").fetchone()
         assert row is not None
         assert row["value"] == "minimal"
 
@@ -481,9 +479,7 @@ def test_finalize_marks_onboarding_complete(db):
     manager.finalize()
 
     with db.get_connection("preferences") as conn:
-        row = conn.execute(
-            "SELECT value FROM user_preferences WHERE key = 'onboarding_completed'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM user_preferences WHERE key = 'onboarding_completed'").fetchone()
         assert row is not None
         assert row["value"] == "true"
 
@@ -505,9 +501,7 @@ def test_finalize_json_serializes_complex_values(db):
 
     # Verify boolean was JSON-serialized
     with db.get_connection("preferences") as conn:
-        row = conn.execute(
-            "SELECT value FROM user_preferences WHERE key = 'draft_replies'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM user_preferences WHERE key = 'draft_replies'").fetchone()
         assert row is not None
         # Should be JSON serialized
         assert row["value"] in ["true", "True", "1"]  # JSON true variants

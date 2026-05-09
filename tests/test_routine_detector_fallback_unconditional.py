@@ -37,15 +37,17 @@ def _create_event(event_store, *, event_type, timestamp=None):
     """Helper to create a test event in the events database and return its ID."""
     event_id = str(uuid.uuid4())
     ts = timestamp or datetime.now(timezone.utc)
-    event_store.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": "test",
-        "timestamp": ts.isoformat(),
-        "priority": "normal",
-        "payload": json.dumps({}),
-        "metadata": json.dumps({}),
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": "test",
+            "timestamp": ts.isoformat(),
+            "priority": "normal",
+            "payload": json.dumps({}),
+            "metadata": json.dumps({}),
+        }
+    )
     return event_id
 
 
@@ -76,9 +78,7 @@ class TestFallbackRunsUnconditionally:
         # Set profile samples well above the old threshold
         _set_temporal_profile_samples(db, 100)
 
-        with patch.object(
-            detector, "_detect_routines_from_episodes_fallback", return_value=[]
-        ) as mock_fallback:
+        with patch.object(detector, "_detect_routines_from_episodes_fallback", return_value=[]) as mock_fallback:
             detector.detect_routines(lookback_days=30)
             mock_fallback.assert_called_once_with(30)
 
@@ -90,9 +90,7 @@ class TestFallbackRunsUnconditionally:
 
         _set_temporal_profile_samples(db, 10)
 
-        with patch.object(
-            detector, "_detect_routines_from_episodes_fallback", return_value=[]
-        ) as mock_fallback:
+        with patch.object(detector, "_detect_routines_from_episodes_fallback", return_value=[]) as mock_fallback:
             detector.detect_routines(lookback_days=30)
             mock_fallback.assert_called_once_with(30)
 

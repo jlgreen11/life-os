@@ -48,8 +48,7 @@ def _make_tracker(db):
     return BehavioralAccuracyTracker(db=db)
 
 
-def _insert_email_sent_event(db, to_addresses, cc_addresses=None, bcc_addresses=None,
-                              timestamp=None):
+def _insert_email_sent_event(db, to_addresses, cc_addresses=None, bcc_addresses=None, timestamp=None):
     """Insert an email.sent event into the events table.
 
     Args:
@@ -128,14 +127,9 @@ async def test_contact_in_cc_marks_prediction_accurate(db):
         signals={"contact_email": "alice@example.com"},
     )
 
-    result = await tracker._infer_opportunity_accuracy(
-        prediction, {"contact_email": "alice@example.com"}, created_at
-    )
+    result = await tracker._infer_opportunity_accuracy(prediction, {"contact_email": "alice@example.com"}, created_at)
 
-    assert result is True, (
-        "Contact in CC field should count as a successful reach-out. "
-        f"Got: {result!r}"
-    )
+    assert result is True, f"Contact in CC field should count as a successful reach-out. Got: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -155,8 +149,9 @@ async def test_contact_in_bcc_marks_prediction_accurate(db):
     created_at = datetime.now(timezone.utc) - timedelta(hours=3)
 
     result = await tracker._infer_opportunity_accuracy(
-        _make_prediction("Reach out to alice@example.com", created_at=created_at,
-                         signals={"contact_email": "alice@example.com"}),
+        _make_prediction(
+            "Reach out to alice@example.com", created_at=created_at, signals={"contact_email": "alice@example.com"}
+        ),
         {"contact_email": "alice@example.com"},
         created_at,
     )
@@ -178,8 +173,9 @@ async def test_contact_in_to_still_marks_prediction_accurate(db):
     created_at = datetime.now(timezone.utc) - timedelta(hours=3)
 
     result = await tracker._infer_opportunity_accuracy(
-        _make_prediction("Reach out to alice@example.com", created_at=created_at,
-                         signals={"contact_email": "alice@example.com"}),
+        _make_prediction(
+            "Reach out to alice@example.com", created_at=created_at, signals={"contact_email": "alice@example.com"}
+        ),
         {"contact_email": "alice@example.com"},
         created_at,
     )
@@ -202,16 +198,14 @@ async def test_unrelated_email_does_not_trigger_accurate(db):
 
     # Still within 7-day window → should be None (undecided), not True
     result = await tracker._infer_opportunity_accuracy(
-        _make_prediction("Reach out to alice@example.com", created_at=created_at,
-                         signals={"contact_email": "alice@example.com"}),
+        _make_prediction(
+            "Reach out to alice@example.com", created_at=created_at, signals={"contact_email": "alice@example.com"}
+        ),
         {"contact_email": "alice@example.com"},
         created_at,
     )
 
-    assert result is None, (
-        "Email to unrelated parties should not mark prediction accurate. "
-        f"Got: {result!r}"
-    )
+    assert result is None, f"Email to unrelated parties should not mark prediction accurate. Got: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -223,16 +217,14 @@ async def test_expired_window_no_contact_marks_inaccurate(db):
     created_at = datetime.now(timezone.utc) - timedelta(days=8)
 
     result = await tracker._infer_opportunity_accuracy(
-        _make_prediction("Reach out to alice@example.com", created_at=created_at,
-                         signals={"contact_email": "alice@example.com"}),
+        _make_prediction(
+            "Reach out to alice@example.com", created_at=created_at, signals={"contact_email": "alice@example.com"}
+        ),
         {"contact_email": "alice@example.com"},
         created_at,
     )
 
-    assert result is False, (
-        "After 7-day window with no contact, prediction should be INACCURATE. "
-        f"Got: {result!r}"
-    )
+    assert result is False, f"After 7-day window with no contact, prediction should be INACCURATE. Got: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -263,10 +255,7 @@ async def test_contact_name_in_cc_marks_accurate(db):
         created_at,
     )
 
-    assert result is True, (
-        "Contact name in CC address should mark prediction accurate. "
-        f"Got: {result!r}"
-    )
+    assert result is True, f"Contact name in CC address should mark prediction accurate. Got: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -297,16 +286,14 @@ async def test_empty_cc_bcc_falls_back_to_to_field(db):
     created_at = datetime.now(timezone.utc) - timedelta(hours=3)
 
     result = await tracker._infer_opportunity_accuracy(
-        _make_prediction("Reach out to alice@example.com", created_at=created_at,
-                         signals={"contact_email": "alice@example.com"}),
+        _make_prediction(
+            "Reach out to alice@example.com", created_at=created_at, signals={"contact_email": "alice@example.com"}
+        ),
         {"contact_email": "alice@example.com"},
         created_at,
     )
 
-    assert result is True, (
-        "Should still find contact in to_addresses when CC/BCC absent. "
-        f"Got: {result!r}"
-    )
+    assert result is True, f"Should still find contact in to_addresses when CC/BCC absent. Got: {result!r}"
 
 
 @pytest.mark.asyncio
@@ -323,8 +310,9 @@ async def test_contact_in_multiple_recipient_fields_accurate(db):
     created_at = datetime.now(timezone.utc) - timedelta(hours=3)
 
     result = await tracker._infer_opportunity_accuracy(
-        _make_prediction("Reach out to alice@example.com", created_at=created_at,
-                         signals={"contact_email": "alice@example.com"}),
+        _make_prediction(
+            "Reach out to alice@example.com", created_at=created_at, signals={"contact_email": "alice@example.com"}
+        ),
         {"contact_email": "alice@example.com"},
         created_at,
     )

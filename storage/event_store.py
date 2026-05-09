@@ -7,8 +7,8 @@ High-level operations on the immutable event log.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from storage.manager import DatabaseManager
 
@@ -51,13 +51,13 @@ class EventStore:
                     event.get("embedding_id"),
                 ),
             )
-        return event["id"]
+        return str(event["id"])
 
     def get_events(
         self,
-        event_type: Optional[str] = None,
-        source: Optional[str] = None,
-        since: Optional[str] = None,
+        event_type: str | None = None,
+        source: str | None = None,
+        since: str | None = None,
         limit: int = 100,
     ) -> list[dict]:
         """Query events with optional filters.
@@ -147,7 +147,7 @@ class EventStore:
                    GROUP BY source"""
             ).fetchall()
 
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=stale_threshold_hours)
+            cutoff = datetime.now(UTC) - timedelta(hours=stale_threshold_hours)
             stale_sources: list[str] = []
 
             for row in all_source_rows:
@@ -184,8 +184,7 @@ class EventStore:
     # flags don't violate the append-only invariant on the events table.
     # -------------------------------------------------------------------
 
-    def add_tag(self, event_id: str, tag: str,
-                rule_id: Optional[str] = None) -> None:
+    def add_tag(self, event_id: str, tag: str, rule_id: str | None = None) -> None:
         """Attach a tag to an event.
 
         Uses INSERT OR IGNORE so re-tagging the same event with the same
@@ -260,7 +259,7 @@ class EventStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def get_timestamp_by_message_id(self, message_id: str) -> Optional[str]:
+    def get_timestamp_by_message_id(self, message_id: str) -> str | None:
         """Look up an event's timestamp by its payload.message_id.
 
         Used by the cadence extractor to calculate response times.  The

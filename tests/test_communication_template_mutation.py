@@ -107,9 +107,7 @@ class TestUpdateCommunicationTemplate:
 
     def test_update_formality(self, user_model_store):
         """Updating formality changes the value and preserves other fields."""
-        tpl = _make_template(
-            "upd-1", contact_id="dave@example.com", channel="email", formality=0.3
-        )
+        tpl = _make_template("upd-1", contact_id="dave@example.com", channel="email", formality=0.3)
         user_model_store.store_communication_template(tpl)
 
         result = user_model_store.update_communication_template("upd-1", {"formality": 0.9})
@@ -123,14 +121,15 @@ class TestUpdateCommunicationTemplate:
     def test_update_greeting_and_closing(self, user_model_store):
         """Updating multiple fields at once applies all changes."""
         tpl = _make_template(
-            "upd-2", contact_id="eve@example.com", channel="email",
-            greeting="Hello", closing="Best",
+            "upd-2",
+            contact_id="eve@example.com",
+            channel="email",
+            greeting="Hello",
+            closing="Best",
         )
         user_model_store.store_communication_template(tpl)
 
-        result = user_model_store.update_communication_template(
-            "upd-2", {"greeting": "Hey", "closing": "Cheers"}
-        )
+        result = user_model_store.update_communication_template("upd-2", {"greeting": "Hey", "closing": "Cheers"})
         assert result is not None
         assert result["greeting"] == "Hey"
         assert result["closing"] == "Cheers"
@@ -138,15 +137,15 @@ class TestUpdateCommunicationTemplate:
     def test_update_list_fields(self, user_model_store):
         """Updating common_phrases with a list serializes/deserializes correctly."""
         tpl = _make_template(
-            "upd-3", contact_id="frank@example.com", channel="slack",
+            "upd-3",
+            contact_id="frank@example.com",
+            channel="slack",
             common_phrases=["old phrase"],
         )
         user_model_store.store_communication_template(tpl)
 
         new_phrases = ["sounds good", "will do", "thanks!"]
-        result = user_model_store.update_communication_template(
-            "upd-3", {"common_phrases": new_phrases}
-        )
+        result = user_model_store.update_communication_template("upd-3", {"common_phrases": new_phrases})
         assert result is not None
         assert isinstance(result["common_phrases"], list)
         assert result["common_phrases"] == new_phrases
@@ -156,10 +155,13 @@ class TestUpdateCommunicationTemplate:
         tpl = _make_template("upd-lists", contact_id="gina@example.com", channel="email")
         user_model_store.store_communication_template(tpl)
 
-        result = user_model_store.update_communication_template("upd-lists", {
-            "avoids_phrases": ["per my last email", "ASAP"],
-            "tone_notes": ["warm", "encouraging"],
-        })
+        result = user_model_store.update_communication_template(
+            "upd-lists",
+            {
+                "avoids_phrases": ["per my last email", "ASAP"],
+                "tone_notes": ["warm", "encouraging"],
+            },
+        )
         assert result is not None
         assert result["avoids_phrases"] == ["per my last email", "ASAP"]
         assert result["tone_notes"] == ["warm", "encouraging"]
@@ -167,39 +169,42 @@ class TestUpdateCommunicationTemplate:
     def test_update_uses_emoji(self, user_model_store):
         """Updating uses_emoji converts boolean to int and back correctly."""
         tpl = _make_template(
-            "upd-emoji", contact_id="hank@example.com", channel="slack",
+            "upd-emoji",
+            contact_id="hank@example.com",
+            channel="slack",
             uses_emoji=False,
         )
         user_model_store.store_communication_template(tpl)
 
-        result = user_model_store.update_communication_template(
-            "upd-emoji", {"uses_emoji": True}
-        )
+        result = user_model_store.update_communication_template("upd-emoji", {"uses_emoji": True})
         assert result is not None
         # The raw DB stores 1, but _deserialize_template_row returns it as-is (int 1)
         assert result["uses_emoji"] in (True, 1)
 
     def test_update_nonexistent_returns_none(self, user_model_store):
         """Updating a non-existent template ID returns None."""
-        result = user_model_store.update_communication_template(
-            "nonexistent-id", {"formality": 0.8}
-        )
+        result = user_model_store.update_communication_template("nonexistent-id", {"formality": 0.8})
         assert result is None
 
     def test_update_ignores_disallowed_fields(self, user_model_store):
         """Attempting to update immutable fields (id, context, contact_id, channel) is ignored."""
         tpl = _make_template(
-            "upd-guard", context="user_to_contact",
-            contact_id="ivan@example.com", channel="email",
+            "upd-guard",
+            context="user_to_contact",
+            contact_id="ivan@example.com",
+            channel="email",
         )
         user_model_store.store_communication_template(tpl)
 
-        result = user_model_store.update_communication_template("upd-guard", {
-            "id": "hacked-id",
-            "context": "contact_to_user",
-            "contact_id": "hacker@evil.com",
-            "channel": "sms",
-        })
+        result = user_model_store.update_communication_template(
+            "upd-guard",
+            {
+                "id": "hacked-id",
+                "context": "contact_to_user",
+                "contact_id": "hacker@evil.com",
+                "channel": "sms",
+            },
+        )
         assert result is not None
         # Structural fields must remain unchanged
         assert result["id"] == "upd-guard"
@@ -210,14 +215,14 @@ class TestUpdateCommunicationTemplate:
     def test_update_empty_allowed_fields_returns_existing(self, user_model_store):
         """When only disallowed fields are provided, the existing template is returned unchanged."""
         tpl = _make_template(
-            "upd-noop", contact_id="joe@example.com", channel="email",
+            "upd-noop",
+            contact_id="joe@example.com",
+            channel="email",
             formality=0.4,
         )
         user_model_store.store_communication_template(tpl)
 
-        result = user_model_store.update_communication_template(
-            "upd-noop", {"id": "should-be-ignored"}
-        )
+        result = user_model_store.update_communication_template("upd-noop", {"id": "should-be-ignored"})
         assert result is not None
         assert result["id"] == "upd-noop"
         assert result["formality"] == 0.4

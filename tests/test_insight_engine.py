@@ -230,8 +230,7 @@ async def test_contact_gap_insufficient_history(db, user_model_store):
                 "interaction_count": 3,
                 "last_interaction": datetime.now(timezone.utc).isoformat(),
                 "interaction_timestamps": [
-                    (datetime.now(timezone.utc) - timedelta(days=i)).isoformat()
-                    for i in range(3)
+                    (datetime.now(timezone.utc) - timedelta(days=i)).isoformat() for i in range(3)
                 ],
             }
         }
@@ -254,8 +253,7 @@ async def test_contact_gap_recent_contact(db, user_model_store):
                 "interaction_count": 10,
                 "last_interaction": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
                 "interaction_timestamps": [
-                    (datetime.now(timezone.utc) - timedelta(days=i * 7)).isoformat()
-                    for i in range(10)
+                    (datetime.now(timezone.utc) - timedelta(days=i * 7)).isoformat() for i in range(10)
                 ],
             }
         }
@@ -285,8 +283,7 @@ async def test_contact_gap_overdue_contact(db, user_model_store):
                 "outbound_count": 5,
                 "last_interaction": (now - timedelta(days=overdue_days)).isoformat(),
                 "interaction_timestamps": [
-                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat()
-                    for i in range(10)
+                    (now - timedelta(days=overdue_days + i * avg_gap_days)).isoformat() for i in range(10)
                 ],
             }
         }
@@ -317,8 +314,7 @@ async def test_contact_gap_confidence_scaling(db, user_model_store):
                 "outbound_count": 4,
                 "last_interaction": (now - timedelta(days=16)).isoformat(),  # 1.6x average
                 "interaction_timestamps": [
-                    (now - timedelta(days=16 + i * avg_gap_days)).isoformat()
-                    for i in range(10)
+                    (now - timedelta(days=16 + i * avg_gap_days)).isoformat() for i in range(10)
                 ],
             },
             "high_gap@example.com": {
@@ -326,8 +322,7 @@ async def test_contact_gap_confidence_scaling(db, user_model_store):
                 "outbound_count": 4,  # bidirectional
                 "last_interaction": (now - timedelta(days=40)).isoformat(),  # 4x average
                 "interaction_timestamps": [
-                    (now - timedelta(days=40 + i * avg_gap_days)).isoformat()
-                    for i in range(10)
+                    (now - timedelta(days=40 + i * avg_gap_days)).isoformat() for i in range(10)
                 ],
             },
         }
@@ -404,15 +399,17 @@ async def test_email_volume_insufficient_data(db, user_model_store, event_store)
 
     # Publish only 5 emails
     for i in range(5):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "test",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "priority": 2,
-            "payload": {"subject": f"Test {i}"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "test",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "priority": 2,
+                "payload": {"subject": f"Test {i}"},
+                "metadata": {},
+            }
+        )
 
     insights = engine._email_volume_insights()
     assert insights == []
@@ -427,15 +424,17 @@ async def test_email_volume_uniform_distribution(db, user_model_store, event_sto
     base_time = datetime.now(timezone.utc)
     for day_offset in range(7):
         for email_num in range(2):
-            event_store.store_event({
-                "id": str(uuid.uuid4()),
-                "type": "email.received",
-                "source": "test",
-                "timestamp": (base_time - timedelta(days=day_offset, hours=email_num)).isoformat(),
-                "priority": 2,
-                "payload": {"subject": "Test"},
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": "email.received",
+                    "source": "test",
+                    "timestamp": (base_time - timedelta(days=day_offset, hours=email_num)).isoformat(),
+                    "priority": 2,
+                    "payload": {"subject": "Test"},
+                    "metadata": {},
+                }
+            )
 
     insights = engine._email_volume_insights()
     assert insights == []  # No day is 1.5x busier than average
@@ -453,33 +452,35 @@ async def test_email_volume_busiest_day_detected(db, user_model_store, event_sto
     # anchor causes the test to fail whenever it runs in the first 9 hours of
     # Monday UTC (the emails would spill into Sunday and the insight would say
     # "Sunday" instead of "Monday").
-    monday = (
-        base_time - timedelta(days=base_time.weekday())
-    ).replace(hour=12, minute=0, second=0, microsecond=0)
+    monday = (base_time - timedelta(days=base_time.weekday())).replace(hour=12, minute=0, second=0, microsecond=0)
 
     for i in range(10):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "test",
-            "timestamp": (monday - timedelta(hours=i)).isoformat(),
-            "priority": 2,
-            "payload": {"subject": "Monday email"},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "test",
+                "timestamp": (monday - timedelta(hours=i)).isoformat(),
+                "priority": 2,
+                "payload": {"subject": "Monday email"},
+                "metadata": {},
+            }
+        )
 
     # Add 2 emails for other days
     for day_offset in range(1, 7):
         for email_num in range(2):
-            event_store.store_event({
-                "id": str(uuid.uuid4()),
-                "type": "email.received",
-                "source": "test",
-                "timestamp": (monday - timedelta(days=day_offset, hours=email_num)).isoformat(),
-                "priority": 2,
-                "payload": {"subject": "Other day email"},
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": "email.received",
+                    "source": "test",
+                    "timestamp": (monday - timedelta(days=day_offset, hours=email_num)).isoformat(),
+                    "priority": 2,
+                    "payload": {"subject": "Other day email"},
+                    "metadata": {},
+                }
+            )
 
     insights = engine._email_volume_insights()
     assert len(insights) == 1
@@ -497,43 +498,49 @@ async def test_email_volume_sent_and_received(db, user_model_store, event_store)
     base_time = datetime.now(timezone.utc)
     # Anchor Tuesday at noon UTC so that subtracting up to 5 hours in the loop
     # below never crosses midnight into Monday.
-    tuesday = (
-        base_time - timedelta(days=(base_time.weekday() - 1) % 7)
-    ).replace(hour=12, minute=0, second=0, microsecond=0)
+    tuesday = (base_time - timedelta(days=(base_time.weekday() - 1) % 7)).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
 
     # Create Tuesday as busiest (5 received + 5 sent = 10 total)
     for i in range(5):
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.received",
-            "source": "test",
-            "timestamp": (tuesday - timedelta(hours=i)).isoformat(),
-            "priority": 2,
-            "payload": {},
-            "metadata": {},
-        })
-        event_store.store_event({
-            "id": str(uuid.uuid4()),
-            "type": "email.sent",
-            "source": "test",
-            "timestamp": (tuesday - timedelta(hours=i, minutes=30)).isoformat(),
-            "priority": 2,
-            "payload": {},
-            "metadata": {},
-        })
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.received",
+                "source": "test",
+                "timestamp": (tuesday - timedelta(hours=i)).isoformat(),
+                "priority": 2,
+                "payload": {},
+                "metadata": {},
+            }
+        )
+        event_store.store_event(
+            {
+                "id": str(uuid.uuid4()),
+                "type": "email.sent",
+                "source": "test",
+                "timestamp": (tuesday - timedelta(hours=i, minutes=30)).isoformat(),
+                "priority": 2,
+                "payload": {},
+                "metadata": {},
+            }
+        )
 
     # Add 2 emails for other days
     for day_offset in range(1, 7):
         for email_num in range(2):
-            event_store.store_event({
-                "id": str(uuid.uuid4()),
-                "type": "email.received",
-                "source": "test",
-                "timestamp": (tuesday - timedelta(days=day_offset, hours=email_num)).isoformat(),
-                "priority": 2,
-                "payload": {},
-                "metadata": {},
-            })
+            event_store.store_event(
+                {
+                    "id": str(uuid.uuid4()),
+                    "type": "email.received",
+                    "source": "test",
+                    "timestamp": (tuesday - timedelta(days=day_offset, hours=email_num)).isoformat(),
+                    "priority": 2,
+                    "payload": {},
+                    "metadata": {},
+                }
+            )
 
     insights = engine._email_volume_insights()
     assert len(insights) == 1

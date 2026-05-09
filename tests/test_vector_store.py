@@ -52,8 +52,10 @@ def vector_store_fallback(temp_vector_dir):
     """VectorStore instance using fallback backend (no LanceDB)."""
     # Patch out LanceDB and sentence-transformers imports so we test
     # the fallback path without external dependencies.
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path=str(temp_vector_dir))
         # Manually set fallback mode flags
         store._use_lancedb = False
@@ -103,8 +105,10 @@ def mock_embedder():
 @pytest.fixture
 def vector_store_with_embedder(temp_vector_dir, mock_embedder):
     """VectorStore with a mock embedder for testing semantic search."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path=str(temp_vector_dir))
         store._use_lancedb = False
         store._embedder = mock_embedder
@@ -119,8 +123,10 @@ def vector_store_with_embedder(temp_vector_dir, mock_embedder):
 
 def test_initialization_creates_directory(temp_vector_dir):
     """VectorStore.initialize() creates the db_path directory if missing."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path=str(temp_vector_dir))
         store.initialize()
         assert temp_vector_dir.exists()
@@ -130,8 +136,10 @@ def test_initialization_creates_directory(temp_vector_dir):
 def test_fallback_mode_when_lancedb_unavailable(temp_vector_dir):
     """When LanceDB import fails, VectorStore falls back to NumPy backend."""
     # Simulate ImportError for lancedb module
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback") as mock_load:
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback") as mock_load,
+    ):
         store = VectorStore(db_path=str(temp_vector_dir))
         # Don't call initialize() — just verify constructor state
         assert store._use_lancedb is False
@@ -152,7 +160,7 @@ def test_load_fallback_restores_state(temp_vector_dir):
         "embeddings": [
             [0.1] * 384,
             [0.2] * 384,
-        ]
+        ],
     }
     fallback_path.write_text(json.dumps(fallback_data))
 
@@ -395,7 +403,12 @@ def test_search_returns_score_and_metadata(vector_store_with_embedder):
 def test_text_search_fallback_uses_keyword_matching(vector_store_fallback):
     """When embeddings are unavailable, search falls back to keyword matching."""
     vector_store_fallback._fallback_docs = [
-        {"doc_id": "doc1", "text": "The Denver project is great.", "metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
+        {
+            "doc_id": "doc1",
+            "text": "The Denver project is great.",
+            "metadata": {},
+            "created_at": "2026-01-01T00:00:00Z",
+        },
         {"doc_id": "doc2", "text": "Solar panels are efficient.", "metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
     ]
 
@@ -483,8 +496,10 @@ def test_get_stats_fallback_backend(vector_store_fallback):
 
 def test_get_stats_lancedb_backend():
     """get_stats() reports 'lancedb' backend when LanceDB is active."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         # Mock the LanceDB table's count_rows method
@@ -525,8 +540,10 @@ def test_numpy_search_with_no_embeddings(vector_store_with_embedder):
 
 def test_lancedb_search_error_handling():
     """LanceDB search errors are caught and return []."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
@@ -544,17 +561,37 @@ def test_lancedb_search_applies_metadata_filter():
     searches with filter_metadata={"type": "email"}, and asserts only the
     email document is returned.
     """
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
 
         # Use low _distance values (high similarity) so results pass the 0.1 threshold
         store._table.search.return_value.limit.return_value.to_list.return_value = [
-            {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
-            {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
-            {"doc_id": "doc3", "text": "Calendar event", "metadata": json.dumps({"type": "calendar"}), "_distance": 0.3, "created_at": "2026-01-01T00:00:00Z"},
+            {
+                "doc_id": "doc1",
+                "text": "Email about project",
+                "metadata": json.dumps({"type": "email"}),
+                "_distance": 0.1,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "doc_id": "doc2",
+                "text": "Message about project",
+                "metadata": json.dumps({"type": "message"}),
+                "_distance": 0.2,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "doc_id": "doc3",
+                "text": "Calendar event",
+                "metadata": json.dumps({"type": "calendar"}),
+                "_distance": 0.3,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
         ]
 
         results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata={"type": "email"})
@@ -565,16 +602,30 @@ def test_lancedb_search_applies_metadata_filter():
 
 def test_lancedb_search_no_filter_returns_all():
     """LanceDB search returns all results when filter_metadata is None."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
 
         # Use low _distance values so results pass the 0.1 similarity threshold
         store._table.search.return_value.limit.return_value.to_list.return_value = [
-            {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
-            {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
+            {
+                "doc_id": "doc1",
+                "text": "Email about project",
+                "metadata": json.dumps({"type": "email"}),
+                "_distance": 0.1,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "doc_id": "doc2",
+                "text": "Message about project",
+                "metadata": json.dumps({"type": "message"}),
+                "_distance": 0.2,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
         ]
 
         results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata=None)
@@ -585,8 +636,10 @@ def test_lancedb_search_no_filter_returns_all():
 
 def test_lancedb_search_filter_no_matches():
     """LanceDB search returns empty list when filter_metadata matches nothing."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
@@ -594,8 +647,20 @@ def test_lancedb_search_filter_no_matches():
         # Use low _distance so the results would pass the similarity threshold
         # — the metadata filter is what should exclude them.
         store._table.search.return_value.limit.return_value.to_list.return_value = [
-            {"doc_id": "doc1", "text": "Email about project", "metadata": json.dumps({"type": "email"}), "_distance": 0.1, "created_at": "2026-01-01T00:00:00Z"},
-            {"doc_id": "doc2", "text": "Message about project", "metadata": json.dumps({"type": "message"}), "_distance": 0.2, "created_at": "2026-01-01T00:00:00Z"},
+            {
+                "doc_id": "doc1",
+                "text": "Email about project",
+                "metadata": json.dumps({"type": "email"}),
+                "_distance": 0.1,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "doc_id": "doc2",
+                "text": "Message about project",
+                "metadata": json.dumps({"type": "message"}),
+                "_distance": 0.2,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
         ]
 
         results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata={"type": "nonexistent"})
@@ -608,8 +673,10 @@ def test_lancedb_search_overfetches_when_filtering():
     This compensates for post-retrieval filtering that removes non-matching
     documents, ensuring enough candidates are fetched to fill the requested limit.
     """
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
@@ -627,15 +694,23 @@ def test_lancedb_search_overfetches_when_filtering():
 
 def test_lancedb_search_truncates_to_limit_after_filtering():
     """LanceDB search returns at most `limit` results even after filtering."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
 
         # Return 5 matching documents
         store._table.search.return_value.limit.return_value.to_list.return_value = [
-            {"doc_id": f"doc{i}", "text": f"Email {i}", "metadata": json.dumps({"type": "email"}), "_distance": 0.1 * i, "created_at": "2026-01-01T00:00:00Z"}
+            {
+                "doc_id": f"doc{i}",
+                "text": f"Email {i}",
+                "metadata": json.dumps({"type": "email"}),
+                "_distance": 0.1 * i,
+                "created_at": "2026-01-01T00:00:00Z",
+            }
             for i in range(5)
         ]
 
@@ -646,8 +721,10 @@ def test_lancedb_search_truncates_to_limit_after_filtering():
 
 def test_add_document_lancedb_error_handling():
     """LanceDB add errors are caught and return False."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._embedder = Mock()
@@ -704,8 +781,9 @@ def test_add_document_logs_warning_on_zero_embeddings(vector_store_fallback, cap
     with caplog.at_level(logging.WARNING, logger="storage.vector_store"):
         vector_store_fallback.add_document("doc42", "This document will fail to embed entirely.")
 
-    assert any("add_document(doc42)" in record.message and "no chunks embedded" in record.message
-               for record in caplog.records)
+    assert any(
+        "add_document(doc42)" in record.message and "no chunks embedded" in record.message for record in caplog.records
+    )
 
 
 def test_add_document_logs_debug_per_failed_chunk(vector_store_fallback, caplog):
@@ -715,8 +793,7 @@ def test_add_document_logs_debug_per_failed_chunk(vector_store_fallback, caplog)
     with caplog.at_level(logging.DEBUG, logger="storage.vector_store"):
         vector_store_fallback.add_document("doc99", "This text is long enough to be a single chunk for embedding.")
 
-    assert any("Embedding failed for chunk 0 of doc doc99" in record.message
-               for record in caplog.records)
+    assert any("Embedding failed for chunk 0 of doc doc99" in record.message for record in caplog.records)
 
 
 # --- Score Inversion Fix Tests (Bug A) ---
@@ -729,16 +806,36 @@ def test_lancedb_search_score_is_similarity_not_distance():
     rather than the distance domain (lower = more similar).  A document with
     _distance=0.2 should get score=0.8, not score=0.2.
     """
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
 
         store._table.search.return_value.limit.return_value.to_list.return_value = [
-            {"doc_id": "doc1", "text": "Very relevant", "metadata": "{}", "_distance": 0.05, "created_at": "2026-01-01"},
-            {"doc_id": "doc2", "text": "Somewhat relevant", "metadata": "{}", "_distance": 0.3, "created_at": "2026-01-01"},
-            {"doc_id": "doc3", "text": "Barely relevant", "metadata": "{}", "_distance": 0.7, "created_at": "2026-01-01"},
+            {
+                "doc_id": "doc1",
+                "text": "Very relevant",
+                "metadata": "{}",
+                "_distance": 0.05,
+                "created_at": "2026-01-01",
+            },
+            {
+                "doc_id": "doc2",
+                "text": "Somewhat relevant",
+                "metadata": "{}",
+                "_distance": 0.3,
+                "created_at": "2026-01-01",
+            },
+            {
+                "doc_id": "doc3",
+                "text": "Barely relevant",
+                "metadata": "{}",
+                "_distance": 0.7,
+                "created_at": "2026-01-01",
+            },
         ]
 
         results = store._lancedb_search([0.1] * 384, limit=10, filter_metadata=None)
@@ -767,16 +864,36 @@ def test_lancedb_search_filters_low_relevance():
     Results where 1.0 - _distance < 0.1 should be filtered out, consistent
     with the NumPy fallback's 0.1 similarity threshold.
     """
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
 
         store._table.search.return_value.limit.return_value.to_list.return_value = [
-            {"doc_id": "good", "text": "Relevant result", "metadata": "{}", "_distance": 0.2, "created_at": "2026-01-01"},
-            {"doc_id": "bad1", "text": "Irrelevant result", "metadata": "{}", "_distance": 0.95, "created_at": "2026-01-01"},
-            {"doc_id": "bad2", "text": "Totally unrelated", "metadata": "{}", "_distance": 1.0, "created_at": "2026-01-01"},
+            {
+                "doc_id": "good",
+                "text": "Relevant result",
+                "metadata": "{}",
+                "_distance": 0.2,
+                "created_at": "2026-01-01",
+            },
+            {
+                "doc_id": "bad1",
+                "text": "Irrelevant result",
+                "metadata": "{}",
+                "_distance": 0.95,
+                "created_at": "2026-01-01",
+            },
+            {
+                "doc_id": "bad2",
+                "text": "Totally unrelated",
+                "metadata": "{}",
+                "_distance": 1.0,
+                "created_at": "2026-01-01",
+            },
             {"doc_id": "bad3", "text": "Missing distance", "metadata": "{}", "created_at": "2026-01-01"},
         ]
 
@@ -801,8 +918,10 @@ def test_add_document_continues_after_chunk_error():
     continue attempting subsequent chunks rather than aborting the entire
     document.  The method should return True if at least one chunk succeeds.
     """
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._embedder = Mock()
@@ -840,8 +959,7 @@ def test_search_score_ordering_consistency(vector_store_with_embedder):
     # Verify descending score order
     for i in range(len(results) - 1):
         assert results[i]["score"] >= results[i + 1]["score"], (
-            f"Result {i} (score={results[i]['score']}) should be >= "
-            f"result {i + 1} (score={results[i + 1]['score']})"
+            f"Result {i} (score={results[i]['score']}) should be >= result {i + 1} (score={results[i + 1]['score']})"
         )
 
 
@@ -873,8 +991,10 @@ def test_get_health_fallback_backend_required_keys(vector_store_fallback):
 
 def test_get_health_lancedb_backend_required_keys():
     """get_health() returns all required keys for the lancedb backend."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
@@ -895,8 +1015,10 @@ def test_get_health_lancedb_backend_required_keys():
 
 def test_get_health_lancedb_unhealthy_on_error():
     """get_health() reports is_healthy=False when the LanceDB table is inaccessible."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
@@ -929,6 +1051,7 @@ def test_get_health_initialized_at_is_set_at_construction(vector_store_fallback)
     assert health["initialized_at"] is not None
     # Should be a valid ISO-8601 string
     from datetime import datetime
+
     dt = datetime.fromisoformat(health["initialized_at"])
     assert dt is not None
 
@@ -955,6 +1078,7 @@ def test_add_document_updates_last_add_at(vector_store_with_embedder):
     assert vector_store_with_embedder._last_add_at is not None
     # Should be a valid ISO-8601 timestamp
     from datetime import datetime
+
     dt = datetime.fromisoformat(vector_store_with_embedder._last_add_at)
     assert dt is not None
 
@@ -986,6 +1110,7 @@ def test_search_updates_last_search_at(vector_store_with_embedder):
 
     assert vector_store_with_embedder._last_search_at is not None
     from datetime import datetime
+
     dt = datetime.fromisoformat(vector_store_with_embedder._last_search_at)
     assert dt is not None
 
@@ -1003,8 +1128,10 @@ def test_search_increments_search_count(vector_store_with_embedder):
 
 def test_search_error_count_increments_on_exception():
     """_search_error_count increments when search raises an unexpected exception."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._embedder = Mock()
@@ -1054,9 +1181,7 @@ def test_get_stale_documents_no_stale_docs(vector_store_fallback):
     from datetime import datetime, timezone
 
     # Documents created 1 hour ago — well within the 168-hour (7-day) window
-    recent_ts = (datetime.now(timezone.utc).replace(
-        hour=datetime.now(timezone.utc).hour - 1
-    )).isoformat()
+    recent_ts = (datetime.now(timezone.utc).replace(hour=datetime.now(timezone.utc).hour - 1)).isoformat()
 
     vector_store_fallback._fallback_docs = [
         {"doc_id": "doc1", "text": "Fresh doc", "metadata": {}, "created_at": recent_ts},
@@ -1128,8 +1253,10 @@ def test_get_stale_documents_no_timestamp_field(vector_store_fallback):
 
 def test_get_stale_documents_lancedb_backend():
     """get_stale_documents() works with a mocked LanceDB backend."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()
@@ -1150,8 +1277,10 @@ def test_get_stale_documents_lancedb_backend():
 
 def test_get_stale_documents_lancedb_query_error():
     """get_stale_documents() handles LanceDB query errors gracefully."""
-    with patch("storage.vector_store.VectorStore._ensure_table"), \
-         patch("storage.vector_store.VectorStore._load_fallback"):
+    with (
+        patch("storage.vector_store.VectorStore._ensure_table"),
+        patch("storage.vector_store.VectorStore._load_fallback"),
+    ):
         store = VectorStore(db_path="./data/vectors")
         store._use_lancedb = True
         store._table = Mock()

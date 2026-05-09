@@ -69,10 +69,7 @@ class TestTemporalBackfillGuard:
         if profile and profile.get("samples_count", 0) >= 5:
             data = profile.get("data", {})
             activity_types = data.get("activity_by_type", {})
-            if (
-                activity_types.get("email_inbound", 0) > 0
-                or activity_types.get("message_inbound", 0) > 0
-            ):
+            if activity_types.get("email_inbound", 0) > 0 or activity_types.get("message_inbound", 0) > 0:
                 return True
             # Inbound data missing — need to re-run
             return False

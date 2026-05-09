@@ -57,9 +57,9 @@ class HTMLStripper(HTMLParser):
     def handle_endtag(self, tag):
         """Add newlines after block-level tags to preserve structure."""
         # Block-level tags that should create line breaks when closed
-        block_tags = {'p', 'div', 'br', 'tr', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'}
+        block_tags = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6"}
         if tag in block_tags:
-            self.text.append('\n')
+            self.text.append("\n")
 
     def get_text(self):
         """Return the extracted plain text with normalized whitespace.
@@ -67,11 +67,11 @@ class HTMLStripper(HTMLParser):
         Collapses multiple consecutive newlines/spaces into single instances
         to clean up the output while maintaining paragraph structure.
         """
-        raw_text = ''.join(self.text)
+        raw_text = "".join(self.text)
         # Collapse multiple newlines into double newlines (paragraph breaks)
-        text = re.sub(r'\n{3,}', '\n\n', raw_text)
+        text = re.sub(r"\n{3,}", "\n\n", raw_text)
         # Collapse multiple spaces into single spaces
-        text = re.sub(r' {2,}', ' ', text)
+        text = re.sub(r" {2,}", " ", text)
         return text.strip()
 
 
@@ -97,14 +97,14 @@ class TaskManager:
         # to be disabled or underperforming (e.g., 0 tasks in the database).
         # All counters are in-memory and reset on restart; they reflect the
         # health of the running process, not historical totals.
-        self._events_processed: int = 0          # Total events entering process_event
-        self._events_skipped_no_ai: int = 0      # Skipped: AI engine not available
-        self._events_skipped_no_text: int = 0    # Skipped: empty or sub-20-char text
+        self._events_processed: int = 0  # Total events entering process_event
+        self._events_skipped_no_ai: int = 0  # Skipped: AI engine not available
+        self._events_skipped_no_text: int = 0  # Skipped: empty or sub-20-char text
         self._events_skipped_marketing: int = 0  # Skipped: marketing/promotional email
-        self._tasks_extracted: int = 0           # Total task objects extracted by AI
-        self._extraction_errors: int = 0         # AI call failures (model errors, etc.)
+        self._tasks_extracted: int = 0  # Total task objects extracted by AI
+        self._extraction_errors: int = 0  # AI call failures (model errors, etc.)
         self._last_extraction_time: str | None = None  # ISO timestamp: last successful extraction
-        self._last_ai_check_time: str | None = None    # ISO timestamp: last AI availability check
+        self._last_ai_check_time: str | None = None  # ISO timestamp: last AI availability check
         self._ai_engine_available: bool = self.ai_engine is not None  # Current AI status
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
@@ -146,19 +146,23 @@ class TaskManager:
             self._ai_engine_skip_count += 1  # Legacy counter
             if self._ai_engine_skip_count == 1 or self._ai_engine_skip_count % 100 == 0:
                 logger.warning(
-                    'task_manager: AI engine not available — automatic task extraction disabled '
-                    '(%d events skipped so far)', self._ai_engine_skip_count
+                    "task_manager: AI engine not available — automatic task extraction disabled "
+                    "(%d events skipped so far)",
+                    self._ai_engine_skip_count,
                 )
             # Publish a degraded-pipeline telemetry event every 500 skips so
             # external health monitors can detect prolonged AI unavailability
             # without polling get_diagnostics().
             if self._events_skipped_no_ai % 500 == 0:
-                await self._publish_telemetry("system.task_extraction.degraded", {
-                    "events_skipped_no_ai": self._events_skipped_no_ai,
-                    "events_processed": self._events_processed,
-                    "skip_rate": self._events_skipped_no_ai / max(self._events_processed, 1),
-                    "reason": "ai_engine_unavailable",
-                })
+                await self._publish_telemetry(
+                    "system.task_extraction.degraded",
+                    {
+                        "events_skipped_no_ai": self._events_skipped_no_ai,
+                        "events_processed": self._events_processed,
+                        "skip_rate": self._events_skipped_no_ai / max(self._events_processed, 1),
+                        "reason": "ai_engine_unavailable",
+                    },
+                )
             return
 
         event_type = event.get("type", "")
@@ -197,7 +201,7 @@ class TaskManager:
         # Email connectors often store raw HTML. LLMs need plain text to
         # extract action items effectively — feeding them HTML markup drowns
         # the signal in formatting noise.
-        if text and text.strip().startswith('<'):
+        if text and text.strip().startswith("<"):
             # Looks like HTML — strip all tags and normalize whitespace
             stripper = HTMLStripper()
             try:
@@ -205,8 +209,11 @@ class TaskManager:
                 text = stripper.get_text()
             except Exception as e:
                 # If HTML parsing fails, fall back to the original text.
-                logger.debug('task_manager: HTML stripping failed for event %s, using raw text: %s',
-                             event.get('id', 'unknown'), e)
+                logger.debug(
+                    "task_manager: HTML stripping failed for event %s, using raw text: %s",
+                    event.get("id", "unknown"),
+                    e,
+                )
 
         # --- Filter: Skip empty or trivial messages ---
         # Don't waste LLM cycles on short messages like "ok", "thanks", etc.
@@ -286,27 +293,39 @@ class TaskManager:
                     related_contacts, related_events, status, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
                 (
-                    task_id, title, description, source, source_event_id, source_context,
-                    domain, priority,
+                    task_id,
+                    title,
+                    description,
+                    source,
+                    source_event_id,
+                    source_context,
+                    domain,
+                    priority,
                     json.dumps(tags or []),
-                    due_date, reminder_at, estimated_minutes,
+                    due_date,
+                    reminder_at,
+                    estimated_minutes,
                     json.dumps(related_contacts or []),
                     json.dumps(related_events or []),
-                    now, now,
+                    now,
+                    now,
                 ),
             )
 
-        await self._publish_telemetry("task.created", {
-            "task_id": task_id,
-            "title": title,
-            "source": source,
-            "source_event_id": source_event_id,
-            "domain": domain,
-            "priority": priority,
-            "has_due_date": due_date is not None,
-            "tags": tags or [],
-            "created_at": now,
-        })
+        await self._publish_telemetry(
+            "task.created",
+            {
+                "task_id": task_id,
+                "title": title,
+                "source": source,
+                "source_event_id": source_event_id,
+                "domain": domain,
+                "priority": priority,
+                "has_due_date": due_date is not None,
+                "tags": tags or [],
+                "created_at": now,
+            },
+        )
 
         return task_id
 
@@ -317,7 +336,9 @@ class TaskManager:
         # Fetch task details before completing for telemetry
         task_details = {}
         with self.db.get_connection("state") as conn:
-            row = conn.execute("SELECT title, source, domain, priority, created_at FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            row = conn.execute(
+                "SELECT title, source, domain, priority, created_at FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
             if row:
                 task_details = dict(row)
             conn.execute(
@@ -325,11 +346,14 @@ class TaskManager:
                 (now, now, task_id),
             )
 
-        await self._publish_telemetry("task.completed", {
-            "task_id": task_id,
-            "completed_at": now,
-            **task_details,
-        })
+        await self._publish_telemetry(
+            "task.completed",
+            {
+                "task_id": task_id,
+                "completed_at": now,
+                **task_details,
+            },
+        )
 
     async def update_task(self, task_id: str, **fields):
         """
@@ -340,8 +364,15 @@ class TaskManager:
         List fields are auto-serialized to JSON before storage.
         """
         allowed = {
-            "title", "description", "domain", "priority", "tags",
-            "due_date", "reminder_at", "estimated_minutes", "status",
+            "title",
+            "description",
+            "domain",
+            "priority",
+            "tags",
+            "due_date",
+            "reminder_at",
+            "estimated_minutes",
+            "status",
         }
         # Filter to only allowed fields — silently drops unknown keys
         updates = {k: v for k, v in fields.items() if k in allowed}
@@ -365,11 +396,14 @@ class TaskManager:
                 values,
             )
 
-        await self._publish_telemetry("task.updated", {
-            "task_id": task_id,
-            "updated_fields": list(updates.keys()),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._publish_telemetry(
+            "task.updated",
+            {
+                "task_id": task_id,
+                "updated_fields": list(updates.keys()),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
     # Valid task status values accepted by get_tasks() and the /api/tasks route.
     VALID_STATUSES = frozenset({"pending", "completed", "in_progress", "archived", "cancelled"})
@@ -532,9 +566,7 @@ class TaskManager:
         # fetch the full event record so the user can see the original context.
         if task.get("source_event_id"):
             with self.db.get_connection("events") as conn:
-                event_row = conn.execute(
-                    "SELECT * FROM events WHERE id = ?", (task["source_event_id"],)
-                ).fetchone()
+                event_row = conn.execute("SELECT * FROM events WHERE id = ?", (task["source_event_id"],)).fetchone()
                 if event_row:
                     context["source_event"] = dict(event_row)
 
@@ -681,8 +713,8 @@ class TaskManager:
             # Create the task (always starts as pending initially)
             task_id = await self.create_task(
                 title=title,
-                source="ai_extracted",           # Marks provenance as AI-extracted
-                source_event_id=source_event_id,   # Links back to the originating message
+                source="ai_extracted",  # Marks provenance as AI-extracted
+                source_event_id=source_event_id,  # Links back to the originating message
                 priority=task_data.get("priority", "normal"),
                 due_date=task_data.get("due_hint"),  # AI's best guess at the deadline
             )
@@ -700,9 +732,7 @@ class TaskManager:
         tasks, and a breakdown of pending tasks by life domain.
         """
         with self.db.get_connection("state") as conn:
-            pending = conn.execute(
-                "SELECT COUNT(*) as cnt FROM tasks WHERE status = 'pending'"
-            ).fetchone()["cnt"]
+            pending = conn.execute("SELECT COUNT(*) as cnt FROM tasks WHERE status = 'pending'").fetchone()["cnt"]
 
             completed_today = conn.execute(
                 """SELECT COUNT(*) as cnt FROM tasks
@@ -803,9 +833,7 @@ class TaskManager:
         # --- Tasks by status ---
         try:
             with self.db.get_connection("state") as conn:
-                rows = conn.execute(
-                    "SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status"
-                ).fetchall()
+                rows = conn.execute("SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status").fetchall()
             diagnostics["by_status"] = {row["status"]: row["cnt"] for row in rows}
         except Exception:
             logger.warning("Diagnostics: failed to query tasks by status", exc_info=True)

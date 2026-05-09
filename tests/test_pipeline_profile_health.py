@@ -23,6 +23,7 @@ from services.signal_extractor.pipeline import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _insert_profile(db, profile_type: str, data: dict, samples_count: int):
     """Insert a signal profile with a specific sample count directly via SQL."""
     with db.get_connection("user_model") as conn:
@@ -58,6 +59,7 @@ def _insert_event(db, event_type: str, payload: dict | None = None, ts: str | No
 # Tests for get_profile_health()
 # ---------------------------------------------------------------------------
 
+
 class TestGetProfileHealth:
     """Verify get_profile_health() correctly classifies each profile."""
 
@@ -77,9 +79,9 @@ class TestGetProfileHealth:
         pipeline = SignalExtractorPipeline(db, user_model_store)
 
         # Manually insert a well-populated profile via raw SQL.
-        _insert_profile(db, "relationships",
-                        {"contacts": {"alice": 10}, "response_times": {"alice": 300}},
-                        samples_count=100)
+        _insert_profile(
+            db, "relationships", {"contacts": {"alice": 10}, "response_times": {"alice": 300}}, samples_count=100
+        )
 
         health = pipeline.get_profile_health()
 
@@ -134,6 +136,7 @@ class TestGetProfileHealth:
 # ---------------------------------------------------------------------------
 # Tests for extractor_error_counts in rebuild
 # ---------------------------------------------------------------------------
+
 
 class TestRebuildErrorCounts:
     """Verify rebuild_profiles_from_events() tracks errors per extractor."""
@@ -206,6 +209,7 @@ class TestRebuildErrorCounts:
 # Tests for _is_profile_stale helper
 # ---------------------------------------------------------------------------
 
+
 class TestIsProfileStale:
     """Edge cases for _is_profile_stale used by get_profile_health."""
 
@@ -215,21 +219,36 @@ class TestIsProfileStale:
 
     def test_metadata_only_keys_is_stale(self):
         """Profile whose data has only metadata keys is stale."""
-        assert _is_profile_stale({
-            "data": {"updated_at": "2026-01-01", "created_at": "2025-01-01"},
-            "samples_count": 100,
-        }) is True
+        assert (
+            _is_profile_stale(
+                {
+                    "data": {"updated_at": "2026-01-01", "created_at": "2025-01-01"},
+                    "samples_count": 100,
+                }
+            )
+            is True
+        )
 
     def test_below_min_samples_is_stale(self):
         """Profile with real data but < 5 samples is stale."""
-        assert _is_profile_stale({
-            "data": {"real_key": {"value": 1}},
-            "samples_count": 4,
-        }) is True
+        assert (
+            _is_profile_stale(
+                {
+                    "data": {"real_key": {"value": 1}},
+                    "samples_count": 4,
+                }
+            )
+            is True
+        )
 
     def test_healthy_profile_is_not_stale(self):
         """Profile with real data and >= 5 samples is not stale."""
-        assert _is_profile_stale({
-            "data": {"real_key": {"value": 1}},
-            "samples_count": 10,
-        }) is False
+        assert (
+            _is_profile_stale(
+                {
+                    "data": {"real_key": {"value": 1}},
+                    "samples_count": 10,
+                }
+            )
+            is False
+        )

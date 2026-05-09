@@ -36,9 +36,7 @@ async def test_duplicate_task_is_skipped(task_manager):
 
     all_tasks = task_manager.get_tasks(limit=100)
     titles = [t["title"] for t in all_tasks]
-    assert titles.count("Review quarterly report") == 1, (
-        "Duplicate task was created despite deduplication guard"
-    )
+    assert titles.count("Review quarterly report") == 1, "Duplicate task was created despite deduplication guard"
 
 
 @pytest.mark.asyncio
@@ -61,9 +59,7 @@ async def test_case_insensitive_dedup(task_manager):
 
     all_tasks = task_manager.get_tasks(limit=100)
     matching = [t for t in all_tasks if "send report to alice" in t["title"].lower()]
-    assert len(matching) == 1, (
-        f"Expected 1 task but got {len(matching)}: {[t['title'] for t in matching]}"
-    )
+    assert len(matching) == 1, f"Expected 1 task but got {len(matching)}: {[t['title'] for t in matching]}"
 
 
 @pytest.mark.asyncio
@@ -127,6 +123,4 @@ async def test_dedup_does_not_block_user_created_tasks(task_manager):
 
     all_tasks = task_manager.get_tasks(limit=100)
     count = sum(1 for t in all_tasks if t["title"] == title)
-    assert count == 2, (
-        "User-created tasks should not be subject to AI deduplication"
-    )
+    assert count == 2, "User-created tasks should not be subject to AI deduplication"

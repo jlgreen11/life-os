@@ -49,8 +49,9 @@ async def test_reaction_filter_reason_logged(db, event_store, user_model_store):
         assert pred["filter_reason"] is not None
         assert pred["filter_reason"].startswith("reaction:")
         # Should include the reaction type (helpful/neutral/annoying) and reasoning
-        assert "(" in pred["filter_reason"] and ")" in pred["filter_reason"], \
+        assert "(" in pred["filter_reason"] and ")" in pred["filter_reason"], (
             f"Reaction filter reason should include reasoning in parentheses: {pred['filter_reason']}"
+        )
 
 
 @pytest.mark.asyncio
@@ -160,8 +161,9 @@ async def test_surfaced_predictions_have_no_filter_reason(db, event_store, user_
 
     # All surfaced predictions should have NULL or empty filter_reason
     for pred in surfaced:
-        assert pred["filter_reason"] is None or pred["filter_reason"] == "", \
+        assert pred["filter_reason"] is None or pred["filter_reason"] == "", (
             f"Surfaced prediction should not have filter_reason, got: {pred['filter_reason']}"
+        )
 
 
 @pytest.mark.asyncio
@@ -188,23 +190,23 @@ async def test_filter_reason_format_is_machine_readable(db, event_store, user_mo
 
     for row in all_reasons:
         reason = row["filter_reason"]
-        assert any(reason.startswith(prefix) for prefix in valid_prefixes), \
+        assert any(reason.startswith(prefix) for prefix in valid_prefixes), (
             f"Filter reason '{reason}' doesn't match expected format (reaction:|confidence:|ranking:)"
+        )
 
         # Reaction reasons should include the reaction type and reasoning
         if reason.startswith("reaction:"):
-            assert "(" in reason and ")" in reason, \
-                "Reaction filter reason should include reasoning in parentheses"
+            assert "(" in reason and ")" in reason, "Reaction filter reason should include reasoning in parentheses"
 
         # Confidence reasons should include the value and threshold
         if reason.startswith("confidence:"):
-            assert "threshold:" in reason, \
-                "Confidence filter reason should include threshold"
+            assert "threshold:" in reason, "Confidence filter reason should include threshold"
 
         # Ranking reasons should include position and cutoff info
         if reason.startswith("ranking:"):
-            assert "top_5_cutoff" in reason or "position_" in reason, \
+            assert "top_5_cutoff" in reason or "position_" in reason, (
                 "Ranking filter reason should include position or cutoff info"
+            )
 
 
 @pytest.mark.asyncio

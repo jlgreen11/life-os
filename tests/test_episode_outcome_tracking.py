@@ -21,6 +21,7 @@ from services.task_completion_detector.detector import TaskCompletionDetector
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _store_episode(db, episode_id, event_id, timestamp=None):
     """Insert a minimal episode row into user_model.db for testing."""
     ts = (timestamp or datetime.now(timezone.utc)).isoformat()
@@ -68,6 +69,7 @@ def _create_event(db, event_id, event_type, payload, timestamp=None):
 # ---------------------------------------------------------------------------
 # UserModelStore.update_episode tests
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateEpisode:
     """Tests for UserModelStore.update_episode() method."""
@@ -149,9 +151,7 @@ class TestUpdateEpisode:
 
         # Telemetry falls back to event_store when no async loop is running.
         with db.get_connection("events") as conn:
-            rows = conn.execute(
-                "SELECT type, payload FROM events WHERE type = 'usermodel.episode.updated'"
-            ).fetchall()
+            rows = conn.execute("SELECT type, payload FROM events WHERE type = 'usermodel.episode.updated'").fetchall()
 
         assert len(rows) >= 1
         payload = json.loads(rows[0]["payload"])
@@ -162,6 +162,7 @@ class TestUpdateEpisode:
 # ---------------------------------------------------------------------------
 # TaskCompletionDetector episode-wiring tests
 # ---------------------------------------------------------------------------
+
 
 class TestDetectorEpisodeWiring:
     """Tests that TaskCompletionDetector updates episode outcomes on task completion."""
@@ -182,24 +183,37 @@ class TestDetectorEpisodeWiring:
         task_id = str(uuid.uuid4())
 
         # Create the originating event
-        _create_event(db, event_id, "email.received", {
-            "subject": "Invoice for Acme Corporation services",
-            "body_plain": "Please send the invoice for Acme Corporation services.",
-        }, timestamp=base_time - timedelta(hours=3))
+        _create_event(
+            db,
+            event_id,
+            "email.received",
+            {
+                "subject": "Invoice for Acme Corporation services",
+                "body_plain": "Please send the invoice for Acme Corporation services.",
+            },
+            timestamp=base_time - timedelta(hours=3),
+        )
 
         # Create episode linked to that event
         _store_episode(db, ep_id, event_id, timestamp=base_time - timedelta(hours=3))
 
         # Create task whose source is the event
-        _create_task(db, task_id, "Send invoice to Acme Corporation",
-                     source=event_id, created_at=base_time - timedelta(hours=2))
+        _create_task(
+            db, task_id, "Send invoice to Acme Corporation", source=event_id, created_at=base_time - timedelta(hours=2)
+        )
 
         # Create a sent email with enough keyword overlap + completion signal
-        _create_event(db, str(uuid.uuid4()), "email.sent", {
-            "to_addresses": ["billing@acme.com"],
-            "subject": "Invoice for Acme - Q4",
-            "body_plain": "The invoice for Acme Corporation has been sent and completed.",
-        }, timestamp=base_time - timedelta(minutes=30))
+        _create_event(
+            db,
+            str(uuid.uuid4()),
+            "email.sent",
+            {
+                "to_addresses": ["billing@acme.com"],
+                "subject": "Invoice for Acme - Q4",
+                "body_plain": "The invoice for Acme Corporation has been sent and completed.",
+            },
+            timestamp=base_time - timedelta(minutes=30),
+        )
 
         await detector_with_ums.detect_completions()
 
@@ -214,14 +228,19 @@ class TestDetectorEpisodeWiring:
         ep_id = str(uuid.uuid4())
         task_id = str(uuid.uuid4())
 
-        _create_event(db, event_id, "email.received", {
-            "subject": "Old email",
-        }, timestamp=base_time - timedelta(days=10))
+        _create_event(
+            db,
+            event_id,
+            "email.received",
+            {
+                "subject": "Old email",
+            },
+            timestamp=base_time - timedelta(days=10),
+        )
 
         _store_episode(db, ep_id, event_id, timestamp=base_time - timedelta(days=10))
 
-        _create_task(db, task_id, "Old inactive task",
-                     source=event_id, created_at=base_time - timedelta(days=10))
+        _create_task(db, task_id, "Old inactive task", source=event_id, created_at=base_time - timedelta(days=10))
 
         await detector_with_ums.detect_completions()
 
@@ -236,14 +255,19 @@ class TestDetectorEpisodeWiring:
         ep_id = str(uuid.uuid4())
         task_id = str(uuid.uuid4())
 
-        _create_event(db, event_id, "email.received", {
-            "subject": "Very old email",
-        }, timestamp=base_time - timedelta(days=35))
+        _create_event(
+            db,
+            event_id,
+            "email.received",
+            {
+                "subject": "Very old email",
+            },
+            timestamp=base_time - timedelta(days=35),
+        )
 
         _store_episode(db, ep_id, event_id, timestamp=base_time - timedelta(days=35))
 
-        _create_task(db, task_id, "Very old stale task",
-                     source=event_id, created_at=base_time - timedelta(days=35))
+        _create_task(db, task_id, "Very old stale task", source=event_id, created_at=base_time - timedelta(days=35))
 
         await detector_with_ums.detect_completions()
 
@@ -260,8 +284,13 @@ class TestDetectorEpisodeWiring:
         task_id = str(uuid.uuid4())
 
         # Task with no matching episode — source is an event_id with no episode
-        _create_task(db, task_id, "Task with no episode",
-                     source="nonexistent-event-id", created_at=base_time - timedelta(days=10))
+        _create_task(
+            db,
+            task_id,
+            "Task with no episode",
+            source="nonexistent-event-id",
+            created_at=base_time - timedelta(days=10),
+        )
 
         # Should complete without error
         completed = await detector_with_ums.detect_completions()

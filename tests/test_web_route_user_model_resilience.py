@@ -30,13 +30,15 @@ def mock_life_os():
     # Default: db is healthy (not degraded)
     life_os.db = Mock()
     life_os.db.user_model_degraded = False
-    life_os.db.get_database_health = Mock(return_value={
-        "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
-        "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
-        "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
-        "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
-        "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
-    })
+    life_os.db.get_database_health = Mock(
+        return_value={
+            "events": {"status": "ok", "errors": [], "path": "/tmp/events.db", "size_bytes": 1024},
+            "entities": {"status": "ok", "errors": [], "path": "/tmp/entities.db", "size_bytes": 1024},
+            "state": {"status": "ok", "errors": [], "path": "/tmp/state.db", "size_bytes": 1024},
+            "user_model": {"status": "ok", "errors": [], "path": "/tmp/user_model.db", "size_bytes": 1024},
+            "preferences": {"status": "ok", "errors": [], "path": "/tmp/preferences.db", "size_bytes": 1024},
+        }
+    )
 
     # Mock event bus
     life_os.event_bus = Mock()
@@ -55,10 +57,17 @@ def mock_life_os():
     # Mock signal extractor
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={"facts": []})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.7, stress_level=0.3, social_battery=0.8,
-        cognitive_load=0.4, emotional_valence=0.6, confidence=0.75, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.7,
+            stress_level=0.3,
+            social_battery=0.8,
+            cognitive_load=0.4,
+            emotional_valence=0.6,
+            confidence=0.75,
+            trend="stable",
+        )
+    )
 
     # Mock notification manager
     life_os.notification_manager = Mock()
@@ -111,6 +120,7 @@ def _make_corrupted_connection(mock_life_os):
 
     class CorruptedContextManager:
         """Context manager that raises sqlite3.DatabaseError on __enter__."""
+
         def __enter__(self):
             raise sqlite3.DatabaseError("database disk image is malformed")
 
@@ -152,6 +162,7 @@ def degraded_client(mock_life_os):
 # PATCH /api/user-model/facts/{key} — correct_fact
 # ---------------------------------------------------------------------------
 
+
 class TestCorrectFactResilience:
     """Tests for corruption resilience in the correct_fact endpoint."""
 
@@ -183,6 +194,7 @@ class TestCorrectFactResilience:
 # POST /api/user-model/facts/{key}/confirm — confirm_fact
 # ---------------------------------------------------------------------------
 
+
 class TestConfirmFactResilience:
     """Tests for corruption resilience in the confirm_fact endpoint."""
 
@@ -213,6 +225,7 @@ class TestConfirmFactResilience:
 # POST /api/insights/{insight_id}/feedback — insight_feedback
 # ---------------------------------------------------------------------------
 
+
 class TestInsightFeedbackResilience:
     """Tests for corruption resilience in the insight_feedback endpoint."""
 
@@ -242,6 +255,7 @@ class TestInsightFeedbackResilience:
 # ---------------------------------------------------------------------------
 # GET /api/predictions — list_predictions
 # ---------------------------------------------------------------------------
+
 
 class TestListPredictionsResilience:
     """Tests for corruption resilience in the list_predictions endpoint."""
@@ -277,6 +291,7 @@ class TestListPredictionsResilience:
 # ---------------------------------------------------------------------------
 # POST /api/predictions/{prediction_id}/feedback — prediction_feedback
 # ---------------------------------------------------------------------------
+
 
 class TestPredictionFeedbackResilience:
     """Tests for corruption resilience in the prediction_feedback endpoint."""

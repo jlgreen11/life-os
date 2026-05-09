@@ -28,8 +28,14 @@ from services.rules_engine.engine import RulesEngine, install_default_rules
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_event(event_type: str, source: str = "test", priority: str = "normal",
-                payload: dict | None = None, metadata: dict | None = None) -> dict:
+
+def _make_event(
+    event_type: str,
+    source: str = "test",
+    priority: str = "normal",
+    payload: dict | None = None,
+    metadata: dict | None = None,
+) -> dict:
     """Build a well-formed event dict for pipeline testing.
 
     Args:
@@ -116,8 +122,7 @@ def _build_notification_content(event: dict, action: dict) -> tuple[str, str]:
     return title, body
 
 
-async def _execute_notify_actions(notification_manager: NotificationManager,
-                                  actions: list[dict], event: dict):
+async def _execute_notify_actions(notification_manager: NotificationManager, actions: list[dict], event: dict):
     """Execute notify actions from the rules engine, mimicking main.py logic.
 
     For each action with type='notify', creates a notification via the
@@ -155,6 +160,7 @@ async def _execute_notify_actions(notification_manager: NotificationManager,
 # Test 1: Connector error → rule match → notification created and visible
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_connector_error_produces_notification(db, event_bus):
     """A system.connector.error event must flow through the full pipeline:
@@ -189,12 +195,9 @@ async def test_connector_error_produces_notification(db, event_bus):
 
     # Assert at least one notify action with high priority
     notify_actions = [a for a in actions if a["type"] == "notify"]
-    assert len(notify_actions) >= 1, (
-        f"Expected at least one notify action for connector error, got: {actions}"
-    )
+    assert len(notify_actions) >= 1, f"Expected at least one notify action for connector error, got: {actions}"
     assert any(a["priority"] == "high" for a in notify_actions), (
-        f"Expected a high-priority notify action, got priorities: "
-        f"{[a.get('priority') for a in notify_actions]}"
+        f"Expected a high-priority notify action, got priorities: {[a.get('priority') for a in notify_actions]}"
     )
 
     # Execute notify actions (mimicking _execute_rule_action)
@@ -202,9 +205,7 @@ async def test_connector_error_produces_notification(db, event_bus):
 
     # Verify notification is visible in get_pending()
     pending = notification_manager.get_pending()
-    assert len(pending) >= 1, (
-        "Expected at least one pending notification after connector error pipeline"
-    )
+    assert len(pending) >= 1, "Expected at least one pending notification after connector error pipeline"
 
     # Verify the notification's title references the rule name (since connector
     # error payloads don't have 'subject' or 'summary' fields, the title falls
@@ -218,6 +219,7 @@ async def test_connector_error_produces_notification(db, event_bus):
 # ---------------------------------------------------------------------------
 # Test 2: Urgent email → notify + tag actions → notification visible
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_urgent_email_produces_notification(db, event_bus):
@@ -245,9 +247,7 @@ async def test_urgent_email_produces_notification(db, event_bus):
 
     # Should produce a notify action with high priority
     notify_actions = [a for a in actions if a["type"] == "notify"]
-    assert len(notify_actions) >= 1, (
-        f"Expected at least one notify action for urgent email, got: {actions}"
-    )
+    assert len(notify_actions) >= 1, f"Expected at least one notify action for urgent email, got: {actions}"
     assert any(a["priority"] == "high" for a in notify_actions), (
         f"Expected high-priority notify, got: {[a.get('priority') for a in notify_actions]}"
     )
@@ -255,28 +255,24 @@ async def test_urgent_email_produces_notification(db, event_bus):
     # Should also produce a tag action with value "urgent"
     tag_actions = [a for a in actions if a["type"] == "tag"]
     tag_values = [a.get("value") for a in tag_actions]
-    assert "urgent" in tag_values, (
-        f"Expected 'urgent' tag action, got tag values: {tag_values}"
-    )
+    assert "urgent" in tag_values, f"Expected 'urgent' tag action, got tag values: {tag_values}"
 
     # Execute notify actions and verify notification appears
     await _execute_notify_actions(notification_manager, actions, event)
 
     pending = notification_manager.get_pending()
-    assert len(pending) >= 1, (
-        "Expected at least one pending notification after urgent email pipeline"
-    )
+    assert len(pending) >= 1, "Expected at least one pending notification after urgent email pipeline"
 
     # Verify the notification title uses the email subject
     assert any("URGENT" in n["title"] for n in pending), (
-        f"Expected notification title to contain 'URGENT', got: "
-        f"{[n['title'] for n in pending]}"
+        f"Expected notification title to contain 'URGENT', got: {[n['title'] for n in pending]}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 3: Marketing email → suppress + tag, NO notification
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_marketing_email_suppressed_no_notification(db, event_bus):
@@ -303,12 +299,8 @@ async def test_marketing_email_suppressed_no_notification(db, event_bus):
 
     # Should have suppress and tag actions
     action_types = [a["type"] for a in actions]
-    assert "suppress" in action_types, (
-        f"Expected a suppress action for marketing email, got: {action_types}"
-    )
-    assert "tag" in action_types, (
-        f"Expected a tag action for marketing email, got: {action_types}"
-    )
+    assert "suppress" in action_types, f"Expected a suppress action for marketing email, got: {action_types}"
+    assert "tag" in action_types, f"Expected a tag action for marketing email, got: {action_types}"
 
     # Marketing email might also match other rules (e.g., "reply requests"
     # if body contains matching phrases). But the suppress action means
@@ -336,6 +328,7 @@ async def test_marketing_email_suppressed_no_notification(db, event_bus):
 # Test 4: Notify action includes rule metadata (rule_id and rule_name)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_notification_includes_rule_metadata(db, event_bus):
     """The rules engine must attach rule_id and rule_name to every action it
@@ -359,30 +352,22 @@ async def test_notification_includes_rule_metadata(db, event_bus):
 
     # Every action must have rule_id and rule_name
     for action in actions:
-        assert "rule_id" in action, (
-            f"Action missing rule_id: {action}"
-        )
-        assert "rule_name" in action, (
-            f"Action missing rule_name: {action}"
-        )
-        assert action["rule_id"] is not None, (
-            f"Action rule_id is None: {action}"
-        )
-        assert action["rule_name"] is not None, (
-            f"Action rule_name is None: {action}"
-        )
+        assert "rule_id" in action, f"Action missing rule_id: {action}"
+        assert "rule_name" in action, f"Action missing rule_name: {action}"
+        assert action["rule_id"] is not None, f"Action rule_id is None: {action}"
+        assert action["rule_name"] is not None, f"Action rule_name is None: {action}"
 
     # Specifically for connector error, the rule_name should match
     notify_actions = [a for a in actions if a["type"] == "notify"]
     assert any(a["rule_name"] == "Notify on connector errors" for a in notify_actions), (
-        f"Expected 'Notify on connector errors' rule_name, got: "
-        f"{[a.get('rule_name') for a in notify_actions]}"
+        f"Expected 'Notify on connector errors' rule_name, got: {[a.get('rule_name') for a in notify_actions]}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 5: High-priority notification delivered immediately (not batched)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_high_priority_notification_delivered_immediately(db, event_bus):
@@ -410,9 +395,7 @@ async def test_high_priority_notification_delivered_immediately(db, event_bus):
 
     # get_pending() returns notifications with status IN ('pending', 'delivered')
     pending = notification_manager.get_pending()
-    assert len(pending) >= 1, (
-        "Expected at least one notification after connector error"
-    )
+    assert len(pending) >= 1, "Expected at least one notification after connector error"
 
     # High-priority notifications should be delivered immediately, which means
     # the notification manager calls _deliver_notification() setting status='delivered'
@@ -427,6 +410,7 @@ async def test_high_priority_notification_delivered_immediately(db, event_bus):
 # ---------------------------------------------------------------------------
 # Test 6: Calendar conflict → notification visible
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_calendar_conflict_produces_notification(db, event_bus):
@@ -450,28 +434,23 @@ async def test_calendar_conflict_produces_notification(db, event_bus):
     actions = await rules_engine.evaluate(event)
 
     notify_actions = [a for a in actions if a["type"] == "notify"]
-    assert len(notify_actions) >= 1, (
-        f"Expected notify action for calendar conflict, got: {actions}"
-    )
+    assert len(notify_actions) >= 1, f"Expected notify action for calendar conflict, got: {actions}"
 
     await _execute_notify_actions(notification_manager, actions, event)
 
     pending = notification_manager.get_pending()
-    assert len(pending) >= 1, (
-        "Expected notification after calendar conflict"
-    )
+    assert len(pending) >= 1, "Expected notification after calendar conflict"
 
     # Title should use the summary from the payload
-    assert any("standup" in n["title"].lower() or "conflict" in n["title"].lower()
-               for n in pending), (
-        f"Expected notification title to reference the conflict, got: "
-        f"{[n['title'] for n in pending]}"
+    assert any("standup" in n["title"].lower() or "conflict" in n["title"].lower() for n in pending), (
+        f"Expected notification title to reference the conflict, got: {[n['title'] for n in pending]}"
     )
 
 
 # ---------------------------------------------------------------------------
 # Test 7: Large transaction → notify + tag pipeline
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_large_transaction_produces_notification(db, event_bus):
@@ -507,12 +486,9 @@ async def test_large_transaction_produces_notification(db, event_bus):
     await _execute_notify_actions(notification_manager, actions, event)
 
     pending = notification_manager.get_pending()
-    assert len(pending) >= 1, (
-        "Expected notification after large transaction"
-    )
+    assert len(pending) >= 1, "Expected notification after large transaction"
 
     # Title should include the merchant name and amount (from _build_notification_content)
     assert any("Best Buy" in n["title"] for n in pending), (
-        f"Expected 'Best Buy' in notification title, got: "
-        f"{[n['title'] for n in pending]}"
+        f"Expected 'Best Buy' in notification title, got: {[n['title'] for n in pending]}"
     )

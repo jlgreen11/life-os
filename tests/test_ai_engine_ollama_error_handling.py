@@ -118,9 +118,7 @@ async def test_query_local_success_returns_string(db, user_model_store):
     with patch("services.ai_engine.engine.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
         mock_response_obj = Mock()
-        mock_response_obj.json.return_value = {
-            "message": {"role": "assistant", "content": "Hello from Ollama"}
-        }
+        mock_response_obj.json.return_value = {"message": {"role": "assistant", "content": "Hello from Ollama"}}
         mock_response_obj.raise_for_status = Mock()
         mock_client.post = AsyncMock(return_value=mock_response_obj)
         mock_client_cls.return_value.__aenter__.return_value = mock_client

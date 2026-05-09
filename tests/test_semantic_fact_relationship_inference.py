@@ -173,14 +173,17 @@ class TestRelationshipInferenceEdgeCases:
         each result.
         """
         # Seed relationship profile with minimal valid data
-        user_model_store.update_signal_profile("relationships", {
-            "contacts": {
-                "alice@example.com": {
-                    "interaction_count": 5,
-                    "outbound_count": 2,
-                },
-            }
-        })
+        user_model_store.update_signal_profile(
+            "relationships",
+            {
+                "contacts": {
+                    "alice@example.com": {
+                        "interaction_count": 5,
+                        "outbound_count": 2,
+                    },
+                }
+            },
+        )
         _set_samples(user_model_store, "relationships", 15)
 
         inferrer = SemanticFactInferrer(user_model_store)

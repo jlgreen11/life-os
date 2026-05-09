@@ -30,6 +30,7 @@ from services.signal_extractor.decision import DecisionExtractor
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_calendar_event(start_time_str: str, created_offset_days: int = 0) -> dict:
     """Build a minimal calendar.event.created event dict.
 
@@ -100,9 +101,7 @@ def test_date_only_past_event_is_skipped(db, user_model_store):
     signals = extractor.extract(event)
 
     # Past event should produce no commitment_pattern signal
-    assert signals == [], (
-        f"Past date-only event should be skipped, but got: {signals}"
-    )
+    assert signals == [], f"Past date-only event should be skipped, but got: {signals}"
 
 
 def test_mix_of_date_only_and_full_datetime_events(db, user_model_store):
@@ -167,9 +166,7 @@ def test_decision_profile_persisted_with_samples_after_date_only_event(db, user_
 
     profile = user_model_store.get_signal_profile("decision")
     assert profile is not None, "Decision profile should exist after processing a calendar event"
-    assert profile["samples_count"] > 0, (
-        f"samples_count should be > 0 after processing, got {profile['samples_count']}"
-    )
+    assert profile["samples_count"] > 0, f"samples_count should be > 0 after processing, got {profile['samples_count']}"
     data = profile["data"]
     assert "risk_tolerance_by_domain" in data, (
         f"risk_tolerance_by_domain missing from profile. keys: {list(data.keys())}"
@@ -198,9 +195,7 @@ def test_decision_profile_accumulates_samples_from_multiple_date_only_events(db,
 
     profile = user_model_store.get_signal_profile("decision")
     assert profile is not None
-    assert profile["samples_count"] == 5, (
-        f"Expected 5 samples (one per event), got {profile['samples_count']}"
-    )
+    assert profile["samples_count"] == 5, f"Expected 5 samples (one per event), got {profile['samples_count']}"
 
 
 def test_full_datetime_calendar_events_still_work(db, user_model_store):
@@ -250,6 +245,4 @@ def test_date_only_with_negative_offset_handled_same_day(db, user_model_store):
     signals = extractor.extract(event)
 
     # Negative horizon → skipped (past/synced event)
-    assert signals == [], (
-        f"Same-day date-only event with negative horizon should be skipped, got: {signals}"
-    )
+    assert signals == [], f"Same-day date-only event with negative horizon should be skipped, got: {signals}"

@@ -42,66 +42,52 @@ class TestEnhancedMarketingFilter:
         # No-reply variants with underscores
         "no_reply@mcmap.chase.com",
         "no_reply@example.com",
-
         # No-reply with + modifiers
         "no-reply+4b0c6802@toast-restaurants.com",
         "noreply+tracking@shopify.com",
         "no_reply+12345@github.com",
-
         # Automation variants
         "automation@stripe.com",
-
         # Singular notification (not notifications)
         "notification@paypal.com",
-
         # Team addresses removed - could be legitimate startups
         # "team@kickstargogo.com", "team@slack.com" - too many false positives
-
         # Mobile/marketing subdomains (@m.)
         "Starbucks@m.starbucks.com",
         "updates@m.facebook.com",
         "deals@m.kohls.com",
-
         # Notification subdomains
         "capitalone@notification.capitalone.com",
         "alerts@notifications.bankofamerica.com",
-
         # Care/support subdomains
         "YourHealth@care.kansashealthsystem.com",
         "account@care.uber.com",
-
         # Marketing campaign managers
         "no_reply@mcmap.chase.com",
         "offers@mcmap.wellsfargo.com",
-
         # Prospect/sales management
         "smartoption@soslprospect.salliemae.com",
         "application@soslprospect.discover.com",
-
         # Personalized automated senders
         "yourhealth@healthsystem.com",
         "youraccount@banking.com",
         "smartoption@lender.com",
         "quickalert@creditcard.com",
-
         # Generic automated patterns
         "update@app.com",
         "offer@store.com",
         "confirm@booking.com",
         "account@service.com",
         "services@provider.com",
-
         # Other common marketing domains
         "deals@marketing.target.com",
         "news@campaigns.nytimes.com",
         "promo@blast.retailer.com",
         "updates@lists.newsletter.com",
         "alerts@messages.bank.com",
-
         # Transaction notification platforms
         "receipt@txn.square.com",
         "order@transactional.shopify.com",
-
         # Communication platforms
         "updates@communications.company.com",
         "news@comms.activision.com",
@@ -114,12 +100,10 @@ class TestEnhancedMarketingFilter:
         "jane.smith@hotmail.com",
         "alice@protonmail.com",
         "bob@outlook.com",
-
         # Work emails (legitimate contacts)
         "sarah.johnson@company.com",
         "michael.team@startup.io",  # "team" is part of surname, not local-part
         "emily.reply@consultancy.com",  # "reply" is part of surname
-
         # Personal domains
         "hello@personalsite.com",  # Personal blog/portfolio (context-dependent)
         "info@smallbusiness.local",  # Small business owner

@@ -22,6 +22,7 @@ Iteration 191 extended the shared marketing filter in two ways:
    - ``e-vanguard.com`` — email marketing platform domain
    - ``directpay.irs.gov`` — government payment system domain
 """
+
 import pytest
 
 from services.signal_extractor.marketing_filter import is_marketing_or_noreply
@@ -30,6 +31,7 @@ from services.signal_extractor.marketing_filter import is_marketing_or_noreply
 # ---------------------------------------------------------------------------
 # 1. No-reply stem variants (the main fix in this iteration)
 # ---------------------------------------------------------------------------
+
 
 class TestNoreplyStems:
     """No-reply senders that use a suffix after the noreply stem."""
@@ -80,6 +82,7 @@ class TestNoreplyStems:
 # 2. alerts+HASH@ tagged notification senders
 # ---------------------------------------------------------------------------
 
+
 class TestAlertsTaggedNotifications:
     """PrismIntelligence-style alerts+hash@ notification senders."""
 
@@ -89,9 +92,7 @@ class TestAlertsTaggedNotifications:
 
     def test_alerts_plus_hash_long(self):
         """Full-length hash variant observed in production data."""
-        assert is_marketing_or_noreply(
-            "alerts+Xe6Cu7Szh4Os3L1c@prismintelligence.com"
-        ) is True
+        assert is_marketing_or_noreply("alerts+Xe6Cu7Szh4Os3L1c@prismintelligence.com") is True
 
     def test_alerts_plus_hash_another_sender(self):
         """Same pattern from a different domain."""
@@ -105,6 +106,7 @@ class TestAlertsTaggedNotifications:
 # ---------------------------------------------------------------------------
 # 3. Hospitality / government / service automated senders
 # ---------------------------------------------------------------------------
+
 
 class TestHospitalityGovernmentService:
     """stay@, claims@, irrigation@ — transactional automated senders."""
@@ -125,6 +127,7 @@ class TestHospitalityGovernmentService:
 # ---------------------------------------------------------------------------
 # 4. Retail / educational / corporate automated senders
 # ---------------------------------------------------------------------------
+
 
 class TestRetailEducationalCorporate:
     """top@, msftpc@ — brand promos and automated corporate systems."""
@@ -155,6 +158,7 @@ class TestRetailEducationalCorporate:
 # 5. accountservices@ (plural variant)
 # ---------------------------------------------------------------------------
 
+
 class TestAccountServicesPlural:
     """accountservices@ is the plural variant of the existing accountservice@."""
 
@@ -170,6 +174,7 @@ class TestAccountServicesPlural:
 # ---------------------------------------------------------------------------
 # 6. CRM/loyalty subdomain patterns
 # ---------------------------------------------------------------------------
+
 
 class TestSubdomainPatterns:
     """@customer. and @rewards. CRM/loyalty subdomain patterns."""
@@ -191,6 +196,7 @@ class TestSubdomainPatterns:
 # 7. Marketing service platform domains
 # ---------------------------------------------------------------------------
 
+
 class TestMarketingPlatformDomains:
     """e-vanguard.com and directpay.irs.gov specific domain blocks."""
 
@@ -206,6 +212,7 @@ class TestMarketingPlatformDomains:
 # ---------------------------------------------------------------------------
 # 8. False-positive guard: real human addresses must not be blocked
 # ---------------------------------------------------------------------------
+
 
 class TestNoFalsePositives:
     """Real human addresses that must pass through the filter unchanged."""

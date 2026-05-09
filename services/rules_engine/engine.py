@@ -56,9 +56,7 @@ class RulesEngine:
         # updated regardless of throttle state.
         self._telemetry_last_published: dict[str, float] = {}
         config = config or {}
-        self._telemetry_throttle_seconds: float = float(
-            config.get("telemetry_throttle_seconds", 300)
-        )
+        self._telemetry_throttle_seconds: float = float(config.get("telemetry_throttle_seconds", 300))
 
     async def _publish_telemetry(self, event_type: str, payload: dict):
         """Publish a telemetry event if the event bus is available."""
@@ -77,9 +75,7 @@ class RulesEngine:
         one bad rule doesn't prevent all other rules from loading.
         """
         with self.db.get_connection("preferences") as conn:
-            rows = conn.execute(
-                "SELECT * FROM rules WHERE is_active = 1 ORDER BY ROWID"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM rules WHERE is_active = 1 ORDER BY ROWID").fetchall()
 
             self._rules_cache = []
             skipped = 0
@@ -94,14 +90,17 @@ class RulesEngine:
                     skipped += 1
                     logger.warning(
                         "Skipping rule %s (%s): malformed JSON — %s",
-                        rule.get("id", "?"), rule.get("name", "?"), exc,
+                        rule.get("id", "?"),
+                        rule.get("name", "?"),
+                        exc,
                     )
 
             self._cache_loaded_at = datetime.now(timezone.utc)
             if skipped:
                 logger.info(
                     "Rules cache refreshed: %d active rules loaded (%d skipped due to errors)",
-                    len(self._rules_cache), skipped,
+                    len(self._rules_cache),
+                    skipped,
                 )
             else:
                 logger.info("Rules cache refreshed: %d active rules loaded", len(self._rules_cache))
@@ -123,10 +122,7 @@ class RulesEngine:
         # Refresh the rules cache every 60 seconds to pick up changes
         # without requiring a full restart. The staleness window is
         # acceptable because rule changes are infrequent.
-        if (
-            not self._cache_loaded_at
-            or (datetime.now(timezone.utc) - self._cache_loaded_at).total_seconds() > 60
-        ):
+        if not self._cache_loaded_at or (datetime.now(timezone.utc) - self._cache_loaded_at).total_seconds() > 60:
             self.load_rules()
 
         event_type = event.get("type", "")
@@ -146,11 +142,13 @@ class RulesEngine:
                     # Step 3: Action collection — attach rule metadata to each action
                     # so downstream handlers know which rule fired.
                     for action in rule["actions"]:
-                        matching_actions.append({
-                            "rule_id": rule["id"],
-                            "rule_name": rule["name"],
-                            **action,
-                        })
+                        matching_actions.append(
+                            {
+                                "rule_id": rule["id"],
+                                "rule_name": rule["name"],
+                                **action,
+                            }
+                        )
 
                     # Record that this rule was triggered (for analytics and
                     # the "times_triggered" display in the rules management UI).
@@ -158,19 +156,23 @@ class RulesEngine:
             except Exception:
                 logger.warning(
                     "Error evaluating rule %s (%s) against event type '%s', skipping",
-                    rule.get("id", "?"), rule.get("name", "?"), event_type,
+                    rule.get("id", "?"),
+                    rule.get("name", "?"),
+                    event_type,
                     exc_info=True,
                 )
 
         logger.debug(
             "Evaluated %d rules against '%s': %d matched",
-            len(self._rules_cache), event_type, matched,
+            len(self._rules_cache),
+            event_type,
+            matched,
         )
         return matching_actions
 
-    async def add_rule(self, name: str, trigger_event: str,
-                       conditions: list[dict], actions: list[dict],
-                       created_by: str = "user") -> str:
+    async def add_rule(
+        self, name: str, trigger_event: str, conditions: list[dict], actions: list[dict], created_by: str = "user"
+    ) -> str:
         """Add a new rule and reload the cache so it takes effect immediately."""
         rule_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -180,24 +182,31 @@ class RulesEngine:
                 """INSERT INTO rules (id, name, trigger_event, conditions, actions, created_by)
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (
-                    rule_id, name, trigger_event,
-                    json.dumps(conditions), json.dumps(actions), created_by,
+                    rule_id,
+                    name,
+                    trigger_event,
+                    json.dumps(conditions),
+                    json.dumps(actions),
+                    created_by,
                 ),
             )
 
         # Reload cache
         self.load_rules()
 
-        await self._publish_telemetry("system.rule.created", {
-            "rule_id": rule_id,
-            "name": name,
-            "trigger_event": trigger_event,
-            "conditions_count": len(conditions),
-            "actions_count": len(actions),
-            "action_types": [a.get("type") for a in actions],
-            "created_by": created_by,
-            "created_at": now,
-        })
+        await self._publish_telemetry(
+            "system.rule.created",
+            {
+                "rule_id": rule_id,
+                "name": name,
+                "trigger_event": trigger_event,
+                "conditions_count": len(conditions),
+                "actions_count": len(actions),
+                "action_types": [a.get("type") for a in actions],
+                "created_by": created_by,
+                "created_at": now,
+            },
+        )
 
         return rule_id
 
@@ -212,11 +221,14 @@ class RulesEngine:
             conn.execute("UPDATE rules SET is_active = 0 WHERE id = ?", (rule_id,))
         self.load_rules()
 
-        await self._publish_telemetry("system.rule.deactivated", {
-            "rule_id": rule_id,
-            "name": rule_name,
-            "deactivated_at": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._publish_telemetry(
+            "system.rule.deactivated",
+            {
+                "rule_id": rule_id,
+                "name": rule_name,
+                "deactivated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
     def get_all_rules(self) -> list[dict]:
         """Get all rules (active and inactive)."""
@@ -296,7 +308,9 @@ class RulesEngine:
         elif op == "contains":
             # Case-insensitive substring match
             if not isinstance(expected, str):
-                logger.debug("'contains' operator: expected is not a string (got %s), returning False", type(expected).__name__)
+                logger.debug(
+                    "'contains' operator: expected is not a string (got %s), returning False", type(expected).__name__
+                )
                 return False
             return isinstance(actual, str) and expected.lower() in actual.lower()
         elif op == "contains_any":
@@ -304,7 +318,9 @@ class RulesEngine:
             if not isinstance(actual, str):
                 return False
             if not isinstance(expected, list):
-                logger.debug("'contains_any' operator: expected is not a list (got %s), returning False", type(expected).__name__)
+                logger.debug(
+                    "'contains_any' operator: expected is not a list (got %s), returning False", type(expected).__name__
+                )
                 return False
             actual_lower = actual.lower()
             return any(isinstance(v, str) and v.lower() in actual_lower for v in expected)
@@ -395,9 +411,13 @@ class RulesEngine:
             return True
         return False
 
-    async def _record_trigger(self, rule_id: str, rule_name: Optional[str] = None,
-                              event_type: Optional[str] = None,
-                              event_id: Optional[str] = None):
+    async def _record_trigger(
+        self,
+        rule_id: str,
+        rule_name: Optional[str] = None,
+        event_type: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ):
         """Update the trigger count and last-triggered timestamp for a rule, and publish telemetry.
 
         A DB failure here should never prevent actions from executing,
@@ -416,7 +436,8 @@ class RulesEngine:
         except Exception:
             logger.warning(
                 "Failed to record trigger for rule %s (%s), continuing",
-                rule_id, rule_name,
+                rule_id,
+                rule_name,
                 exc_info=True,
             )
 
@@ -425,13 +446,16 @@ class RulesEngine:
         # updated — this only limits the event bus publication to avoid
         # flooding the events table with high-frequency rule telemetry.
         if self._should_publish_telemetry(rule_id):
-            await self._publish_telemetry("system.rule.triggered", {
-                "rule_id": rule_id,
-                "rule_name": rule_name,
-                "trigger_event_type": event_type,
-                "trigger_event_id": event_id,
-                "triggered_at": now,
-            })
+            await self._publish_telemetry(
+                "system.rule.triggered",
+                {
+                    "rule_id": rule_id,
+                    "rule_name": rule_name,
+                    "trigger_event_type": event_type,
+                    "trigger_event_id": event_id,
+                    "triggered_at": now,
+                },
+            )
 
 
 # -------------------------------------------------------------------
@@ -447,8 +471,11 @@ DEFAULT_RULES = [
         "name": "Archive marketing emails",
         "trigger_event": "email.received",
         "conditions": [
-            {"field": "payload.body_plain", "op": "contains_any",
-             "value": ["unsubscribe", "opt out", "manage preferences"]},
+            {
+                "field": "payload.body_plain",
+                "op": "contains_any",
+                "value": ["unsubscribe", "opt out", "manage preferences"],
+            },
         ],
         "actions": [
             {"type": "tag", "value": "marketing"},
@@ -495,10 +522,21 @@ DEFAULT_RULES = [
         "name": "Notify on urgent emails",
         "trigger_event": "email.received",
         "conditions": [
-            {"field": "payload.subject", "op": "contains_any",
-             "value": ["urgent", "action required", "action needed",
-                       "immediate", "asap", "time sensitive",
-                       "deadline", "past due", "overdue"]},
+            {
+                "field": "payload.subject",
+                "op": "contains_any",
+                "value": [
+                    "urgent",
+                    "action required",
+                    "action needed",
+                    "immediate",
+                    "asap",
+                    "time sensitive",
+                    "deadline",
+                    "past due",
+                    "overdue",
+                ],
+            },
         ],
         "actions": [
             {"type": "notify", "priority": "high"},
@@ -511,11 +549,21 @@ DEFAULT_RULES = [
         "name": "Notify on direct reply requests",
         "trigger_event": "email.received",
         "conditions": [
-            {"field": "payload.body_plain", "op": "contains_any",
-             "value": ["please reply", "please respond", "let me know",
-                       "can you confirm", "your thoughts",
-                       "waiting for your", "need your input",
-                       "rsvp", "please get back"]},
+            {
+                "field": "payload.body_plain",
+                "op": "contains_any",
+                "value": [
+                    "please reply",
+                    "please respond",
+                    "let me know",
+                    "can you confirm",
+                    "your thoughts",
+                    "waiting for your",
+                    "need your input",
+                    "rsvp",
+                    "please get back",
+                ],
+            },
         ],
         "actions": [
             {"type": "notify", "priority": "medium"},

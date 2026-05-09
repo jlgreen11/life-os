@@ -33,6 +33,7 @@ from services.workflow_detector import WorkflowDetector
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _seed_email_workflow_data(db, sender="boss@company.com", count=5):
     """Seed email.received → email.sent sequences that will produce workflows.
 
@@ -48,9 +49,13 @@ def _seed_email_workflow_data(db, sender="boss@company.com", count=5):
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_from)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "email.received", "protonmail",
-                    event_time.isoformat(), 3,
-                    json.dumps({"sender": sender}), json.dumps({}),
+                    str(uuid4()),
+                    "email.received",
+                    "protonmail",
+                    event_time.isoformat(),
+                    3,
+                    json.dumps({"sender": sender}),
+                    json.dumps({}),
                     sender,
                 ),
             )
@@ -60,9 +65,13 @@ def _seed_email_workflow_data(db, sender="boss@company.com", count=5):
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_to)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "email.sent", "protonmail",
-                    response_time.isoformat(), 3,
-                    json.dumps({"to": sender}), json.dumps({}),
+                    str(uuid4()),
+                    "email.sent",
+                    "protonmail",
+                    response_time.isoformat(),
+                    3,
+                    json.dumps({"to": sender}),
+                    json.dumps({}),
                     sender,
                 ),
             )
@@ -80,9 +89,13 @@ def _seed_task_workflow_data(db, count=5):
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "task.created", "task_manager",
-                    create_time.isoformat(), 3,
-                    json.dumps({"task_id": task_id}), json.dumps({}),
+                    str(uuid4()),
+                    "task.created",
+                    "task_manager",
+                    create_time.isoformat(),
+                    3,
+                    json.dumps({"task_id": task_id}),
+                    json.dumps({}),
                 ),
             )
             # Task completed ~2 hours later
@@ -91,9 +104,13 @@ def _seed_task_workflow_data(db, count=5):
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "task.completed", "task_manager",
-                    complete_time.isoformat(), 3,
-                    json.dumps({"task_id": task_id}), json.dumps({}),
+                    str(uuid4()),
+                    "task.completed",
+                    "task_manager",
+                    complete_time.isoformat(),
+                    3,
+                    json.dumps({"task_id": task_id}),
+                    json.dumps({}),
                 ),
             )
 
@@ -109,9 +126,13 @@ def _seed_calendar_workflow_data(db, count=5):
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "calendar.event.created", "caldav",
-                    event_time.isoformat(), 3,
-                    json.dumps({"title": f"Meeting {i}"}), json.dumps({}),
+                    str(uuid4()),
+                    "calendar.event.created",
+                    "caldav",
+                    event_time.isoformat(),
+                    3,
+                    json.dumps({"title": f"Meeting {i}"}),
+                    json.dumps({}),
                 ),
             )
             # Follow-up email sent ~2 hours later
@@ -120,9 +141,13 @@ def _seed_calendar_workflow_data(db, count=5):
                 """INSERT INTO events (id, type, source, timestamp, priority, payload, metadata)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    str(uuid4()), "email.sent", "protonmail",
-                    followup_time.isoformat(), 3,
-                    json.dumps({"subject": f"Follow-up {i}"}), json.dumps({}),
+                    str(uuid4()),
+                    "email.sent",
+                    "protonmail",
+                    followup_time.isoformat(),
+                    3,
+                    json.dumps({"subject": f"Follow-up {i}"}),
+                    json.dumps({}),
                 ),
             )
 
@@ -130,6 +155,7 @@ def _seed_calendar_workflow_data(db, count=5):
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowDetectorDbResilience:
     """Verify WorkflowDetector handles DB corruption gracefully.
@@ -222,10 +248,12 @@ class TestWorkflowDetectorDbResilience:
             call_log.append("interaction")
             return original_interaction(lookback_days)
 
-        with patch.object(detector, "_detect_email_workflows", side_effect=tracking_email), \
-             patch.object(detector, "_detect_task_workflows", side_effect=tracking_task), \
-             patch.object(detector, "_detect_calendar_workflows", side_effect=tracking_calendar), \
-             patch.object(detector, "_detect_interaction_workflows", side_effect=tracking_interaction):
+        with (
+            patch.object(detector, "_detect_email_workflows", side_effect=tracking_email),
+            patch.object(detector, "_detect_task_workflows", side_effect=tracking_task),
+            patch.object(detector, "_detect_calendar_workflows", side_effect=tracking_calendar),
+            patch.object(detector, "_detect_interaction_workflows", side_effect=tracking_interaction),
+        ):
             workflows = detector.detect_workflows(lookback_days=30)
 
         # All 4 strategies must have been attempted
@@ -424,8 +452,7 @@ class TestWorkflowDetectorDbResilience:
 
         # The summary line should be present
         summary_lines = [
-            r.message for r in caplog.records
-            if "detected" in r.message.lower() and "workflows" in r.message.lower()
+            r.message for r in caplog.records if "detected" in r.message.lower() and "workflows" in r.message.lower()
         ]
         assert len(summary_lines) >= 1, (
             f"Expected a summary log line, got records: {[r.message for r in caplog.records]}"

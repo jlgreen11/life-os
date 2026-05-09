@@ -105,10 +105,14 @@ async def test_noop_when_episodes_already_exist(db: DatabaseManager):
     assert _count_episodes(db) == 1
 
     # Also insert another event that would be eligible for backfill
-    _insert_event(db, "email.sent", {
-        "to_addresses": ["bob@example.com"],
-        "subject": "Re: test",
-    })
+    _insert_event(
+        db,
+        "email.sent",
+        {
+            "to_addresses": ["bob@example.com"],
+            "subject": "Re: test",
+        },
+    )
 
     # Run the backfill method
     from main import LifeOS
@@ -144,23 +148,47 @@ async def test_backfills_when_episodes_empty_and_events_exist(db: DatabaseManage
     """Backfill should create episodes when user_model.db is empty but events.db has data."""
     # Insert several episodic events
     event_ids = []
-    event_ids.append(_insert_event(db, "email.received", {
-        "from_address": "alice@example.com",
-        "subject": "Hello from Alice",
-        "body_plain": "Hi there!",
-    }))
-    event_ids.append(_insert_event(db, "email.sent", {
-        "to_addresses": ["bob@example.com"],
-        "subject": "Meeting notes",
-        "body_plain": "Here are the notes from today.",
-    }))
-    event_ids.append(_insert_event(db, "message.received", {
-        "from_address": "carol@example.com",
-        "snippet": "Can we chat?",
-    }))
-    event_ids.append(_insert_event(db, "task.created", {
-        "title": "Review PR #42",
-    }))
+    event_ids.append(
+        _insert_event(
+            db,
+            "email.received",
+            {
+                "from_address": "alice@example.com",
+                "subject": "Hello from Alice",
+                "body_plain": "Hi there!",
+            },
+        )
+    )
+    event_ids.append(
+        _insert_event(
+            db,
+            "email.sent",
+            {
+                "to_addresses": ["bob@example.com"],
+                "subject": "Meeting notes",
+                "body_plain": "Here are the notes from today.",
+            },
+        )
+    )
+    event_ids.append(
+        _insert_event(
+            db,
+            "message.received",
+            {
+                "from_address": "carol@example.com",
+                "snippet": "Can we chat?",
+            },
+        )
+    )
+    event_ids.append(
+        _insert_event(
+            db,
+            "task.created",
+            {
+                "title": "Review PR #42",
+            },
+        )
+    )
 
     assert _count_episodes(db) == 0
 
@@ -185,10 +213,14 @@ async def test_backfills_when_episodes_empty_and_events_exist(db: DatabaseManage
 @pytest.mark.asyncio
 async def test_backfill_is_idempotent(db: DatabaseManager):
     """Running the backfill twice should not create duplicate episodes."""
-    _insert_event(db, "email.received", {
-        "from_address": "alice@example.com",
-        "subject": "Test idempotency",
-    })
+    _insert_event(
+        db,
+        "email.received",
+        {
+            "from_address": "alice@example.com",
+            "subject": "Test idempotency",
+        },
+    )
 
     from main import LifeOS
 
@@ -209,13 +241,21 @@ async def test_backfill_is_idempotent(db: DatabaseManager):
 @pytest.mark.asyncio
 async def test_backfill_episode_has_correct_interaction_type(db: DatabaseManager):
     """Backfilled episodes should have granular interaction types, not generic ones."""
-    _insert_event(db, "email.received", {
-        "from_address": "alice@example.com",
-        "subject": "Test classification",
-    })
-    _insert_event(db, "task.completed", {
-        "title": "Finish report",
-    })
+    _insert_event(
+        db,
+        "email.received",
+        {
+            "from_address": "alice@example.com",
+            "subject": "Test classification",
+        },
+    )
+    _insert_event(
+        db,
+        "task.completed",
+        {
+            "title": "Finish report",
+        },
+    )
 
     from main import LifeOS
 
@@ -223,9 +263,7 @@ async def test_backfill_episode_has_correct_interaction_type(db: DatabaseManager
     await app._backfill_episodes_from_events_if_needed()
 
     with db.get_connection("user_model") as conn:
-        cursor = conn.execute(
-            "SELECT interaction_type FROM episodes ORDER BY timestamp"
-        )
+        cursor = conn.execute("SELECT interaction_type FROM episodes ORDER BY timestamp")
         types = [row[0] for row in cursor.fetchall()]
 
     assert "email_received" in types
@@ -236,10 +274,14 @@ async def test_backfill_episode_has_correct_interaction_type(db: DatabaseManager
 async def test_backfill_handles_empty_payload(db: DatabaseManager):
     """Backfill should handle events with empty payloads gracefully."""
     # Insert a good event
-    _insert_event(db, "email.received", {
-        "from_address": "alice@example.com",
-        "subject": "Good event",
-    })
+    _insert_event(
+        db,
+        "email.received",
+        {
+            "from_address": "alice@example.com",
+            "subject": "Good event",
+        },
+    )
 
     # Insert an event with an empty JSON payload (no useful fields)
     _insert_event(db, "email.received", {})

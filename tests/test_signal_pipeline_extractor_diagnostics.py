@@ -217,9 +217,14 @@ def test_get_extractor_diagnostics_includes_all_registered_extractors(pipeline):
 
     assert len(diag["registered_extractors"]) == 8
     for name in [
-        "LinguisticExtractor", "CadenceExtractor", "MoodInferenceEngine",
-        "RelationshipExtractor", "TopicExtractor", "TemporalExtractor",
-        "SpatialExtractor", "DecisionExtractor",
+        "LinguisticExtractor",
+        "CadenceExtractor",
+        "MoodInferenceEngine",
+        "RelationshipExtractor",
+        "TopicExtractor",
+        "TemporalExtractor",
+        "SpatialExtractor",
+        "DecisionExtractor",
     ]:
         assert name in diag["registered_extractors"]
 
@@ -266,9 +271,7 @@ def test_get_profile_health_missing_profile_includes_extractor_hits_field(pipeli
     # All profiles should be missing on a fresh DB.
     for ptype, info in health.items():
         if info["status"] == "missing":
-            assert "extractor_hits" in info, (
-                f"Missing profile '{ptype}' does not include 'extractor_hits'"
-            )
+            assert "extractor_hits" in info, f"Missing profile '{ptype}' does not include 'extractor_hits'"
 
 
 def test_get_profile_health_missing_profile_extractor_hits_zero_without_events(pipeline):
@@ -277,9 +280,7 @@ def test_get_profile_health_missing_profile_extractor_hits_zero_without_events(p
 
     for ptype, info in health.items():
         if info["status"] == "missing":
-            assert info["extractor_hits"] == 0, (
-                f"Expected 0 extractor_hits for '{ptype}' before any events processed"
-            )
+            assert info["extractor_hits"] == 0, f"Expected 0 extractor_hits for '{ptype}' before any events processed"
 
 
 @pytest.mark.asyncio

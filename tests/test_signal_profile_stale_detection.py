@@ -23,15 +23,17 @@ def _store_test_event(db, event_id, event_type, source, payload, metadata=None, 
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
     es = EventStore(db)
-    es.store_event({
-        "id": event_id,
-        "type": event_type,
-        "source": source,
-        "timestamp": timestamp,
-        "priority": "normal",
-        "payload": payload,
-        "metadata": metadata or {},
-    })
+    es.store_event(
+        {
+            "id": event_id,
+            "type": event_type,
+            "source": source,
+            "timestamp": timestamp,
+            "priority": "normal",
+            "payload": payload,
+            "metadata": metadata or {},
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +122,15 @@ class TestStaleProfileRebuild:
 
         # Pre-populate ALL profiles — but make 'linguistic' stale (empty data).
         expected = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
         for profile_type in expected:
             user_model_store.update_signal_profile(profile_type, {"averages": {"formality": 0.5}})
@@ -139,12 +148,19 @@ class TestStaleProfileRebuild:
 
         # Store events so rebuild can proceed.
         for i in range(3):
-            _store_test_event(db, f"stale-{i}", "email.received", "proton_mail", {
-                "subject": f"Test {i}",
-                "body": f"Message content {i} about work projects.",
-                "from": "alice@company.com",
-                "to": ["user@example.com"],
-            }, timestamp=f"2026-03-01T{10 + i}:00:00+00:00")
+            _store_test_event(
+                db,
+                f"stale-{i}",
+                "email.received",
+                "proton_mail",
+                {
+                    "subject": f"Test {i}",
+                    "body": f"Message content {i} about work projects.",
+                    "from": "alice@company.com",
+                    "to": ["user@example.com"],
+                },
+                timestamp=f"2026-03-01T{10 + i}:00:00+00:00",
+            )
 
         result = pipeline.check_and_rebuild_missing_profiles()
 
@@ -159,8 +175,15 @@ class TestStaleProfileRebuild:
         import json
 
         expected = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
         # Create all profiles with minimal data.
         for pt in expected:
@@ -174,9 +197,18 @@ class TestStaleProfileRebuild:
             )
 
         # Store an event so the rebuild path is entered.
-        _store_test_event(db, "e1", "email.received", "test", {
-            "subject": "Hi", "body": "Hello there", "from": "a@b.com", "to": ["u@x.com"],
-        })
+        _store_test_event(
+            db,
+            "e1",
+            "email.received",
+            "test",
+            {
+                "subject": "Hi",
+                "body": "Hello there",
+                "from": "a@b.com",
+                "to": ["u@x.com"],
+            },
+        )
 
         result = pipeline.check_and_rebuild_missing_profiles()
 
@@ -191,8 +223,15 @@ class TestStaleProfileRebuild:
         import json
 
         expected = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
         for pt in expected:
             user_model_store.update_signal_profile(pt, {"averages": {"formality": 0.5}})
@@ -213,8 +252,15 @@ class TestStaleProfileRebuild:
         import json
 
         expected = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
         for pt in expected:
             user_model_store.update_signal_profile(pt, {"averages": {"formality": 0.5}})
@@ -231,9 +277,18 @@ class TestStaleProfileRebuild:
             )
 
         # Store an event so event type queries don't fail.
-        _store_test_event(db, "e1", "email.received", "test", {
-            "subject": "Hi", "body": "Hello", "from": "a@b.com", "to": ["u@x.com"],
-        })
+        _store_test_event(
+            db,
+            "e1",
+            "email.received",
+            "test",
+            {
+                "subject": "Hi",
+                "body": "Hello",
+                "from": "a@b.com",
+                "to": ["u@x.com"],
+            },
+        )
 
         diag = pipeline.get_diagnostics()
 

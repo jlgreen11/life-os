@@ -38,27 +38,41 @@ def _insert_email_pair(conn, sender, email_to_value, base_time, offset_days):
     event_time = base_time + timedelta(days=offset_days)
 
     # email.received from the sender
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_from)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-        json.dumps({"from_address": sender, "subject": f"Message {offset_days}"}),
-        json.dumps({}),
-        sender.lower(),
-    ))
+    """,
+        (
+            str(uuid4()),
+            "email.received",
+            "protonmail",
+            event_time.isoformat(),
+            3,
+            json.dumps({"from_address": sender, "subject": f"Message {offset_days}"}),
+            json.dumps({}),
+            sender.lower(),
+        ),
+    )
 
     # email.sent responding to the sender (~1 hour later)
     response_time = event_time + timedelta(hours=1)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_to)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-        json.dumps({"to_addresses": [sender], "subject": f"Re: Message {offset_days}"}),
-        json.dumps({}),
-        email_to_value,
-    ))
+    """,
+        (
+            str(uuid4()),
+            "email.sent",
+            "protonmail",
+            response_time.isoformat(),
+            3,
+            json.dumps({"to_addresses": [sender], "subject": f"Re: Message {offset_days}"}),
+            json.dumps({}),
+            email_to_value,
+        ),
+    )
 
 
 class TestEmailToJsonArrayMatching:
@@ -92,27 +106,41 @@ class TestEmailToJsonArrayMatching:
                 event_time = base_time + timedelta(days=i)
 
                 # email.received with mixed-case sender stored as email_from
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_from)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"from_address": sender_in_received}),
-                    json.dumps({}),
-                    sender_in_received,  # Mixed case in email_from
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"from_address": sender_in_received}),
+                        json.dumps({}),
+                        sender_in_received,  # Mixed case in email_from
+                    ),
+                )
 
                 # email.sent with lowercase email_to
                 response_time = event_time + timedelta(hours=1)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_to)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-                    json.dumps({"to_addresses": ["alice@example.com"]}),
-                    json.dumps({}),
-                    email_to_json,
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        response_time.isoformat(),
+                        3,
+                        json.dumps({"to_addresses": ["alice@example.com"]}),
+                        json.dumps({}),
+                        email_to_json,
+                    ),
+                )
 
         workflows = workflow_detector._detect_email_workflows(lookback_days=30)
 
@@ -146,27 +174,41 @@ class TestEmailToJsonArrayMatching:
                 event_time = base_time + timedelta(days=i)
 
                 # email.received from alice@ex.com
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_from)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.received", "protonmail", event_time.isoformat(), 3,
-                    json.dumps({"from_address": real_sender}),
-                    json.dumps({}),
-                    real_sender,
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.received",
+                        "protonmail",
+                        event_time.isoformat(),
+                        3,
+                        json.dumps({"from_address": real_sender}),
+                        json.dumps({}),
+                        real_sender,
+                    ),
+                )
 
                 # email.sent to alice@example.com (different domain)
                 response_time = event_time + timedelta(hours=1)
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO events (id, type, source, timestamp, priority, payload, metadata, email_to)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(uuid4()), "email.sent", "protonmail", response_time.isoformat(), 3,
-                    json.dumps({"to_addresses": ["alice@example.com"]}),
-                    json.dumps({}),
-                    email_to_json,
-                ))
+                """,
+                    (
+                        str(uuid4()),
+                        "email.sent",
+                        "protonmail",
+                        response_time.isoformat(),
+                        3,
+                        json.dumps({"to_addresses": ["alice@example.com"]}),
+                        json.dumps({}),
+                        email_to_json,
+                    ),
+                )
 
         workflows = workflow_detector._detect_email_workflows(lookback_days=30)
 

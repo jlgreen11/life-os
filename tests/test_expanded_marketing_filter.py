@@ -40,8 +40,9 @@ class TestExpandedMarketingFilter:
             "service@square.com",
         ]
         for email in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should be filtered as service@ sender"
+            )
 
     def test_discover_senders_filtered(self):
         """Discover@ emails are common marketing pattern and should be filtered.
@@ -55,8 +56,9 @@ class TestExpandedMarketingFilter:
             "discover@lyft.com",
         ]
         for email in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should be filtered as discover@ sender"
+            )
 
     def test_alert_notification_senders_filtered(self):
         """Alert@ and notification@ patterns should be filtered.
@@ -70,8 +72,9 @@ class TestExpandedMarketingFilter:
             "notifications@app.com",
         ]
         for email in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should be filtered as alert/notification sender"
+            )
 
     def test_embedded_notification_patterns_filtered(self):
         """Emails with -notification or -alerts in local-part should be filtered.
@@ -89,8 +92,9 @@ class TestExpandedMarketingFilter:
             "billing-digest@company.com",
         ]
         for email in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should be filtered due to embedded notification pattern"
+            )
 
     def test_engagement_platform_domains_filtered(self):
         """Engagement platform domains should be filtered.
@@ -108,8 +112,9 @@ class TestExpandedMarketingFilter:
             "support@e.usa.experian.com",
         ]
         for email in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should be filtered due to engagement platform domain"
+            )
 
     def test_existing_filters_still_work(self):
         """Verify that existing filter patterns still work after expansion.
@@ -146,8 +151,9 @@ class TestExpandedMarketingFilter:
             "contact@smallbusiness.net",
         ]
         for email in legitimate_emails:
-            assert not PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert not PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should NOT be filtered - it's a legitimate personal email"
+            )
 
     def test_edge_case_similar_but_not_matching(self):
         """Emails with similar but non-matching patterns should NOT be filtered.
@@ -164,8 +170,9 @@ class TestExpandedMarketingFilter:
             "discover.team@startup.com",  # Different from discover@
         ]
         for email in edge_cases:
-            assert not PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert not PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should NOT be filtered - pattern doesn't match exactly"
+            )
 
     def test_unsubscribe_in_body_plain(self):
         """Emails with unsubscribe in body_plain should be filtered."""
@@ -200,8 +207,9 @@ class TestExpandedMarketingFilter:
             "NoReply@Company.Com",
         ]
         for email in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} should be filtered (case-insensitive)"
+            )
 
     def test_payload_without_text_fields(self):
         """Filter should handle payloads missing body_plain, snippet, or body."""
@@ -209,18 +217,24 @@ class TestExpandedMarketingFilter:
         assert PredictionEngine._is_marketing_or_noreply("service@paypal.com", {})
 
         # Payload with None values
-        assert PredictionEngine._is_marketing_or_noreply("discover@airbnb.com", {
-            "body_plain": None,
-            "snippet": None,
-            "body": None,
-        })
+        assert PredictionEngine._is_marketing_or_noreply(
+            "discover@airbnb.com",
+            {
+                "body_plain": None,
+                "snippet": None,
+                "body": None,
+            },
+        )
 
         # Payload with empty strings
-        assert PredictionEngine._is_marketing_or_noreply("notifications@app.io", {
-            "body_plain": "",
-            "snippet": "",
-            "body": "",
-        })
+        assert PredictionEngine._is_marketing_or_noreply(
+            "notifications@app.io",
+            {
+                "body_plain": "",
+                "snippet": "",
+                "body": "",
+            },
+        )
 
     def test_real_world_spam_examples(self):
         """Test against real emails from the production database.
@@ -251,8 +265,9 @@ class TestExpandedMarketingFilter:
             "support@e.usa.experian.com",
         ]
         for email in spam_examples:
-            assert PredictionEngine._is_marketing_or_noreply(email, {}), \
+            assert PredictionEngine._is_marketing_or_noreply(email, {}), (
                 f"{email} from production database should be filtered"
+            )
 
     def test_unsubscribe_catches_remaining_marketing(self):
         """Emails not caught by pattern matching should have unsubscribe links.
@@ -263,16 +278,18 @@ class TestExpandedMarketingFilter:
         - ens@ens.usgs.gov (USGS earthquake alerts - automated service)
         """
         test_cases = [
-            ("cutleryandmore@cutleryandmore.com", {
-                "body_plain": "Sale on knives! Click here to unsubscribe."
-            }),
-            ("ens@ens.usgs.gov", {
-                "snippet": "Earthquake alert. To unsubscribe from these alerts... You are receiving this because you signed up."
-            }),
+            ("cutleryandmore@cutleryandmore.com", {"body_plain": "Sale on knives! Click here to unsubscribe."}),
+            (
+                "ens@ens.usgs.gov",
+                {
+                    "snippet": "Earthquake alert. To unsubscribe from these alerts... You are receiving this because you signed up."
+                },
+            ),
         ]
         for email, payload in test_cases:
-            assert PredictionEngine._is_marketing_or_noreply(email, payload), \
+            assert PredictionEngine._is_marketing_or_noreply(email, payload), (
                 f"{email} should be filtered via unsubscribe detection"
+            )
 
     def test_filter_prevents_prediction_creation(self, db, user_model_store):
         """Integration test: verify filter prevents predictions from being created.
@@ -307,18 +324,21 @@ class TestExpandedMarketingFilter:
                         "test",
                         timestamp,
                         1,
-                        json.dumps({
-                            "message_id": f"<{from_addr}>",
-                            "from_address": from_addr,
-                            "subject": subject,
-                            "body_plain": "Test email body",
-                        }),
+                        json.dumps(
+                            {
+                                "message_id": f"<{from_addr}>",
+                                "from_address": from_addr,
+                                "subject": subject,
+                                "body_plain": "Test email body",
+                            }
+                        ),
                         json.dumps({"related_contacts": []}),
                     ),
                 )
 
         # Run prediction engine
         import asyncio
+
         predictions = asyncio.run(engine.generate_predictions({}))
 
         # Only the legitimate email should generate a prediction

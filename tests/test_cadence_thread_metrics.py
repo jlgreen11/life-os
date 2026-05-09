@@ -18,6 +18,7 @@ from services.signal_extractor.cadence import CadenceExtractor
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_event(event_type, payload, source="test", ts=None):
     """Build a minimal event dict for CadenceExtractor."""
     if ts is None:
@@ -53,22 +54,34 @@ def test_replied_threads_produce_nonzero_completion_rate(db, user_model_store):
     ext = CadenceExtractor(db, user_model_store)
 
     # Inbound email starts the thread
-    ext.extract(_make_event("email.received", {
-        "sender": "alice@example.com",
-        "thread_id": "thread-A",
-        "subject": "Hello",
-        "body": "Hi there",
-    }, ts=_old_ts(72)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "alice@example.com",
+                "thread_id": "thread-A",
+                "subject": "Hello",
+                "body": "Hi there",
+            },
+            ts=_old_ts(72),
+        )
+    )
 
     # User replies on the same thread
-    ext.extract(_make_event("email.sent", {
-        "to_addresses": ["alice@example.com"],
-        "thread_id": "thread-A",
-        "subject": "Re: Hello",
-        "body": "Hey!",
-        "is_reply": True,
-        "in_reply_to": "msg-1",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.sent",
+            {
+                "to_addresses": ["alice@example.com"],
+                "thread_id": "thread-A",
+                "subject": "Re: Hello",
+                "body": "Hey!",
+                "is_reply": True,
+                "in_reply_to": "msg-1",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     assert profile is not None
@@ -82,12 +95,18 @@ def test_unreplied_threads_produce_zero_completion_rate(db, user_model_store):
     ext = CadenceExtractor(db, user_model_store)
 
     for i in range(3):
-        ext.extract(_make_event("email.received", {
-            "sender": "bob@example.com",
-            "thread_id": f"thread-{i}",
-            "subject": f"Topic {i}",
-            "body": f"Message {i}",
-        }, ts=_old_ts(48 + i)))
+        ext.extract(
+            _make_event(
+                "email.received",
+                {
+                    "sender": "bob@example.com",
+                    "thread_id": f"thread-{i}",
+                    "subject": f"Topic {i}",
+                    "body": f"Message {i}",
+                },
+                ts=_old_ts(48 + i),
+            )
+        )
 
     profile = user_model_store.get_signal_profile("cadence")
     data = profile["data"]
@@ -101,23 +120,35 @@ def test_mixed_replied_and_unreplied_threads(db, user_model_store):
 
     # 2 threads with replies, 3 without → 2/5 = 0.4
     for i in range(5):
-        ext.extract(_make_event("email.received", {
-            "sender": f"contact{i}@example.com",
-            "thread_id": f"mix-thread-{i}",
-            "subject": f"Topic {i}",
-            "body": f"Inbound {i}",
-        }, ts=_old_ts(72 + i)))
+        ext.extract(
+            _make_event(
+                "email.received",
+                {
+                    "sender": f"contact{i}@example.com",
+                    "thread_id": f"mix-thread-{i}",
+                    "subject": f"Topic {i}",
+                    "body": f"Inbound {i}",
+                },
+                ts=_old_ts(72 + i),
+            )
+        )
 
     # Reply to threads 0 and 1 only
     for i in range(2):
-        ext.extract(_make_event("email.sent", {
-            "to_addresses": [f"contact{i}@example.com"],
-            "thread_id": f"mix-thread-{i}",
-            "subject": f"Re: Topic {i}",
-            "body": f"Reply {i}",
-            "is_reply": True,
-            "in_reply_to": f"ref-{i}",
-        }, ts=_old_ts(48 + i)))
+        ext.extract(
+            _make_event(
+                "email.sent",
+                {
+                    "to_addresses": [f"contact{i}@example.com"],
+                    "thread_id": f"mix-thread-{i}",
+                    "subject": f"Re: Topic {i}",
+                    "body": f"Reply {i}",
+                    "is_reply": True,
+                    "in_reply_to": f"ref-{i}",
+                },
+                ts=_old_ts(48 + i),
+            )
+        )
 
     profile = user_model_store.get_signal_profile("cadence")
     data = profile["data"]
@@ -137,28 +168,46 @@ def test_avg_thread_length_multi_message_threads(db, user_model_store):
 
     # Thread A: 4 messages (2 inbound, 2 outbound)
     for j in range(2):
-        ext.extract(_make_event("email.received", {
-            "sender": "alice@example.com",
-            "thread_id": "length-A",
-            "subject": "Discussion",
-            "body": f"Inbound {j}",
-        }, ts=_old_ts(72 - j)))
-        ext.extract(_make_event("email.sent", {
-            "to_addresses": ["alice@example.com"],
-            "thread_id": "length-A",
-            "subject": "Re: Discussion",
-            "body": f"Outbound {j}",
-            "is_reply": True,
-            "in_reply_to": f"ref-{j}",
-        }, ts=_old_ts(71 - j)))
+        ext.extract(
+            _make_event(
+                "email.received",
+                {
+                    "sender": "alice@example.com",
+                    "thread_id": "length-A",
+                    "subject": "Discussion",
+                    "body": f"Inbound {j}",
+                },
+                ts=_old_ts(72 - j),
+            )
+        )
+        ext.extract(
+            _make_event(
+                "email.sent",
+                {
+                    "to_addresses": ["alice@example.com"],
+                    "thread_id": "length-A",
+                    "subject": "Re: Discussion",
+                    "body": f"Outbound {j}",
+                    "is_reply": True,
+                    "in_reply_to": f"ref-{j}",
+                },
+                ts=_old_ts(71 - j),
+            )
+        )
 
     # Thread B: 1 message (inbound only)
-    ext.extract(_make_event("email.received", {
-        "sender": "bob@example.com",
-        "thread_id": "length-B",
-        "subject": "Quick note",
-        "body": "Just one message",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "bob@example.com",
+                "thread_id": "length-B",
+                "subject": "Quick note",
+                "body": "Just one message",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     data = profile["data"]
@@ -176,28 +225,46 @@ def test_recent_threads_excluded_from_rate_calculation(db, user_model_store):
     ext = CadenceExtractor(db, user_model_store)
 
     # Old thread (eligible) — unreplied → rate should be 0.0
-    ext.extract(_make_event("email.received", {
-        "sender": "old@example.com",
-        "thread_id": "old-thread",
-        "subject": "Old topic",
-        "body": "Old message",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "old@example.com",
+                "thread_id": "old-thread",
+                "subject": "Old topic",
+                "body": "Old message",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
     # Recent thread (excluded) — replied
-    ext.extract(_make_event("email.received", {
-        "sender": "new@example.com",
-        "thread_id": "new-thread",
-        "subject": "New topic",
-        "body": "New message",
-    }, ts=_recent_ts()))
-    ext.extract(_make_event("email.sent", {
-        "to_addresses": ["new@example.com"],
-        "thread_id": "new-thread",
-        "subject": "Re: New topic",
-        "body": "Reply",
-        "is_reply": True,
-        "in_reply_to": "ref-new",
-    }, ts=_recent_ts()))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "new@example.com",
+                "thread_id": "new-thread",
+                "subject": "New topic",
+                "body": "New message",
+            },
+            ts=_recent_ts(),
+        )
+    )
+    ext.extract(
+        _make_event(
+            "email.sent",
+            {
+                "to_addresses": ["new@example.com"],
+                "thread_id": "new-thread",
+                "subject": "Re: New topic",
+                "body": "Reply",
+                "is_reply": True,
+                "in_reply_to": "ref-new",
+            },
+            ts=_recent_ts(),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     data = profile["data"]
@@ -216,12 +283,18 @@ def test_thread_eviction_at_500_limit(db, user_model_store):
 
     # Insert 502 threads with increasing timestamps
     for i in range(502):
-        ext.extract(_make_event("email.received", {
-            "sender": f"user{i}@example.com",
-            "thread_id": f"evict-thread-{i:04d}",
-            "subject": f"Topic {i}",
-            "body": f"Message {i}",
-        }, ts=_old_ts(600 - i)))
+        ext.extract(
+            _make_event(
+                "email.received",
+                {
+                    "sender": f"user{i}@example.com",
+                    "thread_id": f"evict-thread-{i:04d}",
+                    "subject": f"Topic {i}",
+                    "body": f"Message {i}",
+                },
+                ts=_old_ts(600 - i),
+            )
+        )
 
     profile = user_model_store.get_signal_profile("cadence")
     threads = profile["data"]["thread_tracking"]["threads"]
@@ -243,17 +316,29 @@ def test_thread_key_uses_subject_as_fallback(db, user_model_store):
     """When thread_id and in_reply_to are absent, subject is used as thread key."""
     ext = CadenceExtractor(db, user_model_store)
 
-    ext.extract(_make_event("email.received", {
-        "sender": "alice@example.com",
-        "subject": "Budget Review Q1",
-        "body": "Let's review the budget.",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "alice@example.com",
+                "subject": "Budget Review Q1",
+                "body": "Let's review the budget.",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
-    ext.extract(_make_event("email.sent", {
-        "to_addresses": ["alice@example.com"],
-        "subject": "Budget Review Q1",
-        "body": "Looks good to me.",
-    }, ts=_old_ts(47)))
+    ext.extract(
+        _make_event(
+            "email.sent",
+            {
+                "to_addresses": ["alice@example.com"],
+                "subject": "Budget Review Q1",
+                "body": "Looks good to me.",
+            },
+            ts=_old_ts(47),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     threads = profile["data"]["thread_tracking"]["threads"]
@@ -266,13 +351,19 @@ def test_thread_key_prefers_thread_id_over_subject(db, user_model_store):
     """thread_id takes priority over in_reply_to and subject."""
     ext = CadenceExtractor(db, user_model_store)
 
-    ext.extract(_make_event("email.received", {
-        "sender": "bob@example.com",
-        "thread_id": "tid-123",
-        "in_reply_to": "ref-456",
-        "subject": "Some subject",
-        "body": "Hello",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "bob@example.com",
+                "thread_id": "tid-123",
+                "in_reply_to": "ref-456",
+                "subject": "Some subject",
+                "body": "Hello",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     threads = profile["data"]["thread_tracking"]["threads"]
@@ -290,17 +381,29 @@ def test_message_events_also_tracked(db, user_model_store):
     """message.received and message.sent events produce thread activity signals."""
     ext = CadenceExtractor(db, user_model_store)
 
-    ext.extract(_make_event("message.received", {
-        "sender": "+1234567890",
-        "thread_id": "sms-thread-1",
-        "text": "Hey, are you free?",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "message.received",
+            {
+                "sender": "+1234567890",
+                "thread_id": "sms-thread-1",
+                "text": "Hey, are you free?",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
-    ext.extract(_make_event("message.sent", {
-        "to_addresses": ["+1234567890"],
-        "thread_id": "sms-thread-1",
-        "text": "Yes!",
-    }, ts=_old_ts(47)))
+    ext.extract(
+        _make_event(
+            "message.sent",
+            {
+                "to_addresses": ["+1234567890"],
+                "thread_id": "sms-thread-1",
+                "text": "Yes!",
+            },
+            ts=_old_ts(47),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     threads = profile["data"]["thread_tracking"]["threads"]
@@ -318,10 +421,16 @@ def test_no_thread_key_produces_no_thread_signal(db, user_model_store):
     """Events without thread_id, in_reply_to, or subject produce no thread tracking."""
     ext = CadenceExtractor(db, user_model_store)
 
-    ext.extract(_make_event("email.received", {
-        "sender": "nope@example.com",
-        "body": "No subject or thread info at all",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "nope@example.com",
+                "body": "No subject or thread info at all",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     threads = profile["data"]["thread_tracking"]["threads"]
@@ -333,10 +442,16 @@ def test_empty_profile_has_no_thread_metrics(db, user_model_store):
     ext = CadenceExtractor(db, user_model_store)
 
     # Process an event that has no thread key
-    ext.extract(_make_event("email.received", {
-        "sender": "x@example.com",
-        "body": "Bare message",
-    }, ts=_old_ts(48)))
+    ext.extract(
+        _make_event(
+            "email.received",
+            {
+                "sender": "x@example.com",
+                "body": "Bare message",
+            },
+            ts=_old_ts(48),
+        )
+    )
 
     profile = user_model_store.get_signal_profile("cadence")
     data = profile["data"]

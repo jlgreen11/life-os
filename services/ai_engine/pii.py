@@ -26,16 +26,16 @@ class PIIShield:
 
     # --- Regex patterns for PII detection ---
     # Email: standard RFC 5322 simplified pattern. Matches user@domain.tld formats.
-    EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+    EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
     # Phone: flexible international format. Handles optional country code (+1),
     # parenthesized area codes, and various separators (dash, space, dot, slash).
     # Minimum 7 digits to avoid false positives on short number sequences.
-    PHONE_PATTERN = re.compile(r'[\+]?[(]?[0-9]{1,4}[)]?[-\s\./0-9]{7,15}')
+    PHONE_PATTERN = re.compile(r"[\+]?[(]?[0-9]{1,4}[)]?[-\s\./0-9]{7,15}")
     # SSN: US Social Security Number in standard XXX-XX-XXXX format.
-    SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
+    SSN_PATTERN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
     # Credit card: 16-digit card numbers with optional separators (dash or space)
     # between each group of 4 digits. Covers Visa, Mastercard, etc.
-    CREDIT_CARD_PATTERN = re.compile(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b')
+    CREDIT_CARD_PATTERN = re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b")
 
     def __init__(self, known_names: Optional[list[str]] = None):
         # known_names: an optional pre-loaded list of names (user, family, contacts)
@@ -49,8 +49,12 @@ class PIIShield:
         # _counters: track how many tokens have been issued per category to
         # generate unique, sequential placeholder tokens ([EMAIL_1], [EMAIL_2], ...).
         self._counters: dict[str, int] = {
-            "PERSON": 0, "EMAIL": 0, "PHONE": 0,
-            "ADDRESS": 0, "ACCT": 0, "ORG": 0,
+            "PERSON": 0,
+            "EMAIL": 0,
+            "PHONE": 0,
+            "ADDRESS": 0,
+            "ACCT": 0,
+            "ORG": 0,
         }
 
     def strip(self, text: str) -> tuple[str, dict[str, str]]:

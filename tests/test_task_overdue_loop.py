@@ -136,9 +136,7 @@ class TestOverdueDetection:
         )
 
     @pytest.mark.asyncio
-    async def test_overdue_loop_skips_already_notified(
-        self, db, task_manager, event_bus, mock_notification_manager
-    ):
+    async def test_overdue_loop_skips_already_notified(self, db, task_manager, event_bus, mock_notification_manager):
         """The same overdue task should not generate duplicate notifications."""
         past_due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         task_id = insert_task(db, title="Call dentist", due_date=past_due)
@@ -188,9 +186,7 @@ class TestOverdueDetection:
         assert len(overdue) == 0
 
     @pytest.mark.asyncio
-    async def test_multiple_overdue_tasks_all_notified(
-        self, db, task_manager, event_bus, mock_notification_manager
-    ):
+    async def test_multiple_overdue_tasks_all_notified(self, db, task_manager, event_bus, mock_notification_manager):
         """Multiple overdue tasks should each get their own event and notification."""
         notified_set: set[str] = set()
 

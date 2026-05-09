@@ -21,6 +21,7 @@ from services.task_manager.manager import TaskManager
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_calendar_event(event_type: str, description: str, summary: str = "Meeting") -> dict:
     """Build a minimal calendar event dict for testing."""
     return {
@@ -37,9 +38,7 @@ def _make_calendar_event(event_type: str, description: str, summary: str = "Meet
 def _mock_ai_engine(tasks_to_return: list[dict] | None = None):
     """Create a mock AI engine that returns the given tasks from extract_action_items."""
     engine = MagicMock()
-    engine.extract_action_items = AsyncMock(
-        return_value=tasks_to_return or []
-    )
+    engine.extract_action_items = AsyncMock(return_value=tasks_to_return or [])
     return engine
 
 
@@ -51,9 +50,11 @@ def _mock_ai_engine(tasks_to_return: list[dict] | None = None):
 @pytest.mark.asyncio
 async def test_calendar_event_updated_triggers_task_extraction(db):
     """calendar.event.updated events should be processed for task extraction."""
-    ai_engine = _mock_ai_engine([
-        {"title": "Prepare slides for presentation", "priority": "normal"},
-    ])
+    ai_engine = _mock_ai_engine(
+        [
+            {"title": "Prepare slides for presentation", "priority": "normal"},
+        ]
+    )
     manager = TaskManager(db=db, ai_engine=ai_engine)
 
     event = _make_calendar_event(
@@ -72,9 +73,7 @@ async def test_calendar_event_updated_triggers_task_extraction(db):
 
     # Task should have been created in the database
     with db.get_connection("state") as conn:
-        row = conn.execute(
-            "SELECT * FROM tasks WHERE title = 'Prepare slides for presentation'"
-        ).fetchone()
+        row = conn.execute("SELECT * FROM tasks WHERE title = 'Prepare slides for presentation'").fetchone()
         assert row is not None
         assert row["source"] == "ai_extracted"
         assert row["source_event_id"] == event["id"]
@@ -83,9 +82,11 @@ async def test_calendar_event_updated_triggers_task_extraction(db):
 @pytest.mark.asyncio
 async def test_calendar_event_created_also_includes_summary(db):
     """calendar.event.created should also combine description + summary text."""
-    ai_engine = _mock_ai_engine([
-        {"title": "Review Q1 budget", "priority": "high"},
-    ])
+    ai_engine = _mock_ai_engine(
+        [
+            {"title": "Review Q1 budget", "priority": "high"},
+        ]
+    )
     manager = TaskManager(db=db, ai_engine=ai_engine)
 
     event = _make_calendar_event(
@@ -150,9 +151,11 @@ async def test_calendar_event_updated_no_tasks_found(db):
 async def test_duplicate_task_from_created_and_updated_is_deduplicated(db):
     """A task extracted from calendar.event.created should not be re-created
     when the same title appears in a subsequent calendar.event.updated event."""
-    ai_engine = _mock_ai_engine([
-        {"title": "Prepare slides for presentation", "priority": "normal"},
-    ])
+    ai_engine = _mock_ai_engine(
+        [
+            {"title": "Prepare slides for presentation", "priority": "normal"},
+        ]
+    )
     manager = TaskManager(db=db, ai_engine=ai_engine)
 
     # First: calendar.event.created extracts a task
@@ -186,9 +189,14 @@ async def test_duplicate_task_from_created_and_updated_is_deduplicated(db):
 async def test_different_task_from_updated_event_is_created(db):
     """A genuinely new task from calendar.event.updated should be created
     even if a different task was already extracted from the created event."""
-    manager = TaskManager(db=db, ai_engine=_mock_ai_engine([
-        {"title": "Review budget spreadsheet", "priority": "normal"},
-    ]))
+    manager = TaskManager(
+        db=db,
+        ai_engine=_mock_ai_engine(
+            [
+                {"title": "Review budget spreadsheet", "priority": "normal"},
+            ]
+        ),
+    )
 
     created_event = _make_calendar_event(
         "calendar.event.created",
@@ -198,9 +206,11 @@ async def test_different_task_from_updated_event_is_created(db):
     await manager.process_event(created_event)
 
     # Now the updated event has a different task
-    manager.ai_engine = _mock_ai_engine([
-        {"title": "Send agenda to participants", "priority": "normal"},
-    ])
+    manager.ai_engine = _mock_ai_engine(
+        [
+            {"title": "Send agenda to participants", "priority": "normal"},
+        ]
+    )
 
     updated_event = _make_calendar_event(
         "calendar.event.updated",
@@ -260,10 +270,7 @@ async def test_ai_engine_skip_counter_logs_at_100(db, caplog):
     assert manager._ai_engine_skip_count == 100
 
     # Should have two log messages: at event 1 and event 100
-    warning_messages = [
-        msg for msg in caplog.messages
-        if "AI engine not available" in msg
-    ]
+    warning_messages = [msg for msg in caplog.messages if "AI engine not available" in msg]
     assert len(warning_messages) == 2
     assert "1 events skipped" in warning_messages[0]
     assert "100 events skipped" in warning_messages[1]
@@ -287,10 +294,7 @@ async def test_ai_engine_skip_counter_logs_at_200(db, caplog):
 
     assert manager._ai_engine_skip_count == 200
 
-    warning_messages = [
-        msg for msg in caplog.messages
-        if "AI engine not available" in msg
-    ]
+    warning_messages = [msg for msg in caplog.messages if "AI engine not available" in msg]
     # Should have 3 log messages: at event 1, 100, and 200
     assert len(warning_messages) == 3
     assert "200 events skipped" in warning_messages[2]
@@ -315,10 +319,7 @@ async def test_ai_engine_skip_counter_silent_between_milestones(db, caplog):
 
     assert manager._ai_engine_skip_count == 50
 
-    warning_messages = [
-        msg for msg in caplog.messages
-        if "AI engine not available" in msg
-    ]
+    warning_messages = [msg for msg in caplog.messages if "AI engine not available" in msg]
     # Only the first event should have logged
     assert len(warning_messages) == 1
     assert "1 events skipped" in warning_messages[0]

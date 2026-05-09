@@ -10,8 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -19,8 +18,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 logger = logging.getLogger(__name__)
 
 from web.schemas import (
-    BadgeCountsResponse,
     BackupRestoreRequest,
+    BadgeCountsResponse,
     CommandRequest,
     ConnectorConfigRequest,
     ContextBatchRequest,
@@ -81,7 +80,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         async def _check(c):
             try:
                 return await asyncio.wait_for(c.health_check(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return {"connector": c.CONNECTOR_ID, "status": "error", "details": "timeout"}
             except Exception as e:
                 return {"connector": c.CONNECTOR_ID, "status": "error", "details": str(e)}
@@ -112,7 +111,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             "status": "ok" if life_os.startup_state == "running" else "starting",
             "startup_state": life_os.startup_state,
             "startup_detail": life_os.startup_detail,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "event_bus": life_os.event_bus.is_connected,
             "events_stored": events_stored,
             "data_flow": flow_stats,
@@ -167,8 +166,15 @@ def register_routes(app: FastAPI, life_os) -> None:
         import asyncio
 
         EXPECTED_PROFILES = [
-            "relationships", "temporal", "topics", "linguistic",
-            "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
+            "relationships",
+            "temporal",
+            "topics",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "spatial",
+            "decision",
         ]
 
         result: dict = {}
@@ -198,7 +204,12 @@ def register_routes(app: FastAPI, life_os) -> None:
         try:
             result["signal_profiles"] = await asyncio.to_thread(_signal_profiles)
         except Exception as exc:
-            result["signal_profiles"] = {"error": str(exc), "total_expected": len(EXPECTED_PROFILES), "total_present": 0, "missing": list(EXPECTED_PROFILES)}
+            result["signal_profiles"] = {
+                "error": str(exc),
+                "total_expected": len(EXPECTED_PROFILES),
+                "total_present": 0,
+                "missing": list(EXPECTED_PROFILES),
+            }
 
         # ------------------------------------------------------------------
         # Prediction pipeline — is it generating predictions?
@@ -283,11 +294,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             except Exception:
                 return {"saturated_sources": [], "drift_active": False}
 
-            saturated = [
-                w["source_key"]
-                for w in all_weights
-                if w.get("effective_weight", 0.0) >= 0.95
-            ]
+            saturated = [w["source_key"] for w in all_weights if w.get("effective_weight", 0.0) >= 0.95]
             drift_active = any(abs(w.get("ai_drift", 0.0)) > 0.01 for w in all_weights)
 
             return {
@@ -314,7 +321,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                             "status": "error",
                             "error": check.get("details", "unknown error"),
                         }
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     connector_errors[c.CONNECTOR_ID] = {
                         "status": "error",
                         "error": "timeout",
@@ -376,7 +383,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             overall = "healthy"
 
         result["overall_health"] = overall
-        result["timestamp"] = datetime.now(timezone.utc).isoformat()
+        result["timestamp"] = datetime.now(UTC).isoformat()
 
         return result
 
@@ -397,8 +404,15 @@ def register_routes(app: FastAPI, life_os) -> None:
         import asyncio
 
         EXPECTED_PROFILES = [
-            "relationships", "temporal", "topics", "linguistic",
-            "linguistic_inbound", "cadence", "mood_signals", "spatial", "decision",
+            "relationships",
+            "temporal",
+            "topics",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "spatial",
+            "decision",
         ]
 
         result: dict = {}
@@ -536,10 +550,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             result["overall_status"] = "error"
         else:
             profiles = result.get("signal_profiles", {})
-            existing_count = sum(
-                1 for v in profiles.values()
-                if isinstance(v, dict) and v.get("exists")
-            )
+            existing_count = sum(1 for v in profiles.values() if isinstance(v, dict) and v.get("exists"))
             preds_24h = result.get("predictions", {}).get("last_24h", 0)
 
             # Check Layer 3 procedural memory as secondary indicator
@@ -549,9 +560,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
             if existing_count == 0:
                 result["overall_status"] = "broken"
-            elif existing_count < len(EXPECTED_PROFILES) or preds_24h == 0:
-                result["overall_status"] = "degraded"
-            elif workflows_empty and templates_empty:
+            elif existing_count < len(EXPECTED_PROFILES) or preds_24h == 0 or (workflows_empty and templates_empty):
                 result["overall_status"] = "degraded"
             else:
                 result["overall_status"] = "healthy"
@@ -564,34 +573,40 @@ def register_routes(app: FastAPI, life_os) -> None:
             profiles = result.get("signal_profiles", {})
             if isinstance(profiles, dict) and not profiles.get("error"):
                 missing_profiles = [
-                    k for k, v in profiles.items()
-                    if isinstance(v, dict) and (not v.get("exists") or v.get("error"))
+                    k for k, v in profiles.items() if isinstance(v, dict) and (not v.get("exists") or v.get("error"))
                 ]
                 if missing_profiles:
-                    recommendations.append({
-                        "severity": "high",
-                        "area": "signal_profiles",
-                        "message": f"{len(missing_profiles)} signal profile(s) missing: {', '.join(missing_profiles)}",
-                        "action": "POST /api/admin/backfills/trigger to repopulate signal profiles from event history",
-                    })
+                    recommendations.append(
+                        {
+                            "severity": "high",
+                            "area": "signal_profiles",
+                            "message": f"{len(missing_profiles)} signal profile(s) missing: {', '.join(missing_profiles)}",
+                            "action": "POST /api/admin/backfills/trigger to repopulate signal profiles from event history",
+                        }
+                    )
 
             # Check user model tables
             um = result.get("user_model", {})
             if isinstance(um, dict) and not um.get("error"):
                 um_error_found = False
                 um_table_keys = [
-                    "episodes_count", "semantic_facts_count", "routines_count",
-                    "workflows_count", "communication_templates_count",
+                    "episodes_count",
+                    "semantic_facts_count",
+                    "routines_count",
+                    "workflows_count",
+                    "communication_templates_count",
                 ]
                 for table_key in um_table_keys:
                     value = um.get(table_key)
                     if isinstance(value, str) and "error" in value:
-                        recommendations.append({
-                            "severity": "critical",
-                            "area": "user_model",
-                            "message": f"user_model.db query error on {table_key}: {value}",
-                            "action": "POST /api/admin/rebuild-user-model to rebuild the corrupted database",
-                        })
+                        recommendations.append(
+                            {
+                                "severity": "critical",
+                                "area": "user_model",
+                                "message": f"user_model.db query error on {table_key}: {value}",
+                                "action": "POST /api/admin/rebuild-user-model to rebuild the corrupted database",
+                            }
+                        )
                         um_error_found = True
                         break  # One recommendation for the whole DB
                 if not um_error_found:
@@ -599,78 +614,90 @@ def register_routes(app: FastAPI, life_os) -> None:
                         value = um.get(table_key)
                         if value == 0:
                             friendly = table_key.replace("_count", "")
-                            recommendations.append({
-                                "severity": "medium",
-                                "area": "user_model",
-                                "message": f"{friendly} table is empty",
-                                "action": "POST /api/admin/backfills/trigger to populate from event history",
-                            })
+                            recommendations.append(
+                                {
+                                    "severity": "medium",
+                                    "area": "user_model",
+                                    "message": f"{friendly} table is empty",
+                                    "action": "POST /api/admin/backfills/trigger to populate from event history",
+                                }
+                            )
                     # Layer 3 procedural memory: workflows and communication templates
                     if um.get("workflows_count") == 0:
-                        recommendations.append({
-                            "severity": "medium",
-                            "area": "user_model",
-                            "message": "workflows table is empty — Layer 3 procedural memory has no detected workflows",
-                            "action": (
-                                "Ensure routine_detector and workflow detection loops are running — "
-                                "workflows require sufficient episode history to detect patterns"
-                            ),
-                        })
+                        recommendations.append(
+                            {
+                                "severity": "medium",
+                                "area": "user_model",
+                                "message": "workflows table is empty — Layer 3 procedural memory has no detected workflows",
+                                "action": (
+                                    "Ensure routine_detector and workflow detection loops are running — "
+                                    "workflows require sufficient episode history to detect patterns"
+                                ),
+                            }
+                        )
                     if um.get("communication_templates_count") == 0:
-                        recommendations.append({
-                            "severity": "medium",
-                            "area": "user_model",
-                            "message": (
-                                "communication_templates table is empty — "
-                                "Layer 3 procedural memory has no learned templates"
-                            ),
-                            "action": (
-                                "Templates are extracted from outbound messages — "
-                                "ensure message connectors (email, Signal, iMessage) are syncing sent messages"
-                            ),
-                        })
+                        recommendations.append(
+                            {
+                                "severity": "medium",
+                                "area": "user_model",
+                                "message": (
+                                    "communication_templates table is empty — "
+                                    "Layer 3 procedural memory has no learned templates"
+                                ),
+                                "action": (
+                                    "Templates are extracted from outbound messages — "
+                                    "ensure message connectors (email, Signal, iMessage) are syncing sent messages"
+                                ),
+                            }
+                        )
 
             # Check predictions
             preds = result.get("predictions", {})
             if isinstance(preds, dict) and not preds.get("error"):
                 if preds.get("last_24h", 0) == 0:
-                    recommendations.append({
-                        "severity": "high",
-                        "area": "predictions",
-                        "message": "No predictions generated in the last 24 hours",
-                        "action": (
-                            "Check signal profiles and connector status — "
-                            "predictions require populated signal profiles and recent event data"
-                        ),
-                    })
+                    recommendations.append(
+                        {
+                            "severity": "high",
+                            "area": "predictions",
+                            "message": "No predictions generated in the last 24 hours",
+                            "action": (
+                                "Check signal profiles and connector status — "
+                                "predictions require populated signal profiles and recent event data"
+                            ),
+                        }
+                    )
 
             # Check notifications
             notifs = result.get("notifications", {})
             if isinstance(notifs, dict) and not notifs.get("error"):
                 if notifs.get("total", 0) == 0 and notifs.get("last_24h", 0) == 0:
-                    recommendations.append({
-                        "severity": "low",
-                        "area": "notifications",
-                        "message": "No notifications have been generated",
-                        "action": (
-                            "Notifications are generated from predictions and rule actions — "
-                            "ensure the prediction pipeline is healthy"
-                        ),
-                    })
+                    recommendations.append(
+                        {
+                            "severity": "low",
+                            "area": "notifications",
+                            "message": "No notifications have been generated",
+                            "action": (
+                                "Notifications are generated from predictions and rule actions — "
+                                "ensure the prediction pipeline is healthy"
+                            ),
+                        }
+                    )
 
             # Check events pipeline
             events = result.get("events_pipeline", {})
             if isinstance(events, dict) and not events.get("error"):
                 if events.get("last_24h", 0) == 0:
-                    recommendations.append({
-                        "severity": "high",
-                        "area": "events_pipeline",
-                        "message": "No events received in the last 24 hours",
-                        "action": (
-                            "Check connector status at /admin — "
-                            "at least one connector must be syncing to feed the pipeline"
-                        ),
-                    })
+                    recommendations.append(
+                        {
+                            "severity": "high",
+                            "area": "events_pipeline",
+                            "message": "No events received in the last 24 hours",
+                            "action": (
+                                "Check connector status at /admin — "
+                                "at least one connector must be syncing to feed the pipeline"
+                            ),
+                        }
+                    )
 
             result["recommendations"] = recommendations
             result["recommendations_count"] = len(recommendations)
@@ -753,8 +780,15 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # --- Signal profiles summary ---
         expected_profiles = [
-            "linguistic", "linguistic_inbound", "cadence", "mood_signals",
-            "relationships", "topics", "temporal", "spatial", "decision",
+            "linguistic",
+            "linguistic_inbound",
+            "cadence",
+            "mood_signals",
+            "relationships",
+            "topics",
+            "temporal",
+            "spatial",
+            "decision",
         ]
 
         def _signal_profiles():
@@ -841,7 +875,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "active_count": 4
             }
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff_24h = (now - timedelta(hours=24)).isoformat()
         cutoff_7d = (now - timedelta(days=7)).isoformat()
 
@@ -849,16 +883,20 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # Offload the synchronous SQLite query to a thread so we don't block
         # the async event loop for what could be a scan of a large events table.
-        raw = await asyncio.to_thread(
-            life_os.event_store.get_source_stats, cutoff_24h, cutoff_7d
-        )
+        raw = await asyncio.to_thread(life_os.event_store.get_source_stats, cutoff_24h, cutoff_7d)
 
         # Internal pipeline sources (driven by incoming events) — only flag
         # stale if silent for 24+ hours since they don't self-initiate.
         # External connectors — flag stale after 6 hours (they should sync
         # at minimum every hour via their SYNC_INTERVAL_SECONDS setting).
-        INTERNAL_SOURCES = {"user_model_store", "rules_engine", "task_manager",
-                            "routine_detector", "workflow_detector", "feedback_collector"}
+        INTERNAL_SOURCES = {
+            "user_model_store",
+            "rules_engine",
+            "task_manager",
+            "routine_detector",
+            "workflow_detector",
+            "feedback_collector",
+        }
         STALE_EXTERNAL_HOURS = 6
         STALE_INTERNAL_HOURS = 24
 
@@ -873,22 +911,22 @@ def register_routes(app: FastAPI, life_os) -> None:
                 try:
                     last_dt = datetime.fromisoformat(last_event_str.replace("Z", "+00:00"))
                     hours_since = round((now - last_dt).total_seconds() / 3600, 1)
-                    threshold = (STALE_INTERNAL_HOURS
-                                 if source_name in INTERNAL_SOURCES
-                                 else STALE_EXTERNAL_HOURS)
+                    threshold = STALE_INTERNAL_HOURS if source_name in INTERNAL_SOURCES else STALE_EXTERNAL_HOURS
                     stale = hours_since > threshold
                 except ValueError:
                     pass  # Malformed timestamp — treat as unknown
 
-            sources.append({
-                "source": source_name,
-                "last_event": last_event_str,
-                "total_events": row["total_events"],
-                "events_24h": row["events_24h"],
-                "events_7d": row["events_7d"],
-                "stale": stale,
-                "hours_since": hours_since,
-            })
+            sources.append(
+                {
+                    "source": source_name,
+                    "last_event": last_event_str,
+                    "total_events": row["total_events"],
+                    "events_24h": row["events_24h"],
+                    "events_7d": row["events_7d"],
+                    "stale": stale,
+                    "hours_since": hours_since,
+                }
+            )
 
         stale_count = sum(1 for s in sources if s["stale"])
         active_count = sum(1 for s in sources if not s["stale"])
@@ -963,25 +1001,23 @@ def register_routes(app: FastAPI, life_os) -> None:
         # This surfaces how populated each intelligence layer is so the System
         # tab can explain *why* predictions might be limited (e.g. "0 routines
         # detected" directly explains why routine-deviation predictions are blocked).
-        user_model_depth = {"signal_profiles": 0, "routines": 0, "workflows": 0,
-                            "semantic_facts": 0, "episodes": 0}
+        user_model_depth = {"signal_profiles": 0, "routines": 0, "workflows": 0, "semantic_facts": 0, "episodes": 0}
         # Query each table independently so one missing/broken table
         # doesn't zero out the counts for all subsequent tables.
         try:
             with life_os.db.get_connection("user_model") as um_conn:
-                for table_name in ("signal_profiles", "routines", "workflows",
-                                   "semantic_facts", "episodes"):
+                for table_name in ("signal_profiles", "routines", "workflows", "semantic_facts", "episodes"):
                     try:
-                        user_model_depth[table_name] = um_conn.execute(
-                            f"SELECT COUNT(*) FROM {table_name}"  # noqa: S608
-                        ).fetchone()[0]
+                        user_model_depth[table_name] = um_conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[
+                            0
+                        ]
                     except Exception as e:
                         logger.warning("Failed to count %s: %s", table_name, e)
         except Exception as e:
             logger.warning("Failed to open user_model connection: %s", e)
 
         diagnostics["user_model_depth"] = user_model_depth
-        diagnostics["generated_at"] = datetime.now(timezone.utc).isoformat()
+        diagnostics["generated_at"] = datetime.now(UTC).isoformat()
         return diagnostics
 
     # -------------------------------------------------------------------
@@ -1029,7 +1065,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 {
                     "command_type": command_type,
                     "text_length": len(text),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 },
                 source="web_api",
             )
@@ -1052,20 +1088,27 @@ def register_routes(app: FastAPI, life_os) -> None:
                 return {"type": "briefing", "content": briefing}
             except Exception as e:
                 logger.warning("Command briefing failed: %s", e)
-                return {"type": "error", "content": "Briefing generation temporarily unavailable. The AI engine may be offline."}
+                return {
+                    "type": "error",
+                    "content": "Briefing generation temporarily unavailable. The AI engine may be offline.",
+                }
 
         # --- Intent: draft a message ---
         elif command_type == "draft":
             try:
                 context = text.split(" ", 1)[1]
                 draft = await life_os.ai_engine.draft_reply(
-                    contact_id=None, channel="email",
+                    contact_id=None,
+                    channel="email",
                     incoming_message=context,
                 )
                 return {"type": "draft", "content": draft}
             except Exception as e:
                 logger.warning("Command draft failed: %s", e)
-                return {"type": "error", "content": "Draft generation temporarily unavailable. The AI engine may be offline."}
+                return {
+                    "type": "error",
+                    "content": "Draft generation temporarily unavailable. The AI engine may be offline.",
+                }
 
         # --- Fallback: pass to AI engine for open-ended search/response ---
         else:
@@ -1074,14 +1117,17 @@ def register_routes(app: FastAPI, life_os) -> None:
                 return {"type": "ai_response", "content": response}
             except Exception as e:
                 logger.warning("Command AI response failed: %s", e)
-                return {"type": "error", "content": "AI processing temporarily unavailable. The AI engine may be offline."}
+                return {
+                    "type": "error",
+                    "content": "AI processing temporarily unavailable. The AI engine may be offline.",
+                }
 
     # -------------------------------------------------------------------
     # Dashboard Feed (unified, priority-sorted view)
     # -------------------------------------------------------------------
 
     @app.get("/api/dashboard/feed")
-    async def dashboard_feed(topic: Optional[str] = None, limit: int = 50):
+    async def dashboard_feed(topic: str | None = None, limit: int = 50):
         """Unified feed for the dashboard. Aggregates notifications, tasks,
         and recent events into a single priority-sorted list.
 
@@ -1104,18 +1150,24 @@ def register_routes(app: FastAPI, life_os) -> None:
                         continue
                     if topic == "email" and "email" not in source_type:
                         continue
-                    items.append({
-                        "id": n.get("id"),
-                        "kind": "notification",
-                        "channel": "message" if "message" in source_type or "signal" in source_type else "email" if "email" in source_type else "system",
-                        "title": n.get("title", ""),
-                        "body": n.get("body", ""),
-                        "priority": n.get("priority", "normal"),
-                        "timestamp": n.get("created_at", n.get("timestamp", "")),
-                        "source": source_type,
-                        "domain": n.get("domain"),  # Include domain so UI can identify prediction notifications
-                        "metadata": {"source_event_id": n.get("source_event_id")},
-                    })
+                    items.append(
+                        {
+                            "id": n.get("id"),
+                            "kind": "notification",
+                            "channel": "message"
+                            if "message" in source_type or "signal" in source_type
+                            else "email"
+                            if "email" in source_type
+                            else "system",
+                            "title": n.get("title", ""),
+                            "body": n.get("body", ""),
+                            "priority": n.get("priority", "normal"),
+                            "timestamp": n.get("created_at", n.get("timestamp", "")),
+                            "source": source_type,
+                            "domain": n.get("domain"),  # Include domain so UI can identify prediction notifications
+                            "metadata": {"source_event_id": n.get("source_event_id")},
+                        }
+                    )
                 sections_loaded.append("notifications")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "notifications", e)
@@ -1126,17 +1178,19 @@ def register_routes(app: FastAPI, life_os) -> None:
             try:
                 tasks = life_os.task_manager.get_pending_tasks(limit=limit)
                 for t in tasks:
-                    items.append({
-                        "id": t.get("id"),
-                        "kind": "task",
-                        "channel": "task",
-                        "title": t.get("title", ""),
-                        "body": t.get("description", ""),
-                        "priority": t.get("priority", "normal"),
-                        "timestamp": t.get("created_at", ""),
-                        "source": t.get("domain", ""),
-                        "metadata": {"due_date": t.get("due_date"), "domain": t.get("domain")},
-                    })
+                    items.append(
+                        {
+                            "id": t.get("id"),
+                            "kind": "task",
+                            "channel": "task",
+                            "title": t.get("title", ""),
+                            "body": t.get("description", ""),
+                            "priority": t.get("priority", "normal"),
+                            "timestamp": t.get("created_at", ""),
+                            "source": t.get("domain", ""),
+                            "metadata": {"due_date": t.get("due_date"), "domain": t.get("domain")},
+                        }
+                    )
                 sections_loaded.append("tasks")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "tasks", e)
@@ -1147,7 +1201,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             try:
                 import asyncio
 
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 # Show events in the next 7 days for the feed/badge
                 end_window = now + timedelta(days=7)
                 # Generous lookback: event row timestamps don't always match
@@ -1193,12 +1247,12 @@ def register_routes(app: FastAPI, life_os) -> None:
                     # events and are treated as midnight UTC on that day.
                     try:
                         if len(evt_start) <= 10:
-                            evt_start_dt = datetime.fromisoformat(evt_start).replace(tzinfo=timezone.utc)
+                            evt_start_dt = datetime.fromisoformat(evt_start).replace(tzinfo=UTC)
                         else:
                             evt_start_dt = datetime.fromisoformat(evt_start.replace("Z", "+00:00"))
                             # Ensure timezone-aware for comparison
                             if evt_start_dt.tzinfo is None:
-                                evt_start_dt = evt_start_dt.replace(tzinfo=timezone.utc)
+                                evt_start_dt = evt_start_dt.replace(tzinfo=UTC)
                     except (ValueError, TypeError):
                         continue
 
@@ -1208,23 +1262,25 @@ def register_routes(app: FastAPI, life_os) -> None:
                     start_time = payload.get("start_time", "")
                     end_time = payload.get("end_time", "")
                     location = payload.get("location", "")
-                    items.append({
-                        "id": row["id"],
-                        "kind": "event",
-                        "channel": "calendar",
-                        "title": payload.get("title", "Calendar Event"),
-                        "body": payload.get("description", ""),
-                        "priority": "normal",
-                        "timestamp": start_time,
-                        "source": "calendar",
-                        "metadata": {
-                            "start_time": start_time,
-                            "end_time": end_time,
-                            "location": location,
-                            "attendees": payload.get("attendees", []),
-                            "is_all_day": payload.get("is_all_day", False),
-                        },
-                    })
+                    items.append(
+                        {
+                            "id": row["id"],
+                            "kind": "event",
+                            "channel": "calendar",
+                            "title": payload.get("title", "Calendar Event"),
+                            "body": payload.get("description", ""),
+                            "priority": "normal",
+                            "timestamp": start_time,
+                            "source": "calendar",
+                            "metadata": {
+                                "start_time": start_time,
+                                "end_time": end_time,
+                                "location": location,
+                                "attendees": payload.get("attendees", []),
+                                "is_all_day": payload.get("is_all_day", False),
+                            },
+                        }
+                    )
                 sections_loaded.append("calendar")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "calendar", e)
@@ -1281,25 +1337,27 @@ def register_routes(app: FastAPI, life_os) -> None:
                     if snippet and len(snippet) > 300:
                         snippet = snippet[:297] + "…"
 
-                    items.append({
-                        "id": row["id"],
-                        "kind": "email",
-                        "channel": "email",
-                        "title": subject,
-                        "body": snippet,
-                        "priority": "normal",
-                        "timestamp": ep.get("timestamp", row["timestamp"]),
-                        "source": from_addr,
-                        "contact_id": from_addr,
-                        "metadata": {
-                            "from_address": from_addr,
-                            "from_name": ep.get("from_name", ""),
-                            "to_addresses": ep.get("to_addresses", []),
-                            "thread_id": ep.get("thread_id"),
-                            "message_id": ep.get("message_id"),
-                            "has_attachments": ep.get("has_attachments", False),
-                        },
-                    })
+                    items.append(
+                        {
+                            "id": row["id"],
+                            "kind": "email",
+                            "channel": "email",
+                            "title": subject,
+                            "body": snippet,
+                            "priority": "normal",
+                            "timestamp": ep.get("timestamp", row["timestamp"]),
+                            "source": from_addr,
+                            "contact_id": from_addr,
+                            "metadata": {
+                                "from_address": from_addr,
+                                "from_name": ep.get("from_name", ""),
+                                "to_addresses": ep.get("to_addresses", []),
+                                "thread_id": ep.get("thread_id"),
+                                "message_id": ep.get("message_id"),
+                                "has_attachments": ep.get("has_attachments", False),
+                            },
+                        }
+                    )
                 sections_loaded.append("email")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "email", e)
@@ -1344,24 +1402,26 @@ def register_routes(app: FastAPI, life_os) -> None:
                     if body and len(body) > 300:
                         body = body[:297] + "…"
 
-                    items.append({
-                        "id": row["id"],
-                        "kind": "message",
-                        "channel": channel,
-                        "title": ep.get("contact_name") or from_addr or "Message",
-                        "body": body,
-                        "priority": "normal",
-                        "timestamp": ep.get("timestamp", row["timestamp"]),
-                        "source": from_addr,
-                        "contact_id": from_addr,
-                        "metadata": {
-                            "from_address": from_addr,
+                    items.append(
+                        {
+                            "id": row["id"],
+                            "kind": "message",
                             "channel": channel,
-                            "is_group": ep.get("is_group", False),
-                            "group_name": ep.get("group_name"),
-                            "message_id": ep.get("message_id"),
-                        },
-                    })
+                            "title": ep.get("contact_name") or from_addr or "Message",
+                            "body": body,
+                            "priority": "normal",
+                            "timestamp": ep.get("timestamp", row["timestamp"]),
+                            "source": from_addr,
+                            "contact_id": from_addr,
+                            "metadata": {
+                                "from_address": from_addr,
+                                "channel": channel,
+                                "is_group": ep.get("is_group", False),
+                                "group_name": ep.get("group_name"),
+                                "message_id": ep.get("message_id"),
+                            },
+                        }
+                    )
                 sections_loaded.append("messages")
             except Exception as e:
                 logger.warning("dashboard_feed: failed to load %s section: %s", "messages", e)
@@ -1434,12 +1494,15 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # --- Sort by priority (critical > high > normal > low), then newest first ---
         priority_order = {"critical": 0, "high": 1, "normal": 2, "low": 3}
-        items.sort(key=lambda x: (
-            priority_order.get(x["priority"], 2),
-            "" if x.get("timestamp") else "z",  # items with timestamps before those without
-        ))
+        items.sort(
+            key=lambda x: (
+                priority_order.get(x["priority"], 2),
+                "" if x.get("timestamp") else "z",  # items with timestamps before those without
+            )
+        )
         # Within same priority, sort by timestamp descending (newest first)
         from itertools import groupby
+
         sorted_items = []
         for _, group in groupby(items, key=lambda x: priority_order.get(x["priority"], 2)):
             group_list = list(group)
@@ -1493,12 +1556,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         except Exception:
             all_notifications = []
 
-        email_count = sum(
-            1 for n in all_notifications if "email" in n.get("domain", "")
-        )
+        email_count = sum(1 for n in all_notifications if "email" in n.get("domain", ""))
         msg_count = sum(
-            1 for n in all_notifications
-            if "message" in n.get("domain", "") or "signal" in n.get("domain", "")
+            1 for n in all_notifications if "message" in n.get("domain", "") or "signal" in n.get("domain", "")
         )
 
         # --- Tasks ---
@@ -1510,7 +1570,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # --- Calendar (upcoming events in the next 7 days) ---
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             end_window = (now + timedelta(days=7)).isoformat()
             with life_os.db.get_connection("events") as conn:
                 # Count distinct calendar events (deduplicate by event_id payload field)
@@ -1621,17 +1681,19 @@ def register_routes(app: FastAPI, life_os) -> None:
                 continue
             # An event overlaps if it starts before range-end AND ends after range-start
             if evt_start < end and (evt_end > start if evt_end else evt_start >= start):
-                results.append({
-                    "id": payload.get("event_id", ""),
-                    "title": payload.get("title", ""),
-                    "start_time": evt_start,
-                    "end_time": evt_end,
-                    "is_all_day": payload.get("is_all_day", False),
-                    "location": payload.get("location", ""),
-                    "attendees": payload.get("attendees", []),
-                    "description": payload.get("description", ""),
-                    "calendar_id": payload.get("calendar_id", ""),
-                })
+                results.append(
+                    {
+                        "id": payload.get("event_id", ""),
+                        "title": payload.get("title", ""),
+                        "start_time": evt_start,
+                        "end_time": evt_end,
+                        "is_all_day": payload.get("is_all_day", False),
+                        "location": payload.get("location", ""),
+                        "attendees": payload.get("attendees", []),
+                        "description": payload.get("description", ""),
+                        "calendar_id": payload.get("calendar_id", ""),
+                    }
+                )
 
         # Sort by start_time
         results.sort(key=lambda e: e["start_time"])
@@ -1646,12 +1708,12 @@ def register_routes(app: FastAPI, life_os) -> None:
         """Generate the user's daily briefing via the AI engine."""
         try:
             briefing = await life_os.ai_engine.generate_briefing()
-            return {"briefing": briefing, "generated_at": datetime.now(timezone.utc).isoformat()}
+            return {"briefing": briefing, "generated_at": datetime.now(UTC).isoformat()}
         except Exception as e:
             logger.warning("Briefing generation failed: %s", e)
             return {
                 "briefing": None,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
                 "error": "Briefing generation temporarily unavailable",
             }
 
@@ -1663,9 +1725,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def search(req: SearchRequest):
         """Perform semantic vector search across ingested events."""
         try:
-            results = life_os.vector_store.search(
-                req.query, limit=req.limit, filter_metadata=req.filters
-            )
+            results = life_os.vector_store.search(req.query, limit=req.limit, filter_metadata=req.filters)
             return {"query": req.query, "results": results, "count": len(results)}
         except Exception as e:
             logger.warning("Search failed: %s", e)
@@ -1739,7 +1799,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     # Notifications
     # -------------------------------------------------------------------
 
-    async def _classify_notification_source(notif_id: str) -> Optional[str]:
+    async def _classify_notification_source(notif_id: str) -> str | None:
         """Look up a notification's originating source and classify it for weight learning.
 
         Traces from notification -> source_event_id -> event -> source_key.
@@ -1752,7 +1812,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         import asyncio
 
-        def _sync_classify(nid: str) -> Optional[str]:
+        def _sync_classify(nid: str) -> str | None:
             """Synchronous DB lookups, run via asyncio.to_thread to avoid blocking."""
             # Step 1: Look up the notification to get source_event_id and domain
             with life_os.db.get_connection("state") as conn:
@@ -2033,7 +2093,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             Updated fact with new confidence and correction status
         """
         import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Fast-path: skip query if user_model.db is known to be corrupted
         if getattr(life_os.db, "user_model_degraded", False) is True:
@@ -2048,12 +2108,11 @@ def register_routes(app: FastAPI, life_os) -> None:
         try:
             with life_os.db.get_connection("user_model") as conn:
                 # Retrieve the existing fact to compute new confidence
-                existing = conn.execute(
-                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-                ).fetchone()
+                existing = conn.execute("SELECT * FROM semantic_facts WHERE key = ?", (key,)).fetchone()
 
                 if not existing:
                     from fastapi import HTTPException
+
                     raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
 
                 # Compute new confidence: reduce by 0.30 (significant penalty),
@@ -2066,7 +2125,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 update_params = {
                     "is_user_corrected": 1,
                     "confidence": new_confidence,
-                    "last_confirmed": datetime.now(timezone.utc).isoformat(),
+                    "last_confirmed": datetime.now(UTC).isoformat(),
                 }
 
                 # If the user provided a corrected value, replace the existing one
@@ -2074,7 +2133,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                     update_params["value"] = json.dumps(request.corrected_value)
 
                 # Build the UPDATE query dynamically based on provided fields
-                set_clause = ", ".join([f"{k} = ?" for k in update_params.keys()])
+                set_clause = ", ".join([f"{k} = ?" for k in update_params])
                 values = list(update_params.values()) + [key]
 
                 conn.execute(
@@ -2083,9 +2142,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 )
 
                 # Retrieve the updated fact to return to the client
-                updated = conn.execute(
-                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-                ).fetchone()
+                updated = conn.execute("SELECT * FROM semantic_facts WHERE key = ?", (key,)).fetchone()
         except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
             logger.warning("correct_fact: user_model.db query failed: %s", e)
             return JSONResponse(
@@ -2098,20 +2155,22 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # Log the correction to the feedback collector for analytics
         if life_os.feedback_collector:
-            await life_os.feedback_collector._store_feedback({
-                "action_id": f"fact_correction_{key}",
-                "action_type": "semantic_fact",
-                "feedback_type": "corrected",
-                "response_latency_seconds": 0,
-                "context": {
-                    "fact_key": key,
-                    "old_confidence": existing["confidence"],
-                    "new_confidence": new_confidence,
-                    "corrected_value_provided": request.corrected_value is not None,
-                    "reason": request.reason,
-                },
-                "notes": request.reason,
-            })
+            await life_os.feedback_collector._store_feedback(
+                {
+                    "action_id": f"fact_correction_{key}",
+                    "action_type": "semantic_fact",
+                    "feedback_type": "corrected",
+                    "response_latency_seconds": 0,
+                    "context": {
+                        "fact_key": key,
+                        "old_confidence": existing["confidence"],
+                        "new_confidence": new_confidence,
+                        "corrected_value_provided": request.corrected_value is not None,
+                        "reason": request.reason,
+                    },
+                    "notes": request.reason,
+                }
+            )
 
         # Publish a telemetry event for the correction
         if life_os.event_bus and life_os.event_bus.is_connected:
@@ -2122,7 +2181,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                     "old_confidence": existing["confidence"],
                     "new_confidence": new_confidence,
                     "category": updated["category"],
-                    "corrected_at": datetime.now(timezone.utc).isoformat(),
+                    "corrected_at": datetime.now(UTC).isoformat(),
                 },
                 source="web_api",
             )
@@ -2153,8 +2212,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         Returns:
             Confirmed fact with old and new confidence values
         """
-        import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Fast-path: skip query if user_model.db is known to be corrupted
         if getattr(life_os.db, "user_model_degraded", False) is True:
@@ -2168,12 +2226,11 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         try:
             with life_os.db.get_connection("user_model") as conn:
-                existing = conn.execute(
-                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-                ).fetchone()
+                existing = conn.execute("SELECT * FROM semantic_facts WHERE key = ?", (key,)).fetchone()
 
                 if not existing:
                     from fastapi import HTTPException
+
                     raise HTTPException(status_code=404, detail=f"Fact with key '{key}' not found")
 
                 old_confidence = existing["confidence"]
@@ -2190,9 +2247,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                     (new_confidence, key),
                 )
 
-                updated = conn.execute(
-                    "SELECT * FROM semantic_facts WHERE key = ?", (key,)
-                ).fetchone()
+                updated = conn.execute("SELECT * FROM semantic_facts WHERE key = ?", (key,)).fetchone()
         except (sqlite3.DatabaseError, sqlite3.OperationalError) as e:
             logger.warning("confirm_fact: user_model.db query failed: %s", e)
             return JSONResponse(
@@ -2205,19 +2260,21 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # Log confirmation to the feedback collector for analytics
         if life_os.feedback_collector:
-            await life_os.feedback_collector._store_feedback({
-                "action_id": f"fact_confirmation_{key}",
-                "action_type": "semantic_fact",
-                "feedback_type": "confirmed",
-                "response_latency_seconds": 0,
-                "context": {
-                    "fact_key": key,
-                    "old_confidence": old_confidence,
-                    "new_confidence": new_confidence,
-                    "reason": request.reason,
-                },
-                "notes": request.reason,
-            })
+            await life_os.feedback_collector._store_feedback(
+                {
+                    "action_id": f"fact_confirmation_{key}",
+                    "action_type": "semantic_fact",
+                    "feedback_type": "confirmed",
+                    "response_latency_seconds": 0,
+                    "context": {
+                        "fact_key": key,
+                        "old_confidence": old_confidence,
+                        "new_confidence": new_confidence,
+                        "reason": request.reason,
+                    },
+                    "notes": request.reason,
+                }
+            )
 
         # Publish telemetry event for the confirmation
         if life_os.event_bus and life_os.event_bus.is_connected:
@@ -2229,7 +2286,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                     "new_confidence": new_confidence,
                     "category": updated["category"],
                     "times_confirmed": updated["times_confirmed"],
-                    "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                    "confirmed_at": datetime.now(UTC).isoformat(),
                 },
                 source="web_api",
             )
@@ -2255,7 +2312,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         mood = life_os.signal_extractor.get_current_mood()
         return {
-            "mood": mood.model_dump() if hasattr(mood, "model_dump") else {
+            "mood": mood.model_dump()
+            if hasattr(mood, "model_dump")
+            else {
                 "energy_level": mood.energy_level,
                 "stress_level": mood.stress_level,
                 "social_battery": mood.social_battery,
@@ -2317,11 +2376,11 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {
             "workflows": workflows,
             "count": len(workflows),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     @app.get("/api/user-model/routines")
-    async def get_routines(trigger: Optional[str] = None, min_consistency: float = 0.0, min_observations: int = 0):
+    async def get_routines(trigger: str | None = None, min_consistency: float = 0.0, min_observations: int = 0):
         """Return detected routines from Layer 3 (procedural memory).
 
         Routines are time- or location-triggered behavioral patterns learned
@@ -2366,7 +2425,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {
             "routines": routines,
             "count": len(routines),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     # Known signal profile types maintained by the SignalPipeline.  This
@@ -2386,7 +2445,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     ]
 
     @app.get("/api/user-model/signal-profiles")
-    async def get_signal_profiles(profile_type: Optional[str] = None):
+    async def get_signal_profiles(profile_type: str | None = None):
         """Return behavioral signal profiles from Layer 1 (episodic signals).
 
         Signal profiles are the raw aggregated behavioral data collected by the
@@ -2446,10 +2505,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         if profile_type is not None and profile_type not in _SIGNAL_PROFILE_TYPES:
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    f"Unknown profile type {profile_type!r}. "
-                    f"Valid types: {_SIGNAL_PROFILE_TYPES}"
-                ),
+                detail=(f"Unknown profile type {profile_type!r}. Valid types: {_SIGNAL_PROFILE_TYPES}"),
             )
 
         # Determine which types to fetch: a specific one or all known types.
@@ -2477,14 +2533,14 @@ def register_routes(app: FastAPI, life_os) -> None:
             "profiles": profiles,
             # Convenience list so callers can quickly see which types have data.
             "types_with_data": list(profiles.keys()),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     @app.get("/api/user-model/templates")
     async def get_communication_templates(
-        contact_id: Optional[str] = None,
-        channel: Optional[str] = None,
-        context: Optional[str] = None,
+        contact_id: str | None = None,
+        channel: str | None = None,
+        context: str | None = None,
         limit: int = 50,
     ):
         """Return learned communication style templates from Layer 3 (procedural memory).
@@ -2586,11 +2642,11 @@ def register_routes(app: FastAPI, life_os) -> None:
             return {
                 "templates": templates,
                 "total": len(templates),
-                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "generated_at": datetime.now(UTC).isoformat(),
             }
         except Exception as e:
             logger.error("Failed to fetch communication templates: %s", e)
-            return {"templates": [], "total": 0, "generated_at": datetime.now(timezone.utc).isoformat()}
+            return {"templates": [], "total": 0, "generated_at": datetime.now(UTC).isoformat()}
 
     @app.delete("/api/user-model/templates/{template_id}")
     async def delete_communication_template(template_id: str):
@@ -2644,9 +2700,9 @@ def register_routes(app: FastAPI, life_os) -> None:
 
     @app.get("/api/contacts")
     async def get_contacts(
-        is_priority: Optional[bool] = None,
-        name: Optional[str] = None,
-        has_metrics: Optional[bool] = None,
+        is_priority: bool | None = None,
+        name: str | None = None,
+        has_metrics: bool | None = None,
         limit: int = 100,
     ):
         """Return contacts from the entities database with relationship metrics.
@@ -2739,11 +2795,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # ORDER BY: priority contacts first, then most-recently contacted,
         # then alphabetically for contacts with no last_contact date.
-        order_clause = (
-            "ORDER BY is_priority DESC, "
-            "last_contact DESC NULLS LAST, "
-            "name ASC"
-        )
+        order_clause = "ORDER BY is_priority DESC, last_contact DESC NULLS LAST, name ASC"
 
         query = f"""
             SELECT id, name, aliases, emails, phones, channels, relationship,
@@ -2790,7 +2842,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {
             "contacts": contacts,
             "total": total,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     @app.get("/api/contacts/{contact_email}/interactions")
@@ -2854,9 +2906,12 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         # --- Interaction history from events.db ---
         interaction_types = (
-            "email.received", "email.sent",
-            "message.received", "message.sent",
-            "imessage.received", "imessage.sent",
+            "email.received",
+            "email.sent",
+            "message.received",
+            "message.sent",
+            "imessage.received",
+            "imessage.sent",
         )
         type_placeholders = ",".join("?" for _ in interaction_types)
 
@@ -2864,7 +2919,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         # or sender (fallback).  to_addresses is a JSON array so we use LIKE.
         # Bound to a 365-day lookback to avoid full-table scans on large
         # event tables (json_extract + LIKE are expensive).
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=365)).isoformat()
 
         interaction_query = f"""
             SELECT id, type, timestamp, payload
@@ -2906,13 +2961,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         total_interactions = 0
         try:
             with life_os.db.get_connection("events") as conn:
-                total_interactions = conn.execute(
-                    count_query, base_params
-                ).fetchone()[0]
+                total_interactions = conn.execute(count_query, base_params).fetchone()[0]
 
-                rows = conn.execute(
-                    interaction_query, base_params + [effective_limit]
-                ).fetchall()
+                rows = conn.execute(interaction_query, base_params + [effective_limit]).fetchall()
 
             for row in rows:
                 row_dict = dict(row)
@@ -2936,14 +2987,16 @@ def register_routes(app: FastAPI, life_os) -> None:
                 body = payload.get("body") or payload.get("text") or payload.get("content") or ""
                 snippet = body[:100] + ("..." if len(body) > 100 else "")
 
-                interactions.append({
-                    "id": row_dict["id"],
-                    "type": evt_type,
-                    "timestamp": row_dict.get("timestamp", ""),
-                    "subject": payload.get("subject", ""),
-                    "snippet": snippet,
-                    "channel": channel,
-                })
+                interactions.append(
+                    {
+                        "id": row_dict["id"],
+                        "type": evt_type,
+                        "timestamp": row_dict.get("timestamp", ""),
+                        "subject": payload.get("subject", ""),
+                        "snippet": snippet,
+                        "channel": channel,
+                    }
+                )
         except Exception as e:
             logger.error("Failed to query interactions for %s: %s", decoded_email, e)
 
@@ -2996,9 +3049,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         except Exception:
             # If InsightEngine fails, still return whatever is stored so the
             # caller gets the most-recent cached insights rather than an error.
-            logger.exception(
-                "InsightEngine.generate_insights() failed during /api/insights/summary"
-            )
+            logger.exception("InsightEngine.generate_insights() failed during /api/insights/summary")
 
         # Read all non-expired, non-negative insights from the persistent store.
         # This mirrors the query used by services/ai_engine/context.py to build
@@ -3025,9 +3076,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                         pass
                 insights.append(d)
         except Exception:
-            logger.exception(
-                "Failed to read insights from database in /api/insights/summary"
-            )
+            logger.exception("Failed to read insights from database in /api/insights/summary")
 
         # Fallback: if DB read returned nothing but generate_insights produced
         # results, serialize the in-memory Insight objects directly so the API
@@ -3051,8 +3100,8 @@ def register_routes(app: FastAPI, life_os) -> None:
                     oldest_dt = datetime.fromisoformat(oldest_str)
                     # SQLite stores timestamps without timezone info; treat as UTC.
                     if oldest_dt.tzinfo is None:
-                        oldest_dt = oldest_dt.replace(tzinfo=timezone.utc)
-                    now_utc = datetime.now(timezone.utc)
+                        oldest_dt = oldest_dt.replace(tzinfo=UTC)
+                    now_utc = datetime.now(UTC)
                     cache_age_seconds = (now_utc - oldest_dt).total_seconds()
                     oldest_insight_at = oldest_dt.isoformat()
                 except (ValueError, TypeError):
@@ -3061,7 +3110,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         return {
             "insights": insights,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "cache_age_seconds": cache_age_seconds,
             "oldest_insight_at": oldest_insight_at,
         }
@@ -3110,7 +3159,9 @@ def register_routes(app: FastAPI, life_os) -> None:
         AI drift can learn from the user's response patterns.
         """
         if feedback not in ("useful", "dismissed", "not_relevant", "negative"):
-            raise HTTPException(400, f"Invalid feedback value: {feedback}. Must be 'useful', 'dismissed', or 'not_relevant'.")
+            raise HTTPException(
+                400, f"Invalid feedback value: {feedback}. Must be 'useful', 'dismissed', or 'not_relevant'."
+            )
 
         # Fast-path: skip query if user_model.db is known to be corrupted
         if getattr(life_os.db, "user_model_degraded", False) is True:
@@ -3223,12 +3274,14 @@ def register_routes(app: FastAPI, life_os) -> None:
         if feedback == "not_relevant" and row:
             try:
                 suppression_key = f"relevance_suppression:{row['category']}:{row['entity'] or 'general'}"
-                suppression_value = json.dumps({
-                    "insight_id": insight_id,
-                    "category": row["category"],
-                    "entity": row["entity"],
-                    "reason": "User indicated this insight is not about them",
-                })
+                suppression_value = json.dumps(
+                    {
+                        "insight_id": insight_id,
+                        "category": row["category"],
+                        "entity": row["entity"],
+                        "reason": "User indicated this insight is not about them",
+                    }
+                )
                 with life_os.db.get_connection("user_model") as conn:
                     conn.execute(
                         """INSERT OR REPLACE INTO semantic_facts
@@ -3371,7 +3424,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "min_confidence": min_confidence,
                 "include_resolved": include_resolved,
             },
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     @app.post("/api/predictions/{prediction_id}/feedback")
@@ -3495,7 +3548,8 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         try:
             updated = life_os.source_weight_manager.set_user_weight(
-                source_key, req.weight,
+                source_key,
+                req.weight,
             )
             return {"status": "updated", "weight": updated}
         except ValueError as e:
@@ -3547,7 +3601,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.put("/api/preferences")
     async def update_preference(req: PreferenceUpdate):
         try:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             serialized_value = json.dumps(req.value) if not isinstance(req.value, str) else req.value
 
             with life_os.db.get_connection("preferences") as conn:
@@ -3591,12 +3645,14 @@ def register_routes(app: FastAPI, life_os) -> None:
     # -------------------------------------------------------------------
 
     @app.get("/api/events")
-    async def list_events(event_type: Optional[str] = None,
-                          source: Optional[str] = None,
-                          since: Optional[str] = None,
-                          limit: int = 50):
+    async def list_events(
+        event_type: str | None = None, source: str | None = None, since: str | None = None, limit: int = 50
+    ):
         events = life_os.event_store.get_events(
-            event_type=event_type, source=source, since=since, limit=limit,
+            event_type=event_type,
+            source=source,
+            since=since,
+            limit=limit,
         )
         return {"events": events, "count": len(events)}
 
@@ -3612,11 +3668,13 @@ def register_routes(app: FastAPI, life_os) -> None:
                 health = await c.health_check()
             except Exception:
                 health = {"status": "error"}
-            connectors.append({
-                "id": c.CONNECTOR_ID,
-                "name": c.DISPLAY_NAME,
-                "health": health,
-            })
+            connectors.append(
+                {
+                    "id": c.CONNECTOR_ID,
+                    "name": c.DISPLAY_NAME,
+                    "health": health,
+                }
+            )
         return {"connectors": connectors}
 
     @app.get("/api/browser/status")
@@ -3648,7 +3706,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.post("/api/context/event")
     async def submit_context_event(req: ContextEventRequest):
         """Ingest a single context event from a mobile device."""
-        ts = req.timestamp or datetime.now(timezone.utc).isoformat()
+        ts = req.timestamp or datetime.now(UTC).isoformat()
 
         # Map context event type to internal event type
         event_type_map = {
@@ -3715,7 +3773,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         event_ids = []
         publish_fail_count = 0
         for event_req in req.events:
-            ts = event_req.timestamp or datetime.now(timezone.utc).isoformat()
+            ts = event_req.timestamp or datetime.now(UTC).isoformat()
             internal_type = event_type_map.get(event_req.type, "system.user.command")
             event = {
                 "type": internal_type,
@@ -3739,14 +3797,17 @@ def register_routes(app: FastAPI, life_os) -> None:
                 publish_fail_count += 1
                 logger.warning("Context batch event bus publish failed for %s: %s", event_req.type, e)
 
-        return {"status": "received", "count": len(event_ids), "event_ids": event_ids, "publish_failures": publish_fail_count}
+        return {
+            "status": "received",
+            "count": len(event_ids),
+            "event_ids": event_ids,
+            "publish_failures": publish_fail_count,
+        }
 
     @app.get("/api/context/summary")
     async def get_context_summary():
         """Get a summary of recently collected context data."""
-        recent_events = life_os.event_store.get_events(
-            source="ios_app", limit=100
-        )
+        recent_events = life_os.event_store.get_events(source="ios_app", limit=100)
 
         # Aggregate context data
         locations = []
@@ -3757,19 +3818,23 @@ def register_routes(app: FastAPI, life_os) -> None:
             mobile_type = meta.get("mobile_event_type", "")
 
             if mobile_type == "context.location" and payload.get("latitude"):
-                locations.append({
-                    "place": payload.get("place_name", "Unknown"),
-                    "lat": payload.get("latitude"),
-                    "lon": payload.get("longitude"),
-                    "timestamp": evt.get("timestamp"),
-                })
+                locations.append(
+                    {
+                        "place": payload.get("place_name", "Unknown"),
+                        "lat": payload.get("latitude"),
+                        "lon": payload.get("longitude"),
+                        "timestamp": evt.get("timestamp"),
+                    }
+                )
             elif mobile_type == "context.device_nearby":
-                devices.append({
-                    "name": payload.get("device_name", "Unknown"),
-                    "type": payload.get("device_type"),
-                    "signal": payload.get("signal_strength"),
-                    "timestamp": evt.get("timestamp"),
-                })
+                devices.append(
+                    {
+                        "name": payload.get("device_name", "Unknown"),
+                        "type": payload.get("device_type"),
+                        "signal": payload.get("signal_strength"),
+                        "timestamp": evt.get("timestamp"),
+                    }
+                )
 
         # Unique locations and devices
         unique_places = list({l["place"] for l in locations if l["place"] != "Unknown"})
@@ -3778,8 +3843,8 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {
             "type": "context_summary",
             "content": f"Context: {len(locations)} location updates, {len(devices)} device sightings. "
-                       f"Places: {', '.join(unique_places) or 'none tracked'}. "
-                       f"Devices: {', '.join(unique_devices) or 'none detected'}.",
+            f"Places: {', '.join(unique_places) or 'none tracked'}. "
+            f"Devices: {', '.join(unique_devices) or 'none detected'}.",
             "locations": locations[-10:],  # Last 10
             "devices": devices[-10:],
             "unique_places": unique_places,
@@ -3790,9 +3855,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def get_context_places():
         """Get learned places from context data."""
         with life_os.db.get_connection("entities") as conn:
-            rows = conn.execute(
-                "SELECT * FROM places ORDER BY visit_count DESC LIMIT 50"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM places ORDER BY visit_count DESC LIMIT 50").fetchall()
             return {"places": [dict(r) for r in rows]}
 
     def _update_place_from_context(life_os_instance, payload):
@@ -3813,15 +3876,22 @@ def register_routes(app: FastAPI, life_os) -> None:
             if existing:
                 conn.execute(
                     "UPDATE places SET visit_count = visit_count + 1, updated_at = ? WHERE id = ?",
-                    (datetime.now(timezone.utc).isoformat(), existing["id"]),
+                    (datetime.now(UTC).isoformat(), existing["id"]),
                 )
             else:
                 import uuid
+
                 conn.execute(
                     """INSERT INTO places (id, name, latitude, longitude, place_type, visit_count, created_at)
                        VALUES (?, ?, ?, ?, ?, 1, ?)""",
-                    (str(uuid.uuid4()), place_name, payload.latitude, payload.longitude,
-                     payload.place_type or "unknown", datetime.now(timezone.utc).isoformat()),
+                    (
+                        str(uuid.uuid4()),
+                        place_name,
+                        payload.latitude,
+                        payload.longitude,
+                        payload.place_type or "unknown",
+                        datetime.now(UTC).isoformat(),
+                    ),
                 )
 
     def _correlate_device_with_contact(life_os_instance, payload):
@@ -3832,27 +3902,27 @@ def register_routes(app: FastAPI, life_os) -> None:
         device_name = payload.device_name.lower()
         with life_os_instance.db.get_connection("entities") as conn:
             # Check if any contact has an alias matching the device name
-            contacts = conn.execute(
-                "SELECT id, name, aliases FROM contacts"
-            ).fetchall()
+            contacts = conn.execute("SELECT id, name, aliases FROM contacts").fetchall()
 
             for contact in contacts:
                 name_lower = contact["name"].lower()
                 if name_lower in device_name or device_name in name_lower:
                     # Found a potential match - store as a context observation
-                    life_os_instance.event_store.store_event({
-                        "type": "system.ai.suggestion",
-                        "source": "context_engine",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "priority": "silent",
-                        "payload": {
-                            "suggestion_type": "contact_nearby",
-                            "contact_id": contact["id"],
-                            "contact_name": contact["name"],
-                            "device_name": payload.device_name,
-                            "signal_strength": payload.signal_strength,
-                        },
-                    })
+                    life_os_instance.event_store.store_event(
+                        {
+                            "type": "system.ai.suggestion",
+                            "source": "context_engine",
+                            "timestamp": datetime.now(UTC).isoformat(),
+                            "priority": "silent",
+                            "payload": {
+                                "suggestion_type": "contact_nearby",
+                                "contact_id": contact["id"],
+                                "contact_name": contact["name"],
+                                "device_name": payload.device_name,
+                                "signal_strength": payload.signal_strength,
+                            },
+                        }
+                    )
                     break
 
     # -------------------------------------------------------------------
@@ -3898,7 +3968,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                                         if source_key:
                                             life_os.source_weight_manager.record_dismissal(source_key)
                                 except Exception as e:
-                                    logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
+                                    logger.debug(
+                                        "Source weight feedback failed: %s", e
+                                    )  # Source weight feedback is non-critical
 
                         elif cmd == "act_on_notification":
                             notif_id = msg.get("notification_id")
@@ -3911,7 +3983,9 @@ def register_routes(app: FastAPI, life_os) -> None:
                                         if source_key:
                                             life_os.source_weight_manager.record_engagement(source_key)
                                 except Exception as e:
-                                    logger.debug("Source weight feedback failed: %s", e)  # Source weight feedback is non-critical
+                                    logger.debug(
+                                        "Source weight feedback failed: %s", e
+                                    )  # Source weight feedback is non-critical
 
                         # Prediction feedback commands: for direct prediction
                         # resolution with custom user response
@@ -3921,9 +3995,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                             user_response = msg.get("user_response")
                             if prediction_id is not None:
                                 life_os.user_model_store.resolve_prediction(
-                                    prediction_id=prediction_id,
-                                    was_accurate=was_accurate,
-                                    user_response=user_response
+                                    prediction_id=prediction_id, was_accurate=was_accurate, user_response=user_response
                                 )
 
                 except json.JSONDecodeError:
@@ -4002,9 +4074,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         # Pending tasks
         try:
             with life_os.db.get_connection("state") as conn:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM tasks WHERE completed_at IS NULL"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM tasks WHERE completed_at IS NULL").fetchone()[0]
             health["pipeline"]["pending_tasks"] = count
         except Exception as e:
             health["pipeline"]["pending_tasks"] = {"error": str(e)}
@@ -4045,13 +4115,16 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.get("/admin", response_class=HTMLResponse)
     async def admin_page():
         from web.admin_template import ADMIN_HTML_TEMPLATE
+
         return ADMIN_HTML_TEMPLATE
 
     @app.get("/api/admin/connectors/registry")
     async def admin_connector_registry():
         """Return all connector type definitions with config schemas."""
-        from connectors.registry import CONNECTOR_REGISTRY
         from dataclasses import asdict
+
+        from connectors.registry import CONNECTOR_REGISTRY
+
         registry = {}
         for cid, typedef in CONNECTOR_REGISTRY.items():
             entry = asdict(typedef)
@@ -4065,6 +4138,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def admin_list_connectors():
         """Return all connectors with status, health, and masked config."""
         from connectors.registry import CONNECTOR_REGISTRY
+
         connectors = []
         for cid, typedef in CONNECTOR_REGISTRY.items():
             status = life_os.get_connector_status(cid)
@@ -4072,14 +4146,16 @@ def register_routes(app: FastAPI, life_os) -> None:
                 config = life_os.get_connector_config(cid)
             except Exception:
                 config = {}
-            connectors.append({
-                "connector_id": cid,
-                "display_name": typedef.display_name,
-                "description": typedef.description,
-                "category": typedef.category,
-                "status": status,
-                "config": config,
-            })
+            connectors.append(
+                {
+                    "connector_id": cid,
+                    "display_name": typedef.display_name,
+                    "description": typedef.description,
+                    "category": typedef.category,
+                    "status": status,
+                    "config": config,
+                }
+            )
         return {"connectors": connectors}
 
     @app.put("/api/admin/connectors/{connector_id}/config")
@@ -4151,9 +4227,11 @@ def register_routes(app: FastAPI, life_os) -> None:
         token_file = config.get("token_file", "data/google_token.json")
 
         if not os.path.exists(credentials_file):
-            raise HTTPException(400,
+            raise HTTPException(
+                400,
                 f"Credentials file not found at {credentials_file}. "
-                "Download it from Google Cloud Console and place it there.")
+                "Download it from Google Cloud Console and place it there.",
+            )
 
         def _run_oauth_flow():
             """Run the blocking OAuth flow, token save, and profile fetch in a thread."""
@@ -4191,6 +4269,7 @@ def register_routes(app: FastAPI, life_os) -> None:
 
         try:
             from google.oauth2.credentials import Credentials
+
             creds = Credentials.from_authorized_user_file(token_file)
 
             return {
@@ -4211,6 +4290,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.get("/admin/db", response_class=HTMLResponse)
     async def admin_db_page():
         from web.db_template import DB_HTML_TEMPLATE
+
         return DB_HTML_TEMPLATE
 
     @app.get("/api/admin/db")
@@ -4221,8 +4301,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             tables = {}
             with life_os.db.get_connection(db_name) as conn:
                 tbl_rows = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' "
-                    "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
                 ).fetchall()
                 for tbl_row in tbl_rows:
                     tbl = tbl_row["name"]
@@ -4233,20 +4312,27 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {"databases": databases}
 
     @app.get("/api/admin/db/{db_name}/{table_name}")
-    async def admin_db_query(db_name: str, table_name: str,
-                             limit: int = 50, offset: int = 0,
-                             search: Optional[str] = None,
-                             sort: Optional[str] = None,
-                             dir: str = "asc"):
+    async def admin_db_query(
+        db_name: str,
+        table_name: str,
+        limit: int = 50,
+        offset: int = 0,
+        search: str | None = None,
+        sort: str | None = None,
+        dir: str = "asc",
+    ):
         """Query rows from a specific table with optional search, sort, and pagination."""
         if db_name not in DB_NAMES:
             raise HTTPException(400, f"Unknown database: {db_name}")
 
         with life_os.db.get_connection(db_name) as conn:
             # Validate table exists
-            tables = [r["name"] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            ).fetchall()]
+            tables = [
+                r["name"]
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchall()
+            ]
             if table_name not in tables:
                 raise HTTPException(404, f"Table not found: {table_name}")
 
@@ -4353,10 +4439,15 @@ def register_routes(app: FastAPI, life_os) -> None:
             # Check each signal profile's readiness for inference
             profile_status = {}
             INFERENCE_THRESHOLDS = {
-                "linguistic": 1, "linguistic_inbound": 1,
-                "relationships": 5, "topics": 1,
-                "cadence": 1, "mood_signals": 1,
-                "temporal": 1, "spatial": 1, "decision": 1,
+                "linguistic": 1,
+                "linguistic_inbound": 1,
+                "relationships": 5,
+                "topics": 1,
+                "cadence": 1,
+                "mood_signals": 1,
+                "temporal": 1,
+                "spatial": 1,
+                "decision": 1,
             }
             for ptype, threshold in INFERENCE_THRESHOLDS.items():
                 try:
@@ -4371,8 +4462,10 @@ def register_routes(app: FastAPI, life_os) -> None:
                         }
                     else:
                         profile_status[ptype] = {
-                            "exists": False, "samples": 0,
-                            "meets_threshold": False, "threshold": threshold,
+                            "exists": False,
+                            "samples": 0,
+                            "meets_threshold": False,
+                            "threshold": threshold,
                         }
                 except Exception as e:
                     profile_status[ptype] = {"error": str(e)}
@@ -4402,10 +4495,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 result["inferrer"] = {"error": str(e)}
 
             # Health summary
-            profiles_ready = sum(
-                1 for v in profile_status.values()
-                if isinstance(v, dict) and v.get("meets_threshold")
-            )
+            profiles_ready = sum(1 for v in profile_status.values() if isinstance(v, dict) and v.get("meets_threshold"))
             fact_total = result.get("facts", {}).get("total", 0)
             if profiles_ready == 0:
                 result["health"] = "blocked"
@@ -4417,7 +4507,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 result["health"] = "ok"
                 result["health_reason"] = f"{fact_total} facts from {profiles_ready} profiles"
 
-            result["generated_at"] = datetime.now(timezone.utc).isoformat()
+            result["generated_at"] = datetime.now(UTC).isoformat()
             return result
 
         return await asyncio.to_thread(_gather)
@@ -4521,8 +4611,14 @@ def register_routes(app: FastAPI, life_os) -> None:
         # "spatial" tracks place-based behavior (visit frequency, duration, dominant domain).
         # "decision" tracks decision-making patterns (speed, delegation, risk tolerance).
         profile_names = [
-            "relationships", "temporal", "topics", "linguistic",
-            "cadence", "mood_signals", "spatial", "decision",
+            "relationships",
+            "temporal",
+            "topics",
+            "linguistic",
+            "cadence",
+            "mood_signals",
+            "spatial",
+            "decision",
         ]
 
         profiles: dict[str, dict] = {}
@@ -4546,12 +4642,12 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {
             "status": "ok" if all_populated else "needs_backfill",
             "profiles": profiles,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     # Guard against concurrent backfill invocations.  Since asyncio is
     # single-threaded this simple variable check is race-free — no lock needed.
-    _backfill_task: Optional["asyncio.Task"] = None  # noqa: F821 — asyncio imported inside handler
+    _backfill_task: asyncio.Task | None = None  # noqa: F821 — asyncio imported inside handler
 
     @app.post("/api/admin/backfills/trigger")
     async def trigger_signal_profile_backfills():
@@ -4639,12 +4735,17 @@ def register_routes(app: FastAPI, life_os) -> None:
         return {
             "status": "started",
             "message": (
-                "Signal profile backfills triggered in background. "
-                "Poll /api/admin/backfills/status to track progress."
+                "Signal profile backfills triggered in background. Poll /api/admin/backfills/status to track progress."
             ),
             "backfills": [
-                "relationship", "temporal", "topic", "linguistic",
-                "cadence", "mood_signals", "spatial", "decision",
+                "relationship",
+                "temporal",
+                "topic",
+                "linguistic",
+                "cadence",
+                "mood_signals",
+                "spatial",
+                "decision",
             ],
         }
 
@@ -4688,7 +4789,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 "status": info["status"],
                 "detail": detail,
             }
-        return {"databases": results, "checked_at": datetime.now(timezone.utc).isoformat()}
+        return {"databases": results, "checked_at": datetime.now(UTC).isoformat()}
 
     @app.post("/api/admin/rebuild-user-model")
     async def rebuild_user_model():
@@ -4727,7 +4828,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                 # _check_and_recover_db returned False but our quick_check above
                 # failed — force a manual backup as a fallback.
                 db_path = os.path.join(str(life_os.db.data_dir), "user_model.db")
-                backup_suffix = f".corrupted-{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                backup_suffix = f".corrupted-{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
                 for ext in ("", "-wal", "-shm"):
                     src = db_path + ext
                     if os.path.exists(src):
@@ -4876,7 +4977,7 @@ def register_routes(app: FastAPI, life_os) -> None:
         """
         import asyncio
 
-        generated_at = datetime.now(timezone.utc).isoformat()
+        generated_at = datetime.now(UTC).isoformat()
 
         # -- a. Event stats (events.db) ------------------------------------
         def _query_event_stats():
@@ -4927,9 +5028,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             try:
                 with life_os.db.get_connection("user_model") as conn:
                     total = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
-                    surfaced = conn.execute(
-                        "SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1"
-                    ).fetchone()[0]
+                    surfaced = conn.execute("SELECT COUNT(*) FROM predictions WHERE was_surfaced = 1").fetchone()[0]
                     accuracy_row = conn.execute(
                         "SELECT AVG(CASE WHEN was_accurate = 1 THEN 1.0 ELSE 0.0 END) "
                         "FROM predictions WHERE was_accurate IS NOT NULL"
@@ -4966,7 +5065,7 @@ def register_routes(app: FastAPI, life_os) -> None:
                     try:
                         health = await asyncio.wait_for(c.health_check(), timeout=5.0)
                         results[getattr(c, "CONNECTOR_ID", str(c))] = health
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         results[getattr(c, "CONNECTOR_ID", str(c))] = {
                             "status": "error",
                             "details": "timeout",
@@ -4985,9 +5084,7 @@ def register_routes(app: FastAPI, life_os) -> None:
             """Aggregate task counts by status from state.db."""
             try:
                 with life_os.db.get_connection("state") as conn:
-                    rows = conn.execute(
-                        "SELECT status, COUNT(*) as count FROM tasks GROUP BY status"
-                    ).fetchall()
+                    rows = conn.execute("SELECT status, COUNT(*) as count FROM tasks GROUP BY status").fetchall()
                 return {row["status"]: row["count"] for row in rows}
             except Exception as e:
                 return {"error": str(e)}
@@ -5042,15 +5139,14 @@ def register_routes(app: FastAPI, life_os) -> None:
     @app.get("/setup", response_class=HTMLResponse)
     async def setup_page():
         from web.setup_template import SETUP_HTML_TEMPLATE
+
         return SETUP_HTML_TEMPLATE
 
     @app.get("/api/setup/status")
     async def setup_status():
         """Check if onboarding is complete, and return current answers."""
         with life_os.db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'onboarding_completed'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'onboarding_completed'").fetchone()
             completed = bool(row and row["value"] == "true")
         return {
             "completed": completed,
@@ -5061,15 +5157,13 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def setup_flow():
         """Return the onboarding flow phases."""
         from services.onboarding.manager import ONBOARDING_PHASES
+
         # Sanitize for JSON (convert any non-serializable values)
         phases = []
         for p in ONBOARDING_PHASES:
             phase = dict(p)
             if "options" in phase:
-                phase["options"] = [
-                    {"label": o["label"], "value": o["value"]}
-                    for o in phase["options"]
-                ]
+                phase["options"] = [{"label": o["label"], "value": o["value"]} for o in phase["options"]]
             phases.append(phase)
         return {"phases": phases}
 
@@ -5102,6 +5196,7 @@ def register_routes(app: FastAPI, life_os) -> None:
     def _seed_contacts(life_os_ref, contacts: list[dict]):
         """Create contact records from onboarding priority people."""
         import uuid
+
         with life_os_ref.db.get_connection("entities") as conn:
             for contact in contacts:
                 contact_id = str(uuid.uuid4())
@@ -5131,11 +5226,11 @@ def register_routes(app: FastAPI, life_os) -> None:
     async def index():
         # Check if onboarding is complete — if not, redirect to setup
         with life_os.db.get_connection("preferences") as conn:
-            row = conn.execute(
-                "SELECT value FROM user_preferences WHERE key = 'onboarding_completed'"
-            ).fetchone()
+            row = conn.execute("SELECT value FROM user_preferences WHERE key = 'onboarding_completed'").fetchone()
             if not row or row["value"] != "true":
                 from fastapi.responses import RedirectResponse
+
                 return RedirectResponse("/setup")
         from web.template import HTML_TEMPLATE
+
         return HTML_TEMPLATE

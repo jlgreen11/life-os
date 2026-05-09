@@ -57,9 +57,7 @@ async def _run_loop_once(lifeos):
 
 async def test_healthy_db_skips_rebuild(lifeos_instance):
     """When all probe queries succeed, no rebuild should be triggered."""
-    with patch.object(
-        lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-    ) as mock_rebuild:
+    with patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock) as mock_rebuild:
         await _run_loop_once(lifeos_instance)
 
     mock_rebuild.assert_not_called()
@@ -69,9 +67,7 @@ async def test_healthy_db_skips_rebuild(lifeos_instance):
 async def test_healthy_db_sends_no_notification(lifeos_instance):
     """When the DB is healthy, no notifications should be created."""
     with (
-        patch.object(
-            lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-        ),
+        patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock),
         patch("main.ws_manager") as mock_ws,
     ):
         await _run_loop_once(lifeos_instance)
@@ -90,9 +86,7 @@ async def test_corrupted_db_triggers_rebuild(lifeos_instance):
     def corrupted_connection(db_name):
         if db_name == "user_model":
             mock_conn = MagicMock()
-            mock_conn.execute.side_effect = sqlite3.DatabaseError(
-                "database disk image is malformed"
-            )
+            mock_conn.execute.side_effect = sqlite3.DatabaseError("database disk image is malformed")
             yield mock_conn
         else:
             with original_get_connection(db_name) as conn:
@@ -100,12 +94,8 @@ async def test_corrupted_db_triggers_rebuild(lifeos_instance):
 
     with (
         patch.object(lifeos_instance.db, "get_connection", side_effect=corrupted_connection),
-        patch.object(
-            lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-        ) as mock_rebuild,
-        patch.object(
-            lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
-        ) as mock_backfill,
+        patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock) as mock_rebuild,
+        patch.object(lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock) as mock_backfill,
         patch("main.ws_manager") as mock_ws,
     ):
         await _run_loop_once(lifeos_instance)
@@ -140,9 +130,7 @@ async def test_rebuild_counter_limits_retries(lifeos_instance):
     # Pre-set counter above limit — loop should skip probing entirely
     lifeos_instance._runtime_db_rebuilds = 4
 
-    with patch.object(
-        lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-    ) as mock_rebuild:
+    with patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock) as mock_rebuild:
         await _run_loop_once(lifeos_instance)
 
     mock_rebuild.assert_not_called()
@@ -156,9 +144,7 @@ async def test_rebuild_counter_increments_on_each_corruption(lifeos_instance):
     def corrupted_connection(db_name):
         if db_name == "user_model":
             mock_conn = MagicMock()
-            mock_conn.execute.side_effect = sqlite3.DatabaseError(
-                "database disk image is malformed"
-            )
+            mock_conn.execute.side_effect = sqlite3.DatabaseError("database disk image is malformed")
             yield mock_conn
         else:
             with original_get_connection(db_name) as conn:
@@ -171,12 +157,8 @@ async def test_rebuild_counter_increments_on_each_corruption(lifeos_instance):
 
         with (
             patch.object(lifeos_instance.db, "get_connection", side_effect=corrupted_connection),
-            patch.object(
-                lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-            ),
-            patch.object(
-                lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
-            ),
+            patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock),
+            patch.object(lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock),
             patch("main.ws_manager"),
         ):
             await _run_loop_once(lifeos_instance)
@@ -196,9 +178,7 @@ async def test_fourth_corruption_stops_rebuilds(lifeos_instance):
     def corrupted_connection(db_name):
         if db_name == "user_model":
             mock_conn = MagicMock()
-            mock_conn.execute.side_effect = sqlite3.DatabaseError(
-                "database disk image is malformed"
-            )
+            mock_conn.execute.side_effect = sqlite3.DatabaseError("database disk image is malformed")
             yield mock_conn
         else:
             with original_get_connection(db_name) as conn:
@@ -206,12 +186,8 @@ async def test_fourth_corruption_stops_rebuilds(lifeos_instance):
 
     with (
         patch.object(lifeos_instance.db, "get_connection", side_effect=corrupted_connection),
-        patch.object(
-            lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-        ) as mock_rebuild,
-        patch.object(
-            lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
-        ) as mock_backfill,
+        patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock) as mock_rebuild,
+        patch.object(lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock) as mock_backfill,
         patch("main.ws_manager"),
     ):
         await _run_loop_once(lifeos_instance)
@@ -240,12 +216,8 @@ async def test_connection_failure_triggers_rebuild(lifeos_instance):
 
     with (
         patch.object(lifeos_instance.db, "get_connection", side_effect=raise_on_user_model),
-        patch.object(
-            lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock
-        ) as mock_rebuild,
-        patch.object(
-            lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock
-        ) as mock_backfill,
+        patch.object(lifeos_instance, "_rebuild_user_model_db_if_corrupted", new_callable=AsyncMock) as mock_rebuild,
+        patch.object(lifeos_instance, "_verify_and_retry_backfills", new_callable=AsyncMock) as mock_backfill,
         patch("main.ws_manager"),
     ):
         await _run_loop_once(lifeos_instance)

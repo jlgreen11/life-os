@@ -28,20 +28,24 @@ def _store_calendar_event(event_store, start_time, title="Test Event", location=
         start_str = start_time.isoformat()
         end_str = end_time.isoformat()
 
-    event_store.store_event({
-        "id": event_id,
-        "type": "calendar.event.created",
-        "source": "caldav",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "payload": json.dumps({
-            "title": title,
-            "start_time": start_str,
-            "end_time": end_str,
-            "location": location,
-            "is_all_day": is_all_day,
-        }),
-        "metadata": {},
-    })
+    event_store.store_event(
+        {
+            "id": event_id,
+            "type": "calendar.event.created",
+            "source": "caldav",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "payload": json.dumps(
+                {
+                    "title": title,
+                    "start_time": start_str,
+                    "end_time": end_str,
+                    "location": location,
+                    "is_all_day": is_all_day,
+                }
+            ),
+            "metadata": {},
+        }
+    )
     return event_id
 
 
@@ -95,8 +99,10 @@ async def test_location_included_in_description(db, event_store, user_model_stor
     now = datetime.now(timezone.utc)
 
     _store_calendar_event(
-        event_store, now + timedelta(hours=5),
-        title="Lunch Meeting", location="Cafe Milano",
+        event_store,
+        now + timedelta(hours=5),
+        title="Lunch Meeting",
+        location="Cafe Milano",
     )
 
     predictions = await engine._check_calendar_event_reminders({})
@@ -144,8 +150,10 @@ async def test_all_day_event_skipped(db, event_store, user_model_store):
     now = datetime.now(timezone.utc)
 
     _store_calendar_event(
-        event_store, now + timedelta(hours=6),
-        title="Holiday", is_all_day=True,
+        event_store,
+        now + timedelta(hours=6),
+        title="Holiday",
+        is_all_day=True,
     )
 
     predictions = await engine._check_calendar_event_reminders({})
@@ -192,9 +200,13 @@ async def test_deduplication_prevents_duplicate_reminders(db, event_store, user_
                 time_horizon, suggested_action, supporting_signals, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                pred.id, pred.prediction_type, pred.description,
-                pred.confidence, pred.confidence_gate.value,
-                pred.time_horizon, pred.suggested_action,
+                pred.id,
+                pred.prediction_type,
+                pred.description,
+                pred.confidence,
+                pred.confidence_gate.value,
+                pred.time_horizon,
+                pred.suggested_action,
                 json.dumps(pred.supporting_signals),
                 now.isoformat(),
             ),
@@ -258,5 +270,6 @@ async def test_calendar_reminders_in_generate_predictions(db, event_store, user_
     reminder_preds = [p for p in predictions if p.prediction_type == "reminder"]
     # At least one reminder should be generated (may be filtered by reaction scoring,
     # but we check the raw output includes it)
-    assert any("Integration Test Meeting" in p.description for p in reminder_preds) or \
-        any("Integration Test Meeting" in p.description for p in predictions)
+    assert any("Integration Test Meeting" in p.description for p in reminder_preds) or any(
+        "Integration Test Meeting" in p.description for p in predictions
+    )

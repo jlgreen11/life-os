@@ -29,6 +29,7 @@ from services.ai_engine.context import ContextAssembler
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_routine(
     name: str,
     trigger: str,
@@ -106,10 +107,10 @@ class TestGetRoutinesContext:
         result = assembler._get_routines_context()
 
         # All key statistics must appear in the formatted line
-        assert "steps" in result        # step count
-        assert "20" in result           # duration (20 min)
-        assert "seen 19x" in result     # times_observed
-        assert "0.78" in result         # consistency_score
+        assert "steps" in result  # step count
+        assert "20" in result  # duration (20 min)
+        assert "seen 19x" in result  # times_observed
+        assert "0.78" in result  # consistency_score
 
     def test_caps_at_five_routines(self, db, user_model_store):
         """Only the top 5 routines (by consistency_score) should appear."""
@@ -162,9 +163,7 @@ class TestGetRoutinesContext:
             _make_routine("morning_routine", "morning", consistency_score=0.9, times_observed=30)
         )
         # One low-consistency (should be filtered out)
-        user_model_store.store_routine(
-            _make_routine("rare_task", "random", consistency_score=0.2, times_observed=2)
-        )
+        user_model_store.store_routine(_make_routine("rare_task", "random", consistency_score=0.2, times_observed=2))
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler._get_routines_context()
@@ -176,9 +175,7 @@ class TestGetRoutinesContext:
 
     def test_uses_trigger_as_label(self, db, user_model_store):
         """The routine's trigger field should appear as the label in the output."""
-        user_model_store.store_routine(
-            _make_routine("myname", "arrive_home", consistency_score=0.8, times_observed=20)
-        )
+        user_model_store.store_routine(_make_routine("myname", "arrive_home", consistency_score=0.8, times_observed=20))
 
         assembler = ContextAssembler(db, user_model_store)
         result = assembler._get_routines_context()
@@ -217,9 +214,7 @@ class TestBriefingIncludesRoutines:
 
     def test_briefing_excludes_low_consistency_routines(self, db, user_model_store):
         """Low-consistency routines should not appear in the briefing context."""
-        user_model_store.store_routine(
-            _make_routine("unreliable", "random", consistency_score=0.3, times_observed=3)
-        )
+        user_model_store.store_routine(_make_routine("unreliable", "random", consistency_score=0.3, times_observed=3))
 
         assembler = ContextAssembler(db, user_model_store)
         context = assembler.assemble_briefing_context()

@@ -29,26 +29,28 @@ Options:
     --dry-run    Show what would be processed without making changes
 """
 
-import asyncio
 import argparse
+import asyncio
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
 
 # Add project root to path so we can import Life OS modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from storage.manager import DatabaseManager
-from storage.event_store import EventStore
-from services.task_manager.manager import TaskManager
-from services.ai_engine.engine import AIEngine
-from storage.user_model_store import UserModelStore
-from storage.vector_store import VectorStore
 import yaml
 
+from services.ai_engine.engine import AIEngine
+from services.task_manager.manager import TaskManager
+from storage.event_store import EventStore
+from storage.manager import DatabaseManager
+from storage.user_model_store import UserModelStore
+from storage.vector_store import VectorStore
 
-async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
-                         limit: int = None, dry_run: bool = False, batch_size: int = 50):
+
+async def backfill_tasks(
+    db: DatabaseManager, task_manager: TaskManager, limit: int = None, dry_run: bool = False, batch_size: int = 50
+):
     """
     Backfill task extraction for all historical events using concurrent processing.
 
@@ -90,7 +92,7 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
         rows = conn.execute(query).fetchall()
 
     print(f"\n{'DRY RUN: ' if dry_run else ''}Found {len(rows)} events to process")
-    print(f"Event types breakdown:")
+    print("Event types breakdown:")
 
     # Count events by type for progress reporting
     type_counts = {}
@@ -174,7 +176,7 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
                            FROM tasks
                            ORDER BY created_at DESC
                            LIMIT ?""",
-                        (new_tasks_count,)
+                        (new_tasks_count,),
                     ).fetchall()
 
                 # Publish events for each new task
@@ -249,28 +251,25 @@ async def backfill_tasks(db: DatabaseManager, task_manager: TaskManager,
         # Launch all events in this batch concurrently using asyncio.gather
         results = await asyncio.gather(
             *[process_single_event(row) for row in batch],
-            return_exceptions=True  # Don't let one exception kill the whole batch
+            return_exceptions=True,  # Don't let one exception kill the whole batch
         )
 
         # Count successes and failures
         for result in results:
-            if isinstance(result, Exception):
-                errors += 1
-            elif result is False:
+            if isinstance(result, Exception) or result is False:
                 errors += 1
 
         # Progress reporting after each batch
         tasks_now = _count_tasks(db)
         tasks_extracted = tasks_now - tasks_before
         processed = batch_end
-        print(f"Progress: {processed}/{len(rows)} events processed, "
-              f"{tasks_extracted} tasks extracted, {errors} errors")
+        print(f"Progress: {processed}/{len(rows)} events processed, {tasks_extracted} tasks extracted, {errors} errors")
 
     # --- Final statistics ---
     tasks_after = _count_tasks(db)
     tasks_extracted = tasks_after - tasks_before
 
-    print(f"\nBackfill complete!")
+    print("\nBackfill complete!")
     print(f"  Events processed: {len(rows)}")
     print(f"  Tasks extracted: {tasks_extracted}")
     print(f"  Errors: {errors}")
@@ -307,24 +306,11 @@ async def main():
     runs the backfill, and reports statistics.
     """
     # --- Parse command-line arguments ---
-    parser = argparse.ArgumentParser(
-        description="Backfill task extraction for historical events"
-    )
+    parser = argparse.ArgumentParser(description="Backfill task extraction for historical events")
+    parser.add_argument("--limit", type=int, help="Process only the first N events (for testing)")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be processed without making changes")
     parser.add_argument(
-        "--limit",
-        type=int,
-        help="Process only the first N events (for testing)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be processed without making changes"
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=50,
-        help="Number of events to process concurrently (default: 50)"
+        "--batch-size", type=int, default=50, help="Number of events to process concurrently (default: 50)"
     )
     args = parser.parse_args()
 
@@ -348,25 +334,20 @@ async def main():
     # VectorStore constructor only takes db_path (str) and model_name (str), not DatabaseManager
     vector_store = VectorStore(
         db_path=str(Path(data_dir) / "vectors"),
-        model_name=config.get("vector_store", {}).get("model", "all-MiniLM-L6-v2")
+        model_name=config.get("vector_store", {}).get("model", "all-MiniLM-L6-v2"),
     )
 
     # Initialize AI engine with the full config (not just the ai section)
     # AIEngine expects the full config dict and extracts what it needs internally
-    ai_engine = AIEngine(
-        db,
-        user_model_store,
-        config,
-        vector_store=vector_store
-    )
+    ai_engine = AIEngine(db, user_model_store, config, vector_store=vector_store)
 
     # Initialize task manager with AI engine (no event bus needed for backfill)
     task_manager = TaskManager(db, event_bus=None, ai_engine=ai_engine)
 
     # --- Run the backfill ---
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
     stats = await backfill_tasks(db, task_manager, args.limit, args.dry_run, args.batch_size)
-    end_time = datetime.now(timezone.utc)
+    end_time = datetime.now(UTC)
     duration = (end_time - start_time).total_seconds()
 
     print(f"\nTotal runtime: {duration:.1f}s")

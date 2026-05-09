@@ -127,10 +127,7 @@ async def test_auth_failure_publishes_error_event(reconnect_connector, event_bus
     await reconnect_connector.start()
 
     # Check that an error event was published
-    error_events = [
-        e for e in event_bus._published_events
-        if e["type"] == "system.connector.error"
-    ]
+    error_events = [e for e in event_bus._published_events if e["type"] == "system.connector.error"]
     assert len(error_events) >= 1
     assert error_events[0]["payload"]["error_type"] == "authentication"
     assert error_events[0]["payload"]["connector_id"] == reconnect_connector.CONNECTOR_ID
@@ -217,10 +214,7 @@ async def test_successful_reconnect_publishes_reconnected_event(reconnect_connec
     await reconnect_connector.start()
     await asyncio.sleep(0.15)
 
-    reconnected_events = [
-        e for e in event_bus._published_events
-        if e["type"] == "system.connector.reconnected"
-    ]
+    reconnected_events = [e for e in event_bus._published_events if e["type"] == "system.connector.reconnected"]
     assert len(reconnected_events) == 1
     assert reconnected_events[0]["payload"]["connector_id"] == reconnect_connector.CONNECTOR_ID
 
@@ -287,7 +281,7 @@ async def test_backoff_caps_at_max_delay(event_bus, db):
 
     max_delay = connector.RECONNECT_DELAYS[-1]
     # Any delays beyond the length of RECONNECT_DELAYS should use the max
-    for d in sleep_delays[len(connector.RECONNECT_DELAYS):]:
+    for d in sleep_delays[len(connector.RECONNECT_DELAYS) :]:
         assert d == max_delay
 
 

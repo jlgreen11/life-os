@@ -24,6 +24,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_life_os(db, event_store, user_model_store):
     """
     Build a minimal LifeOS shell with notification_manager and task_manager
@@ -46,12 +47,8 @@ def _make_life_os(db, event_store, user_model_store):
     lo.task_manager = tm
 
     # Wire real methods that the notify action path uses
-    lo._infer_domain_from_event_type = LifeOS._infer_domain_from_event_type.__get__(
-        lo, LifeOS
-    )
-    lo._build_notification_content = LifeOS._build_notification_content.__get__(
-        lo, LifeOS
-    )
+    lo._infer_domain_from_event_type = LifeOS._infer_domain_from_event_type.__get__(lo, LifeOS)
+    lo._build_notification_content = LifeOS._build_notification_content.__get__(lo, LifeOS)
     return lo
 
 
@@ -70,6 +67,7 @@ def _make_event(event_type, **payload_fields):
 # ---------------------------------------------------------------------------
 # Unit tests for _build_notification_content
 # ---------------------------------------------------------------------------
+
 
 class TestBuildNotificationContentEmail:
     """Email events should use subject as title and body_plain/snippet as body."""
@@ -360,6 +358,7 @@ class TestBuildNotificationContentTruncation:
 # ---------------------------------------------------------------------------
 # Integration: verify _execute_rule_action passes enriched content through
 # ---------------------------------------------------------------------------
+
 
 class TestNotifyActionUsesEnrichedContent:
     """End-to-end: _execute_rule_action notify type uses _build_notification_content."""

@@ -23,6 +23,7 @@ from web.app import create_web_app
 # Helpers — build a mock life_os with real DB connections
 # ---------------------------------------------------------------------------
 
+
 def _make_life_os(db: DatabaseManager):
     """Build a mock life_os wired to a real DatabaseManager.
 
@@ -43,10 +44,17 @@ def _make_life_os(db: DatabaseManager):
     life_os.vector_store.search = Mock(return_value=[])
     life_os.signal_extractor = Mock()
     life_os.signal_extractor.get_user_summary = Mock(return_value={})
-    life_os.signal_extractor.get_current_mood = Mock(return_value=Mock(
-        energy_level=0.5, stress_level=0.3, social_battery=0.5,
-        cognitive_load=0.3, emotional_valence=0.5, confidence=0.5, trend="stable",
-    ))
+    life_os.signal_extractor.get_current_mood = Mock(
+        return_value=Mock(
+            energy_level=0.5,
+            stress_level=0.3,
+            social_battery=0.5,
+            cognitive_load=0.3,
+            emotional_valence=0.5,
+            confidence=0.5,
+            trend="stable",
+        )
+    )
     life_os.notification_manager = Mock()
     life_os.notification_manager.get_stats = Mock(return_value={})
     life_os.notification_manager.get_pending = Mock(return_value=[])
@@ -76,6 +84,7 @@ def _make_client(db: DatabaseManager) -> tuple[TestClient, Mock]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDataQualityEndpoint:
     """Tests for GET /api/admin/data-quality."""
@@ -118,25 +127,29 @@ class TestDataQualityEndpoint:
         # Store a few test events
         event_store = EventStore(db)
         for i in range(3):
-            event_store.store_event({
-                "id": f"dq-test-event-{i}",
-                "type": "email_received",
-                "source": "email",
+            event_store.store_event(
+                {
+                    "id": f"dq-test-event-{i}",
+                    "type": "email_received",
+                    "source": "email",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "priority": "normal",
+                    "payload": {"subject": f"Test {i}"},
+                    "metadata": {},
+                }
+            )
+        # Store one more with a different type
+        event_store.store_event(
+            {
+                "id": "dq-test-event-other",
+                "type": "calendar_event_created",
+                "source": "calendar",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "priority": "normal",
-                "payload": {"subject": f"Test {i}"},
+                "payload": {"title": "Meeting"},
                 "metadata": {},
-            })
-        # Store one more with a different type
-        event_store.store_event({
-            "id": "dq-test-event-other",
-            "type": "calendar_event_created",
-            "source": "calendar",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "priority": "normal",
-            "payload": {"title": "Meeting"},
-            "metadata": {},
-        })
+            }
+        )
 
         client, _ = _make_client(db)
         resp = client.get("/api/admin/data-quality")

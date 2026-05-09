@@ -88,24 +88,21 @@ class TestWorkflowPatternInsightsThresholds:
     def test_empty_below_observation_threshold(self, db):
         """Skips workflow with times_observed < 3."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums, name="Responding to person@example.com",
-                        times_observed=2, success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to person@example.com", times_observed=2, success_rate=0.5)
         result = engine._workflow_pattern_insights()
         assert result == []
 
     def test_empty_below_success_rate_threshold(self, db):
         """Skips workflow with success_rate < 0.01."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums, name="Responding to person@example.com",
-                        times_observed=10, success_rate=0.0)
+        _store_workflow(engine.ums, name="Responding to person@example.com", times_observed=10, success_rate=0.0)
         result = engine._workflow_pattern_insights()
         assert result == []
 
     def test_qualifies_at_minimum_thresholds(self, db):
         """Workflow with times_observed=3 and success_rate=0.01 qualifies."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums, name="Responding to human@example.com",
-                        times_observed=3, success_rate=0.01)
+        _store_workflow(engine.ums, name="Responding to human@example.com", times_observed=3, success_rate=0.01)
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
 
@@ -121,10 +118,7 @@ class TestEmailWorkflowInsights:
     def test_email_workflow_basic_summary(self, db):
         """Email workflow summary includes sender, count, and reply percentage."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to alice@work.com",
-                        times_observed=47,
-                        success_rate=0.92)
+        _store_workflow(engine.ums, name="Responding to alice@work.com", times_observed=47, success_rate=0.92)
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         summary = result[0].summary
@@ -143,30 +137,21 @@ class TestEmailWorkflowInsights:
         """Marketing and noreply senders are filtered out."""
         engine = _make_engine(db)
         # Marketing sender — should be skipped
-        _store_workflow(engine.ums,
-                        name="Responding to noreply@newsletter.com",
-                        times_observed=500,
-                        success_rate=0.002)
+        _store_workflow(engine.ums, name="Responding to noreply@newsletter.com", times_observed=500, success_rate=0.002)
         result = engine._workflow_pattern_insights()
         assert result == []
 
     def test_email_workflow_skips_no_reply_variant(self, db):
         """'no-reply@' sender is correctly filtered as automated."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to no-reply@service.io",
-                        times_observed=100,
-                        success_rate=0.01)
+        _store_workflow(engine.ums, name="Responding to no-reply@service.io", times_observed=100, success_rate=0.01)
         result = engine._workflow_pattern_insights()
         assert result == []
 
     def test_email_workflow_passes_human_sender(self, db):
         """Human-looking sender at generic domain is surfaced."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to alice@gmail.com",
-                        times_observed=15,
-                        success_rate=0.75)
+        _store_workflow(engine.ums, name="Responding to alice@gmail.com", times_observed=15, success_rate=0.75)
         result = engine._workflow_pattern_insights()
         # gmail.com personal addresses should NOT be filtered
         assert len(result) == 1
@@ -183,13 +168,15 @@ class TestTaskWorkflowInsights:
     def test_task_workflow_summary_contains_key_fields(self, db):
         """Task workflow summary includes step count, tools, and completion rate."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Task completion workflow",
-                        trigger_conditions=["task.created"],
-                        steps=["create_task", "sent", "completed", "received"],
-                        tools_used=["task_manager", "email"],
-                        success_rate=0.25,
-                        times_observed=7232)
+        _store_workflow(
+            engine.ums,
+            name="Task completion workflow",
+            trigger_conditions=["task.created"],
+            steps=["create_task", "sent", "completed", "received"],
+            tools_used=["task_manager", "email"],
+            success_rate=0.25,
+            times_observed=7232,
+        )
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         summary = result[0].summary
@@ -200,12 +187,14 @@ class TestTaskWorkflowInsights:
     def test_task_workflow_category(self, db):
         """Task workflow has category 'workflow_pattern_task'."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Task completion workflow",
-                        trigger_conditions=["task.created"],
-                        tools_used=["task_manager"],
-                        success_rate=0.1,
-                        times_observed=50)
+        _store_workflow(
+            engine.ums,
+            name="Task completion workflow",
+            trigger_conditions=["task.created"],
+            tools_used=["task_manager"],
+            success_rate=0.1,
+            times_observed=50,
+        )
         result = engine._workflow_pattern_insights()
         assert result[0].category == "workflow_pattern_task"
 
@@ -221,13 +210,15 @@ class TestCalendarWorkflowInsights:
     def test_calendar_workflow_summary(self, db):
         """Calendar workflow summary mentions calendar events and follow-up rate."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Calendar event workflow",
-                        trigger_conditions=["calendar.event.created"],
-                        steps=["prep_received", "attend_event", "followup_sent"],
-                        tools_used=["calendar", "email"],
-                        success_rate=0.68,
-                        times_observed=2638)
+        _store_workflow(
+            engine.ums,
+            name="Calendar event workflow",
+            trigger_conditions=["calendar.event.created"],
+            steps=["prep_received", "attend_event", "followup_sent"],
+            tools_used=["calendar", "email"],
+            success_rate=0.68,
+            times_observed=2638,
+        )
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         summary = result[0].summary
@@ -238,11 +229,13 @@ class TestCalendarWorkflowInsights:
     def test_calendar_workflow_category(self, db):
         """Calendar workflow has category 'workflow_pattern_calendar'."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Calendar event workflow",
-                        trigger_conditions=["calendar.event.created"],
-                        success_rate=0.5,
-                        times_observed=10)
+        _store_workflow(
+            engine.ums,
+            name="Calendar event workflow",
+            trigger_conditions=["calendar.event.created"],
+            success_rate=0.5,
+            times_observed=10,
+        )
         result = engine._workflow_pattern_insights()
         assert result[0].category == "workflow_pattern_calendar"
 
@@ -258,14 +251,16 @@ class TestGenericWorkflowInsights:
     def test_generic_workflow_summary(self, db):
         """Generic workflow summary includes name, steps, count, and success rate."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Email Received workflow",
-                        trigger_conditions=["email_received"],
-                        steps=["email_received", "sent", "created"],
-                        tools_used=[],
-                        success_rate=0.60,
-                        times_observed=8,
-                        typical_duration_minutes=30.0)
+        _store_workflow(
+            engine.ums,
+            name="Email Received workflow",
+            trigger_conditions=["email_received"],
+            steps=["email_received", "sent", "created"],
+            tools_used=[],
+            success_rate=0.60,
+            times_observed=8,
+            typical_duration_minutes=30.0,
+        )
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         summary = result[0].summary
@@ -275,11 +270,13 @@ class TestGenericWorkflowInsights:
     def test_generic_workflow_category(self, db):
         """Generic workflow has category 'workflow_pattern_interaction'."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Custom Process workflow",
-                        trigger_conditions=["custom"],
-                        success_rate=0.50,
-                        times_observed=5)
+        _store_workflow(
+            engine.ums,
+            name="Custom Process workflow",
+            trigger_conditions=["custom"],
+            success_rate=0.50,
+            times_observed=5,
+        )
         result = engine._workflow_pattern_insights()
         assert result[0].category == "workflow_pattern_interaction"
 
@@ -295,10 +292,7 @@ class TestWorkflowInsightConfidence:
     def test_confidence_minimum_observations(self, db):
         """With 3 observations and 0.01 success, confidence ≈ 0.50 + small bonus."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to min@example.com",
-                        times_observed=3,
-                        success_rate=0.01)
+        _store_workflow(engine.ums, name="Responding to min@example.com", times_observed=3, success_rate=0.01)
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         conf = result[0].confidence
@@ -308,10 +302,7 @@ class TestWorkflowInsightConfidence:
     def test_confidence_high_observations(self, db):
         """With 50+ observations and high success, confidence approaches 0.85 cap."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to boss@work.com",
-                        times_observed=100,
-                        success_rate=0.90)
+        _store_workflow(engine.ums, name="Responding to boss@work.com", times_observed=100, success_rate=0.90)
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         conf = result[0].confidence
@@ -321,10 +312,7 @@ class TestWorkflowInsightConfidence:
     def test_confidence_never_exceeds_cap(self, db):
         """Confidence never exceeds 0.85 regardless of inputs."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to superfreq@work.com",
-                        times_observed=1000,
-                        success_rate=1.0)
+        _store_workflow(engine.ums, name="Responding to superfreq@work.com", times_observed=1000, success_rate=1.0)
         result = engine._workflow_pattern_insights()
         assert result[0].confidence <= 0.85
 
@@ -369,10 +357,7 @@ class TestWorkflowInsightMetadata:
     def test_evidence_contains_required_fields(self, db):
         """Evidence list contains all required diagnostic fields."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to evidence@example.com",
-                        times_observed=15,
-                        success_rate=0.50)
+        _store_workflow(engine.ums, name="Responding to evidence@example.com", times_observed=15, success_rate=0.50)
         result = engine._workflow_pattern_insights()
         evidence = result[0].evidence
         evidence_keys = [e.split("=")[0] for e in evidence]
@@ -393,17 +378,21 @@ class TestMultipleWorkflows:
     def test_multiple_qualifying_workflows_all_surface(self, db):
         """All qualifying workflows generate distinct insights."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to alpha@company.com",
-                        times_observed=30, success_rate=0.70)
-        _store_workflow(engine.ums,
-                        name="Task completion workflow",
-                        trigger_conditions=["task.created"],
-                        times_observed=100, success_rate=0.25)
-        _store_workflow(engine.ums,
-                        name="Calendar event workflow",
-                        trigger_conditions=["calendar.event.created"],
-                        times_observed=50, success_rate=0.60)
+        _store_workflow(engine.ums, name="Responding to alpha@company.com", times_observed=30, success_rate=0.70)
+        _store_workflow(
+            engine.ums,
+            name="Task completion workflow",
+            trigger_conditions=["task.created"],
+            times_observed=100,
+            success_rate=0.25,
+        )
+        _store_workflow(
+            engine.ums,
+            name="Calendar event workflow",
+            trigger_conditions=["calendar.event.created"],
+            times_observed=50,
+            success_rate=0.60,
+        )
         result = engine._workflow_pattern_insights()
         assert len(result) == 3
         categories = {i.category for i in result}
@@ -414,32 +403,19 @@ class TestMultipleWorkflows:
     def test_insights_sorted_descending_by_times_observed(self, db):
         """Insights are ordered with the most-observed workflow first."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to low@example.com",
-                        times_observed=5, success_rate=0.5)
-        _store_workflow(engine.ums,
-                        name="Responding to high@example.com",
-                        times_observed=50, success_rate=0.5)
-        _store_workflow(engine.ums,
-                        name="Responding to mid@example.com",
-                        times_observed=20, success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to low@example.com", times_observed=5, success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to high@example.com", times_observed=50, success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to mid@example.com", times_observed=20, success_rate=0.5)
         result = engine._workflow_pattern_insights()
         # Should be high (50) → mid (20) → low (5)
-        obs_values = [
-            int(next(e.split("=")[1] for e in i.evidence if e.startswith("times_observed=")))
-            for i in result
-        ]
+        obs_values = [int(next(e.split("=")[1] for e in i.evidence if e.startswith("times_observed="))) for i in result]
         assert obs_values == sorted(obs_values, reverse=True)
 
     def test_mixes_qualifying_and_disqualifying(self, db):
         """Only qualifying workflows surface; disqualifying ones are silently skipped."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to good@example.com",
-                        times_observed=10, success_rate=0.5)
-        _store_workflow(engine.ums,
-                        name="Responding to toofew@example.com",
-                        times_observed=1, success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to good@example.com", times_observed=10, success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to toofew@example.com", times_observed=1, success_rate=0.5)
         result = engine._workflow_pattern_insights()
         assert len(result) == 1
         assert "good@example.com" in result[0].summary
@@ -457,14 +433,9 @@ class TestWorkflowCorrelatorIntegration:
     async def test_workflow_insights_appear_in_generate_insights(self, db):
         """Workflow insights from the correlator appear in generate_insights() output."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to integrated@example.com",
-                        times_observed=10,
-                        success_rate=0.7)
+        _store_workflow(engine.ums, name="Responding to integrated@example.com", times_observed=10, success_rate=0.7)
         all_insights = await engine.generate_insights()
-        workflow_insights = [
-            i for i in all_insights if i.category.startswith("workflow_pattern")
-        ]
+        workflow_insights = [i for i in all_insights if i.category.startswith("workflow_pattern")]
         assert len(workflow_insights) >= 1
         assert "integrated@example.com" in workflow_insights[0].summary
 
@@ -472,10 +443,7 @@ class TestWorkflowCorrelatorIntegration:
     async def test_workflow_category_in_source_weights(self, db):
         """workflow_pattern category does not crash _apply_source_weights."""
         engine = _make_engine(db)
-        _store_workflow(engine.ums,
-                        name="Responding to weight@example.com",
-                        times_observed=5,
-                        success_rate=0.5)
+        _store_workflow(engine.ums, name="Responding to weight@example.com", times_observed=5, success_rate=0.5)
         # Should complete without raising, even without registered source weight
         all_insights = await engine.generate_insights()
         # Insights list must be a list (empty or populated)

@@ -143,9 +143,7 @@ class TestNatsReconnectLoop:
         catch it (fail-open) and continue running without crashing."""
         lifeos_instance.event_bus.is_connected = True
         lifeos_instance._event_handlers_registered = False
-        lifeos_instance._register_event_handlers = AsyncMock(
-            side_effect=Exception("NATS subscribe failed")
-        )
+        lifeos_instance._register_event_handlers = AsyncMock(side_effect=Exception("NATS subscribe failed"))
 
         sleep_fn = _make_shutdown_sleep(lifeos_instance.shutdown_event)
         # Should not raise — the loop catches exceptions

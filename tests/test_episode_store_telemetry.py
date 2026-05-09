@@ -74,8 +74,10 @@ class TestTelemetryNotEmittedOnDBFailure:
         """If get_connection() raises, _emit_telemetry must not be called."""
         episode = _make_episode()
 
-        with patch.object(store.db, "get_connection", side_effect=Exception("DB error")), \
-             patch.object(store, "_emit_telemetry") as mock_telemetry:
+        with (
+            patch.object(store.db, "get_connection", side_effect=Exception("DB error")),
+            patch.object(store, "_emit_telemetry") as mock_telemetry,
+        ):
             store.store_episode(episode)
 
         mock_telemetry.assert_not_called()
@@ -91,8 +93,10 @@ class TestTelemetryNotEmittedOnDBFailure:
         mock_ctx.__enter__ = MagicMock(return_value=mock_conn)
         mock_ctx.__exit__ = MagicMock(return_value=False)
 
-        with patch.object(store.db, "get_connection", return_value=mock_ctx), \
-             patch.object(store, "_emit_telemetry") as mock_telemetry:
+        with (
+            patch.object(store.db, "get_connection", return_value=mock_ctx),
+            patch.object(store, "_emit_telemetry") as mock_telemetry,
+        ):
             store.store_episode(episode)
 
         mock_telemetry.assert_not_called()
@@ -114,8 +118,7 @@ class TestTelemetryNotEmittedOnDBFailure:
                 store.store_episode(episode)
 
         assert any(
-            "store_episode failed" in record.message and record.levelno == logging.WARNING
-            for record in caplog.records
+            "store_episode failed" in record.message and record.levelno == logging.WARNING for record in caplog.records
         )
 
 
@@ -176,10 +179,12 @@ class TestTelemetryEmittedOnSuccess:
                 raise RuntimeError("simulated first-call failure")
             return original_get_connection(*args, **kwargs)
 
-        with patch.object(store.db, "get_connection", side_effect=fail_first_call), \
-             patch.object(store, "_emit_telemetry", side_effect=_real_emit):
-            store.store_episode(episode_fail)   # fails → no telemetry
-            store.store_episode(episode_ok)     # succeeds → telemetry fires
+        with (
+            patch.object(store.db, "get_connection", side_effect=fail_first_call),
+            patch.object(store, "_emit_telemetry", side_effect=_real_emit),
+        ):
+            store.store_episode(episode_fail)  # fails → no telemetry
+            store.store_episode(episode_ok)  # succeeds → telemetry fires
 
         assert len(calls) == 1
         assert calls[0][1]["episode_id"] == "ep-ok"
@@ -190,9 +195,7 @@ class TestTelemetryEmittedOnSuccess:
         store.store_episode(episode)
 
         with store.db.get_connection("user_model") as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM episodes WHERE id = ?", ("ep-db-check",)
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM episodes WHERE id = ?", ("ep-db-check",)).fetchone()[0]
 
         assert count == 1
 
@@ -261,9 +264,7 @@ class TestEpisodeWALCheckpoint:
 
     def test_checkpoint_failure_does_not_crash_write(self, store):
         """A checkpoint exception must NOT propagate out of store_episode."""
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")):
             # Drive to the 50th write, which triggers checkpoint — must not raise
             for i in range(50):
                 store.store_episode(_make_episode(f"ep-{i:04d}", f"evt-{i:04d}"))
@@ -275,16 +276,13 @@ class TestEpisodeWALCheckpoint:
 
     def test_checkpoint_failure_logs_warning(self, store, caplog):
         """A checkpoint failure must log a WARNING without re-raising."""
-        with patch.object(
-            store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")
-        ):
+        with patch.object(store.db, "checkpoint_wal", side_effect=RuntimeError("disk full")):
             with caplog.at_level(logging.WARNING, logger="storage.user_model_store"):
                 for i in range(50):
                     store.store_episode(_make_episode(f"ep-{i:04d}", f"evt-{i:04d}"))
 
         assert any(
-            "WAL checkpoint" in record.message and record.levelno == logging.WARNING
-            for record in caplog.records
+            "WAL checkpoint" in record.message and record.levelno == logging.WARNING for record in caplog.records
         )
 
 
@@ -305,8 +303,7 @@ class TestPostWriteVerification:
 
         # Should be no CRITICAL messages about verification failure
         critical_msgs = [
-            r for r in caplog.records
-            if r.levelno == logging.CRITICAL and "post-write verification" in r.message
+            r for r in caplog.records if r.levelno == logging.CRITICAL and "post-write verification" in r.message
         ]
         assert critical_msgs == []
 
@@ -337,8 +334,7 @@ class TestPostWriteVerification:
                 store.store_episode(episode)
 
         critical_msgs = [
-            r for r in caplog.records
-            if r.levelno == logging.CRITICAL and "post-write verification FAILED" in r.message
+            r for r in caplog.records if r.levelno == logging.CRITICAL and "post-write verification FAILED" in r.message
         ]
         assert len(critical_msgs) == 1
         assert "ep-ghost" in critical_msgs[0].message
