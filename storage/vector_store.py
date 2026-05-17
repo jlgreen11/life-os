@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -67,6 +68,25 @@ class VectorStore:
         self._add_count: int = 0          # Total documents added this session
         self._search_count: int = 0       # Total search calls this session
         self._search_error_count: int = 0  # Search calls that raised an exception this session
+
+        # Ingest health counters. Tracked at the document (event) level — one
+        # add_document call contributes at most one increment to attempts /
+        # successes / failures / skipped_empty. This makes the success_rate
+        # interpretable as "fraction of submitted events that landed in the
+        # index". Per-reason classification lets operators distinguish silent
+        # encode failures from LanceDB write failures.
+        self._embed_attempts: int = 0
+        self._embed_successes: int = 0
+        self._embed_failures: int = 0
+        self._embed_skipped_empty: int = 0
+        # defaultdict avoids the need to guard each increment; short string
+        # keys (e.g. 'empty_text', 'model_error', 'lancedb_write_error') let
+        # the histogram remain compact even with many failure types.
+        self._failure_reasons: dict[str, int] = defaultdict(int)
+        # Stored as a datetime so consumers can compute "time since last
+        # successful embed" without re-parsing ISO strings. Serialised to
+        # ISO-8601 inside get_ingest_metrics.
+        self._last_embed_at: Optional[datetime] = None
 
     def initialize(self):
         """Initialize the vector store and embedding model.
@@ -199,19 +219,36 @@ class VectorStore:
             False if the text was too short or no chunks could be embedded
         """
         # Skip very short texts — they produce low-quality embeddings and
-        # are unlikely to contain meaningful searchable content.
+        # are unlikely to contain meaningful searchable content. These are
+        # tracked separately from failures because they're a deliberate filter,
+        # not a fault.
         if not text or len(text.strip()) < 10:
+            self._embed_skipped_empty += 1
+            self._failure_reasons["empty_text"] += 1
             return False
+
+        # One add_document call counts as one ingest attempt regardless of how
+        # many chunks the text produces, so success_rate stays interpretable
+        # at the event level.
+        self._embed_attempts += 1
 
         # Split long texts into overlapping chunks (1000 chars, 100 char overlap)
         # so that each chunk fits within the embedding model's effective context
         # window and retrieval can pinpoint the relevant passage.
         chunks = self._chunk_text(text, max_chars=1000, overlap=100)
         chunks_stored = 0
+        # Tracks the most specific failure mode encountered in this document
+        # so we can attribute the failure to a category if no chunk succeeds.
+        last_failure_reason: Optional[str] = None
 
         for i, chunk in enumerate(chunks):
             embedding = self.embed_text(chunk)
             if embedding is None:
+                # embed_text returns None either because the model isn't loaded
+                # or because encoding raised. Classify by inspecting the
+                # embedder state — this is the only signal available without
+                # restructuring embed_text's exception handling.
+                last_failure_reason = "no_model" if self._embedder is None else "model_error"
                 logger.debug("Embedding failed for chunk %d of doc %s", i, doc_id)
                 continue
 
@@ -236,6 +273,7 @@ class VectorStore:
                     # the entire document.  A transient error on one chunk
                     # should not discard remaining chunks.  The chunks_stored
                     # == 0 check after the loop handles total failure.
+                    last_failure_reason = "lancedb_write_error"
                     logger.error("LanceDB add error for chunk %d of %s: %s", i, doc_id, e)
                     continue
             else:
@@ -253,11 +291,18 @@ class VectorStore:
                     self._save_fallback()
 
         if chunks_stored == 0:
+            self._embed_failures += 1
+            # Record the most-specific failure reason observed during the loop.
+            # If no chunks were even attempted (shouldn't happen given the
+            # empty_text guard above), fall back to a generic bucket.
+            self._failure_reasons[last_failure_reason or "unknown"] += 1
             logger.warning("add_document(%s): no chunks embedded — embedding model may be unavailable", doc_id)
             return False
 
         # Update session-level observability counters on successful storage.
-        self._last_add_at = datetime.now(timezone.utc).isoformat()
+        self._embed_successes += 1
+        self._last_embed_at = datetime.now(timezone.utc)
+        self._last_add_at = self._last_embed_at.isoformat()
         self._add_count += 1
         return True
 
@@ -569,6 +614,65 @@ class VectorStore:
             })
 
         return health
+
+    def get_ingest_metrics(self) -> dict:
+        """Return a snapshot of embedding ingest health.
+
+        Distinct from ``get_health`` — that surface focuses on whether the
+        backend itself is reachable. ``get_ingest_metrics`` focuses on how
+        well events flowing through ``add_document`` are landing in the index.
+
+        Returns a dict with:
+            - embed_attempts (int): Documents submitted past the empty-text
+              filter. Empty/short submissions are NOT counted here.
+            - embed_successes (int): Documents where at least one chunk was
+              embedded and stored.
+            - embed_failures (int): Submitted documents where zero chunks
+              landed (encode failure, missing model, or write failure).
+            - embed_skipped_empty (int): Submissions rejected before any
+              embedding attempt because the text was empty or under 10 chars.
+            - failure_reasons (dict[str, int]): Histogram of why submissions
+              failed or were skipped. Keys include 'empty_text', 'no_model',
+              'model_error', 'lancedb_write_error'.
+            - success_rate (float): successes / max(attempts, 1). Empty-text
+              skips are excluded from the denominator so the rate measures
+              the embedding pipeline's health, not upstream filtering.
+            - last_embed_at (str | None): ISO-8601 UTC timestamp of the most
+              recent successful embed, or None if no document has succeeded.
+            - total_rows (int | str): Total rows currently in the LanceDB
+              table (or fallback doc list). "unknown" if the count query fails.
+        """
+        attempts = self._embed_attempts
+        # Guard against ZeroDivisionError when no attempts have been made yet.
+        # max(attempts, 1) keeps the rate at 0.0 in that case, which reads
+        # more naturally than NaN or None on dashboards.
+        success_rate = self._embed_successes / max(attempts, 1)
+
+        # Total row count is best-effort: we want a single number that
+        # operators can compare against expected ingest volume. Use the
+        # backend's native count when available; fall back gracefully on
+        # error so a corrupted table doesn't break the diagnostics surface.
+        if self._use_lancedb and self._table is not None:
+            try:
+                total_rows: Any = self._table.count_rows()
+            except Exception as e:
+                logger.error("get_ingest_metrics: count_rows failed: %s", e)
+                total_rows = "unknown"
+        else:
+            total_rows = len(self._fallback_docs)
+
+        return {
+            "embed_attempts": attempts,
+            "embed_successes": self._embed_successes,
+            "embed_failures": self._embed_failures,
+            "embed_skipped_empty": self._embed_skipped_empty,
+            # Convert defaultdict to a plain dict so the response is
+            # JSON-serialisable without side-effects on the underlying counter.
+            "failure_reasons": dict(self._failure_reasons),
+            "success_rate": success_rate,
+            "last_embed_at": self._last_embed_at.isoformat() if self._last_embed_at else None,
+            "total_rows": total_rows,
+        }
 
     def get_stale_documents(self, max_age_hours: int = 168) -> dict:
         """Find documents whose embeddings are older than ``max_age_hours``.
