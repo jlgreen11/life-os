@@ -475,6 +475,14 @@ class LinguisticExtractor(BaseExtractor):
     # replies, so we need higher statistical confidence than for style averages.
     _MIN_TEMPLATE_SAMPLES = 5
 
+    # Cumulative counters for per-contact communication template writes.  These
+    # are class-level defaults so instances created via ``__new__`` (used by
+    # some legacy tests) still see them.  Assignment in
+    # ``_store_per_contact_templates`` promotes them to instance attributes so
+    # each extractor tracks its own totals without leaking across instances.
+    _template_write_failures = 0
+    _template_writes_verified = 0
+
     # Maximum unique contacts tracked in the linguistic_inbound profile.
     # With 13K+ qualifying events from potentially thousands of unique senders,
     # the JSON-serialized per_contact dict can grow very large.  When this
@@ -1028,10 +1036,70 @@ class LinguisticExtractor(BaseExtractor):
                 "samples_analyzed": samples_count,
             }
 
+            # ── Pre-write serialization guard ────────────────────────────
+            # Attempt to serialize the template before handing it to the
+            # store.  Non-serializable values (sets, datetimes, custom
+            # objects) would otherwise raise inside the sqlite layer and be
+            # swallowed by the catch-all below, silently dropping the write.
+            # Mirrors the inbound profile diagnostics around line 906.
+            try:
+                json.dumps(template)
+            except TypeError as ser_err:
+                offending_key = None
+                for k, v in template.items():
+                    try:
+                        json.dumps(v)
+                    except TypeError:
+                        offending_key = k
+                        break
+                logger.critical(
+                    "LinguisticExtractor: per-contact template FAILED to serialize "
+                    "(contact=%s, template_id=%s, offending_key=%s): %s",
+                    contact_id,
+                    template_id,
+                    offending_key,
+                    ser_err,
+                )
+                self._template_write_failures = getattr(self, "_template_write_failures", 0) + 1
+                continue
+
             try:
                 self.ums.store_communication_template(template)
             except Exception as e:
                 logger.warning("Failed to store linguistic template for %s: %s", contact_id, e)
+                self._template_write_failures = getattr(self, "_template_write_failures", 0) + 1
+                continue
+
+            # ── Post-write verification ──────────────────────────────────
+            # Read back the template to confirm it actually landed in the
+            # database.  A missing read-back means the write was silently
+            # dropped (WAL corruption, lock contention, schema mismatch).
+            # Logging CRITICAL here surfaces the failure so operators can
+            # investigate rather than discovering the drop indirectly via
+            # missing per-contact style in the draft-context assembler.
+            try:
+                rows = self.ums.get_communication_templates(contact_id=contact_id, limit=1)
+                if not any(row.get("id") == template_id for row in rows):
+                    logger.critical(
+                        "LinguisticExtractor: per-contact template FAILED to persist "
+                        "after write (contact_id=%s, template_id=%s, samples_count=%d)",
+                        contact_id,
+                        template_id,
+                        samples_count,
+                    )
+                    self._template_write_failures = getattr(self, "_template_write_failures", 0) + 1
+                else:
+                    self._template_writes_verified = (
+                        getattr(self, "_template_writes_verified", 0) + 1
+                    )
+            except Exception as verify_err:
+                logger.warning(
+                    "LinguisticExtractor: post-write verification failed for "
+                    "contact=%s template=%s: %s",
+                    contact_id,
+                    template_id,
+                    verify_err,
+                )
 
     def _get_existing_phrase_data(self, contact_id: str, channel: str) -> dict:
         """Retrieve phrase data from existing templates for this contact.
