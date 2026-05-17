@@ -50,7 +50,7 @@ no-ops, meaning the system's advertised automation is partially non-functional.
 These features have complete schemas and model definitions but no code path that
 writes data into them. They are architectural scaffolding awaiting implementation.
 
-### 4. CalDAV Conflict Detection
+### 4. CalDAV Conflict Detection (RESOLVED 2026-05-17)
 
 - **File:** `connectors/caldav/connector.py` (the `detect_conflicts()` method)
 - **Impact:** Calendar overlap alerts never fire. The default rule
@@ -59,6 +59,14 @@ writes data into them. They are architectural scaffolding awaiting implementatio
 - **Recommendation:** Implement conflict detection in the CalDAV connector's sync loop:
   after fetching events, compare start/end times for overlaps and publish
   `calendar.conflict.detected` events to the bus.
+- **Resolution:** Implemented in `connectors/caldav/connector.py:308-490` as
+  `_detect_conflicts()`. The method queries calendar events in the upcoming 48h
+  window, runs a sweep-line overlap detection, dedupes pairs via `frozenset`, and
+  publishes `calendar.conflict.detected` events at `high` priority for each new
+  overlap. Persisted pair tracking (`_published_conflicts`) prevents duplicate
+  alerts across sync cycles. Iteration 169 widened the query window from "events
+  synced in last 24h" to "events with start_time in next 48h" so it catches
+  conflicts regardless of when the underlying events were synced.
 
 ### 5. User Model Profiles (Composite)
 
@@ -72,7 +80,7 @@ writes data into them. They are architectural scaffolding awaiting implementatio
   access point for all profile data, or remove the composite class and keep the
   per-signal-profile approach (which works well today).
 
-### 6. Communication Templates
+### 6. Communication Templates (IMPLEMENTED 2026-05-17)
 
 - **File:** `storage/manager.py:432-448` (schema), `storage/user_model_store.py:300+`
   (store methods)
@@ -82,6 +90,16 @@ writes data into them. They are architectural scaffolding awaiting implementatio
 - **Recommendation:** Add template extraction to `LinguisticExtractor` or
   `RelationshipExtractor` — analyze outbound messages grouped by contact/channel to
   populate greeting, closing, and formality fields.
+- **Resolution:** `LinguisticExtractor._store_per_contact_templates()` in
+  `services/signal_extractor/linguistic.py:948` now writes templates by calling
+  `self.ums.store_communication_template()` (line 1032). For each contact with
+  at least `_MIN_TEMPLATE_SAMPLES` outbound messages, it derives the most-common
+  greeting/closing, average word count, dominant channel, formality/emoji-rate
+  averages, and tone notes (e.g. "tends to hedge", "asks many questions"). The
+  template ID is a deterministic SHA-256 of `linguistic:{contact}:outbound` so
+  repeated calls produce idempotent upserts. Existing phrase data from
+  `RelationshipExtractor` is preserved via `_get_existing_phrase_data()` to avoid
+  overwriting `common_phrases` / `avoids_phrases`.
 
 ---
 
@@ -89,7 +107,7 @@ writes data into them. They are architectural scaffolding awaiting implementatio
 
 These components have full implementations but are unreachable from any active code path.
 
-### 7. Episodic Memory Layer
+### 7. Episodic Memory Layer (IMPLEMENTED 2026-05-17)
 
 - **File:** `storage/manager.py:378-398` (schema), `storage/user_model_store.py`
   (store/query methods)
@@ -98,8 +116,17 @@ These components have full implementations but are unreachable from any active c
 - **Recommendation:** Wire episode creation into `master_event_handler` or the signal
   extractor pipeline. Each processed event should create an episode summarizing the
   interaction.
+- **Resolution:** `master_event_handler` in `main.py:2607` now calls
+  `self._create_episode(event)` after signal extraction, and the implementation at
+  `main.py:3027` (with `store_episode` at `main.py:3223`) persists every processed
+  event as an episode with interaction-type classification, topics, entities, and
+  contact linkage. As of 2026-05-17 the `episodes` table contains ~42,078 rows
+  (confirmed via the data quality analyzer). Downstream consumers — the semantic
+  fact inferrer, routine detector, and topic queries — read from this table in
+  production. The "topics from most recent episode" path in
+  `services/insight_engine/engine.py:986` is one example of an active reader.
 
-### 8. Unused DB Columns
+### 8. Unused DB Columns (IMPLEMENTED 2026-05-17)
 
 The following columns are defined in schemas but never written to or queried:
 
@@ -111,6 +138,16 @@ The following columns are defined in schemas but never written to or queried:
 
 These columns support the confidence-growth loop described in the architecture doc
 (+0.05 per confirmation) but the increment logic is not implemented.
+
+- **Resolution:** All three columns are now load-bearing in
+  `storage/user_model_store.py`. `store_semantic_fact()` (around line 294)
+  accumulates `source_episodes` as a JSON array of supporting episode IDs and
+  increments `times_confirmed` on every upsert of an existing fact. The
+  semantic fact inferrer at `services/semantic_fact_inferrer/inferrer.py:882-983`
+  uses `is_user_corrected = 0` as a safety filter so user-corrected facts are
+  never auto-deleted during reconciliation. `get_high_confidence_facts()` filters
+  by `times_confirmed` to surface well-established facts. The +0.05-per-
+  confirmation confidence-growth loop runs through these columns end-to-end.
 
 ### 9. LinguisticProfile Fields
 
@@ -133,3 +170,22 @@ These columns support the confidence-growth loop described in the architecture d
   Reddit. Disabled by config flag (`browser_automation.enabled: false` in settings).
 - **Reason:** Intentionally gated — browser automation is resource-intensive and
   requires user opt-in. This is correct behavior, not a bug.
+
+---
+
+## Revision history
+
+- **2026-05-17** — Marked sections 4, 6, 7, and 8 as resolved/implemented after
+  verifying via grep + line-range citations:
+  - §4 CalDAV Conflict Detection: `_detect_conflicts()` at
+    `connectors/caldav/connector.py:308-490` publishes `calendar.conflict.detected`.
+  - §6 Communication Templates: `_store_per_contact_templates()` at
+    `services/signal_extractor/linguistic.py:948` calls
+    `UserModelStore.store_communication_template()` (line 1032).
+  - §7 Episodic Memory Layer: episode creation wired into `master_event_handler`
+    via `_create_episode()` at `main.py:3027` (`store_episode` at `main.py:3223`).
+    Current row count ~42,078.
+  - §8 Unused DB Columns: `is_user_corrected`, `times_confirmed`, and
+    `source_episodes` are all active in `storage/user_model_store.py` and
+    `services/semantic_fact_inferrer/inferrer.py`.
+- **2026-02-15** — Initial audit.
