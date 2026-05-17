@@ -41,20 +41,18 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Returned from wave 28 (no PR). getErrorHint() JS, retry btn, error badge in admin_template.py.
-- **Reduce notification expiry rate with more aggressive graduated delivery tiers** · `broken_feature` — Returned from wave 28 (no PR). 4 tiers, delivery_attempts col.
-- **Add feedback collector per-source and per-type diagnostic expansion** · `code_quality` — Returned from wave 28 (no PR). by_source, latency_stats, hourly, recency_gap.
-- **Add pre-write serialization guard and post-write verification to linguistic outbound profile** · `broken_feature` — Returned from wave 28 (no PR). json.dumps guard, post-write verify in linguistic.py.
-- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Returned from wave 28 (no PR). Hash cursor+profiles+hour, skip unchanged.
-- **Harden onboarding input validation with domain cap, name validation, and multi-range quiet hours** · `code_quality` — Returned from wave 28 (no PR). MAX_DOMAINS=10, name fallback, MAX_CONTACTS=50.
 - **Add event bus throughput counters and get_metrics() method** · `code_quality` — Open PR #725 awaiting merge. Returned from wave 10.
 - **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Open PR #724 awaiting merge. Returned from wave 8 (not merged).
-- **Add diagnostic banner to dashboard when user model is empty** · `missing_feature` — Open PR #723 awaiting merge. Returned from wave 8 (not merged).
 - **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Open PR #700 awaiting merge. Temporal extractor writes fail silently; WAL resilience and retry needed.
 - **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
-- **Add signal profile freshness check to insight engine data sufficiency report** · `missing_feature` — Open PR #701 awaiting merge. Adds freshness/staleness tracking per profile to get_data_sufficiency_report().
-- **Fix missing error handling in /api/events, /api/rules, /api/contacts, /api/source-weights** · `code_quality` — Open PR #702 awaiting merge. Adds try/except guards and structured JSON 500 responses.
 - **Add update_signal_profile() return value for caller-side failure detection** · `code_quality` — Currently returns void; callers can't distinguish success from silent failure. Requires coordinated changes across all extractors.
+- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Returned from previous wave (no PR). Inline OAuth re-auth flow for Google connector token-missing state.
+- **Reduce notification expiry rate with 4-tier graduated delivery and delivery_attempts tracking** · `broken_feature` — Returned from previous wave (no PR). Reduce 84% expiry rate via graduated channels.
+- **Add feedback collector per-source and per-type diagnostic expansion** · `code_quality` — Returned from previous wave (no PR). Per-source / per-type breakdown in feedback diagnostics.
+- **Add pre-write serialization guard and post-write verification to linguistic outbound profile** · `broken_feature` — Returned from previous wave (no PR). Apply established serialization+verification pattern to linguistic_outbound (11 qualifying events, profile may be lost).
+- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Returned from previous wave (no PR). Distinct from observability work in wave 1 slot 7 — this is the dedup logic fix (cap triggers, fingerprint inputs).
+- **Harden onboarding input validation with domain cap, name validation, and multi-range quiet hours** · `code_quality` — Returned from previous wave (no PR).
+- **Add post-write verification and WAL checkpoint to cadence extractor** · `broken_feature` — Returned from previous wave (no PR). Distinct from the merged pre-write serialization guard — this is post-write verification.
 
 ## In Progress
 
@@ -62,13 +60,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add prediction pipeline health section to admin UI** · `missing_feature` (wave 116, slot 1)
-- **Add post-write verification and WAL checkpoint to store_routine and store_prediction** · `code_quality` (wave 116, slot 2)
-- **Add post-execution verification to semantic inference and routine detection loops** · `code_quality` (wave 116, slot 3)
-- **Add notification delivery failure diagnostics with per-domain expiry tracking** · `broken_feature` (wave 116, slot 4)
-- **Add episode creation rate and backfill status diagnostics to data quality analyzer** · `data_quality` (wave 116, slot 5)
-- **Add per-correlator execution timing and consecutive-zero tracking to insight engine** · `code_quality` (wave 116, slot 6)
-- **Add rules engine empty-conditions warning and regex pattern pre-validation** · `code_quality` (wave 116, slot 7)
+- **Add prediction pipeline health section to admin UI** · `missing_feature` (wave 1, slot 1)
+- **Add post-write verification and WAL checkpoint to store_routine and store_prediction** · `code_quality` (wave 1, slot 2)
+- **Add post-execution verification to semantic inference and routine detection loops** · `code_quality` (wave 1, slot 3)
+- **Add notification delivery failure diagnostics with per-domain expiry tracking** · `broken_feature` (wave 1, slot 4)
+- **Add episode creation rate and backfill status diagnostics to data quality analyzer** · `data_quality` (wave 1, slot 5)
+- **Add per-correlator execution timing and consecutive-zero tracking to insight engine** · `code_quality` (wave 1, slot 6)
+- **Add prediction deduplication root-cause logging with per-type and per-trigger breakdown** · `data_quality` (wave 1, slot 7)
 
 ## Completed
 
@@ -76,6 +74,10 @@ _Append-only log of merged improvements. Most recent first._
 
 <!-- AGENT-MANAGED: planner prepends completed items here. -->
 
+- **Add rules engine empty-conditions warning and regex pattern pre-validation** · `code_quality` — PR #729 (merged 2026-05-17)
+- **Add diagnostic banner to dashboard for cold-start and degraded states** · `missing_feature` — PR #723 (merged 2026-05-17)
+- **Add error handling to 6 unprotected API endpoints** · `code_quality` — PR #702 (merged 2026-05-17)
+- **Add signal profile freshness check to insight engine sufficiency report** · `missing_feature` — PR #701 (merged 2026-05-17)
 - **Add pre-write JSON serialization guard to cadence extractor** · `broken_feature` — wave 13 (verified already implemented: cadence extractor uses plain dicts instead of defaultdict, confirmed in cadence.py:230-233)
 - **Add pre-write JSON serialization guard to topic extractor** · `broken_feature` — wave 11, PR #727
 - **Add pre-write JSON serialization guard to spatial extractor** · `broken_feature` — wave 11, PR #728
