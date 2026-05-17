@@ -68,6 +68,19 @@ def _make_lifeos_stub(**overrides):
 
     stub._notified_overdue_tasks = set()
 
+    # Per-cycle diagnostic state for the semantic-inference and routine-
+    # detection loops (added when post-execution verification landed). The
+    # loops call `_count_semantic_facts` / `_count_routines` against `self`,
+    # so the stub needs concrete int-returning fakes — a bare MagicMock
+    # method would return a MagicMock and break the delta arithmetic.
+    stub._semantic_inference_cycle = 0
+    stub._semantic_inference_zero_streak = 0
+    stub._routine_detection_cycle = 0
+    stub._routine_detection_zero_streak = 0
+    stub._zero_streak_warn_threshold = 3
+    stub._count_semantic_facts = lambda: 0
+    stub._count_routines = lambda: 0
+
     # Apply any overrides
     for key, value in overrides.items():
         setattr(stub, key, value)

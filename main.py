@@ -20,6 +20,7 @@ import logging
 import os
 import signal
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -194,6 +195,27 @@ class LifeOS:
         # Task IDs that have already been flagged as overdue, preventing
         # duplicate notifications on subsequent loop iterations.
         self._notified_overdue_tasks: set[str] = set()
+
+        # Per-cycle diagnostics for the semantic inference background loop.
+        # We track a monotonically increasing cycle id and a consecutive-zero
+        # streak (cycles in a row that produced zero new semantic facts) so
+        # silent failures — loop runs to completion but writes nothing — can
+        # be detected and surfaced via /health or admin UI without re-deriving
+        # the state from log scraping.
+        self._semantic_inference_cycle: int = 0
+        self._semantic_inference_zero_streak: int = 0
+
+        # Same diagnostics for the routine/workflow detection loop. The streak
+        # tracks consecutive cycles that produced no new routines in the
+        # routines table.
+        self._routine_detection_cycle: int = 0
+        self._routine_detection_zero_streak: int = 0
+
+        # Threshold (in consecutive zero-result cycles) at which the loops
+        # escalate from INFO to WARNING. Three cycles avoids noise from a
+        # single cold-start cycle while still catching persistently stuck
+        # pipelines.
+        self._zero_streak_warn_threshold: int = 3
 
         # Connector management
         self.config_encryptor = ConfigEncryptor(data_dir)
@@ -3662,6 +3684,37 @@ class LifeOS:
             last_retry[connector_id] = now_ts
             logger.error("Auto-retry failed for connector %s: %s", connector_id, e)
 
+    def _count_semantic_facts(self) -> int:
+        """Return the current row count of the ``semantic_facts`` table.
+
+        Used by ``_semantic_inference_loop`` to compute a per-cycle delta
+        and detect silent failures (inferrer runs but writes nothing).
+        Fails open: any DB error is logged and treated as a count of 0 so
+        the loop never crashes on a diagnostic query.
+        """
+        try:
+            with self.user_model_store.db.get_connection("user_model") as conn:
+                row = conn.execute("SELECT COUNT(*) FROM semantic_facts").fetchone()
+                return int(row[0]) if row else 0
+        except Exception as e:
+            logger.debug("Could not read semantic_facts count: %s", e)
+            return 0
+
+    def _count_routines(self) -> int:
+        """Return the current row count of the ``routines`` table.
+
+        Used by ``_routine_detection_loop`` to compute a per-cycle delta
+        and detect silent failures (detection runs but no rows persist).
+        Fails open like ``_count_semantic_facts``.
+        """
+        try:
+            with self.user_model_store.db.get_connection("user_model") as conn:
+                row = conn.execute("SELECT COUNT(*) FROM routines").fetchone()
+                return int(row[0]) if row else 0
+        except Exception as e:
+            logger.debug("Could not read routines count: %s", e)
+            return 0
+
     async def _insight_loop(self):
         """Run the insight engine every 15 minutes.
 
@@ -3720,14 +3773,65 @@ class LifeOS:
         await asyncio.sleep(180)
 
         while not self.shutdown_event.is_set():
+            self._semantic_inference_cycle += 1
+            cycle_id = self._semantic_inference_cycle
+
+            facts_before = self._count_semantic_facts()
+            started = time.perf_counter()
+            inferrer_reported: int | None = None
+
             try:
                 # Run inference across all signal profiles to extract semantic facts.
                 # Offloaded to a thread to avoid blocking the async event loop —
                 # run_all_inference is fully synchronous (SQLite queries + computation).
                 await asyncio.to_thread(self.semantic_fact_inferrer.run_all_inference)
-                logger.info("  SemanticFactInferrer: completed inference cycle")
+                # The inferrer caches its own per-cycle count; we read it here
+                # for cross-validation against our before/after DB snapshot.
+                inferrer_reported = getattr(
+                    self.semantic_fact_inferrer,
+                    "_total_facts_written_last_cycle",
+                    None,
+                )
             except Exception as e:
                 logger.error("Semantic fact inferrer error: %s", e)
+
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            facts_after = self._count_semantic_facts()
+            facts_added = max(0, facts_after - facts_before)
+
+            # Track consecutive-zero streak so a degraded pipeline is visible
+            # without trawling logs. A cycle that produced any net new fact
+            # resets the streak.
+            if facts_added == 0:
+                self._semantic_inference_zero_streak += 1
+            else:
+                self._semantic_inference_zero_streak = 0
+
+            log_payload = (
+                "SemanticInferenceLoop cycle=%d duration_ms=%d facts_before=%d "
+                "facts_after=%d facts_added=%d inferrer_reported=%s zero_streak=%d"
+            )
+            log_args = (
+                cycle_id,
+                duration_ms,
+                facts_before,
+                facts_after,
+                facts_added,
+                inferrer_reported if inferrer_reported is not None else "n/a",
+                self._semantic_inference_zero_streak,
+            )
+
+            if self._semantic_inference_zero_streak >= self._zero_streak_warn_threshold:
+                # Persistent zero-output streak — likely a silent failure
+                # (thresholds too tight, profiles empty, or persistence bug).
+                logger.warning(
+                    log_payload
+                    + " — no new semantic facts for %d consecutive cycles; investigate inferrer or profile data",
+                    *log_args,
+                    self._semantic_inference_zero_streak,
+                )
+            else:
+                logger.info(log_payload, *log_args)
 
             await asyncio.sleep(3600)  # 1 hour
 
@@ -3771,6 +3875,14 @@ class LifeOS:
         await asyncio.sleep(60)
 
         while not self.shutdown_event.is_set():
+            self._routine_detection_cycle += 1
+            cycle_id = self._routine_detection_cycle
+
+            routines_before = self._count_routines()
+            started = time.perf_counter()
+            routines: list = []
+            stored_count = 0
+
             try:
                 # Detect routines from last 30 days of episodic memory.
                 # Offloaded to threads — these are synchronous SQLite + computation.
@@ -3873,6 +3985,44 @@ class LifeOS:
                 # On error, retry in 1 hour to avoid tight error loops
                 retry_seconds = 3600
                 logger.info("  Next detection cycle in 1 hour (after error)")
+
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            routines_after = self._count_routines()
+            routines_added = max(0, routines_after - routines_before)
+
+            # Track consecutive-zero streak so we can distinguish "nothing
+            # changed" from a silently broken pipeline. Persistence (rather
+            # than mere detection) is what we care about — a detect-but-no-
+            # store path would keep `routines_added` at 0.
+            if routines_added == 0:
+                self._routine_detection_zero_streak += 1
+            else:
+                self._routine_detection_zero_streak = 0
+
+            log_payload = (
+                "RoutineDetectionLoop cycle=%d duration_ms=%d routines_before=%d "
+                "routines_after=%d routines_added=%d detected=%d stored=%d zero_streak=%d"
+            )
+            log_args = (
+                cycle_id,
+                duration_ms,
+                routines_before,
+                routines_after,
+                routines_added,
+                len(routines),
+                stored_count,
+                self._routine_detection_zero_streak,
+            )
+
+            if self._routine_detection_zero_streak >= self._zero_streak_warn_threshold:
+                logger.warning(
+                    log_payload
+                    + " — no new routines for %d consecutive cycles; investigate detector or episode supply",
+                    *log_args,
+                    self._routine_detection_zero_streak,
+                )
+            else:
+                logger.info(log_payload, *log_args)
 
             await asyncio.sleep(retry_seconds)
 
