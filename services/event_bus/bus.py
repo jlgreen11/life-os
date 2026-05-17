@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Optional
 
@@ -30,6 +32,16 @@ import nats
 from nats.js.api import StreamConfig, ConsumerConfig, AckPolicy
 
 logger = logging.getLogger(__name__)
+
+# Rolling window (seconds) for computing per-subject throughput rates.
+# Bus throughput is bursty (connector syncs run every N minutes), so a
+# 60-second window gives a stable "events per minute" reading without
+# being so long that it masks a sudden stall.
+DEFAULT_METRICS_WINDOW_SECONDS = 60
+# Per-subject deque size cap. At sustained ~16 msg/sec/subject this is
+# >60 seconds of headroom; the bound prevents unbounded memory growth
+# if a single subject ever floods.
+METRICS_DEQUE_MAXLEN = 1000
 
 
 class EventBus:
@@ -52,7 +64,8 @@ class EventBus:
     # stream's subject filter, not a subscription pattern.
     SUBJECTS = "lifeos.>"
 
-    def __init__(self, url: str = "nats://localhost:4222"):
+    def __init__(self, url: str = "nats://localhost:4222",
+                 metrics_window_seconds: int = DEFAULT_METRICS_WINDOW_SECONDS):
         self.url = url
         # _nc: the raw NATS connection (None until connect() is called).
         self._nc: Optional[nats.NATS] = None
@@ -65,6 +78,28 @@ class EventBus:
         # Flag set when the client reconnects after a disconnect. Consumers
         # can poll this to detect connectivity blips (resets on read).
         self._reconnected_flag: bool = False
+
+        # --- Observability counters ---
+        # The data quality analyzer surfaces stale last_event timestamps but
+        # cannot tell "connector not producing" apart from "bus dropping
+        # messages". These per-subject counters give operators that signal.
+        self.metrics_window_seconds: int = metrics_window_seconds
+        # Lifetime totals — monotonically increasing. Keyed by full subject
+        # (e.g. "lifeos.email.received").
+        self.publish_total: dict[str, int] = defaultdict(int)
+        self.publish_errors: dict[str, int] = defaultdict(int)
+        self.consume_total: dict[str, int] = defaultdict(int)
+        # Most recent activity timestamp per subject (UTC, ISO 8601 string).
+        self.last_publish_at: dict[str, str] = {}
+        self.last_consume_at: dict[str, str] = {}
+        # Rolling per-subject timestamps (monotonic seconds) for rate
+        # computation. Bounded to prevent memory growth under sustained load.
+        self._publish_window: dict[str, deque] = defaultdict(
+            lambda: deque(maxlen=METRICS_DEQUE_MAXLEN)
+        )
+        self._consume_window: dict[str, deque] = defaultdict(
+            lambda: deque(maxlen=METRICS_DEQUE_MAXLEN)
+        )
 
     async def _on_disconnect(self):
         """Called when the NATS client loses its connection.
@@ -121,6 +156,12 @@ class EventBus:
         # Obtain the JetStream context for persistent messaging (as opposed
         # to core NATS which is fire-and-forget).
         self._js = self._nc.jetstream()
+        logger.info(
+            "EventBus metrics enabled (window=%ds, deque_maxlen=%d) — "
+            "call get_metrics() for per-subject throughput",
+            self.metrics_window_seconds,
+            METRICS_DEQUE_MAXLEN,
+        )
 
         # --- Idempotent stream creation ---
         # First, check if the stream already exists by looking up a subject.
@@ -203,10 +244,25 @@ class EventBus:
         # e.g., "email.received" -> "lifeos.email.received"
         subject = f"lifeos.{event_type}"
         # Serialize the event envelope to JSON bytes for NATS transport.
+        # Serialization happens before any counters are bumped so that a
+        # bad payload (non-JSON-serializable) raises before observers see
+        # a phantom publish that never reached the stream.
         data = json.dumps(event).encode()
-        # JetStream publish provides at-least-once delivery: the message is
-        # persisted to the stream before the publish ack is returned.
-        await self._js.publish(subject, data)
+        try:
+            # JetStream publish provides at-least-once delivery: the message
+            # is persisted to the stream before the publish ack is returned.
+            await self._js.publish(subject, data)
+        except Exception:
+            # Count the failure (so operators can see error rates) and
+            # re-raise: callers decide whether to retry. We do NOT swallow
+            # this — fail-open at the service level, not at the bus level.
+            self.publish_errors[subject] += 1
+            raise
+
+        # Successful publish — update counters and rolling window.
+        self.publish_total[subject] += 1
+        self.last_publish_at[subject] = datetime.now(timezone.utc).isoformat()
+        self._publish_window[subject].append(time.monotonic())
 
         return event_id
 
@@ -237,6 +293,13 @@ class EventBus:
         async def _wrapper(msg):
             """Internal message wrapper that handles deserialization, dispatch,
             acknowledgment, and error recovery for each delivered message."""
+            # Bump consume counters before dispatch so metrics reflect "delivered
+            # to subscriber" rather than "successfully handled" — a stuck or
+            # crashing handler should still show up as bus traffic.
+            msg_subject = getattr(msg, "subject", subject)
+            self.consume_total[msg_subject] += 1
+            self.last_consume_at[msg_subject] = datetime.now(timezone.utc).isoformat()
+            self._consume_window[msg_subject].append(time.monotonic())
             try:
                 # Deserialize the JSON event envelope from raw NATS bytes.
                 event = json.loads(msg.data.decode())
@@ -305,6 +368,96 @@ class EventBus:
         except Exception:
             # Timeout or connection error -- return None for graceful degradation.
             return None
+
+    def _rate_per_minute(self, window: deque, now: float) -> float:
+        """Compute messages-per-minute over the configured rolling window.
+
+        Counts entries in the deque whose timestamp falls within
+        ``metrics_window_seconds`` of ``now`` and scales to a per-minute rate.
+        Returns 0.0 when the window is empty.
+        """
+        if not window:
+            return 0.0
+        cutoff = now - self.metrics_window_seconds
+        # Walk from the right (most recent) — once we drop below the cutoff,
+        # everything older is also out of window. O(n) worst-case but bounded
+        # by METRICS_DEQUE_MAXLEN.
+        count = 0
+        for ts in reversed(window):
+            if ts < cutoff:
+                break
+            count += 1
+        # Scale window-count to per-minute equivalent so dashboards can show
+        # a consistent unit regardless of the configured window size.
+        return count * (60.0 / self.metrics_window_seconds)
+
+    async def get_metrics(self) -> dict[str, Any]:
+        """Return per-subject throughput counters and connection state.
+
+        Shape::
+
+            {
+                "connected": bool,
+                "window_seconds": int,
+                "subjects": {
+                    "lifeos.email.received": {
+                        "publish_total": int,
+                        "publish_errors": int,
+                        "consume_total": int,
+                        "last_publish_at": "2026-05-17T10:00:00+00:00" | None,
+                        "last_consume_at": str | None,
+                        "publishes_per_minute": float,
+                        "consumes_per_minute": float,
+                    },
+                    ...
+                },
+                "totals": {
+                    "publish_total": int,
+                    "publish_errors": int,
+                    "consume_total": int,
+                },
+            }
+
+        Designed for the ``/health`` endpoint: a connector showing
+        ``last_publish_at`` from hours ago + ``publishes_per_minute == 0``
+        is producing nothing; a non-zero error count is the bus rejecting
+        messages.
+        """
+        now = time.monotonic()
+        # Union of subjects we've ever seen on either side — a subject with
+        # publishes but no consumers (or vice versa) should still appear.
+        subjects = (
+            set(self.publish_total)
+            | set(self.consume_total)
+            | set(self.publish_errors)
+        )
+
+        per_subject: dict[str, dict[str, Any]] = {}
+        for subj in sorted(subjects):
+            per_subject[subj] = {
+                "publish_total": self.publish_total.get(subj, 0),
+                "publish_errors": self.publish_errors.get(subj, 0),
+                "consume_total": self.consume_total.get(subj, 0),
+                "last_publish_at": self.last_publish_at.get(subj),
+                "last_consume_at": self.last_consume_at.get(subj),
+                "publishes_per_minute": self._rate_per_minute(
+                    self._publish_window.get(subj, deque()), now
+                ),
+                "consumes_per_minute": self._rate_per_minute(
+                    self._consume_window.get(subj, deque()), now
+                ),
+            }
+
+        return {
+            "connected": self.is_connected,
+            "window_seconds": self.metrics_window_seconds,
+            "subjects": per_subject,
+            "totals": {
+                "publish_total": sum(self.publish_total.values()),
+                "publish_errors": sum(self.publish_errors.values()),
+                "consume_total": sum(self.consume_total.values()),
+            },
+        }
 
     @property
     def is_connected(self) -> bool:
