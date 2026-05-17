@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from statistics import median
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -87,6 +90,25 @@ class AIEngine:
         self.cloud_model = config.get("cloud_model", "claude-sonnet-4-5-20250514")
         # Cloud usage is gated: both the flag and a valid API key must be present.
         self.use_cloud = config.get("use_cloud", False) and self.cloud_api_key
+
+        # --- Ollama health metrics ---
+        # Rolling counters and windows so operators get a fast signal when the
+        # local model starts timing out, refusing connections, or returning
+        # empty bodies. Counters are cumulative; the deques retain only the
+        # most recent samples so rolling_success_rate stays responsive to
+        # current conditions rather than ancient history.
+        self._ollama_metrics: dict[str, Any] = {
+            "requests_total": 0,
+            "requests_success": 0,
+            "requests_failed": 0,
+            "requests_empty_response": 0,
+            "requests_timeout": 0,
+            "latency_ms_window": deque(maxlen=100),
+            "recent_outcomes": deque(maxlen=50),  # 'success' | 'fail' | 'timeout' | 'empty'
+            "last_success_at": None,
+            "last_failure_at": None,
+            "last_error_message": None,
+        }
 
     async def generate_briefing(self) -> str:
         """Generate the morning briefing."""
@@ -519,12 +541,19 @@ CONSTRAINTS:
     async def _query_local(self, system_prompt: str, user_prompt: str) -> str:
         """Query the local Ollama model.
 
+        Records the call in `_ollama_metrics` regardless of outcome so that
+        `get_ollama_health()` can report a live success rate, latency window,
+        and last-error diagnostics. Outcomes are classified as one of
+        'success', 'empty', 'timeout', or 'fail'.
+
         Raises:
             AIEngineError: With classified error_type when the Ollama request
                 fails — 'connection' if unreachable, 'timeout' if the request
                 exceeds 120s, 'server_error' on HTTP 4xx/5xx responses.
         """
         url = f"{self.ollama_url}/api/chat"
+        self._ollama_metrics["requests_total"] += 1
+        start = perf_counter()
         try:
             # Use httpx async client with a generous 120s timeout -- local models
             # can be slow on CPU-only hardware or with large context windows.
@@ -546,25 +575,107 @@ CONSTRAINTS:
                 data = response.json()
                 # Extract the assistant's message content; default to empty string
                 # if the response structure is unexpected.
-                return data.get("message", {}).get("content", "")
-        except httpx.ConnectError:
-            raise AIEngineError(
-                "Ollama service unreachable",
-                "connection",
-                f"Could not connect to {self.ollama_url}",
-            )
-        except httpx.TimeoutException:
+                content = data.get("message", {}).get("content", "")
+                latency_ms = (perf_counter() - start) * 1000.0
+                self._ollama_metrics["latency_ms_window"].append(latency_ms)
+                # An empty/None response counts separately from a hard failure —
+                # the model is reachable but produced nothing useful, which is
+                # its own kind of silent degradation worth alerting on.
+                if not content:
+                    self._record_ollama_outcome(
+                        "empty",
+                        error_message="Ollama returned empty response body",
+                    )
+                    return content
+                self._record_ollama_outcome("success")
+                return content
+        except httpx.TimeoutException as e:
+            # TimeoutException is a base for ReadTimeout/WriteTimeout/ConnectTimeout.
+            # Check it before ConnectError because ConnectTimeout is a subclass of both.
+            self._record_ollama_outcome("timeout", error_message=str(e) or "timeout")
             raise AIEngineError(
                 "Ollama request timed out",
                 "timeout",
                 "Request exceeded 120s timeout",
             )
+        except httpx.ConnectError as e:
+            self._record_ollama_outcome("fail", error_message=str(e) or "connection refused")
+            raise AIEngineError(
+                "Ollama service unreachable",
+                "connection",
+                f"Could not connect to {self.ollama_url}",
+            )
         except httpx.HTTPStatusError as e:
+            self._record_ollama_outcome("fail", error_message=str(e))
             raise AIEngineError(
                 f"Ollama returned error: {e.response.status_code}",
                 "server_error",
                 str(e),
             )
+
+    def _record_ollama_outcome(self, outcome: str, error_message: str | None = None) -> None:
+        """Update the rolling Ollama health metrics for a single call outcome.
+
+        Args:
+            outcome: One of 'success', 'empty', 'timeout', or 'fail'.
+            error_message: Optional human-readable error description; stored as
+                `last_error_message` for failure/empty outcomes so operators
+                can read it from `get_ollama_health()` without trawling logs.
+        """
+        m = self._ollama_metrics
+        m["recent_outcomes"].append(outcome)
+        now = datetime.now(timezone.utc).isoformat()
+        if outcome == "success":
+            m["requests_success"] += 1
+            m["last_success_at"] = now
+        elif outcome == "empty":
+            m["requests_empty_response"] += 1
+            m["last_failure_at"] = now
+            m["last_error_message"] = error_message
+        elif outcome == "timeout":
+            m["requests_timeout"] += 1
+            m["last_failure_at"] = now
+            m["last_error_message"] = error_message
+        else:  # 'fail' or any unknown classification
+            m["requests_failed"] += 1
+            m["last_failure_at"] = now
+            m["last_error_message"] = error_message
+
+    def get_ollama_health(self) -> dict[str, Any]:
+        """Return a JSON-serializable snapshot of Ollama health metrics.
+
+        Includes cumulative counters, the most recent outcomes/latencies, plus
+        derived `rolling_success_rate` (over the last 50 calls) and
+        `median_latency_ms` (over the last 100 successful calls). Returned as
+        a plain dict with lists instead of deques so it can be serialized
+        directly to JSON for the /health endpoint.
+        """
+        m = self._ollama_metrics
+        recent = list(m["recent_outcomes"])
+        latencies = list(m["latency_ms_window"])
+        # rolling_success_rate is computed over the most recent 50 outcomes
+        # (the deque's maxlen). Older calls have already been evicted and
+        # therefore cannot influence the current health signal. When no calls
+        # have been made yet, return None rather than dividing by zero.
+        if recent:
+            rolling_success_rate = sum(1 for o in recent if o == "success") / len(recent)
+        else:
+            rolling_success_rate = None
+        median_latency_ms = median(latencies) if latencies else None
+        return {
+            "requests_total": m["requests_total"],
+            "requests_success": m["requests_success"],
+            "requests_failed": m["requests_failed"],
+            "requests_empty_response": m["requests_empty_response"],
+            "requests_timeout": m["requests_timeout"],
+            "latency_ms_window": latencies,
+            "recent_outcomes": recent,
+            "last_success_at": m["last_success_at"],
+            "last_failure_at": m["last_failure_at"],
+            "last_error_message": m["last_error_message"],
+            "rolling_success_rate": rolling_success_rate,
+            "median_latency_ms": median_latency_ms,
+        }
 
     async def _query_cloud(self, system_prompt: str, user_prompt: str) -> str:
         """Query a cloud LLM API (Anthropic Claude) with PII-stripped content."""
