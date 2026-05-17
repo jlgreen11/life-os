@@ -120,6 +120,81 @@ class RoutineDetector:
         self._last_detection_count: int | None = None
         self._last_detection_time: str | None = None
 
+        # Per-run skip-reason diagnostics populated by detect_routines() and its
+        # delegate strategies.  Empty until the first run completes.  See
+        # get_last_run_diagnostics() for the dict shape.
+        self._last_run_diagnostics: dict = {}
+
+    def _ensure_run_diagnostic_keys(self) -> None:
+        """Backfill default counter keys when a strategy is invoked standalone.
+
+        ``detect_routines()`` initializes ``self._last_run_diagnostics`` with
+        the full schema, but the strategy helpers (``_detect_temporal_routines``,
+        ``_detect_routines_from_episodes_fallback``) are also called directly by
+        existing tests with the initializer-state empty dict.  This method
+        ensures the integer counters and string fields exist before being
+        incremented, without overwriting values that ``detect_routines()`` has
+        already set.
+        """
+        defaults = {
+            "last_run_at": None,
+            "episodes_considered": 0,
+            "effective_lookback_days": None,
+            "effective_consistency_threshold": None,
+            "effective_min_episodes": None,
+            "candidates_considered": 0,
+            "skipped_below_min_episodes": 0,
+            "skipped_below_consistency": 0,
+            "skipped_high_volume_passive": 0,
+            "routines_emitted": 0,
+        }
+        for key, default_value in defaults.items():
+            self._last_run_diagnostics.setdefault(key, default_value)
+
+    def get_last_run_diagnostics(self) -> dict:
+        """Return a snapshot of the most recent detect_routines() run.
+
+        Captures the per-cycle skip-reason breakdown so operators can tell why
+        a detection cycle produced zero routines — too few candidates, sparse
+        per-bucket coverage, or unreachable consistency thresholds for
+        high-volume passive types (e.g. inbound email).  The dict is reset on
+        every call to detect_routines() and is empty before the first run.
+
+        Returns:
+            A dict with the following fields (all integers unless noted):
+
+            - ``last_run_at`` (str | None): ISO 8601 UTC timestamp of the most
+              recent run, or ``None`` if detect_routines() has never been called.
+            - ``episodes_considered``: Number of episodes pulled from the
+              user_model database for temporal detection in this run.
+            - ``effective_lookback_days``: Lookback window actually used after
+              adaptive expansion.
+            - ``effective_consistency_threshold`` (float | None): Base
+              consistency threshold for the current data maturity tier (without
+              the per-type passive cap).  ``None`` if temporal detection did not
+              run far enough to compute it.
+            - ``effective_min_episodes`` (int | None): Adaptive fallback-trigger
+              threshold from ``_effective_min_episodes``.  ``None`` if temporal
+              detection did not run far enough to compute it.
+            - ``candidates_considered``: Number of (time_bucket, interaction_type)
+              pairs evaluated before any filtering, summed across the temporal
+              and episode-fallback strategies.
+            - ``skipped_below_min_episodes``: Candidate pairs whose distinct-day
+              count was below ``self.min_occurrences`` (3) and were therefore
+              dropped before consistency evaluation.
+            - ``skipped_below_consistency``: Candidate pairs whose bucket-level
+              consistency was below the effective threshold for their dominant
+              interaction type.
+            - ``skipped_high_volume_passive``: Subset of skipped pairs whose
+              dominant interaction type was in ``HIGH_VOLUME_PASSIVE_TYPES``
+              and that still failed the lowered passive-type cap
+              (``PASSIVE_TYPE_CONSISTENCY_THRESHOLD``).
+            - ``routines_emitted``: Total routines returned by detect_routines()
+              across all detection strategies.
+        """
+        # Return a copy so callers cannot mutate the cached diagnostics dict.
+        return dict(self._last_run_diagnostics)
+
     def _effective_consistency_threshold(
         self,
         active_days: int,
@@ -462,6 +537,23 @@ class RoutineDetector:
         Returns:
             List of detected routines with metadata
         """
+        # Reset per-run diagnostics so each call yields a fresh snapshot.  The
+        # delegate strategies (_detect_temporal_routines, the episode-based
+        # fallback) read and increment this dict directly.  See
+        # get_last_run_diagnostics() for the documented field semantics.
+        self._last_run_diagnostics = {
+            "last_run_at": datetime.now(UTC).isoformat(),
+            "episodes_considered": 0,
+            "effective_lookback_days": lookback_days,
+            "effective_consistency_threshold": None,
+            "effective_min_episodes": None,
+            "candidates_considered": 0,
+            "skipped_below_min_episodes": 0,
+            "skipped_below_consistency": 0,
+            "skipped_high_volume_passive": 0,
+            "routines_emitted": 0,
+        }
+
         # Adaptive lookback: when the default window contains fewer episodes than
         # the detection minimum (e.g., because a connector outage pushed all
         # episodes older than 30 days), extend the window to cover the most recent
@@ -476,6 +568,7 @@ class RoutineDetector:
                 lookback_days,
             )
             effective_lookback_days = lookback_days
+        self._last_run_diagnostics["effective_lookback_days"] = effective_lookback_days
 
         # Backfill stale interaction_type values before any detection strategy
         # runs, so all strategies benefit from properly classified episodes.
@@ -545,6 +638,18 @@ class RoutineDetector:
         # Cache result for diagnostics observability
         self._last_detection_count = len(routines)
         self._last_detection_time = datetime.now(UTC).isoformat()
+
+        self._last_run_diagnostics["routines_emitted"] = len(routines)
+
+        # Surface zero-result cycles at INFO level so operators see the skip
+        # breakdown in container logs without needing to call the accessor.
+        # When detection emitted at least one routine the structured summary
+        # above is enough.
+        if len(routines) == 0:
+            logger.info(
+                "Routine detection produced 0 routines — diagnostics: %s",
+                self._last_run_diagnostics,
+            )
 
         return routines
 
@@ -1162,6 +1267,11 @@ class RoutineDetector:
         Returns:
             List of temporal routines
         """
+        # Ensure per-run diagnostic counters exist even when this strategy is
+        # invoked standalone (some unit tests call _detect_temporal_routines
+        # directly without going through detect_routines()).
+        self._ensure_run_diagnostic_keys()
+
         routines = []
         cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
@@ -1222,6 +1332,15 @@ class RoutineDetector:
 
         effective_min_episodes = self._effective_min_episodes(len(raw_episodes), data_age_days)
 
+        # Record adaptive thresholds in the run-level diagnostics dict so
+        # operators can see the gate values that shaped this cycle.  The base
+        # consistency threshold (no per-type passive cap) is the representative
+        # value here; bucket-level evaluation applies any type-specific cap.
+        self._last_run_diagnostics["effective_min_episodes"] = effective_min_episodes
+        self._last_run_diagnostics["effective_consistency_threshold"] = (
+            self._effective_consistency_threshold(active_days)
+        )
+
         # Fallback: if too few episodes have a usable interaction_type, re-query
         # WITHOUT the filter and derive classification from the linked event.
         # The threshold is adaptive (see _effective_min_episodes) so that cold-start
@@ -1272,6 +1391,15 @@ class RoutineDetector:
         logger.info(
             "Temporal detection: %d (bucket, type) pairs found",
             len(bucket_day_sets),
+        )
+
+        # Record per-candidate diagnostics: every (bucket, type) pair counts as
+        # one candidate; pairs that don't reach min_occurrences distinct days
+        # are dropped before consistency evaluation.
+        self._last_run_diagnostics["episodes_considered"] += len(raw_episodes)
+        self._last_run_diagnostics["candidates_considered"] += len(bucket_day_sets)
+        self._last_run_diagnostics["skipped_below_min_episodes"] += sum(
+            1 for days in bucket_day_sets.values() if len(days) < self.min_occurrences
         )
 
         # Filter to (bucket, type) pairs meeting min_occurrences.
@@ -1353,6 +1481,19 @@ class RoutineDetector:
                     effective_threshold,
                     "PASS" if consistency >= effective_threshold else "FAIL",
                 )
+
+                if consistency < effective_threshold:
+                    # Every surviving (bucket, type) pair in this bucket failed
+                    # consistency.  Count them all so operators can tell whether
+                    # threshold tuning or data sparsity is to blame.
+                    self._last_run_diagnostics["skipped_below_consistency"] += len(actions)
+                    if (
+                        dominant_type in self.HIGH_VOLUME_PASSIVE_TYPES
+                        and consistency < self.PASSIVE_TYPE_CONSISTENCY_THRESHOLD
+                    ):
+                        # Subset diagnostic: pairs dropped specifically because
+                        # the lowered passive-type cap was still unreachable.
+                        self._last_run_diagnostics["skipped_high_volume_passive"] += len(actions)
 
                 if consistency >= effective_threshold:
                     steps = actions[:10]  # Cap at 10 steps
@@ -1444,6 +1585,10 @@ class RoutineDetector:
             List of detected routines in the same format as
             ``_detect_temporal_routines()``.
         """
+        # Ensure per-run diagnostic counters exist even when this strategy is
+        # invoked standalone (some unit tests bypass detect_routines()).
+        self._ensure_run_diagnostic_keys()
+
         routines: list[dict[str, Any]] = []
         cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
@@ -1515,6 +1660,15 @@ class RoutineDetector:
             except (ValueError, TypeError):
                 continue
 
+        # Record per-candidate diagnostics for the fallback path so its skip
+        # breakdown is visible alongside the primary temporal stats.  Both
+        # paths feed the same counters so operators see the cumulative effect.
+        self._last_run_diagnostics["episodes_considered"] += len(classified)
+        self._last_run_diagnostics["candidates_considered"] += len(bucket_day_sets)
+        self._last_run_diagnostics["skipped_below_min_episodes"] += sum(
+            1 for days in bucket_day_sets.values() if len(days) < self.min_occurrences
+        )
+
         # Filter to pairs meeting min_occurrences
         hour_actions = [
             (bucket, atype, len(days))
@@ -1563,6 +1717,17 @@ class RoutineDetector:
                     effective_threshold,
                     "PASS" if consistency >= effective_threshold else "FAIL",
                 )
+
+                if consistency < effective_threshold:
+                    # Mirror the temporal-path accounting so a fallback-driven
+                    # zero-result cycle is just as legible in diagnostics.
+                    self._last_run_diagnostics["skipped_below_consistency"] += len(actions)
+                    dominant_type = actions[0][0] if actions else None
+                    if (
+                        dominant_type in self.HIGH_VOLUME_PASSIVE_TYPES
+                        and consistency < self.PASSIVE_TYPE_CONSISTENCY_THRESHOLD
+                    ):
+                        self._last_run_diagnostics["skipped_high_volume_passive"] += len(actions)
 
                 if consistency >= effective_threshold:
                     steps = actions[:10]
