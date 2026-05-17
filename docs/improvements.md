@@ -41,18 +41,21 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Add event bus throughput counters and get_metrics() method** · `code_quality` — Open PR #725 awaiting merge. Returned from wave 10.
-- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Open PR #724 awaiting merge. Returned from wave 8 (not merged).
-- **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Open PR #700 awaiting merge. Temporal extractor writes fail silently; WAL resilience and retry needed.
-- **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Open PR #699 awaiting merge. Decision profile writes lost to WAL; needs write verification.
+- **Add prediction pipeline health section to admin UI** · `missing_feature` — Open PR #734 from wave 1, awaiting merge.
+- **Add post-write verification and WAL checkpoint to store_routine and store_prediction** · `code_quality` — Open PR #737 from wave 1, awaiting merge.
+- **Add post-execution verification to semantic inference and routine detection loops** · `code_quality` — Open PR #736 from wave 1, awaiting merge.
+- **Add notification delivery failure diagnostics with per-domain expiry tracking** · `broken_feature` — Open PR #733 from wave 1, awaiting merge.
+- **Add episode creation rate and backfill status diagnostics to data quality analyzer** · `data_quality` — Open PR #735 from wave 1, awaiting merge.
+- **Add per-correlator execution timing and consecutive-zero tracking to insight engine** · `code_quality` — Open PR #738 from wave 1, awaiting merge.
+- **Add prediction deduplication root-cause logging with per-type and per-trigger breakdown** · `data_quality` — Open PR #739 from wave 1, awaiting merge.
+- **Add event bus throughput counters and get_metrics() method** · `code_quality` — Prior PR #725 closed unmerged. Retry candidate.
+- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Prior PR #724 closed unmerged. Retry candidate.
+- **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Prior PR #700 closed unmerged. Temporal extractor writes fail silently; WAL resilience and retry needed.
+- **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Prior PR #699 closed unmerged. Decision profile writes lost to WAL; needs write verification.
 - **Add update_signal_profile() return value for caller-side failure detection** · `code_quality` — Currently returns void; callers can't distinguish success from silent failure. Requires coordinated changes across all extractors.
-- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Returned from previous wave (no PR). Inline OAuth re-auth flow for Google connector token-missing state.
-- **Reduce notification expiry rate with 4-tier graduated delivery and delivery_attempts tracking** · `broken_feature` — Returned from previous wave (no PR). Reduce 84% expiry rate via graduated channels.
-- **Add feedback collector per-source and per-type diagnostic expansion** · `code_quality` — Returned from previous wave (no PR). Per-source / per-type breakdown in feedback diagnostics.
-- **Add pre-write serialization guard and post-write verification to linguistic outbound profile** · `broken_feature` — Returned from previous wave (no PR). Apply established serialization+verification pattern to linguistic_outbound (11 qualifying events, profile may be lost).
-- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Returned from previous wave (no PR). Distinct from observability work in wave 1 slot 7 — this is the dedup logic fix (cap triggers, fingerprint inputs).
-- **Harden onboarding input validation with domain cap, name validation, and multi-range quiet hours** · `code_quality` — Returned from previous wave (no PR).
-- **Add post-write verification and WAL checkpoint to cadence extractor** · `broken_feature` — Returned from previous wave (no PR). Distinct from the merged pre-write serialization guard — this is post-write verification.
+- **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Inline OAuth re-auth flow for Google connector token-missing state. Defer until wave 1 admin UI work (PR #734) merges to avoid file conflicts.
+- **Reduce notification expiry rate with 4-tier graduated delivery and delivery_attempts tracking** · `broken_feature` — Reduce 84% expiry rate via graduated channels. Defer until wave 1 notification diagnostics (PR #733) merges to avoid file conflicts.
+- **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Distinct from observability work in wave 1 slot 7 — this is the dedup logic fix (cap triggers, fingerprint inputs). Defer until wave 1 PR #739 merges.
 
 ## In Progress
 
@@ -60,13 +63,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add prediction pipeline health section to admin UI** · `missing_feature` (wave 1, slot 1)
-- **Add post-write verification and WAL checkpoint to store_routine and store_prediction** · `code_quality` (wave 1, slot 2)
-- **Add post-execution verification to semantic inference and routine detection loops** · `code_quality` (wave 1, slot 3)
-- **Add notification delivery failure diagnostics with per-domain expiry tracking** · `broken_feature` (wave 1, slot 4)
-- **Add episode creation rate and backfill status diagnostics to data quality analyzer** · `data_quality` (wave 1, slot 5)
-- **Add per-correlator execution timing and consecutive-zero tracking to insight engine** · `code_quality` (wave 1, slot 6)
-- **Add prediction deduplication root-cause logging with per-type and per-trigger breakdown** · `data_quality` (wave 1, slot 7)
+- **Expand feedback collector diagnostics with per-source breakdown and source×type cross-tab** · `code_quality` (wave 2, slot 1)
+- **Harden onboarding input validation: cap domains, validate contact names, support multi-range quiet hours** · `code_quality` (wave 2, slot 2)
+- **Add post-write verification and WAL checkpoint to cadence extractor profile updates** · `broken_feature` (wave 2, slot 3)
+- **Add pre-write serialization guard and post-write verification to linguistic per-contact communication templates** · `broken_feature` (wave 2, slot 4)
+- **Add structured skip-reason diagnostics to routine detector for zero-result cycles** · `data_quality` (wave 2, slot 5)
+- **Add structured skip-reason diagnostics to workflow detector for sender/task/calendar candidates** · `data_quality` (wave 2, slot 6)
+- **Add per-strategy diagnostic counters to task completion detector** · `data_quality` (wave 2, slot 7)
 
 ## Completed
 
