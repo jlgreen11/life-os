@@ -1233,6 +1233,176 @@ def test_expire_stale_notifications_skips_recent_batched(db, mock_event_bus):
     assert stale_row["status"] == "expired"
 
 
+# ============================================================================
+# Expiry Diagnostics (per-domain forensics)
+# ============================================================================
+
+
+def _seed_expiry_fixture(db):
+    """Insert a heterogeneous set of notifications for expiry-diagnostics tests.
+
+    Layout (relative to "now"):
+      - email.work:    3 expired  (1h ago, 2h ago, 3h ago)
+      - email.work:    1 delivered
+      - messaging:     1 expired  (4h ago)
+      - messaging:     2 acted_on (recent)
+      - prediction:    2 expired  (5h ago, 6h ago)
+    """
+    now = datetime.now(timezone.utc)
+
+    def ts(hours_ago: float) -> str:
+        return (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    rows = [
+        ("e1", "email.work", "expired", "normal", ts(1)),
+        ("e2", "email.work", "expired", "high",   ts(2)),
+        ("e3", "email.work", "expired", "low",    ts(3)),
+        ("e4", "email.work", "delivered", "normal", ts(0.5)),
+        ("m1", "messaging", "expired", "normal", ts(4)),
+        ("m2", "messaging", "acted_on", "normal", ts(0.2)),
+        ("m3", "messaging", "acted_on", "high",   ts(0.3)),
+        ("p1", "prediction", "expired", "low",    ts(5)),
+        ("p2", "prediction", "expired", "normal", ts(6)),
+    ]
+    with db.get_connection("state") as conn:
+        for row in rows:
+            conn.execute(
+                """INSERT INTO notifications (id, title, domain, status, priority, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (row[0], f"Notif {row[0]}", row[1], row[2], row[3], row[4]),
+            )
+
+
+def test_get_expiry_diagnostics_returns_expected_shape(notification_manager, db):
+    """Diagnostics payload contains every documented top-level key."""
+    _seed_expiry_fixture(db)
+    result = notification_manager.get_expiry_diagnostics(window_hours=168)
+
+    expected_keys = {
+        "window_hours",
+        "total_in_window",
+        "status_counts",
+        "expiry_rate",
+        "per_domain",
+        "per_type",
+        "per_hour_expired",
+        "avg_time_to_expiry_seconds",
+        "top_sources_by_expired",
+    }
+    assert expected_keys.issubset(result.keys())
+    assert result["window_hours"] == 168
+    assert isinstance(result["per_domain"], list)
+    assert isinstance(result["per_type"], list)
+    assert isinstance(result["per_hour_expired"], dict)
+    # Hour bucket map should always be 24 keys, zero-filled.
+    assert len(result["per_hour_expired"]) == 24
+
+
+def test_get_expiry_diagnostics_per_domain_math(notification_manager, db):
+    """Per-domain expiry rate math matches the seeded fixture exactly."""
+    _seed_expiry_fixture(db)
+    result = notification_manager.get_expiry_diagnostics(window_hours=168)
+
+    per_domain = {d["domain"]: d for d in result["per_domain"]}
+
+    # email.work: 3 expired / 4 total = 0.75
+    assert per_domain["email.work"]["expired"] == 3
+    assert per_domain["email.work"]["delivered"] == 1
+    assert per_domain["email.work"]["total"] == 4
+    assert per_domain["email.work"]["expiry_rate"] == 0.75
+
+    # messaging: 1 expired / 3 total
+    assert per_domain["messaging"]["expired"] == 1
+    assert per_domain["messaging"]["acted_on"] == 2
+    assert per_domain["messaging"]["total"] == 3
+    assert per_domain["messaging"]["expiry_rate"] == round(1 / 3, 4)
+
+    # prediction: 2 expired / 2 total = 1.0
+    assert per_domain["prediction"]["expired"] == 2
+    assert per_domain["prediction"]["expiry_rate"] == 1.0
+
+    # Aggregate expiry rate: 6 expired / 9 total
+    assert result["status_counts"]["expired"] == 6
+    assert result["total_in_window"] == 9
+    assert result["expiry_rate"] == round(6 / 9, 4)
+
+
+def test_get_expiry_diagnostics_top_sources_sorted_by_expired(notification_manager, db):
+    """top_sources_by_expired returns domains ordered by absolute expired count."""
+    _seed_expiry_fixture(db)
+    result = notification_manager.get_expiry_diagnostics(window_hours=168)
+
+    domains_in_order = [entry["domain"] for entry in result["top_sources_by_expired"]]
+    # email.work (3) > prediction (2) > messaging (1)
+    assert domains_in_order[:3] == ["email.work", "prediction", "messaging"]
+    # All top sources should have non-zero expired counts.
+    assert all(entry["expired"] > 0 for entry in result["top_sources_by_expired"])
+
+
+def test_get_expiry_diagnostics_empty_window_returns_zeros(notification_manager, db):
+    """An empty window must return zeroes/empty containers — never crash."""
+    # Seed one notification *outside* the 1-hour window so the query returns
+    # zero rows but the DB schema is still exercised.
+    old_time = (datetime.now(timezone.utc) - timedelta(hours=10)).strftime(
+        "%Y-%m-%dT%H:%M:%S.000Z"
+    )
+    with db.get_connection("state") as conn:
+        conn.execute(
+            """INSERT INTO notifications (id, title, domain, status, priority, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("old-1", "Old", "email", "expired", "normal", old_time),
+        )
+
+    result = notification_manager.get_expiry_diagnostics(window_hours=1)
+
+    assert result["total_in_window"] == 0
+    assert result["expiry_rate"] == 0.0
+    assert result["status_counts"]["expired"] == 0
+    assert result["per_domain"] == []
+    assert result["per_type"] == []
+    assert result["top_sources_by_expired"] == []
+    assert result["avg_time_to_expiry_seconds"] is None
+    # Hour buckets remain present (zero-filled) for chart rendering.
+    assert sum(result["per_hour_expired"].values()) == 0
+
+
+def test_get_expiry_diagnostics_avg_time_to_expiry(notification_manager, db):
+    """Average time-to-expiry is positive and roughly matches seed offsets."""
+    _seed_expiry_fixture(db)
+    result = notification_manager.get_expiry_diagnostics(window_hours=168)
+
+    # Expired ages in the fixture: 1h, 2h, 3h, 4h, 5h, 6h → avg = 3.5h
+    assert result["avg_time_to_expiry_seconds"] is not None
+    avg_hours = result["avg_time_to_expiry_seconds"] / 3600
+    assert 3.0 < avg_hours < 4.0
+
+
+def test_expire_stale_notifications_emits_structured_warning(db, mock_event_bus, caplog):
+    """expire_stale_notifications() logs a per-notification structured WARNING."""
+    import logging as _logging
+
+    nm = NotificationManager(db, mock_event_bus, {}, timezone="UTC")
+    now = datetime.now(timezone.utc)
+    stale_time = (now - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%fZ")
+    with db.get_connection("state") as conn:
+        conn.execute(
+            """INSERT INTO notifications (id, title, domain, priority, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("warn-1", "Stale", "email.work", "normal", "pending", stale_time),
+        )
+
+    with caplog.at_level(_logging.WARNING, logger="services.notification_manager.manager"):
+        nm.expire_stale_notifications(max_age_hours=48)
+
+    forensic = [r for r in caplog.records if "notification expired" in r.getMessage()]
+    assert len(forensic) == 1
+    msg = forensic[0].getMessage()
+    assert "id=warn-1" in msg
+    assert "domain=email.work" in msg
+    assert "priority=normal" in msg
+    assert "reason=age_exceeded" in msg
+
+
 @pytest.mark.asyncio
 async def test_get_digest_expires_stale_before_flushing(db, mock_event_bus):
     """Stale 'batched' notifications should be expired before digest delivery.

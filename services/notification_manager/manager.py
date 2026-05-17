@@ -59,20 +59,22 @@ class NotificationManager:
             # Format must match SQLite's strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             # where %f = SS.SSS (seconds with 3-digit fractional part).
             # Sub-second precision is irrelevant for a 48-hour cutoff.
-            cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).strftime(
+            now = datetime.now(UTC)
+            cutoff = (now - timedelta(hours=max_age_hours)).strftime(
                 "%Y-%m-%dT%H:%M:%S.000Z"
             )
             with self.db.get_connection("state") as conn:
-                # Collect IDs before the UPDATE so we can log feedback for each.
-                # Include both 'pending' (immediate-delivery queue) and 'batched'
-                # (digest-delivery queue) so all undelivered notifications age out.
-                expired_ids = [
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT id FROM notifications WHERE status IN ('pending', 'batched') AND created_at < ?",
-                        (cutoff,),
-                    ).fetchall()
-                ]
+                # Collect full per-row context before the UPDATE so we can both
+                # log structured feedback and emit per-domain forensic warnings
+                # (notification_id, domain, priority, age_seconds) — needed for
+                # the expiry diagnostics surfaced by get_expiry_diagnostics().
+                expired_rows = conn.execute(
+                    """SELECT id, domain, priority, created_at
+                       FROM notifications
+                       WHERE status IN ('pending', 'batched') AND created_at < ?""",
+                    (cutoff,),
+                ).fetchall()
+                expired_ids = [row["id"] for row in expired_rows]
 
                 result = conn.execute(
                     """UPDATE notifications
@@ -83,6 +85,20 @@ class NotificationManager:
                     (cutoff,),
                 )
                 expired_count = result.rowcount
+
+            # Per-notification structured WARNING so log aggregation can build
+            # per-domain expiry forensics without a schema migration. Kept at
+            # WARNING (not INFO) because expiry is a delivery failure, not a
+            # normal lifecycle event.
+            for row in expired_rows:
+                age_seconds = self._compute_age_seconds(row["created_at"], now)
+                logger.warning(
+                    "notification expired: id=%s domain=%s priority=%s age_seconds=%s reason=age_exceeded",
+                    row["id"],
+                    row["domain"] or "unknown",
+                    row["priority"] or "unknown",
+                    f"{age_seconds:.0f}" if age_seconds is not None else "unknown",
+                )
 
             if expired_count > 0:
                 logger.info("Expired %d stale pending notifications (older than %dh)", expired_count, max_age_hours)
@@ -938,6 +954,238 @@ class NotificationManager:
             "delivery_rate": round(delivery_rate, 4),
         }
 
+    @staticmethod
+    def _compute_age_seconds(created_at: str | None, now: datetime) -> float | None:
+        """Compute notification age in seconds from a stored created_at string.
+
+        SQLite stores created_at via strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        which produces an ISO-8601 string ending in 'Z'. Python's
+        ``datetime.fromisoformat`` accepts the +00:00 offset form, so the
+        trailing 'Z' is rewritten before parsing. Returns ``None`` when the
+        timestamp is missing or malformed (callers downgrade to 'unknown').
+        """
+        if not created_at:
+            return None
+        try:
+            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            return (now - created_dt).total_seconds()
+        except (ValueError, AttributeError):
+            return None
+
+    def get_expiry_diagnostics(self, window_hours: int = 168) -> dict:
+        """Forensic breakdown of notification expiry within a recent window.
+
+        Targets the 84%+ expiry rate observed in production by exposing
+        per-domain, per-type, and per-hour distributions so operators can
+        identify which sources are losing the most notifications. Uses only
+        the existing notifications schema — no migration required.
+
+        Args:
+            window_hours: How far back to look (default 168h / 7 days). Only
+                notifications with created_at within the window are considered.
+
+        Returns:
+            Dictionary with structure::
+
+                {
+                    "window_hours":              int,
+                    "total_in_window":           int,
+                    "status_counts":             {"expired": int, "delivered": int, ...},
+                    "expiry_rate":               float,
+                    "per_domain":                [
+                        {"domain": str, "expired": int, "delivered": int,
+                         "acted_on": int, "dismissed": int, "total": int,
+                         "expiry_rate": float},
+                        ...
+                    ],
+                    "per_type":                  [{"type": str, "expired": int, "total": int,
+                                                   "expiry_rate": float}, ...],
+                    "per_hour_expired":          {"00": int, "01": int, ..., "23": int},
+                    "avg_time_to_expiry_seconds": float | None,
+                    "top_sources_by_expired":    [{"domain": str, "expired": int}, ...],
+                }
+
+            All numeric fields return zero/empty on an empty window so callers
+            never need to special-case the cold-start state.
+        """
+        empty: dict = {
+            "window_hours": window_hours,
+            "total_in_window": 0,
+            "status_counts": {
+                "expired": 0,
+                "delivered": 0,
+                "acted_on": 0,
+                "dismissed": 0,
+            },
+            "expiry_rate": 0.0,
+            "per_domain": [],
+            "per_type": [],
+            "per_hour_expired": {f"{h:02d}": 0 for h in range(24)},
+            "avg_time_to_expiry_seconds": None,
+            "top_sources_by_expired": [],
+        }
+
+        try:
+            now = datetime.now(UTC)
+            cutoff = (now - timedelta(hours=window_hours)).strftime(
+                "%Y-%m-%dT%H:%M:%S.000Z"
+            )
+
+            with self.db.get_connection("state") as conn:
+                status_rows = conn.execute(
+                    """SELECT status, COUNT(*) AS cnt
+                       FROM notifications
+                       WHERE created_at > ?
+                       GROUP BY status""",
+                    (cutoff,),
+                ).fetchall()
+
+                # Per-domain breakdown — we pivot statuses into columns in
+                # Python so the SQL stays portable across SQLite versions.
+                domain_rows = conn.execute(
+                    """SELECT COALESCE(domain, 'unknown') AS domain,
+                              status,
+                              COUNT(*) AS cnt
+                       FROM notifications
+                       WHERE created_at > ?
+                       GROUP BY COALESCE(domain, 'unknown'), status""",
+                    (cutoff,),
+                ).fetchall()
+
+                # priority is the closest stand-in for a notification "type"
+                # in the current schema — there is no action_type column.
+                type_rows = conn.execute(
+                    """SELECT COALESCE(priority, 'unknown') AS type,
+                              status,
+                              COUNT(*) AS cnt
+                       FROM notifications
+                       WHERE created_at > ?
+                       GROUP BY COALESCE(priority, 'unknown'), status""",
+                    (cutoff,),
+                ).fetchall()
+
+                # Hour-of-day distribution of expired notifications — uses
+                # local SQLite parsing of the ISO timestamp. Bucketed in UTC
+                # to stay independent of the user's timezone.
+                hour_rows = conn.execute(
+                    """SELECT strftime('%H', created_at) AS hour, COUNT(*) AS cnt
+                       FROM notifications
+                       WHERE status = 'expired' AND created_at > ?
+                       GROUP BY strftime('%H', created_at)""",
+                    (cutoff,),
+                ).fetchall()
+
+                # Average create→expiry latency. Computed in Python so we can
+                # tolerate mixed timestamp precisions (millisecond vs second).
+                expired_rows = conn.execute(
+                    """SELECT created_at
+                       FROM notifications
+                       WHERE status = 'expired' AND created_at > ?""",
+                    (cutoff,),
+                ).fetchall()
+        except Exception:
+            logger.warning("Failed to compute expiry diagnostics", exc_info=True)
+            return empty
+
+        status_counts = {row["status"]: row["cnt"] for row in status_rows}
+        total_in_window = sum(status_counts.values())
+        expired = status_counts.get("expired", 0)
+        delivered = status_counts.get("delivered", 0)
+        acted_on = status_counts.get("acted_on", 0)
+        dismissed = status_counts.get("dismissed", 0)
+        expiry_rate = round(expired / total_in_window, 4) if total_in_window else 0.0
+
+        # Pivot per-domain status counts into one row per domain.
+        per_domain_map: dict[str, dict[str, int]] = {}
+        for row in domain_rows:
+            bucket = per_domain_map.setdefault(
+                row["domain"],
+                {"expired": 0, "delivered": 0, "acted_on": 0, "dismissed": 0, "total": 0},
+            )
+            if row["status"] in bucket:
+                bucket[row["status"]] += row["cnt"]
+            bucket["total"] += row["cnt"]
+        per_domain = []
+        for domain, counts in per_domain_map.items():
+            domain_total = counts["total"]
+            per_domain.append(
+                {
+                    "domain": domain,
+                    "expired": counts["expired"],
+                    "delivered": counts["delivered"],
+                    "acted_on": counts["acted_on"],
+                    "dismissed": counts["dismissed"],
+                    "total": domain_total,
+                    "expiry_rate": round(counts["expired"] / domain_total, 4) if domain_total else 0.0,
+                }
+            )
+        # Sort by absolute expired count descending so the worst sources
+        # surface first in the diagnostics payload.
+        per_domain.sort(key=lambda r: r["expired"], reverse=True)
+
+        per_type_map: dict[str, dict[str, int]] = {}
+        for row in type_rows:
+            bucket = per_type_map.setdefault(
+                row["type"], {"expired": 0, "total": 0}
+            )
+            if row["status"] == "expired":
+                bucket["expired"] += row["cnt"]
+            bucket["total"] += row["cnt"]
+        per_type = [
+            {
+                "type": ptype,
+                "expired": counts["expired"],
+                "total": counts["total"],
+                "expiry_rate": round(counts["expired"] / counts["total"], 4)
+                if counts["total"]
+                else 0.0,
+            }
+            for ptype, counts in per_type_map.items()
+        ]
+        per_type.sort(key=lambda r: r["expired"], reverse=True)
+
+        # Hour buckets default to 0 so consumers can render a 24-bar chart
+        # without checking for missing keys.
+        per_hour_expired = {f"{h:02d}": 0 for h in range(24)}
+        for row in hour_rows:
+            if row["hour"] is not None:
+                per_hour_expired[row["hour"]] = row["cnt"]
+
+        # Average time from create to expiry. We approximate "expired_at"
+        # as "now" because the schema has no explicit expired_at column;
+        # this slightly overstates latency for the most recent expiries
+        # but matches how expiry diagnostics are usually consumed (trend
+        # signal, not exact SLA).
+        ages: list[float] = []
+        for row in expired_rows:
+            age = self._compute_age_seconds(row["created_at"], now)
+            if age is not None:
+                ages.append(age)
+        avg_time_to_expiry = round(sum(ages) / len(ages), 2) if ages else None
+
+        top_sources = [
+            {"domain": entry["domain"], "expired": entry["expired"]}
+            for entry in per_domain[:5]
+            if entry["expired"] > 0
+        ]
+
+        return {
+            "window_hours": window_hours,
+            "total_in_window": total_in_window,
+            "status_counts": {
+                "expired": expired,
+                "delivered": delivered,
+                "acted_on": acted_on,
+                "dismissed": dismissed,
+            },
+            "expiry_rate": expiry_rate,
+            "per_domain": per_domain,
+            "per_type": per_type,
+            "per_hour_expired": per_hour_expired,
+            "avg_time_to_expiry_seconds": avg_time_to_expiry,
+            "top_sources_by_expired": top_sources,
+        }
+
     def delivery_diagnostics(self) -> dict:
         """Return a breakdown of notification expiry reasons for diagnostics.
 
@@ -1019,9 +1267,12 @@ class NotificationManager:
 
         # Find stale prediction notifications: delivered more than timeout_hours
         # ago, still in "delivered" status (never read, acted on, or dismissed).
+        # Fetch priority/created_at so the per-notification expiry warning has
+        # the same forensic fields as the bulk expiry path.
         with self.db.get_connection("state") as conn:
             stale = conn.execute(
-                """SELECT id, source_event_id FROM notifications
+                """SELECT id, source_event_id, priority, created_at
+                   FROM notifications
                    WHERE domain = 'prediction'
                      AND status = 'delivered'
                      AND delivered_at < ?
@@ -1073,6 +1324,16 @@ class NotificationManager:
             # Always mark the notification as expired so it doesn't clutter the UI,
             # regardless of whether the prediction was already resolved.
             self._mark_status(notif["id"], "expired")
+
+            # Structured forensic log so per-domain expiry analysis can
+            # distinguish "ignored prediction" from "aged out before delivery".
+            age_seconds = self._compute_age_seconds(notif["created_at"], now)
+            logger.warning(
+                "notification expired: id=%s domain=prediction priority=%s age_seconds=%s reason=ignored_prediction",
+                notif["id"],
+                notif["priority"] or "unknown",
+                f"{age_seconds:.0f}" if age_seconds is not None else "unknown",
+            )
 
         return resolved_count
 
