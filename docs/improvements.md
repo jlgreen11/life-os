@@ -41,12 +41,13 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
-- **Add post-write verification + WAL-checkpoint retry to decision extractor** · `broken_feature` — Re-queued from wave 3 (no PR opened yet); skip if wave-3 worker completes this.
-- **Add throughput counters and get_metrics() method to NATS event bus** · `code_quality` — Re-queued from wave 3 (no PR opened yet).
-- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Re-queued from wave 3 (no PR opened yet).
-- **Add per-strategy and skip-reason diagnostics to CalDAV/calendar conflict detector** · `data_quality` — Re-queued from wave 3 (no PR opened yet).
-- **Strengthen PIIShield redaction patterns (IBAN, IPv6, MAC, API keys) and add edge-case test coverage** · `code_quality` — Re-queued from wave 3 (no PR opened yet).
-- **Add Ollama health metrics with rolling success rate to AI engine** · `code_quality` — Re-queued from wave 3 (no PR opened yet).
+- **Add WAL-checkpoint retry to spatial extractor post-write verification** · `broken_feature` — Re-queued from wave 4 (no PR opened yet).
+- **Add connection metrics, heartbeat, and broadcast-failure diagnostics to WebSocket manager** · `code_quality` — Re-queued from wave 4 (no PR opened yet).
+- **Add per-strategy resolution counters and accuracy breakdown to behavioral accuracy tracker** · `data_quality` — Re-queued from wave 4 (no PR opened yet).
+- **Add per-category extraction counters and skip-reason diagnostics to semantic fact inferrer** · `data_quality` — Re-queued from wave 4 (no PR opened yet).
+- **Tighten Pydantic schema validation in web/schemas.py for command, search, and rule endpoints** · `code_quality` — Re-queued from wave 4 (no PR opened yet).
+- **Update unused-capability audit to reflect features now implemented (CalDAV conflict, comm templates, episodes)** · `cleanup` — Open PR #748 from wave 4, awaiting merge.
+- **Add embedding-failure tracking and per-source ingest counters to vector store** · `code_quality` — Open PR #749 from wave 4, awaiting merge.
 - **Add post-write verification (sampled) to relationship signal extractor** · `broken_feature` — Open PR #747 from wave 3, awaiting merge.
 - **Add prediction pipeline health section to admin UI** · `missing_feature` — Open PR #734 from wave 1, awaiting merge.
 - **Add post-write verification and WAL checkpoint to store_routine and store_prediction** · `code_quality` — Open PR #737 from wave 1, awaiting merge.
@@ -67,9 +68,12 @@ Feel free to hand-add items above or below whatever the agent writes._
 - **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Inline OAuth re-auth flow for Google connector token-missing state. Defer until wave 1 admin UI work (PR #734) merges to avoid file conflicts.
 - **Reduce notification expiry rate with 4-tier graduated delivery and delivery_attempts tracking** · `broken_feature` — Reduce 84% expiry rate via graduated channels. Defer until wave 1 notification diagnostics (PR #733) merges to avoid file conflicts.
 - **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Distinct from observability work in wave 1 slot 7 — this is the dedup logic fix (cap triggers, fingerprint inputs). Defer until wave 1 PR #739 merges.
-- **Update unused-capability audit to remove CalDAV-conflict-detection stub claim** · `cleanup` — Promoted from Ideas. CalDAV conflict detection is fully implemented in connectors/caldav/connector.py:308-480; audit doc still lists it as a stub.
-- **Add post-write verification + WAL checkpoint retry to spatial extractor (sample-mode)** · `broken_feature` — Spatial profile stuck at 209 samples, last updated 2026-04-14 (33+ days stale). Existing verification fires only at line 371; consider sampled-every-Nth-write hardening matching mood.py pattern.
-- **Add data quality analyzer surfacing of conflict-detector diagnostics** · `data_quality` — Once wave-3 slot 4 lands per-strategy counters in conflict_detector.get_diagnostics(), expose them in scripts/analyze-data-quality.py output so 0-conflict runs become operator-visible.
+- **Update unused-capability audit to remove CalDAV-conflict-detection stub claim** · `cleanup` — Promoted from Ideas. CalDAV conflict detection is fully implemented in connectors/caldav/connector.py:308-480; audit doc still lists it as a stub. Likely subsumed by wave 4 slot 3 (PR #748) once merged.
+- **Add post-write verification + WAL checkpoint retry to spatial extractor (sample-mode)** · `broken_feature` — Spatial profile stuck at 209 samples, last updated 2026-04-14 (33+ days stale). Subsumed by wave 4 slot 1 re-queue at top of backlog.
+- **Add data quality analyzer surfacing of conflict-detector diagnostics** · `data_quality` — Once wave-5 slot 4 lands per-strategy counters in conflict_detector.get_diagnostics(), expose them in scripts/analyze-data-quality.py output so 0-conflict runs become operator-visible.
+- **Add Anthropic cloud AI engine health metrics with rolling success rate** · `code_quality` — Companion to wave-5 slot 6 (Ollama metrics). Mirror the same instrumentation on the cloud-Claude call path; both share services/ai_engine/engine.py so should land after slot 6 to avoid conflict.
+- **Add per-rule-action-type counters to RulesEngine admin UI surface** · `code_quality` — Once wave-5 slot 7 lands get_diagnostics() on RulesEngine, expose those counters in /admin and /health so operators can spot the 33-day rules silence.
+- **Investigate why source_weights.updated_at is null for 14 of 16 weights despite 100k+ interactions** · `data_quality` — Only email.work and email.transactional show non-null updated_at; the others (messaging.direct with 46k interactions, calendar.meetings with 1.7k, etc.) never persist. Likely a write path that records the in-memory weight but skips the SQL UPDATE.
 
 ## In Progress
 
@@ -77,13 +81,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add WAL-checkpoint retry to spatial extractor post-write verification** · `broken_feature` (wave 4, slot 1)
-- **Add connection metrics, heartbeat, and broadcast-failure diagnostics to WebSocket manager** · `code_quality` (wave 4, slot 2)
-- **Update unused-capability audit to reflect features now implemented (CalDAV conflict, comm templates, episodes)** · `cleanup` (wave 4, slot 3)
-- **Add per-strategy resolution counters and accuracy breakdown to behavioral accuracy tracker** · `data_quality` (wave 4, slot 4)
-- **Add embedding-failure tracking and per-source ingest counters to vector store** · `code_quality` (wave 4, slot 5)
-- **Add per-category extraction counters and skip-reason diagnostics to semantic fact inferrer** · `data_quality` (wave 4, slot 6)
-- **Tighten Pydantic schema validation in web/schemas.py for command, search, and rule endpoints** · `code_quality` (wave 4, slot 7)
+- **Add post-write verification + WAL-checkpoint retry to decision signal extractor** · `broken_feature` (wave 5, slot 1)
+- **Add throughput counters and get_metrics() to NATS event bus** · `code_quality` (wave 5, slot 2)
+- **Add regex/heuristic task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 5, slot 3)
+- **Add per-strategy and skip-reason diagnostics to calendar conflict detector** · `data_quality` (wave 5, slot 4)
+- **Strengthen PIIShield redaction patterns (IBAN, IPv6, MAC, API keys) + edge-case tests** · `code_quality` (wave 5, slot 5)
+- **Add Ollama health metrics with rolling success rate to AI engine** · `code_quality` (wave 5, slot 6)
+- **Add per-action-type diagnostics and stale-rule detection to RulesEngine** · `code_quality` (wave 5, slot 7)
 
 ## Completed
 
