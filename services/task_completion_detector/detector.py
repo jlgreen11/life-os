@@ -79,6 +79,26 @@ class TaskCompletionDetector:
             'merged', 'deployed', 'published', 'launched'
         }
 
+        # Per-strategy diagnostics from the most recent detect_completions() run.
+        # Empty until the first run completes. See get_last_run_diagnostics().
+        self._last_run_diagnostics: dict[str, Any] = {}
+
+    def get_last_run_diagnostics(self) -> dict:
+        """Return diagnostics from the most recent detect_completions() invocation.
+
+        Returns a copy of the per-strategy counters captured during the last
+        run, allowing operators to distinguish between "no pending tasks"
+        (everything is zero), "strategies considered tasks but found no
+        completion signals" (tasks_examined > 0, completions == 0), and
+        "completions are firing" (completions > 0). Empty dict if detection
+        has not yet run.
+
+        Returns:
+            Dict with keys: last_run_at, pending_tasks_examined,
+            activity, inactivity, stale, total_completions.
+        """
+        return dict(self._last_run_diagnostics)
+
     async def detect_completions(self) -> int:
         """Scan all pending tasks and detect which ones are completed.
 
@@ -88,29 +108,73 @@ class TaskCompletionDetector:
         3. Inactivity-based: tasks with no activity for threshold period
         4. Stale task cleanup: very old tasks with zero activity
 
+        Populates ``self._last_run_diagnostics`` with per-strategy counters so
+        operators can introspect which strategies are firing (or not) without
+        having to inspect the database. Always emits an INFO summary line on
+        completion regardless of whether any tasks were closed — this is a
+        low-frequency loop so log volume is not a concern, and silence in the
+        log was previously indistinguishable from a broken detector.
+
         Returns:
             Number of tasks marked complete
         """
-        completed_count = 0
+        # Count all pending tasks once so the top-level diagnostic reflects
+        # how many candidates the system had before any strategy filtered.
+        with self.db.get_connection("state") as conn:
+            pending_total = conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status = 'pending'"
+            ).fetchone()[0]
+
+        # Reset diagnostics for this run. Each strategy populates its own
+        # sub-dict below so the structure is fully predictable for consumers.
+        self._last_run_diagnostics = {
+            'last_run_at': datetime.now(timezone.utc).isoformat(),
+            'pending_tasks_examined': pending_total,
+            'activity': {
+                'tasks_examined': 0,
+                'sent_events_examined': 0,
+                'keyword_matches': 0,
+                'completions': 0,
+            },
+            'inactivity': {
+                'tasks_examined': 0,
+                'completions': 0,
+            },
+            'stale': {
+                'tasks_examined': 0,
+                'completions': 0,
+            },
+            'total_completions': 0,
+        }
 
         # Strategy 1: Activity-based completion detection
         activity_completions = await self._detect_activity_based_completion()
-        completed_count += activity_completions
 
         # Strategy 2: Inactivity-based completion (tasks that went silent)
         inactivity_completions = await self._detect_inactivity_based_completion()
-        completed_count += inactivity_completions
 
         # Strategy 3: Stale task cleanup (very old tasks, likely abandoned)
         stale_completions = await self._detect_stale_tasks()
-        completed_count += stale_completions
 
-        if completed_count > 0:
-            logger.info(
-                f"Auto-detected {completed_count} completed tasks "
-                f"({activity_completions} activity, {inactivity_completions} inactive, "
-                f"{stale_completions} stale)"
-            )
+        completed_count = activity_completions + inactivity_completions + stale_completions
+        self._last_run_diagnostics['total_completions'] = completed_count
+
+        diag = self._last_run_diagnostics
+        logger.info(
+            "Task completion detector run: pending=%d, completions=%d "
+            "(activity=%d/%d tasks, %d keyword matches, %d events; "
+            "inactivity=%d/%d tasks; stale=%d/%d tasks)",
+            diag['pending_tasks_examined'],
+            completed_count,
+            diag['activity']['completions'],
+            diag['activity']['tasks_examined'],
+            diag['activity']['keyword_matches'],
+            diag['activity']['sent_events_examined'],
+            diag['inactivity']['completions'],
+            diag['inactivity']['tasks_examined'],
+            diag['stale']['completions'],
+            diag['stale']['tasks_examined'],
+        )
 
         return completed_count
 
@@ -131,6 +195,15 @@ class TaskCompletionDetector:
         completed_count = 0
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.inactivity_days)
 
+        # Initialize counters even if no tasks exist, so diagnostics always
+        # have a stable shape downstream.
+        counters = self._last_run_diagnostics.setdefault('activity', {
+            'tasks_examined': 0,
+            'sent_events_examined': 0,
+            'keyword_matches': 0,
+            'completions': 0,
+        })
+
         # Get all pending tasks
         with self.db.get_connection("state") as conn:
             cursor = conn.execute("""
@@ -142,6 +215,8 @@ class TaskCompletionDetector:
             """, (cutoff.isoformat(),))
 
             tasks = [dict(row) for row in cursor.fetchall()]
+
+        counters['tasks_examined'] = len(tasks)
 
         # For each task, look for sent emails/messages after creation that reference it
         for task in tasks:
@@ -189,6 +264,8 @@ class TaskCompletionDetector:
 
                 sent_events = cursor.fetchall()
 
+            counters['sent_events_examined'] += len(sent_events)
+
             # Check each sent event for task reference + completion keywords
             for event_row in sent_events:
                 event_id, event_type, payload_json, timestamp = event_row
@@ -216,6 +293,12 @@ class TaskCompletionDetector:
                 # Total score is weighted sum (exact matches worth more)
                 keyword_overlap = exact_matches + (stem_matches * 0.5)
 
+                # Track any keyword overlap before the completion-signal gate so
+                # operators can distinguish "no task references at all" from
+                # "references present but never paired with a completion word".
+                if keyword_overlap > 0:
+                    counters['keyword_matches'] += 1
+
                 # Check for completion signal keywords
                 has_completion_keyword = any(
                     keyword in text_content for keyword in self.completion_keywords
@@ -227,6 +310,7 @@ class TaskCompletionDetector:
                     await self.task_manager.complete_task(task_id)
                     self._update_episode_outcome(task.get("source"), "activity_match")
                     completed_count += 1
+                    counters['completions'] += 1
                     logger.debug(
                         f"Auto-completed task '{task['title']}' based on sent "
                         f"{event_type} with {keyword_overlap} keyword matches"
@@ -273,10 +357,17 @@ class TaskCompletionDetector:
 
             inactive_tasks = [dict(row) for row in cursor.fetchall()]
 
+        counters = self._last_run_diagnostics.setdefault('inactivity', {
+            'tasks_examined': 0,
+            'completions': 0,
+        })
+        counters['tasks_examined'] = len(inactive_tasks)
+
         for task in inactive_tasks:
             await self.task_manager.complete_task(task['id'])
             self._update_episode_outcome(task.get("source"), "inactivity")
             completed_count += 1
+            counters['completions'] += 1
             logger.debug(
                 "Auto-completed inactive task '%s' "
                 "(pending for %d+ days without completion signal)",
@@ -310,11 +401,18 @@ class TaskCompletionDetector:
 
             stale_tasks = [dict(row) for row in cursor.fetchall()]
 
+        counters = self._last_run_diagnostics.setdefault('stale', {
+            'tasks_examined': 0,
+            'completions': 0,
+        })
+        counters['tasks_examined'] = len(stale_tasks)
+
         # Mark them all complete - they're too old to be actionable
         for task in stale_tasks:
             await self.task_manager.complete_task(task['id'])
             self._update_episode_outcome(task.get("source"), "stale")
             completed_count += 1
+            counters['completions'] += 1
             logger.debug(
                 f"Archived stale task '{task['title']}' "
                 f"(created {task['created_at']}, {self.stale_days}+ days old)"
