@@ -28,6 +28,7 @@ import json
 import logging
 import math
 import uuid
+from collections import deque
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -186,6 +187,18 @@ class PredictionEngine:
         # DB-based cache refresh.  Resets to 0 after each refresh.
         self._prefilter_refresh_cycle: int = 0
 
+        # Dedup root-cause breakdown — tracks which prediction types and which
+        # upstream triggers (_check_* method names) are responsible for duplicate
+        # predictions.  The data-quality analyzer flagged a 15.7x dedup rate but
+        # without this attribution it was invisible which class was responsible.
+        # _dedup_breakdown_current is reset at the start of each generate cycle.
+        # _dedup_recent is a rolling window over the last 24h aggregated in-memory
+        # and exposed via get_dedup_breakdown(); each entry stores prediction_type,
+        # trigger_kind, time_horizon, confidence, dedup site, and a timestamp.
+        self._dedup_breakdown_current: dict[str, Any] = self._empty_dedup_breakdown()
+        self._dedup_recent: deque[dict[str, Any]] = deque()
+        self._dedup_window_seconds: int = 24 * 60 * 60
+
         # Lazy-loaded cache mapping lowercase email addresses → contact names
         # from the entities.db contacts table.  Refreshed every 30 minutes.
         self._contact_email_map: dict[str, str] = {}
@@ -316,6 +329,11 @@ class PredictionEngine:
         # After a DB recovery, any in-memory cache entries are stale.
         self._prefilter_cache = set()
         self._prefilter_refresh_cycle = 0
+        # Reset dedup tracking — the rolling window's attributions are scoped
+        # to the current engine session, so wipe them alongside other in-memory
+        # state after a DB recovery resets the engine.
+        self._dedup_breakdown_current = self._empty_dedup_breakdown()
+        self._dedup_recent.clear()
 
         # Clear the persisted trigger-state keys from the DB so that
         # _load_persisted_state() doesn't reload stale timestamps after
@@ -536,6 +554,143 @@ class PredictionEngine:
             "sample_filtered_reasons": [],
         }
 
+    @staticmethod
+    def _empty_dedup_breakdown() -> dict[str, Any]:
+        """Return a fresh per-cycle dedup breakdown dict with zeroed counters.
+
+        Tracks duplicates dropped at either dedup site (intra-batch or DB-level)
+        grouped by prediction_type and trigger_kind so the data-quality analyzer
+        can attribute the dedup-rate anomaly to a specific class of predictions.
+        """
+        return {"by_type": {}, "by_trigger": {}, "total": 0}
+
+    @staticmethod
+    def _extract_trigger_kind(prediction: Any, fallback_type: str | None = None) -> str:
+        """Extract the originating trigger kind from a prediction.
+
+        Pulls from ``supporting_signals['_trigger_kind']`` if present,
+        otherwise falls back to the ``prediction_type`` — which roughly maps
+        to the originating ``_check_*`` correlator method since each method
+        emits a fixed set of prediction types.
+
+        Accepts both ``Prediction`` model instances and dict representations
+        (the DB-level dedup site only sees a dict).
+        """
+        if isinstance(prediction, dict):
+            signals = prediction.get("supporting_signals") or {}
+            ptype = prediction.get("prediction_type") or fallback_type or "unknown"
+        else:
+            signals = getattr(prediction, "supporting_signals", {}) or {}
+            ptype = getattr(prediction, "prediction_type", None) or fallback_type or "unknown"
+
+        # supporting_signals may arrive as a JSON string when read back from
+        # SQLite — decode defensively so the extractor never raises.
+        if isinstance(signals, str):
+            try:
+                signals = json.loads(signals)
+            except (json.JSONDecodeError, ValueError):
+                signals = {}
+
+        trigger = signals.get("_trigger_kind") if isinstance(signals, dict) else None
+        return trigger or ptype
+
+    def _record_dedup(self, prediction: Any, site: str) -> None:
+        """Record a single deduplicated prediction in both per-cycle and rolling stats.
+
+        ``site`` is one of ``"intra_batch"`` or ``"store_prediction"`` and
+        identifies which dedup path dropped the duplicate.  The per-cycle
+        breakdown is logged at end-of-cycle; the rolling window backs
+        :py:meth:`get_dedup_breakdown` for diagnostics queries.
+        """
+        ptype = (
+            prediction.get("prediction_type") if isinstance(prediction, dict)
+            else getattr(prediction, "prediction_type", "unknown")
+        ) or "unknown"
+        trigger = self._extract_trigger_kind(prediction, fallback_type=ptype)
+        time_horizon = (
+            prediction.get("time_horizon") if isinstance(prediction, dict)
+            else getattr(prediction, "time_horizon", None)
+        )
+        confidence_raw = (
+            prediction.get("confidence") if isinstance(prediction, dict)
+            else getattr(prediction, "confidence", 0.0)
+        )
+        try:
+            confidence = float(confidence_raw) if confidence_raw is not None else 0.0
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        entry = {
+            "timestamp": datetime.now(UTC),
+            "prediction_type": ptype,
+            "trigger_kind": trigger,
+            "time_horizon": time_horizon,
+            "confidence": confidence,
+            "site": site,
+        }
+        self._dedup_recent.append(entry)
+
+        self._dedup_breakdown_current["by_type"][ptype] = (
+            self._dedup_breakdown_current["by_type"].get(ptype, 0) + 1
+        )
+        self._dedup_breakdown_current["by_trigger"][trigger] = (
+            self._dedup_breakdown_current["by_trigger"].get(trigger, 0) + 1
+        )
+        self._dedup_breakdown_current["total"] += 1
+
+    def _prune_dedup_recent(self) -> None:
+        """Drop entries from the rolling dedup window older than ``_dedup_window_seconds``.
+
+        Called from :py:meth:`get_dedup_breakdown` so the rolling aggregate
+        always reflects only the configured lookback window (24h by default).
+        """
+        cutoff = datetime.now(UTC) - timedelta(seconds=self._dedup_window_seconds)
+        while self._dedup_recent and self._dedup_recent[0]["timestamp"] < cutoff:
+            self._dedup_recent.popleft()
+
+    def get_dedup_breakdown(self) -> dict[str, Any]:
+        """Return rolling per-type and per-trigger dedup counts over the last 24h.
+
+        Read-only aggregate over the in-memory rolling window — no DB hits,
+        no schema, no storage changes.  Intended for the data-quality
+        analyzer and admin dashboard to attribute the dedup-rate anomaly
+        to a specific prediction class or originating correlator.
+
+        Returns:
+            dict with keys:
+              - by_type: ``{prediction_type: count}``
+              - by_trigger: ``{trigger_kind: count}``
+              - total_dedups: total deduplicated predictions in the window
+              - window_seconds: lookback window length
+        """
+        self._prune_dedup_recent()
+        by_type: dict[str, int] = {}
+        by_trigger: dict[str, int] = {}
+        for entry in self._dedup_recent:
+            by_type[entry["prediction_type"]] = by_type.get(entry["prediction_type"], 0) + 1
+            by_trigger[entry["trigger_kind"]] = by_trigger.get(entry["trigger_kind"], 0) + 1
+        return {
+            "by_type": by_type,
+            "by_trigger": by_trigger,
+            "total_dedups": len(self._dedup_recent),
+            "window_seconds": self._dedup_window_seconds,
+        }
+
+    def _tag_trigger(self, predictions: list[Prediction], kind: str) -> list[Prediction]:
+        """Stamp each prediction with its originating ``_check_*`` method name.
+
+        Adds ``_trigger_kind`` to ``supporting_signals`` via ``setdefault`` so a
+        check method that has already set a more specific value (e.g.
+        ``"calendar_conflict_overlap"`` vs ``"calendar_conflict_tight"``) is
+        not overwritten.  Used purely as observability metadata at the two
+        dedup sites — does not influence dedup logic itself.
+        """
+        for p in predictions:
+            signals = p.supporting_signals if isinstance(p.supporting_signals, dict) else {}
+            signals.setdefault("_trigger_kind", kind)
+            p.supporting_signals = signals
+        return predictions
+
     def _bucket_reaction_score(self, score: float) -> str:
         """Classify a reaction score into a histogram bucket.
 
@@ -630,6 +785,11 @@ class PredictionEngine:
         # Wrapped in try/except so DB errors (e.g. corrupted user_model.db)
         # default to True rather than aborting the entire pipeline.
         generation_stats = {}
+
+        # Reset per-cycle dedup breakdown so the structured INFO log at end of
+        # cycle reflects only duplicates dropped during this run.  The rolling
+        # 24h window in _dedup_recent is preserved across cycles.
+        self._dedup_breakdown_current = self._empty_dedup_breakdown()
 
         # --- Persistence failure recovery ---
         # If the previous cycle detected that predictions were lost after storage
@@ -892,7 +1052,7 @@ class PredictionEngine:
             try:
                 calendar_preds = await self._check_calendar_conflicts(current_context)
                 generation_stats['calendar_conflicts'] = len(calendar_preds)
-                predictions.extend(calendar_preds)
+                predictions.extend(self._tag_trigger(calendar_preds, "calendar_conflicts"))
             except Exception as e:
                 generation_stats['calendar_conflicts'] = f'error: {e}'
                 logger.error("calendar_conflicts check failed: %s", e)
@@ -900,7 +1060,7 @@ class PredictionEngine:
             try:
                 routine_preds = await self._check_routine_deviations(current_context)
                 generation_stats['routine_deviations'] = len(routine_preds)
-                predictions.extend(routine_preds)
+                predictions.extend(self._tag_trigger(routine_preds, "routine_deviations"))
             except Exception as e:
                 generation_stats['routine_deviations'] = f'error: {e}'
                 logger.error("routine_deviations check failed: %s", e)
@@ -908,7 +1068,7 @@ class PredictionEngine:
             try:
                 relationship_preds = await self._check_relationship_maintenance(current_context)
                 generation_stats['relationship_maintenance'] = len(relationship_preds)
-                predictions.extend(relationship_preds)
+                predictions.extend(self._tag_trigger(relationship_preds, "relationship_maintenance"))
             except Exception as e:
                 generation_stats['relationship_maintenance'] = f'error: {e}'
                 logger.error("relationship_maintenance check failed: %s", e)
@@ -916,7 +1076,7 @@ class PredictionEngine:
             try:
                 prep_preds = await self._check_preparation_needs(current_context)
                 generation_stats['preparation_needs'] = len(prep_preds)
-                predictions.extend(prep_preds)
+                predictions.extend(self._tag_trigger(prep_preds, "preparation_needs"))
             except Exception as e:
                 generation_stats['preparation_needs'] = f'error: {e}'
                 logger.error("preparation_needs check failed: %s", e)
@@ -924,7 +1084,7 @@ class PredictionEngine:
             try:
                 reminder_preds = await self._check_calendar_event_reminders(current_context)
                 generation_stats['calendar_reminders'] = len(reminder_preds)
-                predictions.extend(reminder_preds)
+                predictions.extend(self._tag_trigger(reminder_preds, "calendar_reminders"))
             except Exception as e:
                 generation_stats['calendar_reminders'] = f'error: {e}'
                 logger.error("calendar_reminders check failed: %s", e)
@@ -932,7 +1092,7 @@ class PredictionEngine:
             try:
                 connector_preds = await self._check_connector_health(current_context)
                 generation_stats['connector_health'] = len(connector_preds)
-                predictions.extend(connector_preds)
+                predictions.extend(self._tag_trigger(connector_preds, "connector_health"))
             except Exception as e:
                 generation_stats['connector_health'] = f'error: {e}'
                 logger.error("connector_health check failed: %s", e)
@@ -953,7 +1113,7 @@ class PredictionEngine:
         try:
             followup_preds = await self._check_follow_up_needs(current_context)
             generation_stats['follow_up_needs'] = len(followup_preds)
-            predictions.extend(followup_preds)
+            predictions.extend(self._tag_trigger(followup_preds, "follow_up_needs"))
         except Exception as e:
             generation_stats['follow_up_needs'] = f'error: {e}'
             logger.error("follow_up_needs check failed: %s", e)
@@ -964,7 +1124,7 @@ class PredictionEngine:
             try:
                 spending_preds = await self._check_spending_patterns(current_context)
                 generation_stats['spending_patterns'] = len(spending_preds)
-                predictions.extend(spending_preds)
+                predictions.extend(self._tag_trigger(spending_preds, "spending_patterns"))
             except Exception as e:
                 generation_stats['spending_patterns'] = f'error: {e}'
                 logger.error("spending_patterns check failed: %s", e)
@@ -977,10 +1137,15 @@ class PredictionEngine:
         # the overhead of per-prediction DB queries and telemetry events.
         if existing_predictions:
             before_count = len(predictions)
-            predictions = [
-                p for p in predictions
-                if (p.prediction_type, p.description, p.time_horizon) not in existing_predictions
-            ]
+            kept: list[Prediction] = []
+            for p in predictions:
+                if (p.prediction_type, p.description, p.time_horizon) in existing_predictions:
+                    # Attribute this drop to the originating correlator so the
+                    # end-of-cycle breakdown and rolling window stay accurate.
+                    self._record_dedup(p, site="pre_filter")
+                else:
+                    kept.append(p)
+            predictions = kept
             skipped = before_count - len(predictions)
             if skipped:
                 generation_stats['pre_filtered'] = skipped
@@ -999,6 +1164,10 @@ class PredictionEngine:
             if key not in seen_keys:
                 seen_keys.add(key)
                 unique_predictions.append(p)
+            else:
+                # Record duplicates dropped at the intra-batch site so the
+                # breakdown can pinpoint which check method is over-generating.
+                self._record_dedup(p, site="intra_batch")
         intra_dupes = len(predictions) - len(unique_predictions)
         if intra_dupes:
             generation_stats['intra_batch_dedup'] = intra_dupes
@@ -1197,6 +1366,10 @@ class PredictionEngine:
                     # so it won't be returned to _prediction_loop() and create
                     # orphaned notifications referencing non-existent DB rows.
                     surfaced_ids.discard(pred.id)
+                    # Attribute the DB-level duplicate so the breakdown
+                    # distinguishes it from intra-batch dedup (different root
+                    # causes: pre-filter cache miss vs. same-cycle collision).
+                    self._record_dedup(pred, site="store_prediction")
             except Exception as e:
                 logger.error("Failed to store prediction %s: %s", pred.id, e)
                 run_store_failures += 1
@@ -1331,6 +1504,22 @@ class PredictionEngine:
                 available_profiles,
             )
 
+        # Snapshot the per-cycle dedup breakdown (per-type and per-trigger
+        # counts plus total) and emit a structured INFO line so operators can
+        # see which prediction class drove this cycle's dedup volume.
+        dedup_breakdown_snapshot = {
+            "by_type": dict(self._dedup_breakdown_current["by_type"]),
+            "by_trigger": dict(self._dedup_breakdown_current["by_trigger"]),
+            "total": self._dedup_breakdown_current["total"],
+        }
+        if dedup_breakdown_snapshot["total"] > 0:
+            logger.info(
+                "prediction dedup breakdown: total=%d, by_type=%s, by_trigger=%s",
+                dedup_breakdown_snapshot["total"],
+                dedup_breakdown_snapshot["by_type"],
+                dedup_breakdown_snapshot["by_trigger"],
+            )
+
         self._last_run_diagnostics = {
             "last_run_at": datetime.now(UTC).isoformat(),
             "total_runs": self._total_runs,
@@ -1353,6 +1542,11 @@ class PredictionEngine:
             # Intra-batch dedup counter: how many predictions were removed within
             # this cycle because two _check_* methods generated the same prediction.
             "intra_batch_dedup": generation_stats.get("intra_batch_dedup", 0),
+            # Per-cycle dedup root-cause breakdown — both pre-filter/intra-batch
+            # drops AND DB-level dedups are attributed to their prediction_type
+            # and trigger_kind (originating correlator).  Read by the data-quality
+            # analyzer to attribute the dedup-rate warning.
+            "dedup_breakdown": dedup_breakdown_snapshot,
             # Pre-filter cache state for monitoring cache effectiveness.
             "prefilter_cache_size": len(self._prefilter_cache),
             "prefilter_refresh_cycle": self._prefilter_refresh_cycle,

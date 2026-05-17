@@ -636,11 +636,31 @@ class UserModelStore:
 
             # If duplicate exists (either unresolved or recently filtered), skip storage
             if existing:
+                # Extract trigger_kind so downstream analyzer queries can group
+                # dedup volume by the originating correlator (e.g. follow_up_needs
+                # vs relationship_maintenance). Falls back to prediction_type
+                # when the prediction wasn't tagged in the engine pipeline —
+                # prediction_type is the next-best attribution since each
+                # _check_* method emits a fixed type.
+                supporting_signals = prediction.get("supporting_signals") or {}
+                if isinstance(supporting_signals, str):
+                    try:
+                        supporting_signals = json.loads(supporting_signals)
+                    except (json.JSONDecodeError, ValueError):
+                        supporting_signals = {}
+                trigger_kind = None
+                if isinstance(supporting_signals, dict):
+                    trigger_kind = supporting_signals.get("_trigger_kind")
+                if not trigger_kind:
+                    trigger_kind = prediction["prediction_type"]
+
                 # Telemetry for observability: track that deduplication occurred
                 self._emit_telemetry("usermodel.prediction.deduplicated", {
                     "existing_prediction_id": existing["id"],
                     "attempted_prediction_type": prediction["prediction_type"],
                     "attempted_description": prediction["description"][:100],  # Truncate for telemetry
+                    "trigger_kind": trigger_kind,
+                    "time_horizon": prediction.get("time_horizon"),
                     "deduplicated_at": datetime.now(UTC).isoformat(),
                 })
                 return False  # Skip storage — duplicate exists

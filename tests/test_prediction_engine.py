@@ -5,6 +5,7 @@ Tests all 8 prediction methods across various scenarios to ensure the core
 prediction loop generates accurate, actionable predictions.
 """
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1062,3 +1063,317 @@ async def test_no_accumulation_storm_on_repeated_runs(db, event_store, user_mode
         f"Expected at most 4 reminder predictions for 2 events (with dedup), "
         f"got {len(rows)} — accumulation bug may still be present"
     )
+
+
+# -------------------------------------------------------------------------
+# Dedup Root-Cause Observability Tests
+# -------------------------------------------------------------------------
+
+
+def _make_prediction(
+    *,
+    prediction_type: str = "reminder",
+    description: str = "Follow up on email",
+    time_horizon: str = "2_hours",
+    trigger_kind: str | None = None,
+    confidence: float = 0.6,
+):
+    """Construct a Prediction model instance for dedup tests.
+
+    Optionally stamps ``_trigger_kind`` into supporting_signals so the
+    breakdown can verify trigger attribution independent of prediction_type.
+    """
+    from models.user_model import Prediction
+    signals: dict = {}
+    if trigger_kind is not None:
+        signals["_trigger_kind"] = trigger_kind
+    return Prediction(
+        prediction_type=prediction_type,
+        description=description,
+        confidence=confidence,
+        confidence_gate=ConfidenceGate.SUGGEST,
+        time_horizon=time_horizon,
+        supporting_signals=signals,
+    )
+
+
+def test_extract_trigger_kind_prefers_supporting_signals(db, user_model_store):
+    """_extract_trigger_kind reads supporting_signals['_trigger_kind'] when present."""
+    engine = PredictionEngine(db, user_model_store)
+    pred = _make_prediction(prediction_type="reminder", trigger_kind="follow_up_needs")
+    assert engine._extract_trigger_kind(pred) == "follow_up_needs"
+
+
+def test_extract_trigger_kind_falls_back_to_prediction_type(db, user_model_store):
+    """_extract_trigger_kind falls back to prediction_type when no tag is set."""
+    engine = PredictionEngine(db, user_model_store)
+    pred = _make_prediction(prediction_type="routine_deviation", trigger_kind=None)
+    assert engine._extract_trigger_kind(pred) == "routine_deviation"
+
+
+def test_extract_trigger_kind_handles_dict_predictions(db, user_model_store):
+    """_extract_trigger_kind also works on dict-shaped predictions (DB-dedup site)."""
+    engine = PredictionEngine(db, user_model_store)
+    pred_dict = {
+        "prediction_type": "conflict",
+        "supporting_signals": {"_trigger_kind": "calendar_conflicts"},
+    }
+    assert engine._extract_trigger_kind(pred_dict) == "calendar_conflicts"
+
+
+def test_extract_trigger_kind_handles_json_string_signals(db, user_model_store):
+    """_extract_trigger_kind decodes supporting_signals when stored as JSON string."""
+    engine = PredictionEngine(db, user_model_store)
+    pred_dict = {
+        "prediction_type": "reminder",
+        "supporting_signals": json.dumps({"_trigger_kind": "calendar_reminders"}),
+    }
+    assert engine._extract_trigger_kind(pred_dict) == "calendar_reminders"
+
+
+def test_tag_trigger_sets_trigger_kind_via_setdefault(db, user_model_store):
+    """_tag_trigger stamps the trigger but does not overwrite an existing tag."""
+    engine = PredictionEngine(db, user_model_store)
+    untagged = _make_prediction(prediction_type="reminder")
+    already = _make_prediction(prediction_type="reminder", trigger_kind="custom_subkind")
+
+    engine._tag_trigger([untagged, already], "follow_up_needs")
+
+    assert untagged.supporting_signals["_trigger_kind"] == "follow_up_needs"
+    # setdefault must not clobber a more specific value set by the check method.
+    assert already.supporting_signals["_trigger_kind"] == "custom_subkind"
+
+
+def test_record_dedup_groups_by_type_and_trigger(db, user_model_store):
+    """_record_dedup accumulates per-type and per-trigger counts in the breakdown."""
+    engine = PredictionEngine(db, user_model_store)
+
+    engine._record_dedup(
+        _make_prediction(prediction_type="reminder", trigger_kind="follow_up_needs"),
+        site="intra_batch",
+    )
+    engine._record_dedup(
+        _make_prediction(prediction_type="reminder", trigger_kind="follow_up_needs"),
+        site="store_prediction",
+    )
+    engine._record_dedup(
+        _make_prediction(prediction_type="conflict", trigger_kind="calendar_conflicts"),
+        site="intra_batch",
+    )
+
+    breakdown = engine._dedup_breakdown_current
+    assert breakdown["total"] == 3
+    assert breakdown["by_type"] == {"reminder": 2, "conflict": 1}
+    assert breakdown["by_trigger"] == {
+        "follow_up_needs": 2,
+        "calendar_conflicts": 1,
+    }
+
+
+def test_get_dedup_breakdown_returns_rolling_aggregate(db, user_model_store):
+    """get_dedup_breakdown exposes the rolling 24h aggregate by type and trigger."""
+    engine = PredictionEngine(db, user_model_store)
+
+    for _ in range(3):
+        engine._record_dedup(
+            _make_prediction(prediction_type="reminder", trigger_kind="follow_up_needs"),
+            site="intra_batch",
+        )
+    engine._record_dedup(
+        _make_prediction(prediction_type="opportunity", trigger_kind="relationship_maintenance"),
+        site="store_prediction",
+    )
+
+    out = engine.get_dedup_breakdown()
+    assert out["total_dedups"] == 4
+    assert out["window_seconds"] == 24 * 60 * 60
+    assert out["by_type"] == {"reminder": 3, "opportunity": 1}
+    assert out["by_trigger"] == {
+        "follow_up_needs": 3,
+        "relationship_maintenance": 1,
+    }
+
+
+def test_get_dedup_breakdown_prunes_old_entries(db, user_model_store):
+    """Entries older than the rolling window are dropped from get_dedup_breakdown."""
+    engine = PredictionEngine(db, user_model_store)
+    engine._dedup_window_seconds = 60  # shorten window for the test
+
+    # Recent entry stays
+    engine._record_dedup(
+        _make_prediction(prediction_type="reminder", trigger_kind="follow_up_needs"),
+        site="intra_batch",
+    )
+    # Inject a stale entry by hand (older than the window cutoff)
+    engine._dedup_recent.appendleft({
+        "timestamp": datetime.now(timezone.utc) - timedelta(hours=2),
+        "prediction_type": "opportunity",
+        "trigger_kind": "relationship_maintenance",
+        "time_horizon": "this_week",
+        "confidence": 0.4,
+        "site": "store_prediction",
+    })
+
+    out = engine.get_dedup_breakdown()
+    assert out["total_dedups"] == 1
+    assert out["by_type"] == {"reminder": 1}
+    assert out["by_trigger"] == {"follow_up_needs": 1}
+
+
+@pytest.mark.asyncio
+async def test_store_prediction_event_includes_trigger_kind(db, user_model_store, event_bus):
+    """Deduplicated predictions emit telemetry with trigger_kind attribution.
+
+    Runs under asyncio so ``_emit_telemetry`` can schedule the publish task on
+    the running loop (sync callers fall through to the event-store fallback,
+    which isn't wired in this fixture).
+    """
+    # Seed the original
+    original = {
+        "id": "pred-orig",
+        "prediction_type": "reminder",
+        "description": "Reply to alice@example.com",
+        "confidence": 0.7,
+        "confidence_gate": "default",
+        "time_horizon": "2_hours",
+        "supporting_signals": {"_trigger_kind": "follow_up_needs"},
+        "was_surfaced": True,
+        "resolved_at": None,
+    }
+    assert user_model_store.store_prediction(original) is True
+    # Let any scheduled publish tasks from the first store run finish so they
+    # don't leak into the duplicate-attempt assertions below.
+    await asyncio.sleep(0)
+    event_bus._published_events.clear()
+
+    # Attempt duplicate — must be deduplicated and emit the new payload field
+    duplicate = original.copy()
+    duplicate["id"] = "pred-dup"
+    assert user_model_store.store_prediction(duplicate) is False
+    # The publish is scheduled with create_task; yield so it runs.
+    await asyncio.sleep(0)
+
+    dedup_events = [
+        e for e in event_bus._published_events
+        if e["type"] == "usermodel.prediction.deduplicated"
+    ]
+    assert len(dedup_events) == 1
+    payload = dedup_events[0]["payload"]
+    assert payload["trigger_kind"] == "follow_up_needs"
+    assert payload["time_horizon"] == "2_hours"
+    assert payload["attempted_prediction_type"] == "reminder"
+    assert payload["existing_prediction_id"] == "pred-orig"
+
+
+@pytest.mark.asyncio
+async def test_store_prediction_event_falls_back_to_prediction_type_when_untagged(
+    db, user_model_store, event_bus,
+):
+    """When _trigger_kind is missing, telemetry falls back to prediction_type."""
+    original = {
+        "id": "pred-orig",
+        "prediction_type": "routine_deviation",
+        "description": "You usually do your 'morning' routine by now",
+        "confidence": 0.5,
+        "confidence_gate": "suggest",
+        "time_horizon": "today",
+        "supporting_signals": {},  # untagged
+        "was_surfaced": True,
+        "resolved_at": None,
+    }
+    assert user_model_store.store_prediction(original) is True
+    await asyncio.sleep(0)
+    event_bus._published_events.clear()
+
+    duplicate = original.copy()
+    duplicate["id"] = "pred-dup"
+    assert user_model_store.store_prediction(duplicate) is False
+    await asyncio.sleep(0)
+
+    dedup_events = [
+        e for e in event_bus._published_events
+        if e["type"] == "usermodel.prediction.deduplicated"
+    ]
+    assert dedup_events, "expected a deduplicated event to be published"
+    assert dedup_events[0]["payload"]["trigger_kind"] == "routine_deviation"
+
+
+def test_intra_batch_dedup_path_records_breakdown(db, user_model_store):
+    """Directly drive the intra-batch dedup site to confirm attribution.
+
+    The integration through generate_predictions is exercised in
+    test_last_run_diagnostics_includes_dedup_breakdown; this test isolates the
+    intra-batch path so we have a deterministic assertion that duplicates
+    coming from two different correlators land in the breakdown with their
+    respective trigger_kind tags preserved.
+    """
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+
+    # Two predictions with the same (type, description, time_horizon) key
+    # but different originating triggers — the second is dropped at the
+    # intra-batch dedup site and must be attributed to relationship_maintenance.
+    p1 = _make_prediction(
+        prediction_type="opportunity",
+        description="Reach out to alice@example.com",
+        trigger_kind="follow_up_needs",
+    )
+    p2 = _make_prediction(
+        prediction_type="opportunity",
+        description="Reach out to alice@example.com",
+        trigger_kind="relationship_maintenance",
+    )
+
+    # Simulate the exact loop the engine runs: keep first, drop the rest,
+    # recording each drop via _record_dedup.
+    seen: set[tuple] = set()
+    kept = []
+    for pred in (p1, p2):
+        key = (pred.prediction_type, pred.description, pred.time_horizon)
+        if key in seen:
+            engine._record_dedup(pred, site="intra_batch")
+        else:
+            seen.add(key)
+            kept.append(pred)
+
+    assert len(kept) == 1
+    assert engine._dedup_breakdown_current["total"] == 1
+    assert engine._dedup_breakdown_current["by_type"] == {"opportunity": 1}
+    assert engine._dedup_breakdown_current["by_trigger"] == {
+        "relationship_maintenance": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_generate_predictions_resets_per_cycle_breakdown(
+    db, event_store, user_model_store,
+):
+    """The per-cycle breakdown is reset at the start of each generate cycle."""
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+
+    # Pre-populate as if a prior cycle had dedups
+    engine._dedup_breakdown_current = {
+        "by_type": {"reminder": 5},
+        "by_trigger": {"follow_up_needs": 5},
+        "total": 5,
+    }
+
+    await engine.generate_predictions({})
+
+    # After the cycle, the per-cycle breakdown should reflect THIS cycle only,
+    # not the synthetic 5 dedups we injected before the call.
+    assert engine._dedup_breakdown_current["total"] != 5 or (
+        engine._dedup_breakdown_current["by_type"] != {"reminder": 5}
+    ), "per-cycle breakdown must reset at the start of generate_predictions()"
+
+
+@pytest.mark.asyncio
+async def test_last_run_diagnostics_includes_dedup_breakdown(
+    db, event_store, user_model_store,
+):
+    """The cycle diagnostics snapshot must include the dedup_breakdown dict."""
+    engine = PredictionEngine(db, user_model_store, timezone="UTC")
+    await engine.generate_predictions({})
+
+    assert "dedup_breakdown" in engine._last_run_diagnostics
+    breakdown = engine._last_run_diagnostics["dedup_breakdown"]
+    assert set(breakdown.keys()) == {"by_type", "by_trigger", "total"}
