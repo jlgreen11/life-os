@@ -872,3 +872,237 @@ class TestHighConfidenceFacts:
         # source_episodes should be a list, not a JSON string
         assert isinstance(facts[0]["source_episodes"], list)
         assert len(facts[0]["source_episodes"]) == 3
+
+
+class TestStoreRoutinePostWriteVerification:
+    """Post-write verification + WAL checkpoint for store_routine.
+
+    Mirrors the pattern hardened in PR #714 for store_episode: the write must
+    be followed by a read-back to confirm the row landed, and the WAL must be
+    checkpointed so the change reaches the main DB file.
+    """
+
+    def _make_routine(self, name: str = "morning") -> dict:
+        """Build a minimal routine dict with all required fields."""
+        return {
+            "name": name,
+            "trigger": "morning",
+            "steps": [{"action": "check_email", "duration_min": 5}],
+            "typical_duration_minutes": 30.0,
+            "consistency_score": 0.8,
+            "times_observed": 12,
+            "variations": ["skips coffee on Mondays"],
+        }
+
+    def test_happy_path_returns_true(self, user_model_store: UserModelStore):
+        """A successful store_routine must return True."""
+        result = user_model_store.store_routine(self._make_routine())
+        assert result is True
+
+    def test_row_present_after_store(self, user_model_store: UserModelStore):
+        """The row must be readable from the routines table after store_routine."""
+        user_model_store.store_routine(self._make_routine("evening"))
+
+        with user_model_store.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                "SELECT * FROM routines WHERE name = ?", ("evening",)
+            ).fetchone()
+            assert row is not None
+            assert row["trigger_condition"] == "morning"
+            assert row["consistency_score"] == 0.8
+            assert row["times_observed"] == 12
+
+    def test_failure_returns_false(self, user_model_store: UserModelStore):
+        """Simulated write failure must return False, not raise."""
+        # Patch get_connection to raise — simulates a corrupt/unavailable DB.
+        def failing_get_conn(_db_name):
+            raise RuntimeError("Simulated DB corruption")
+
+        user_model_store.db.get_connection = failing_get_conn
+
+        result = user_model_store.store_routine(self._make_routine("doomed"))
+        assert result is False
+
+    def test_wal_checkpoint_invoked_on_success(self, user_model_store: UserModelStore):
+        """A successful routine write must trigger a WAL checkpoint on user_model.db."""
+        checkpoint_calls = []
+        original_checkpoint = user_model_store.db.checkpoint_wal
+
+        def tracking_checkpoint(db_name):
+            checkpoint_calls.append(db_name)
+            return original_checkpoint(db_name)
+
+        user_model_store.db.checkpoint_wal = tracking_checkpoint
+
+        user_model_store.store_routine(self._make_routine("checkpointed"))
+
+        assert "user_model" in checkpoint_calls, (
+            "checkpoint_wal must be called with 'user_model' after a successful routine write"
+        )
+
+    def test_returns_false_when_postwrite_verification_fails(
+        self, user_model_store: UserModelStore, caplog
+    ):
+        """If the row is missing on read-back, return False and log CRITICAL.
+
+        We patch get_connection so the second call (post-write verification)
+        returns a connection whose COUNT(*) is forced to 0, simulating the
+        silent-failure class of bugs the verification is designed to catch.
+        """
+        import logging
+
+        original_get_conn = user_model_store.db.get_connection
+        call_count = {"n": 0}
+
+        class FakeCountConn:
+            """Stand-in connection for the verification read.
+
+            We only need to intercept the COUNT(*) SELECT and return a (0,)
+            row.  Other queries are not expected in this code path.
+            """
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def execute(self, _sql, _params=()):
+                class _Cursor:
+                    def fetchone(self):
+                        return (0,)
+                return _Cursor()
+
+        def patched_get_conn(db_name):
+            call_count["n"] += 1
+            # First call performs the actual INSERT.  Subsequent calls (the
+            # verification read and any post-write WAL/telemetry conns) get
+            # the fake.
+            if call_count["n"] == 1:
+                return original_get_conn(db_name)
+            return FakeCountConn()
+
+        user_model_store.db.get_connection = patched_get_conn
+
+        with caplog.at_level(logging.CRITICAL, logger="storage.user_model_store"):
+            result = user_model_store.store_routine(self._make_routine("verify_fail"))
+
+        assert result is False
+        assert any(
+            "post-write verification FAILED" in r.message
+            for r in caplog.records
+            if r.levelno >= logging.CRITICAL
+        ), "Expected CRITICAL log when post-write verification finds row missing"
+
+
+class TestStorePredictionPostWriteVerification:
+    """Post-write verification + WAL checkpoint for store_prediction.
+
+    store_prediction already returns bool to signal deduplication; this suite
+    covers the new success/failure semantics: True on verified persistence,
+    False on dedup OR on write/verification failure.
+    """
+
+    def _make_prediction(self, pred_id: str | None = None, description: str | None = None) -> dict:
+        """Build a minimal prediction dict suitable for storage."""
+        return {
+            "id": pred_id or str(uuid4()),
+            "prediction_type": "reminder",
+            "description": description or f"Reply to email {uuid4()}",
+            "confidence": 0.7,
+            "confidence_gate": "SUGGEST",
+        }
+
+    def test_happy_path_returns_true(self, user_model_store: UserModelStore):
+        """A successful, non-duplicate store_prediction must return True."""
+        result = user_model_store.store_prediction(self._make_prediction())
+        assert result is True
+
+    def test_row_present_after_store(self, user_model_store: UserModelStore):
+        """The row must be readable from the predictions table after store_prediction."""
+        pred_id = str(uuid4())
+        user_model_store.store_prediction(self._make_prediction(pred_id=pred_id))
+
+        with user_model_store.db.get_connection("user_model") as conn:
+            row = conn.execute(
+                "SELECT * FROM predictions WHERE id = ?", (pred_id,)
+            ).fetchone()
+            assert row is not None
+            assert row["prediction_type"] == "reminder"
+
+    def test_dedup_still_returns_false(self, user_model_store: UserModelStore):
+        """An identical recent prediction is deduplicated and returns False.
+
+        Important: this is NOT a failure — it's the legitimate dedup outcome,
+        and the post-write verification must NOT mistake it for one.
+        """
+        first = self._make_prediction(description="Take out the trash")
+        second = self._make_prediction(description="Take out the trash")
+
+        first_result = user_model_store.store_prediction(first)
+        second_result = user_model_store.store_prediction(second)
+
+        assert first_result is True
+        assert second_result is False  # Deduplicated
+
+        # Only one row should exist for this description.
+        with user_model_store.db.get_connection("user_model") as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM predictions WHERE description = ?",
+                ("Take out the trash",),
+            ).fetchone()[0]
+            assert count == 1
+
+    def test_failure_returns_false(self, user_model_store: UserModelStore):
+        """Simulated write failure must return False, not raise."""
+        def failing_get_conn(_db_name):
+            raise RuntimeError("Simulated DB corruption")
+
+        user_model_store.db.get_connection = failing_get_conn
+
+        result = user_model_store.store_prediction(self._make_prediction())
+        assert result is False
+
+    def test_wal_checkpoint_invoked_on_success(self, user_model_store: UserModelStore):
+        """A successful prediction write must trigger a WAL checkpoint."""
+        checkpoint_calls = []
+        original_checkpoint = user_model_store.db.checkpoint_wal
+
+        def tracking_checkpoint(db_name):
+            checkpoint_calls.append(db_name)
+            return original_checkpoint(db_name)
+
+        user_model_store.db.checkpoint_wal = tracking_checkpoint
+
+        user_model_store.store_prediction(self._make_prediction())
+
+        assert "user_model" in checkpoint_calls, (
+            "checkpoint_wal must be called with 'user_model' after a successful prediction write"
+        )
+
+    def test_wal_checkpoint_not_invoked_on_dedup(self, user_model_store: UserModelStore):
+        """Deduplicated predictions are a legitimate no-op — no checkpoint required.
+
+        Calling checkpoint_wal for every dedup'd prediction would waste IO at
+        15-minute cycle frequency.  The checkpoint belongs to the write path
+        only.
+        """
+        checkpoint_calls = []
+        original_checkpoint = user_model_store.db.checkpoint_wal
+
+        def tracking_checkpoint(db_name):
+            checkpoint_calls.append(db_name)
+            return original_checkpoint(db_name)
+
+        # Seed the first prediction (this WILL checkpoint).
+        user_model_store.store_prediction(self._make_prediction(description="dedup-me"))
+
+        # Swap in the tracker AFTER the seed so we only observe the dedup path.
+        user_model_store.db.checkpoint_wal = tracking_checkpoint
+
+        # Duplicate — should short-circuit before the checkpoint.
+        result = user_model_store.store_prediction(self._make_prediction(description="dedup-me"))
+
+        assert result is False
+        assert checkpoint_calls == [], (
+            "checkpoint_wal must NOT be called for a deduplicated prediction"
+        )

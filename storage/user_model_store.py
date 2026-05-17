@@ -610,77 +610,115 @@ class UserModelStore:
         - After 24h: Conditions may have changed (relationship gaps widening, events
           approaching, stress levels shifting), allow regeneration
         """
-        with self.db.get_connection("user_model") as conn:
-            # Check for existing prediction with same type + description within 24h
-            # This catches both:
-            # 1. Unresolved predictions (resolved_at IS NULL) that user hasn't acted on
-            # 2. Recently filtered predictions (resolved_at within 24h) that failed gates
-            #
-            # CRITICAL: Use datetime(resolved_at) to parse ISO timestamps correctly.
-            # Direct string comparison fails because ISO format ('2026-02-15T16:00:00+00:00')
-            # sorts differently than SQLite format ('2026-02-15 18:00:00').
-            existing = conn.execute(
-                """SELECT id FROM predictions
-                   WHERE prediction_type = ?
-                   AND description = ?
-                   AND (time_horizon = ? OR (time_horizon IS NULL AND ? IS NULL))
-                   AND (resolved_at IS NULL OR datetime(resolved_at) > datetime('now', '-24 hours'))
-                   LIMIT 1""",
-                (
-                    prediction["prediction_type"],
-                    prediction["description"],
-                    prediction.get("time_horizon"),
-                    prediction.get("time_horizon"),
-                ),
-            ).fetchone()
+        try:
+            with self.db.get_connection("user_model") as conn:
+                # Check for existing prediction with same type + description within 24h
+                # This catches both:
+                # 1. Unresolved predictions (resolved_at IS NULL) that user hasn't acted on
+                # 2. Recently filtered predictions (resolved_at within 24h) that failed gates
+                #
+                # CRITICAL: Use datetime(resolved_at) to parse ISO timestamps correctly.
+                # Direct string comparison fails because ISO format ('2026-02-15T16:00:00+00:00')
+                # sorts differently than SQLite format ('2026-02-15 18:00:00').
+                existing = conn.execute(
+                    """SELECT id FROM predictions
+                       WHERE prediction_type = ?
+                       AND description = ?
+                       AND (time_horizon = ? OR (time_horizon IS NULL AND ? IS NULL))
+                       AND (resolved_at IS NULL OR datetime(resolved_at) > datetime('now', '-24 hours'))
+                       LIMIT 1""",
+                    (
+                        prediction["prediction_type"],
+                        prediction["description"],
+                        prediction.get("time_horizon"),
+                        prediction.get("time_horizon"),
+                    ),
+                ).fetchone()
 
-            # If duplicate exists (either unresolved or recently filtered), skip storage
-            if existing:
-                # Telemetry for observability: track that deduplication occurred
-                self._emit_telemetry("usermodel.prediction.deduplicated", {
-                    "existing_prediction_id": existing["id"],
-                    "attempted_prediction_type": prediction["prediction_type"],
-                    "attempted_description": prediction["description"][:100],  # Truncate for telemetry
-                    "deduplicated_at": datetime.now(UTC).isoformat(),
-                })
-                return False  # Skip storage — duplicate exists
+                # If duplicate exists (either unresolved or recently filtered), skip storage.
+                # NOTE: Deduplication is a legitimate "no write" outcome, not a failure —
+                # we return False without running post-write verification.
+                if existing:
+                    # Telemetry for observability: track that deduplication occurred
+                    self._emit_telemetry("usermodel.prediction.deduplicated", {
+                        "existing_prediction_id": existing["id"],
+                        "attempted_prediction_type": prediction["prediction_type"],
+                        "attempted_description": prediction["description"][:100],  # Truncate for telemetry
+                        "deduplicated_at": datetime.now(UTC).isoformat(),
+                    })
+                    return False  # Skip storage — duplicate exists
 
-            # No duplicate found, store the prediction
-            conn.execute(
-                """INSERT INTO predictions
-                   (id, prediction_type, description, confidence, confidence_gate,
-                    time_horizon, suggested_action, supporting_signals, was_surfaced,
-                    user_response, resolved_at, filter_reason)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
+                # No duplicate found, store the prediction
+                conn.execute(
+                    """INSERT INTO predictions
+                       (id, prediction_type, description, confidence, confidence_gate,
+                        time_horizon, suggested_action, supporting_signals, was_surfaced,
+                        user_response, resolved_at, filter_reason)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        prediction["id"],
+                        prediction["prediction_type"],
+                        prediction["description"],
+                        prediction["confidence"],
+                        prediction["confidence_gate"],
+                        prediction.get("time_horizon"),
+                        prediction.get("suggested_action"),
+                        json.dumps(prediction.get("supporting_signals", {})),
+                        prediction.get("was_surfaced", False),
+                        prediction.get("user_response"),
+                        prediction.get("resolved_at"),
+                        prediction.get("filter_reason"),
+                    ),
+                )
+            # `with` block has exited — transaction committed.
+
+            # Post-write verification: read the row back to confirm it actually
+            # landed in the DB.  Guards against the silent-failure class of bugs
+            # (PR #714 episodes, #717 linguistic_inbound, #718 mood_signals) where
+            # an INSERT appears to succeed at the connection level but the row
+            # never persists (e.g. WAL corruption, swallowed constraint error).
+            with self.db.get_connection("user_model") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM predictions WHERE id = ?", (prediction["id"],)
+                ).fetchone()[0]
+            if count == 0:
+                logger.critical(
+                    "UserModelStore.store_prediction: post-write verification FAILED "
+                    "for prediction %s — row not found after INSERT; "
+                    "user_model.db may be corrupt or schema migration is incomplete",
                     prediction["id"],
-                    prediction["prediction_type"],
-                    prediction["description"],
-                    prediction["confidence"],
-                    prediction["confidence_gate"],
-                    prediction.get("time_horizon"),
-                    prediction.get("suggested_action"),
-                    json.dumps(prediction.get("supporting_signals", {})),
-                    prediction.get("was_surfaced", False),
-                    prediction.get("user_response"),
-                    prediction.get("resolved_at"),
-                    prediction.get("filter_reason"),
-                ),
-            )
+                )
+                return False
 
-        # Prediction was stored successfully
-        # Emit telemetry for successfully stored (non-duplicate) prediction
-        self._emit_telemetry("usermodel.prediction.generated", {
-            "prediction_id": prediction["id"],
-            "prediction_type": prediction["prediction_type"],
-            "confidence": prediction["confidence"],
-            "confidence_gate": prediction["confidence_gate"],
-            "time_horizon": prediction.get("time_horizon"),
-            "was_surfaced": prediction.get("was_surfaced", False),
-            "signals_count": len(prediction.get("supporting_signals", [])),
-            "generated_at": datetime.now(UTC).isoformat(),
-        })
-        return True
+            # WAL checkpoint after a successful write.  Predictions are written
+            # at a moderate rate (every 15-minute prediction cycle) so we
+            # checkpoint on every write rather than throttling — same rationale
+            # as templates.
+            try:
+                self.db.checkpoint_wal("user_model")
+            except Exception as wal_err:
+                logger.warning(
+                    "UserModelStore: WAL checkpoint after prediction write failed: %s",
+                    wal_err,
+                )
+
+            # Telemetry fires only after the DB write committed and was verified.
+            self._emit_telemetry("usermodel.prediction.generated", {
+                "prediction_id": prediction["id"],
+                "prediction_type": prediction["prediction_type"],
+                "confidence": prediction["confidence"],
+                "confidence_gate": prediction["confidence_gate"],
+                "time_horizon": prediction.get("time_horizon"),
+                "was_surfaced": prediction.get("was_surfaced", False),
+                "signals_count": len(prediction.get("supporting_signals", [])),
+                "generated_at": datetime.now(UTC).isoformat(),
+            })
+            return True
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.store_prediction failed (user_model.db may be corrupt): %s", e
+            )
+            return False
 
     def store_communication_template(self, template: dict):
         """Store or update a communication template.
@@ -996,7 +1034,7 @@ class UserModelStore:
             "resolved_at": datetime.now(UTC).isoformat(),
         })
 
-    def store_routine(self, routine: dict):
+    def store_routine(self, routine: dict) -> bool:
         """Store or update a detected routine (Layer 3: Procedural Memory).
 
         Routines are recurring behavioral patterns discovered by analyzing
@@ -1021,33 +1059,73 @@ class UserModelStore:
                 - consistency_score (float): 0-1, how reliably user follows pattern
                 - times_observed (int): Number of instances detected
                 - variations (list[str]): Known pattern deviations
-        """
-        with self.db.get_connection("user_model") as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO routines
-                   (name, trigger_condition, steps, typical_duration, consistency_score,
-                    times_observed, variations, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?,
-                           strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
-                (
-                    routine["name"],
-                    routine["trigger"],
-                    json.dumps(routine.get("steps", [])),
-                    routine.get("typical_duration_minutes", 30.0),
-                    routine.get("consistency_score", 0.5),
-                    routine.get("times_observed", 0),
-                    json.dumps(routine.get("variations", [])),
-                ),
-            )
 
-        self._emit_telemetry("usermodel.routine.updated", {
-            "routine_name": routine["name"],
-            "trigger": routine["trigger"],
-            "steps_count": len(routine.get("steps", [])),
-            "consistency_score": routine.get("consistency_score", 0.5),
-            "times_observed": routine.get("times_observed", 0),
-            "updated_at": datetime.now(UTC).isoformat(),
-        })
+        Returns:
+            True if the routine was persisted and verified, False if the write
+            failed or post-write verification did not find the row.
+        """
+        try:
+            with self.db.get_connection("user_model") as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO routines
+                       (name, trigger_condition, steps, typical_duration, consistency_score,
+                        times_observed, variations, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?,
+                               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))""",
+                    (
+                        routine["name"],
+                        routine["trigger"],
+                        json.dumps(routine.get("steps", [])),
+                        routine.get("typical_duration_minutes", 30.0),
+                        routine.get("consistency_score", 0.5),
+                        routine.get("times_observed", 0),
+                        json.dumps(routine.get("variations", [])),
+                    ),
+                )
+            # `with` block has exited — transaction committed.
+
+            # Post-write verification: read the row back by primary key (name)
+            # to confirm the INSERT OR REPLACE actually persisted. Same defence
+            # pattern as store_episode (PR #714) — guards against silent
+            # persistence failures from WAL corruption or swallowed errors.
+            with self.db.get_connection("user_model") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM routines WHERE name = ?", (routine["name"],)
+                ).fetchone()[0]
+            if count == 0:
+                logger.critical(
+                    "UserModelStore.store_routine: post-write verification FAILED "
+                    "for routine %r — row not found after INSERT OR REPLACE; "
+                    "user_model.db may be corrupt or schema migration is incomplete",
+                    routine["name"],
+                )
+                return False
+
+            # WAL checkpoint after a successful write.  Routines are written
+            # infrequently (only when the routine detector runs), so checkpoint
+            # on every write to minimise data-loss exposure.
+            try:
+                self.db.checkpoint_wal("user_model")
+            except Exception as wal_err:
+                logger.warning(
+                    "UserModelStore: WAL checkpoint after routine write failed: %s",
+                    wal_err,
+                )
+
+            self._emit_telemetry("usermodel.routine.updated", {
+                "routine_name": routine["name"],
+                "trigger": routine["trigger"],
+                "steps_count": len(routine.get("steps", [])),
+                "consistency_score": routine.get("consistency_score", 0.5),
+                "times_observed": routine.get("times_observed", 0),
+                "updated_at": datetime.now(UTC).isoformat(),
+            })
+            return True
+        except Exception as e:
+            logger.warning(
+                "UserModelStore.store_routine failed (user_model.db may be corrupt): %s", e
+            )
+            return False
 
     def get_routines(self, trigger: str | None = None) -> list[dict]:
         """Retrieve stored routines, optionally filtered by trigger.

@@ -2252,8 +2252,16 @@ class RoutineDetector:
         stored_count = 0
         for routine in routines:
             try:
-                self.user_model_store.store_routine(routine)
-                stored_count += 1
+                # store_routine now returns True on verified persistence, False
+                # if the write or post-write verification failed.  Don't bump
+                # stored_count on False — we'd be lying about durability.
+                if self.user_model_store.store_routine(routine):
+                    stored_count += 1
+                else:
+                    logger.warning(
+                        f"store_routine returned False for '{routine.get('name')}' "
+                        "(write failed or post-write verification did not find the row)"
+                    )
             except Exception as e:
                 logger.error(f"Failed to store routine '{routine.get('name')}': {e}")
 
