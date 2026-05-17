@@ -48,14 +48,21 @@ Feel free to hand-add items above or below whatever the agent writes._
 - **Add episode creation rate and backfill status diagnostics to data quality analyzer** · `data_quality` — Open PR #735 from wave 1, awaiting merge.
 - **Add per-correlator execution timing and consecutive-zero tracking to insight engine** · `code_quality` — Open PR #738 from wave 1, awaiting merge.
 - **Add prediction deduplication root-cause logging with per-type and per-trigger breakdown** · `data_quality` — Open PR #739 from wave 1, awaiting merge.
-- **Add event bus throughput counters and get_metrics() method** · `code_quality` — Prior PR #725 closed unmerged. Retry candidate.
-- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Prior PR #724 closed unmerged. Retry candidate.
-- **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Prior PR #700 closed unmerged. Temporal extractor writes fail silently; WAL resilience and retry needed.
-- **Fix decision signal profile persistence and add fallback signal extraction** · `broken_feature` — Prior PR #699 closed unmerged. Decision profile writes lost to WAL; needs write verification.
-- **Add update_signal_profile() return value for caller-side failure detection** · `code_quality` — Currently returns void; callers can't distinguish success from silent failure. Requires coordinated changes across all extractors.
+- **Expand feedback collector diagnostics with per-source breakdown and source×type cross-tab** · `code_quality` — Open PR #740 from wave 2, awaiting merge.
+- **Harden onboarding input validation: cap domains, validate contact names, support multi-range quiet hours** · `code_quality` — Open PR #746 from wave 2, awaiting merge.
+- **Add post-write verification and WAL checkpoint to cadence extractor profile updates** · `broken_feature` — Open PR #743 from wave 2, awaiting merge.
+- **Add pre-write serialization guard and post-write verification to linguistic per-contact communication templates** · `broken_feature` — Open PR #742 from wave 2, awaiting merge.
+- **Add structured skip-reason diagnostics to routine detector for zero-result cycles** · `data_quality` — Open PR #744 from wave 2, awaiting merge.
+- **Add structured skip-reason diagnostics to workflow detector for sender/task/calendar candidates** · `data_quality` — Open PR #745 from wave 2, awaiting merge.
+- **Add per-strategy diagnostic counters to task completion detector** · `data_quality` — Open PR #741 from wave 2, awaiting merge.
+- **Fix temporal signal profile persistence failure (13,726 qualifying events, 0 profile)** · `broken_feature` — Verified largely resolved in current temporal.py (post-write verification + retry already implemented in lines 271-306); profile now shows 384,830 samples updated within the hour. Keep entry for traceability but not actionable.
+- **Add update_signal_profile() return value for caller-side failure detection** · `code_quality` — Currently returns void; callers can't distinguish success from silent failure. Requires coordinated changes across all extractors. Defer until in-progress per-extractor write verifications (waves 1-3) merge to avoid sweeping conflicts.
 - **Add connector error recovery hints and retry button to admin UI** · `missing_feature` — Inline OAuth re-auth flow for Google connector token-missing state. Defer until wave 1 admin UI work (PR #734) merges to avoid file conflicts.
 - **Reduce notification expiry rate with 4-tier graduated delivery and delivery_attempts tracking** · `broken_feature` — Reduce 84% expiry rate via graduated channels. Defer until wave 1 notification diagnostics (PR #733) merges to avoid file conflicts.
 - **Reduce prediction deduplication waste with input-state fingerprinting** · `code_quality` — Distinct from observability work in wave 1 slot 7 — this is the dedup logic fix (cap triggers, fingerprint inputs). Defer until wave 1 PR #739 merges.
+- **Update unused-capability audit to remove CalDAV-conflict-detection stub claim** · `cleanup` — Promoted from Ideas. CalDAV conflict detection is fully implemented in connectors/caldav/connector.py:308-480; audit doc still lists it as a stub.
+- **Add post-write verification + WAL checkpoint retry to spatial extractor (sample-mode)** · `broken_feature` — Spatial profile stuck at 209 samples, last updated 2026-04-14 (33+ days stale). Existing verification fires only at line 371; consider sampled-every-Nth-write hardening matching mood.py pattern.
+- **Add data quality analyzer surfacing of conflict-detector diagnostics** · `data_quality` — Once wave-3 slot 4 lands per-strategy counters in conflict_detector.get_diagnostics(), expose them in scripts/analyze-data-quality.py output so 0-conflict runs become operator-visible.
 
 ## In Progress
 
@@ -63,13 +70,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Expand feedback collector diagnostics with per-source breakdown and source×type cross-tab** · `code_quality` (wave 2, slot 1)
-- **Harden onboarding input validation: cap domains, validate contact names, support multi-range quiet hours** · `code_quality` (wave 2, slot 2)
-- **Add post-write verification and WAL checkpoint to cadence extractor profile updates** · `broken_feature` (wave 2, slot 3)
-- **Add pre-write serialization guard and post-write verification to linguistic per-contact communication templates** · `broken_feature` (wave 2, slot 4)
-- **Add structured skip-reason diagnostics to routine detector for zero-result cycles** · `data_quality` (wave 2, slot 5)
-- **Add structured skip-reason diagnostics to workflow detector for sender/task/calendar candidates** · `data_quality` (wave 2, slot 6)
-- **Add per-strategy diagnostic counters to task completion detector** · `data_quality` (wave 2, slot 7)
+- **Add post-write verification + WAL-checkpoint retry to decision extractor** · `broken_feature` (wave 3, slot 1)
+- **Add throughput counters and get_metrics() method to NATS event bus** · `code_quality` (wave 3, slot 2)
+- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 3, slot 3)
+- **Add per-strategy and skip-reason diagnostics to CalDAV/calendar conflict detector** · `data_quality` (wave 3, slot 4)
+- **Strengthen PIIShield redaction patterns (IBAN, IPv6, MAC, API keys) and add edge-case test coverage** · `code_quality` (wave 3, slot 5)
+- **Add Ollama health metrics with rolling success rate to AI engine** · `code_quality` (wave 3, slot 6)
+- **Add post-write verification (sampled) to relationship signal extractor** · `broken_feature` (wave 3, slot 7)
 
 ## Completed
 
