@@ -1881,3 +1881,125 @@ def test_list_source_weights_returns_500_json_on_failure(client, mock_life_os):
     data = response.json()
     assert "error" in data
     assert data["error"] == "Failed to retrieve source weights"
+
+
+# ---------------------------------------------------------------------------
+# Prediction Pipeline Health
+# ---------------------------------------------------------------------------
+
+
+def _make_prediction_health_db_mock(events_rows, stored_row):
+    """Build a get_connection mock that serves the prediction-health endpoint.
+
+    The endpoint opens two connections: ``events`` (5 sequential fetchone calls
+    for the rolling counts and last_generated_at) and ``user_model`` (one call
+    that returns the aggregated stored-prediction row).
+
+    Args:
+        events_rows: 5-tuple of fetchone return values, in order:
+            generated_24h, generated_7d, dedup_24h, dedup_7d, last_generated_at_row
+        stored_row: tuple (total, unresolved, surfaced) returned for the
+            single user_model query.
+    """
+    events_conn = Mock()
+    events_conn.execute.return_value.fetchone.side_effect = list(events_rows)
+
+    user_model_conn = Mock()
+    user_model_conn.execute.return_value.fetchone.return_value = stored_row
+
+    def _get_connection(db_name):
+        if db_name == "events":
+            return Mock(__enter__=Mock(return_value=events_conn), __exit__=Mock())
+        if db_name == "user_model":
+            return Mock(__enter__=Mock(return_value=user_model_conn), __exit__=Mock())
+        return Mock(__enter__=Mock(return_value=Mock()), __exit__=Mock())
+
+    return Mock(side_effect=_get_connection)
+
+
+def test_prediction_health_returns_expected_shape(client, mock_life_os):
+    """GET /api/admin/prediction-health returns all required fields."""
+    mock_life_os.prediction_engine = Mock()
+    mock_life_os.prediction_engine._persistence_failure_detected = False
+    mock_life_os.db.get_connection = _make_prediction_health_db_mock(
+        events_rows=[(10,), (100,), (50,), (500,), ("2026-05-17T08:00:00Z",)],
+        stored_row=(80, 30, 20),
+    )
+
+    response = client.get("/api/admin/prediction-health")
+    assert response.status_code == 200
+    data = response.json()
+
+    for key in (
+        "generated_24h", "generated_7d", "dedup_24h", "dedup_7d",
+        "dedup_ratio_7d", "last_generated_at", "persistence_failure", "stored",
+    ):
+        assert key in data, f"missing key {key!r}"
+
+    assert data["generated_24h"] == 10
+    assert data["generated_7d"] == 100
+    assert data["dedup_24h"] == 50
+    assert data["dedup_7d"] == 500
+    assert data["last_generated_at"] == "2026-05-17T08:00:00Z"
+    assert data["persistence_failure"] is False
+    assert data["stored"] == {"total": 80, "unresolved": 30, "surfaced": 20}
+
+
+def test_prediction_health_dedup_ratio_computed_correctly(client, mock_life_os):
+    """dedup_ratio_7d = dedup_7d / generated_7d, rounded to 2 decimals."""
+    mock_life_os.prediction_engine = Mock()
+    mock_life_os.prediction_engine._persistence_failure_detected = False
+    # 248 generated, 3882 deduplicated → 15.65x ratio (the real anomaly value)
+    mock_life_os.db.get_connection = _make_prediction_health_db_mock(
+        events_rows=[(20,), (248,), (300,), (3882,), ("2026-05-17T08:00:00Z",)],
+        stored_row=(50, 10, 5),
+    )
+
+    data = client.get("/api/admin/prediction-health").json()
+    assert data["dedup_ratio_7d"] == round(3882 / 248, 2)
+
+
+def test_prediction_health_dedup_ratio_zero_when_no_generations(client, mock_life_os):
+    """dedup_ratio_7d is 0.0 (not a ZeroDivisionError) when no generations."""
+    mock_life_os.prediction_engine = Mock()
+    mock_life_os.prediction_engine._persistence_failure_detected = False
+    mock_life_os.db.get_connection = _make_prediction_health_db_mock(
+        events_rows=[(0,), (0,), (0,), (0,), None],
+        stored_row=(0, 0, 0),
+    )
+
+    data = client.get("/api/admin/prediction-health").json()
+    assert data["dedup_ratio_7d"] == 0.0
+    assert data["last_generated_at"] is None
+
+
+def test_prediction_health_surfaces_persistence_failure_flag(client, mock_life_os):
+    """The engine's _persistence_failure_detected flag propagates to the response."""
+    mock_life_os.prediction_engine = Mock()
+    mock_life_os.prediction_engine._persistence_failure_detected = True
+    mock_life_os.db.get_connection = _make_prediction_health_db_mock(
+        events_rows=[(0,), (5,), (0,), (0,), ("2026-05-17T08:00:00Z",)],
+        stored_row=(0, 0, 0),
+    )
+
+    data = client.get("/api/admin/prediction-health").json()
+    assert data["persistence_failure"] is True
+
+
+def test_prediction_health_missing_engine_defaults_to_no_failure(client, mock_life_os):
+    """Endpoint still returns 200 when prediction_engine attribute is absent."""
+    # Remove the prediction_engine attribute entirely
+    if hasattr(mock_life_os, "prediction_engine"):
+        del mock_life_os.prediction_engine
+    mock_life_os.db.get_connection = _make_prediction_health_db_mock(
+        events_rows=[(1,), (2,), (3,), (4,), ("2026-05-17T08:00:00Z",)],
+        stored_row=(1, 0, 1),
+    )
+    # Ensure getattr() returns None for prediction_engine (Mock auto-creates
+    # children, so explicitly set to None instead of deleting).
+    mock_life_os.prediction_engine = None
+
+    response = client.get("/api/admin/prediction-health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["persistence_failure"] is False

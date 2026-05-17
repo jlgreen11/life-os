@@ -4488,6 +4488,136 @@ def register_routes(app: FastAPI, life_os) -> None:
         return diagnostics
 
     # -------------------------------------------------------------------
+    # Prediction Pipeline Health (Admin)
+    # -------------------------------------------------------------------
+
+    @app.get("/api/admin/prediction-health")
+    async def prediction_health():
+        """Aggregate prediction pipeline operational metrics for the admin UI.
+
+        Surfaces signals the admin dashboard needs to diagnose dedup explosions,
+        persistence failures, and surface-rate regressions: rolling event counts,
+        stored prediction state, the engine's persistence-failure flag, and the
+        7-day dedup ratio (a known recurring source of warning anomalies).
+
+        Returns:
+            {
+                "generated_24h": int,
+                "generated_7d": int,
+                "dedup_24h": int,
+                "dedup_7d": int,
+                "dedup_ratio_7d": float,
+                "last_generated_at": str | null,
+                "persistence_failure": bool,
+                "stored": {"total": int, "unresolved": int, "surfaced": int}
+            }
+        """
+        import asyncio
+
+        def _gather() -> dict:
+            now = datetime.now(timezone.utc)
+            cutoff_24h = (now - timedelta(hours=24)).isoformat()
+            cutoff_7d = (now - timedelta(days=7)).isoformat()
+
+            result: dict = {
+                "generated_24h": 0,
+                "generated_7d": 0,
+                "dedup_24h": 0,
+                "dedup_7d": 0,
+                "dedup_ratio_7d": 0.0,
+                "last_generated_at": None,
+                "persistence_failure": False,
+                "stored": {"total": 0, "unresolved": 0, "surfaced": 0},
+            }
+
+            # Event counts from events.db — wrapped so a corrupt DB doesn't
+            # block the persistence_failure flag or stored counts from being
+            # reported.
+            try:
+                with life_os.db.get_connection("events") as conn:
+                    row = conn.execute(
+                        """SELECT COUNT(*) FROM events
+                           WHERE type = 'usermodel.prediction.generated'
+                             AND timestamp >= ?""",
+                        (cutoff_24h,),
+                    ).fetchone()
+                    result["generated_24h"] = (row[0] if row else 0) or 0
+
+                    row = conn.execute(
+                        """SELECT COUNT(*) FROM events
+                           WHERE type = 'usermodel.prediction.generated'
+                             AND timestamp >= ?""",
+                        (cutoff_7d,),
+                    ).fetchone()
+                    result["generated_7d"] = (row[0] if row else 0) or 0
+
+                    row = conn.execute(
+                        """SELECT COUNT(*) FROM events
+                           WHERE type = 'usermodel.prediction.deduplicated'
+                             AND timestamp >= ?""",
+                        (cutoff_24h,),
+                    ).fetchone()
+                    result["dedup_24h"] = (row[0] if row else 0) or 0
+
+                    row = conn.execute(
+                        """SELECT COUNT(*) FROM events
+                           WHERE type = 'usermodel.prediction.deduplicated'
+                             AND timestamp >= ?""",
+                        (cutoff_7d,),
+                    ).fetchone()
+                    result["dedup_7d"] = (row[0] if row else 0) or 0
+
+                    row = conn.execute(
+                        """SELECT timestamp FROM events
+                           WHERE type = 'usermodel.prediction.generated'
+                           ORDER BY timestamp DESC LIMIT 1""",
+                    ).fetchone()
+                    result["last_generated_at"] = row[0] if row else None
+            except Exception as e:
+                result["events_error"] = str(e)
+
+            # Dedup ratio: deduplicated / generated over the last 7d. A high
+            # ratio (e.g. > 5x) indicates the same predictions are being
+            # generated repeatedly and squashed, which is operationally wasteful.
+            if result["generated_7d"] > 0:
+                result["dedup_ratio_7d"] = round(
+                    result["dedup_7d"] / result["generated_7d"], 2
+                )
+
+            # Stored prediction counts come from user_model.db (the predictions
+            # table lives there, alongside episodes and signal_profiles).
+            try:
+                with life_os.db.get_connection("user_model") as conn:
+                    row = conn.execute(
+                        """SELECT
+                            COUNT(*) AS total,
+                            SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END) AS unresolved,
+                            SUM(CASE WHEN was_surfaced = 1 THEN 1 ELSE 0 END) AS surfaced
+                           FROM predictions"""
+                    ).fetchone()
+                    if row:
+                        result["stored"] = {
+                            "total": (row[0] or 0),
+                            "unresolved": (row[1] or 0),
+                            "surfaced": (row[2] or 0),
+                        }
+            except Exception as e:
+                result["stored"] = {"error": str(e)}
+
+            # Persistence-failure flag — read directly from the engine instance.
+            # The flag is set when the engine generates predictions but storing
+            # them fails (e.g. user_model.db is corrupted or locked).
+            engine = getattr(life_os, "prediction_engine", None)
+            if engine is not None:
+                result["persistence_failure"] = bool(
+                    getattr(engine, "_persistence_failure_detected", False)
+                )
+
+            return result
+
+        return await asyncio.to_thread(_gather)
+
+    # -------------------------------------------------------------------
     # Signal Profile Backfills (Admin)
     # -------------------------------------------------------------------
 

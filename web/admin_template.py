@@ -144,6 +144,21 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="section-label">Browser Connectors</div>
         <div class="grid" id="browserGrid"></div>
 
+        <div class="section-label">Prediction Pipeline Health</div>
+        <div id="predHealthCard" style="background:#1a1a1a;border:1px solid #222;border-radius:10px;padding:16px;margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <span style="font-weight:500;font-size:15px;">Generation, Dedup &amp; Persistence</span>
+                <button class="btn btn-secondary" onclick="loadPredictionHealth()" id="predRefreshBtn">Refresh</button>
+            </div>
+            <div id="predFailureBanner" style="display:none;background:#3d0a0a;border:1px solid #5a1a1a;color:#ff8a8a;padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:13px;">
+                Persistence failure detected &mdash; predictions are being generated but not stored.
+            </div>
+            <div id="predHealthGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;">
+                <span style="color:#666;font-size:13px;">Loading&hellip;</span>
+            </div>
+            <div id="predHealthMeta" style="margin-top:12px;font-size:12px;color:#666;"></div>
+        </div>
+
         <div class="section-label">Intelligence &amp; Signal Profiles</div>
         <div id="intelligenceCard" style="background:#1a1a1a;border:1px solid #222;border-radius:10px;padding:16px;margin-bottom:12px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
@@ -720,11 +735,114 @@ ADMIN_HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     // ---------------------------------------------------------------
+    // Prediction Pipeline Health
+    // ---------------------------------------------------------------
+
+    /** Humanize an ISO-8601 timestamp into "x minutes/hours/days ago".
+     *  Returns 'never' when null/undefined, or the raw string if unparseable. */
+    function humanizeAgo(iso) {
+        if (!iso) return 'never';
+        const t = Date.parse(iso);
+        if (isNaN(t)) return String(iso);
+        const seconds = Math.floor((Date.now() - t) / 1000);
+        if (seconds < 60) return seconds + 's ago';
+        if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+        if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+        return Math.floor(seconds / 86400) + 'd ago';
+    }
+
+    /** Pick a badge color for the dedup ratio.
+     *  Red > 5x signals dedup explosion; yellow > 2x is suspicious but tolerable. */
+    function dedupBadgeColor(ratio) {
+        if (ratio > 5) return { bg: '#3d0a0a', fg: '#ff5555' };
+        if (ratio > 2) return { bg: '#3d2a00', fg: '#ffc14a' };
+        return { bg: '#0a3d1a', fg: '#4aff6b' };
+    }
+
+    /** Append a labeled metric tile to the prediction-health grid. */
+    function appendPredTile(grid, label, value, sublabel, badge) {
+        const card = document.createElement('div');
+        card.style.cssText = 'background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:10px;';
+
+        const labelEl = document.createElement('div');
+        labelEl.style.cssText = 'font-size:11px;text-transform:uppercase;letter-spacing:0.4px;color:#666;';
+        labelEl.textContent = label;
+        card.appendChild(labelEl);
+
+        const valWrap = document.createElement('div');
+        valWrap.style.cssText = 'display:flex;align-items:baseline;gap:6px;margin-top:6px;';
+        const valEl = document.createElement('span');
+        valEl.style.cssText = 'font-size:18px;font-weight:600;color:#e0e0e0;';
+        valEl.textContent = value;
+        valWrap.appendChild(valEl);
+        if (badge) {
+            const b = document.createElement('span');
+            b.style.cssText = 'font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:'
+                + badge.bg + ';color:' + badge.fg + ';';
+            b.textContent = badge.text;
+            valWrap.appendChild(b);
+        }
+        card.appendChild(valWrap);
+
+        if (sublabel) {
+            const sub = document.createElement('div');
+            sub.style.cssText = 'font-size:11px;color:#666;margin-top:4px;';
+            sub.textContent = sublabel;
+            card.appendChild(sub);
+        }
+        grid.appendChild(card);
+    }
+
+    /** Fetch /api/admin/prediction-health and render the grid + banner. */
+    async function loadPredictionHealth() {
+        const grid = document.getElementById('predHealthGrid');
+        const meta = document.getElementById('predHealthMeta');
+        const banner = document.getElementById('predFailureBanner');
+        const btn = document.getElementById('predRefreshBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+        try {
+            const res = await fetch(`${API}/api/admin/prediction-health`);
+            const data = await res.json();
+            while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+            banner.style.display = data.persistence_failure ? 'block' : 'none';
+
+            appendPredTile(grid, 'Generated (24h)', (data.generated_24h ?? 0).toLocaleString(), null, null);
+            appendPredTile(grid, 'Generated (7d)', (data.generated_7d ?? 0).toLocaleString(), null, null);
+
+            const dedupBadge = {
+                ...dedupBadgeColor(data.dedup_ratio_7d ?? 0),
+                text: (data.dedup_ratio_7d ?? 0).toFixed(2) + 'x',
+            };
+            appendPredTile(grid, 'Dedup (24h)', (data.dedup_24h ?? 0).toLocaleString(), null, null);
+            appendPredTile(grid, 'Dedup (7d)', (data.dedup_7d ?? 0).toLocaleString(), 'ratio 7d', dedupBadge);
+
+            const stored = data.stored || {};
+            appendPredTile(grid, 'Stored total', (stored.total ?? 0).toLocaleString(), null, null);
+            appendPredTile(grid, 'Unresolved', (stored.unresolved ?? 0).toLocaleString(), null, null);
+            appendPredTile(grid, 'Surfaced', (stored.surfaced ?? 0).toLocaleString(), null, null);
+
+            const lastTxt = humanizeAgo(data.last_generated_at);
+            meta.textContent = 'Last generation: ' + lastTxt
+                + (data.last_generated_at ? '  (' + data.last_generated_at + ')' : '');
+        } catch (e) {
+            while (grid.firstChild) grid.removeChild(grid.firstChild);
+            const msg = document.createElement('span');
+            msg.style.cssText = 'color:#ff5555;font-size:13px;';
+            msg.textContent = 'Could not load prediction health: ' + e.message;
+            grid.appendChild(msg);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Init
     // ---------------------------------------------------------------
     loadAll();
     loadDbHealth();
     loadBackfillStatus();
+    loadPredictionHealth();
     </script>
 </body>
 </html>"""
