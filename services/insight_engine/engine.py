@@ -45,6 +45,14 @@ from storage.user_model_store import UserModelStore
 logger = logging.getLogger(__name__)
 
 
+# Threshold for warning that a correlator has been silently returning empty
+# lists.  When `consecutive_zero_count` reaches this value, a WARNING log line
+# is emitted once per cycle until the streak resets.  A correlator producing
+# zero insights for this many cycles is a strong signal that its input data
+# has dried up (broken connector, schema drift, profile not updating).
+CORRELATOR_ZERO_STREAK_WARN_THRESHOLD = 5
+
+
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
@@ -115,6 +123,14 @@ class InsightEngine:
         self._total_runs: int = 0
         self._last_run_at: str | None = None
         self._last_correlator_stats: dict[str, int | str] = {}
+
+        # Rich per-correlator stats accumulated across runs.  Maps the
+        # short correlator name (e.g. "place_frequency") to a dict with
+        # keys: last_duration_ms, last_output_count, consecutive_zero_count,
+        # total_runs, last_exception.  Surfaces the slow tail of correlators
+        # and detects correlators that have been silently empty for many
+        # cycles (a strong signal that their input data dried up).
+        self._correlator_stats: dict[str, dict] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -293,6 +309,75 @@ class InsightEngine:
         report["freshness_summary"] = freshness_summary
         return report
 
+    def _run_correlator(self, name: str, method) -> list[Insight]:
+        """Invoke a correlator method, recording timing, output count, and exceptions.
+
+        Wraps the call in a ``time.perf_counter()`` measurement and a
+        try/except so one slow or broken correlator never aborts the cycle.
+        Updates ``self._correlator_stats[name]`` with:
+
+        - ``last_duration_ms`` (float): wall-clock duration of the most recent call
+        - ``last_output_count`` (int): number of insights returned (0 on exception)
+        - ``consecutive_zero_count`` (int): incremented when output is 0, reset
+          to 0 when output is positive.  Reaching
+          ``CORRELATOR_ZERO_STREAK_WARN_THRESHOLD`` logs a WARNING.
+        - ``total_runs`` (int): cumulative invocation count for this correlator
+        - ``last_exception`` (str | None): repr of the most recent exception
+          (cleared on a successful invocation)
+
+        Args:
+            name: Short correlator identifier (e.g. ``"place_frequency"``).
+            method: Bound correlator method returning a list of ``Insight``.
+
+        Returns:
+            The list of insights produced, or ``[]`` if the correlator raised.
+        """
+        stats = self._correlator_stats.setdefault(
+            name,
+            {
+                "last_duration_ms": 0.0,
+                "last_output_count": 0,
+                "consecutive_zero_count": 0,
+                "total_runs": 0,
+                "last_exception": None,
+            },
+        )
+
+        start = time.perf_counter()
+        try:
+            results = method()
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start) * 1000.0
+            stats["last_duration_ms"] = duration_ms
+            stats["last_output_count"] = 0
+            stats["last_exception"] = repr(e)
+            stats["total_runs"] += 1
+            # Exceptions don't increment the zero-streak: an outright failure is
+            # observable via last_exception, and we don't want a transient crash
+            # to also trip the empty-data warning.
+            logger.exception("%s correlator failed", name)
+            return []
+
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        count = len(results)
+        stats["last_duration_ms"] = duration_ms
+        stats["last_output_count"] = count
+        stats["total_runs"] += 1
+        stats["last_exception"] = None
+
+        if count == 0:
+            stats["consecutive_zero_count"] += 1
+            if stats["consecutive_zero_count"] == CORRELATOR_ZERO_STREAK_WARN_THRESHOLD:
+                logger.warning(
+                    "correlator %s has produced zero insights for %d consecutive cycles",
+                    name,
+                    stats["consecutive_zero_count"],
+                )
+        else:
+            stats["consecutive_zero_count"] = 0
+
+        return results
+
     async def generate_insights(self) -> list[Insight]:
         """Main loop: run all correlators, deduplicate, store, return new insights.
 
@@ -335,13 +420,13 @@ class InsightEngine:
         ]
 
         for name, method in correlators:
-            try:
-                results = method()
-                correlator_stats[name] = len(results)
-                raw.extend(results)
-            except Exception:
-                correlator_stats[name] = "error"
-                logger.exception("%s correlator failed", name)
+            results = self._run_correlator(name, method)
+            correlator_stats[name] = (
+                "error"
+                if self._correlator_stats[name].get("last_exception")
+                else len(results)
+            )
+            raw.extend(results)
 
         logger.info("InsightEngine: correlator results — %s", correlator_stats)
 
@@ -416,8 +501,13 @@ class InsightEngine:
 
         Returns:
             dict with keys: ``total_runs``, ``last_run_at``,
-            ``last_correlator_stats``, ``total_insights_stored``,
-            ``insights_by_type``, and ``health``.
+            ``last_correlator_stats``, ``correlator_stats``,
+            ``total_insights_stored``, ``insights_by_type``, and ``health``.
+
+            ``correlator_stats`` is a mapping ``name → {last_duration_ms,
+            last_output_count, consecutive_zero_count, total_runs,
+            last_exception}`` — useful for identifying slow correlators and
+            those that have been silently empty for many cycles.
         """
         total_stored = 0
         by_type: dict[str, int] = {}
@@ -446,6 +536,7 @@ class InsightEngine:
             "total_runs": self._total_runs,
             "last_run_at": self._last_run_at,
             "last_correlator_stats": self._last_correlator_stats,
+            "correlator_stats": self._correlator_stats,
             "total_insights_stored": total_stored,
             "insights_by_type": by_type,
             "health": health,

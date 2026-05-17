@@ -914,3 +914,195 @@ async def test_generate_insights_error_handling(db, user_model_store):
 
     # Should not raise an exception
     assert isinstance(insights, list)
+
+
+# =============================================================================
+# Per-correlator timing and zero-streak tracking
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_per_correlator_stats_populated_after_run(db, user_model_store):
+    """After generate_insights(), self._correlator_stats has an entry per correlator."""
+    engine = InsightEngine(db, user_model_store)
+    await engine.generate_insights()
+
+    stats = engine._correlator_stats
+    expected_names = {
+        "place_frequency", "contact_gap", "relationship_intelligence",
+        "email_volume", "email_peak_hour", "meeting_density",
+        "communication_style", "inbound_style", "actionable_alert",
+        "temporal_pattern", "mood_trend", "spending_pattern",
+        "decision_pattern", "topic_interest", "cadence_response",
+        "routine", "spatial", "workflow_pattern", "connector_health",
+    }
+    assert expected_names == set(stats.keys())
+
+    for name, entry in stats.items():
+        # Each entry has the documented keys with sensible initial values.
+        assert "last_duration_ms" in entry
+        assert "last_output_count" in entry
+        assert "consecutive_zero_count" in entry
+        assert "total_runs" in entry
+        assert "last_exception" in entry
+        assert isinstance(entry["last_duration_ms"], float)
+        assert entry["last_duration_ms"] >= 0.0
+        assert isinstance(entry["last_output_count"], int)
+        assert entry["total_runs"] == 1, f"{name} should have run exactly once"
+
+
+@pytest.mark.asyncio
+async def test_get_diagnostics_includes_correlator_stats(db, user_model_store):
+    """get_diagnostics() should expose the new correlator_stats dict."""
+    engine = InsightEngine(db, user_model_store)
+    await engine.generate_insights()
+
+    diag = engine.get_diagnostics()
+    assert "correlator_stats" in diag
+    assert isinstance(diag["correlator_stats"], dict)
+    # Same data as engine._correlator_stats
+    assert diag["correlator_stats"] is engine._correlator_stats
+    # And the legacy last_correlator_stats remains present for backward compat
+    assert "last_correlator_stats" in diag
+
+
+@pytest.mark.asyncio
+async def test_zero_streak_increments_on_empty_output(db, user_model_store):
+    """consecutive_zero_count increments each time a correlator returns []."""
+    engine = InsightEngine(db, user_model_store)
+
+    # Drive three back-to-back runs; place_frequency returns 0 on empty DB.
+    for _ in range(3):
+        engine._last_insight_run = 0.0  # bypass TTL cache
+        await engine.generate_insights()
+
+    assert engine._correlator_stats["place_frequency"]["consecutive_zero_count"] == 3
+    assert engine._correlator_stats["place_frequency"]["total_runs"] == 3
+
+
+@pytest.mark.asyncio
+async def test_zero_streak_resets_when_output_nonzero(db, user_model_store):
+    """A non-empty correlator output resets consecutive_zero_count to 0."""
+    engine = InsightEngine(db, user_model_store)
+
+    # First run: place_frequency returns 0 → streak goes to 1
+    await engine.generate_insights()
+    assert engine._correlator_stats["place_frequency"]["consecutive_zero_count"] == 1
+
+    # Seed a place so the next run produces an insight
+    import uuid as _uuid
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    with db.get_connection("entities") as conn:
+        conn.execute(
+            "INSERT INTO places (id, name, visit_count, place_type, created_at) VALUES (?, ?, ?, ?, ?)",
+            (str(_uuid.uuid4()), "Streak Reset Cafe", 10, "cafe", _dt.now(_tz.utc).isoformat()),
+        )
+
+    engine._last_insight_run = 0.0
+    await engine.generate_insights()
+    assert engine._correlator_stats["place_frequency"]["last_output_count"] > 0
+    assert engine._correlator_stats["place_frequency"]["consecutive_zero_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_zero_streak_warning_at_threshold(db, user_model_store, caplog):
+    """Hitting CORRELATOR_ZERO_STREAK_WARN_THRESHOLD emits a WARNING log line."""
+    import logging
+
+    from services.insight_engine.engine import CORRELATOR_ZERO_STREAK_WARN_THRESHOLD
+
+    engine = InsightEngine(db, user_model_store)
+
+    # Run threshold-1 cycles without expecting the warning yet
+    for _ in range(CORRELATOR_ZERO_STREAK_WARN_THRESHOLD - 1):
+        engine._last_insight_run = 0.0
+        await engine.generate_insights()
+
+    with caplog.at_level(logging.WARNING, logger="services.insight_engine.engine"):
+        engine._last_insight_run = 0.0
+        await engine.generate_insights()
+
+    warning_msgs = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "consecutive cycles" in r.message
+    ]
+    assert any("place_frequency" in m.message for m in warning_msgs), (
+        f"Expected zero-streak warning at threshold; got: {[m.message for m in warning_msgs]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_exception_in_correlator_does_not_abort_cycle(db, user_model_store):
+    """A raising correlator records last_exception and the cycle continues."""
+    engine = InsightEngine(db, user_model_store)
+
+    def broken():
+        raise RuntimeError("simulated correlator crash")
+
+    engine._place_frequency_insights = broken
+    result = await engine.generate_insights()
+
+    # Cycle completed and returned a list (other correlators ran).
+    assert isinstance(result, list)
+
+    stats = engine._correlator_stats["place_frequency"]
+    assert stats["last_exception"] is not None
+    assert "simulated correlator crash" in stats["last_exception"]
+    assert stats["last_output_count"] == 0
+    assert stats["total_runs"] == 1
+
+    # Other correlators were unaffected and have stats entries.
+    assert engine._correlator_stats["contact_gap"]["last_exception"] is None
+    assert engine._correlator_stats["contact_gap"]["total_runs"] == 1
+
+
+@pytest.mark.asyncio
+async def test_exception_does_not_increment_zero_streak(db, user_model_store):
+    """A raising correlator should not bump consecutive_zero_count.
+
+    Exception state is already visible via last_exception; conflating it with
+    the "data dried up" signal would produce false positives every time a
+    correlator throws.
+    """
+    engine = InsightEngine(db, user_model_store)
+
+    def broken():
+        raise RuntimeError("boom")
+
+    engine._place_frequency_insights = broken
+    await engine.generate_insights()
+
+    assert engine._correlator_stats["place_frequency"]["consecutive_zero_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_successful_run_clears_prior_exception(db, user_model_store):
+    """A correlator that raises then succeeds should have last_exception cleared."""
+    engine = InsightEngine(db, user_model_store)
+
+    original = engine._place_frequency_insights
+
+    def broken():
+        raise RuntimeError("first-cycle crash")
+
+    engine._place_frequency_insights = broken
+    await engine.generate_insights()
+    assert engine._correlator_stats["place_frequency"]["last_exception"] is not None
+
+    engine._place_frequency_insights = original
+    engine._last_insight_run = 0.0
+    await engine.generate_insights()
+    assert engine._correlator_stats["place_frequency"]["last_exception"] is None
+
+
+@pytest.mark.asyncio
+async def test_duration_ms_recorded(db, user_model_store):
+    """last_duration_ms should be a non-negative float after a run."""
+    engine = InsightEngine(db, user_model_store)
+    await engine.generate_insights()
+
+    for name, entry in engine._correlator_stats.items():
+        assert isinstance(entry["last_duration_ms"], float), name
+        assert entry["last_duration_ms"] >= 0.0, name
