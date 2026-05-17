@@ -79,6 +79,60 @@ class WorkflowDetector:
         # rate, but those 15 replies clearly represent a real workflow.
         self.min_completions = 2  # Absolute completion count minimum to store workflow
 
+        # Most recent detect_workflows() outcome, bucketed by detection path.
+        # Populated each run by detect_workflows(); operators read via
+        # get_last_run_diagnostics() to distinguish "no candidates exist"
+        # from "candidates filtered out by thresholds".
+        self._last_run_diagnostics: dict[str, Any] = {}
+
+    @staticmethod
+    def _empty_run_diagnostics() -> dict[str, Any]:
+        """Return a zero-filled diagnostics structure for a single detection run.
+
+        Each per-path bucket tracks the candidates considered and the reasons
+        any of them were skipped by threshold gates.  Used both as the initial
+        state at the start of ``detect_workflows`` and as the safe default
+        returned by ``get_last_run_diagnostics`` when no run has occurred yet.
+        """
+        return {
+            "last_run_at": None,
+            "email_senders": {
+                "considered": 0,
+                "skipped_below_min_occurrences": 0,
+                "skipped_extreme_volume": 0,
+                "skipped_no_following_actions": 0,
+                "emitted": 0,
+            },
+            "tasks": {
+                "considered": 0,
+                "skipped_below_min_occurrences": 0,
+                "skipped_below_min_steps": 0,
+                "emitted": 0,
+            },
+            "calendar": {
+                "considered": 0,
+                "skipped_below_min_occurrences": 0,
+                "skipped_below_min_steps": 0,
+                "emitted": 0,
+            },
+            "total_emitted": 0,
+        }
+
+    def get_last_run_diagnostics(self) -> dict[str, Any]:
+        """Return the most recent detect_workflows() run's outcome.
+
+        Surfaces per-path "considered vs. skipped vs. emitted" counters so
+        operators can tell whether a zero-result cycle reflects an absence of
+        candidates or candidates being filtered by thresholds (e.g. an email
+        connector outage vs. real sparsity).
+
+        Returns an empty diagnostics structure (all counters zero,
+        ``last_run_at`` None) if detect_workflows has not yet been invoked.
+        """
+        if not self._last_run_diagnostics:
+            return self._empty_run_diagnostics()
+        return self._last_run_diagnostics
+
     def _backfill_stale_interaction_types(self, lookback_days: int) -> None:
         """Batch-update episodes with stale interaction_type values.
 
@@ -292,6 +346,11 @@ class WorkflowDetector:
         Returns:
             List of detected workflows (email, task, calendar, interaction-based)
         """
+        # Reset per-run diagnostics before any detection strategy runs.  The
+        # sub-detectors increment counters on this dict inline as their gates
+        # fire (see e.g. `_detect_email_workflows`).
+        self._last_run_diagnostics = self._empty_run_diagnostics()
+
         # Adaptive lookback: when the default window contains fewer than
         # MIN_QUALIFYING_EVENTS qualifying events (because a connector outage
         # pushed all data outside the window), double the window repeatedly up
@@ -360,6 +419,26 @@ class WorkflowDetector:
             f"{len(calendar_workflows)} calendar, {len(interaction_workflows)} interaction, "
             f"{len(recurring_inbound_workflows)} recurring_inbound)"
         )
+
+        # Finalize per-run diagnostics.  total_emitted counts every workflow
+        # produced by any path (not just the three bucketed paths), so
+        # operators can see at a glance whether the cycle was empty.
+        self._last_run_diagnostics["last_run_at"] = datetime.now(UTC).isoformat()
+        self._last_run_diagnostics["total_emitted"] = len(workflows)
+
+        # Emit a single INFO line when nothing was emitted.  Routine zero-result
+        # cycles previously left operators with no signal at all; the bucketed
+        # counts here make it possible to see whether candidates existed and
+        # were filtered, vs. there being nothing to look at.
+        if len(workflows) == 0:
+            logger.info(
+                "WorkflowDetector: zero-result cycle — "
+                "email_senders %s, tasks %s, calendar %s",
+                self._last_run_diagnostics["email_senders"],
+                self._last_run_diagnostics["tasks"],
+                self._last_run_diagnostics["calendar"],
+            )
+
         return workflows
 
     def _detect_email_workflows(self, lookback_days: int) -> list[dict[str, Any]]:
@@ -471,14 +550,19 @@ class WorkflowDetector:
 
                             if is_match:
                                 # Calculate average delay from all active received emails
-                                for recv_ts, recv_id in received_list:
+                                for recv_ts, _recv_id in received_list:
                                     delay_hours = (timestamp - recv_ts).total_seconds() / 3600
                                     sender_stats[sender]['following_actions'][event_type].append(delay_hours)
 
         # Build workflows from aggregated statistics
+        email_diag = self._last_run_diagnostics.get("email_senders") if self._last_run_diagnostics else None
         for sender, stats in sender_stats.items():
+            if email_diag is not None:
+                email_diag["considered"] += 1
             receive_count = stats['receive_count']
             if receive_count < self.min_occurrences:
+                if email_diag is not None:
+                    email_diag["skipped_below_min_occurrences"] += 1
                 continue
 
             # Aggregate following actions: count occurrences and average delay
@@ -525,9 +609,13 @@ class WorkflowDetector:
                         "times_observed": receive_count,
                     }
                     workflows.append(workflow)
+                    if email_diag is not None:
+                        email_diag["emitted"] += 1
                     logger.debug(f"Detected email workflow for {sender}: {len(steps)} steps, {completion_count} completions")
                 else:
                     # Log why this sender was rejected for debugging workflow detection issues
+                    if email_diag is not None:
+                        email_diag["skipped_no_following_actions"] += 1
                     if not following_actions:
                         logger.debug("Workflow candidate '%s' rejected: %d receives but 0 following actions", sender, receive_count)
                     elif completion_count < self.min_completions:
@@ -535,6 +623,10 @@ class WorkflowDetector:
                             "Workflow candidate '%s' rejected: %d receives, %d completions < min %d",
                             sender, receive_count, completion_count, self.min_completions,
                         )
+            else:
+                # len(following_actions) < min_steps - 1 — no usable response chain.
+                if email_diag is not None:
+                    email_diag["skipped_no_following_actions"] += 1
 
         # Cap at top 20 senders by email volume to keep workflow storage manageable
         # and focus on the most significant communication patterns.  On systems
@@ -625,11 +717,16 @@ class WorkflowDetector:
         else:
             max_volume = 200
 
+        email_diag = self._last_run_diagnostics.get("email_senders") if self._last_run_diagnostics else None
         for sender, timestamps in sender_timestamps.items():
             count = len(timestamps)
+            if email_diag is not None:
+                email_diag["considered"] += 1
 
             # Skip senders below minimum occurrence threshold
             if count < self.min_occurrences:
+                if email_diag is not None:
+                    email_diag["skipped_below_min_occurrences"] += 1
                 continue
 
             # Skip senders where majority of events are tagged as marketing
@@ -641,13 +738,15 @@ class WorkflowDetector:
 
             # Skip extreme-volume senders (dynamic threshold)
             if count > max_volume:
+                if email_diag is not None:
+                    email_diag["skipped_extreme_volume"] += 1
                 continue
 
             cadence = self._detect_cadence(timestamps)
             if cadence is None:
                 continue
 
-            sender_label = sender.replace("@", "_at_").replace(".", "_")
+            sender.replace("@", "_at_").replace(".", "_")
             workflow = {
                 "name": f"Recurring email from {sender}",
                 "trigger_conditions": [f"email.received.from.{sender}"],
@@ -663,6 +762,8 @@ class WorkflowDetector:
                 },
             }
             workflows.append(workflow)
+            if email_diag is not None:
+                email_diag["emitted"] += 1
             logger.debug(
                 "Detected recurring inbound pattern from %s: %s cadence, %d occurrences",
                 sender,
@@ -819,11 +920,23 @@ class WorkflowDetector:
                     # Match this event to active tasks
                     if active_tasks:
                         # Calculate average delay from all active tasks
-                        for task_ts, t_id in active_tasks:
+                        for task_ts, _t_id in active_tasks:
                             delay_hours = (timestamp - task_ts).total_seconds() / 3600
                             task_stats['following_actions'][event_type].append(delay_hours)
 
+        task_diag = self._last_run_diagnostics.get("tasks") if self._last_run_diagnostics else None
+        if task_diag is not None:
+            # "considered" = number of task.created events seen in the window.
+            # The task path produces a single aggregate workflow, so per-path
+            # candidates are individual task triggers rather than distinct
+            # workflow shapes.
+            task_diag["considered"] += task_stats['total_tasks']
+
         if task_stats['total_tasks'] < self.min_occurrences:
+            # Only flag a skip when there were actual candidates filtered out;
+            # the zero-data case is already represented by considered=0.
+            if task_diag is not None and task_stats['total_tasks'] > 0:
+                task_diag["skipped_below_min_occurrences"] += 1
             return workflows
 
         # Aggregate following actions
@@ -866,7 +979,12 @@ class WorkflowDetector:
                     "times_observed": task_stats['total_tasks'],
                 }
                 workflows.append(workflow)
+                if task_diag is not None:
+                    task_diag["emitted"] += 1
                 logger.debug(f"Detected task workflow: {len(steps)} steps, {completion_count} completions")
+        else:
+            if task_diag is not None:
+                task_diag["skipped_below_min_steps"] += 1
 
         return workflows
 
@@ -942,7 +1060,7 @@ class WorkflowDetector:
                         if evt_ts > timestamp and evt_ts - timestamp <= max_gap
                     ]
                     if prep_matches and event_type in ('email.received', 'task.created'):
-                        for evt_ts, evt_id in prep_matches:
+                        for evt_ts, _evt_id in prep_matches:
                             delay_hours = (evt_ts - timestamp).total_seconds() / 3600
                             calendar_stats['prep_actions'][event_type].append(delay_hours)
 
@@ -952,7 +1070,7 @@ class WorkflowDetector:
                         if timestamp > evt_ts and timestamp - evt_ts <= max_gap
                     ]
                     if followup_matches and event_type in ('email.sent', 'task.created', 'message.sent'):
-                        for evt_ts, evt_id in followup_matches:
+                        for evt_ts, _evt_id in followup_matches:
                             delay_hours = (timestamp - evt_ts).total_seconds() / 3600
                             calendar_stats['followup_actions'][event_type].append(delay_hours)
 
@@ -962,7 +1080,15 @@ class WorkflowDetector:
                         if timestamp - evt_ts <= max_gap
                     ]
 
+        cal_diag = self._last_run_diagnostics.get("calendar") if self._last_run_diagnostics else None
+        if cal_diag is not None:
+            cal_diag["considered"] += calendar_stats['event_count']
+
         if calendar_stats['event_count'] < self.min_occurrences:
+            # Match the task path: only count this as "skipped" if candidates
+            # actually existed.  An empty calendar log should read all zeros.
+            if cal_diag is not None and calendar_stats['event_count'] > 0:
+                cal_diag["skipped_below_min_occurrences"] += 1
             return workflows
 
         # Aggregate calendar actions
@@ -976,6 +1102,9 @@ class WorkflowDetector:
             count = len(delays)
             if count >= self.min_occurrences:
                 calendar_actions.append((action_type, count, 'after'))
+
+        if len(calendar_actions) < self.min_steps and cal_diag is not None:
+            cal_diag["skipped_below_min_steps"] += 1
 
         if len(calendar_actions) >= self.min_steps:
             steps = []
@@ -1010,6 +1139,8 @@ class WorkflowDetector:
                     "times_observed": calendar_stats['event_count'],
                 }
                 workflows.append(workflow)
+                if cal_diag is not None:
+                    cal_diag["emitted"] += 1
                 logger.debug(f"Detected calendar workflow: {len(steps)} steps, {followup_count} completions")
 
         return workflows
