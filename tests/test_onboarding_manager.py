@@ -195,14 +195,20 @@ def test_parse_contacts_with_parentheses(db):
 
 
 def test_parse_contacts_names_only(db):
-    """_parse_contacts should handle names without relationships."""
+    """_parse_contacts should handle real names without relationships.
+
+    A line that is JUST a relationship word ("Mom", "wife") is intentionally
+    dropped — see test_onboarding_input_validation.py::
+    test_contact_with_only_relationship_phrase_is_dropped — because the
+    parser cannot recover a real person from a relationship label alone.
+    """
     manager = OnboardingManager(db)
-    result = manager._parse_contacts("Sarah, Tom, Mom")
+    result = manager._parse_contacts("Sarah, Tom, Bob")
 
     assert len(result) == 3
     assert result[0]["name"] == "Sarah"
     assert result[0]["relationship"] is None
-    assert result[2]["name"] == "Mom"
+    assert result[2]["name"] == "Bob"
 
 
 def test_parse_contacts_bullet_list(db):

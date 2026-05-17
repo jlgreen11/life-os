@@ -53,7 +53,6 @@ ONBOARDING_PHASES = [
         ),
         "type": "info",
     },
-
     # --- Phase 1: Communication Style ---
     # These three screens capture how the AI should talk to the user.
     # The values ("minimal"/"detailed", "warm"/"professional"/"casual", etc.)
@@ -106,7 +105,6 @@ ONBOARDING_PHASES = [
         ],
         "maps_to": "proactivity",
     },
-
     # --- Phase 2: Autonomy ---
     # Controls the "leash length" — how much the AI can do without asking.
     # "supervised" = ask about everything, "high" = handle as much as possible.
@@ -141,7 +139,6 @@ ONBOARDING_PHASES = [
         ],
         "maps_to": "draft_replies",
     },
-
     # --- Phase 3: Life Structure ---
     # Free-text inputs that are parsed into structured data by the
     # _parse_domains and _parse_contacts helpers below.
@@ -166,7 +163,6 @@ ONBOARDING_PHASES = [
         "type": "free_text",
         "maps_to": "priority_contacts",
     },
-
     # --- Phase 4: Privacy & Boundaries ---
     # The boundary_mode controls whether work events bleed into personal
     # time and vice versa. The Vault is an optional encrypted compartment
@@ -204,7 +200,6 @@ ONBOARDING_PHASES = [
         ],
         "maps_to": "vault_enabled",
     },
-
     # --- Phase 5: Attention ---
     # Notification mode + quiet hours together define when and how
     # the system is allowed to interrupt the user.
@@ -235,7 +230,6 @@ ONBOARDING_PHASES = [
         "maps_to": "quiet_hours",
         "hint": "Example: '10pm to 7am' or 'I don't need quiet hours'",
     },
-
     # --- Phase 6: Close (info-only, no input captured) ---
     # Reassures the user about data ownership and privacy before starting.
     {
@@ -255,6 +249,7 @@ ONBOARDING_PHASES = [
 # ---------------------------------------------------------------------------
 # Onboarding Manager
 # ---------------------------------------------------------------------------
+
 
 class OnboardingManager:
     """Manages the onboarding flow and persists preferences."""
@@ -327,19 +322,13 @@ class OnboardingManager:
         # Free-text responses are natural language; the _parse_* helpers
         # convert them into lists/dicts the rest of the system can use.
         if "life_domains" in preferences:
-            preferences["life_domains"] = self._parse_domains(
-                preferences["life_domains"]
-            )
+            preferences["life_domains"] = self._parse_domains(preferences["life_domains"])
 
         if "priority_contacts" in preferences:
-            preferences["priority_contacts"] = self._parse_contacts(
-                preferences["priority_contacts"]
-            )
+            preferences["priority_contacts"] = self._parse_contacts(preferences["priority_contacts"])
 
         if "quiet_hours" in preferences:
-            preferences["quiet_hours"] = self._parse_quiet_hours(
-                preferences["quiet_hours"]
-            )
+            preferences["quiet_hours"] = self._parse_quiet_hours(preferences["quiet_hours"])
 
         # --- Step 3: Handle vault setup ---
         # Convert the boolean "vault_enabled" answer into a vaults config
@@ -371,6 +360,16 @@ class OnboardingManager:
 
         return preferences
 
+    # Reject these as domain names — common filler/refusal tokens that
+    # shouldn't become "life domains" in the user model.
+    _DOMAIN_JUNK = {"na", "none", "n/a", "nothing", "no"}
+
+    # Caps to keep a verbose paragraph from creating runaway preferences.
+    _MAX_DOMAINS = 12
+    _MAX_DOMAIN_NAME_LEN = 40
+    _MAX_CONTACTS = 50
+    _MAX_CONTACT_NAME_LEN = 80
+
     def _parse_domains(self, text: str) -> list[dict]:
         """
         Parse free-text domain description into structured domains.
@@ -379,30 +378,83 @@ class OnboardingManager:
         lists (e.g., "work, family, health" or "- work\n- family").
         Each domain gets a default "soft_separation" boundary mode.
         Falls back to ["personal", "work"] if parsing yields nothing.
+
+        Robustness guards:
+          - Each domain name is lowercased, stripped, and truncated to
+            _MAX_DOMAIN_NAME_LEN chars.
+          - Junk tokens ("na", "none", "n/a", ...) are dropped.
+          - Duplicates are removed while preserving first-seen order.
+          - The list is capped at _MAX_DOMAINS so a 5,000-word paragraph
+            can't spawn 5,000 single-word "domains".
         """
-        # Simple parsing — in production, use LLM for more robust extraction
-        domains = []
+        domains: list[dict] = []
+        seen: set[str] = set()
+
         # Normalize commas to newlines, then split and strip list markers
         for part in text.replace(",", "\n").split("\n"):
-            part = part.strip().strip("-\u2022*").strip()
-            if part:
-                domains.append({"name": part.lower(), "boundary": "soft_separation"})
+            part = part.strip().strip("-\u2022*").strip().lower()
+            if not part or part in self._DOMAIN_JUNK:
+                continue
+            # Truncate so a giant paragraph can't become one giant name
+            name = part[: self._MAX_DOMAIN_NAME_LEN]
+            if name in seen:
+                continue
+            seen.add(name)
+            domains.append({"name": name, "boundary": "soft_separation"})
+            if len(domains) >= self._MAX_DOMAINS:
+                break
+
         return domains if domains else [{"name": "personal"}, {"name": "work"}]
 
     # Relationship phrases to detect (order matters — check longer phrases first)
     _RELATIONSHIP_PHRASES = [
-        "brother in law", "sister in law", "mother in law", "father in law",
-        "daughter in law", "son in law",
-        "step brother", "step sister", "step mother", "step father",
-        "step daughter", "step son",
-        "best friend", "close friend",
-        "brother", "sister", "mother", "father", "mom", "dad",
-        "daughter", "son", "wife", "husband", "spouse", "partner",
-        "uncle", "aunt", "cousin", "nephew", "niece",
-        "grandmother", "grandfather", "grandma", "grandpa",
-        "boss", "manager", "coworker", "colleague", "teammate",
-        "mentor", "assistant", "client", "contractor",
-        "friend", "neighbor", "roommate",
+        "brother in law",
+        "sister in law",
+        "mother in law",
+        "father in law",
+        "daughter in law",
+        "son in law",
+        "step brother",
+        "step sister",
+        "step mother",
+        "step father",
+        "step daughter",
+        "step son",
+        "best friend",
+        "close friend",
+        "brother",
+        "sister",
+        "mother",
+        "father",
+        "mom",
+        "dad",
+        "daughter",
+        "son",
+        "wife",
+        "husband",
+        "spouse",
+        "partner",
+        "uncle",
+        "aunt",
+        "cousin",
+        "nephew",
+        "niece",
+        "grandmother",
+        "grandfather",
+        "grandma",
+        "grandpa",
+        "boss",
+        "manager",
+        "coworker",
+        "colleague",
+        "teammate",
+        "mentor",
+        "assistant",
+        "client",
+        "contractor",
+        "friend",
+        "neighbor",
+        "roommate",
     ]
 
     def _parse_contacts(self, text: str) -> list[dict]:
@@ -410,44 +462,72 @@ class OnboardingManager:
         Parse free-text contact list into structured contacts.
 
         Supports formats like:
-            "Sarah - wife, Tom - coworker, Mom"
-            "Sarah (wife)\nTom (coworker)\nMom"
+            "Sarah - wife, Tom - coworker"
+            "Sarah (wife)\nTom (coworker)"
             "Nate my brother in law"
             "my wife Sarah"
         The relationship is optional; if absent, it's stored as None.
+
+        Robustness guards:
+          - Skip entries whose name is None, empty/whitespace, or longer
+            than _MAX_CONTACT_NAME_LEN chars.
+          - Cap the list at _MAX_CONTACTS entries.
+          - If a line is JUST a relationship phrase (e.g. "wife"),
+            _extract_name_and_relationship returns (None, "wife") and we
+            drop it — a relationship without a name is not a contact.
         """
-        contacts = []
+        contacts: list[dict] = []
         for line in text.replace(",", "\n").split("\n"):
             line = line.strip().strip("-\u2022*").strip()
             if not line:
                 continue
+
+            name: str | None
+            relationship: str | None
 
             # Try explicit separators first: "Name - role" or "Name (role)"
             if "-" in line:
                 parts = line.split("-", 1)
                 name = parts[0].strip()
                 relationship = parts[1].strip() if len(parts) > 1 else None
-                contacts.append({"name": name, "relationship": relationship})
-                continue
-            if "(" in line:
+            elif "(" in line:
                 parts = line.split("(", 1)
                 name = parts[0].strip()
                 relationship = parts[1].strip().strip(")") if len(parts) > 1 else None
-                contacts.append({"name": name, "relationship": relationship})
+            else:
+                # Try natural language: "Nate my brother in law" or "my wife Sarah"
+                name, relationship = self._extract_name_and_relationship(line)
+
+            # Validate name: must exist, must be non-empty after stripping,
+            # must fit within the length cap. Otherwise drop the entry.
+            if not name or not name.strip():
+                continue
+            if len(name) > self._MAX_CONTACT_NAME_LEN:
                 continue
 
-            # Try natural language: "Nate my brother in law" or "my wife Sarah"
-            name, relationship = self._extract_name_and_relationship(line)
+            # Normalize empty relationship strings to None.
+            if isinstance(relationship, str) and not relationship.strip():
+                relationship = None
+
             contacts.append({"name": name, "relationship": relationship})
+            if len(contacts) >= self._MAX_CONTACTS:
+                break
+
         return contacts
 
-    def _extract_name_and_relationship(self, text: str) -> tuple[str, str | None]:
+    def _extract_name_and_relationship(self, text: str) -> tuple[str | None, str | None]:
         """Extract a name and relationship from natural language text.
 
         Handles both orderings:
           - "Nate my brother in law" → ("Nate", "brother-in-law")
           - "my brother in law Nate" → ("Nate", "brother-in-law")
-          - "Mom" → ("Mom", None) — the word IS the name, no separate relationship
+          - "wife"                   → (None, "wife")  — dropped by caller
+          - "Bob"                    → ("Bob", None)   — no phrase matched
+
+        When the input is just a relationship phrase (e.g. "wife", "mom"),
+        we return ``(None, relationship)`` so _parse_contacts can skip it.
+        The previous behavior — returning ``(text.strip(), None)`` and
+        thereby creating a contact literally named "wife" — was a bug.
         """
         import re
 
@@ -457,7 +537,7 @@ class OnboardingManager:
         stripped = lowered
         for prefix in ("my ", "our "):
             if stripped.startswith(prefix):
-                stripped = stripped[len(prefix):]
+                stripped = stripped[len(prefix) :]
                 break
 
         # Check if any relationship phrase appears
@@ -465,8 +545,8 @@ class OnboardingManager:
             if phrase not in stripped:
                 continue
 
-            # Found a phrase — remove it (and possessives) to isolate the name
-            # Work on original text to preserve casing
+            # Found a phrase — remove it (and possessives) to isolate the name.
+            # Work on original text to preserve casing.
             remainder = text
             for prefix in ("my ", "My ", "our ", "Our "):
                 remainder = remainder.replace(prefix, " ")
@@ -479,11 +559,50 @@ class OnboardingManager:
 
             if name:
                 return name, relationship
-            # If removing the phrase leaves nothing, the phrase IS the name
-            return text.strip(), None
+            # Phrase exhausted the text — there is no name. Return None so
+            # _parse_contacts drops this entry instead of saving a contact
+            # whose name is the relationship word itself.
+            return None, relationship
 
-        # No relationship phrase found
+        # No relationship phrase found — treat whole text as a name
         return text.strip(), None
+
+    # Full lowercase day names — matches what the notification manager's
+    # ``_is_quiet_hours`` produces via ``strftime("%A").lower()``.
+    _ALL_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    _WEEKENDS = ["saturday", "sunday"]
+
+    # Day-qualifier vocabulary. Order matters: longer keywords are listed
+    # first so "weekends" wins before the substring "wed" or "sun".
+    _DAY_KEYWORDS: tuple[tuple[str, list[str]], ...] = (
+        ("weekdays", _WEEKDAYS),
+        ("weekday", _WEEKDAYS),
+        ("weekends", _WEEKENDS),
+        ("weekend", _WEEKENDS),
+        ("monday", ["monday"]),
+        ("tuesday", ["tuesday"]),
+        ("wednesday", ["wednesday"]),
+        ("thursday", ["thursday"]),
+        ("friday", ["friday"]),
+        ("saturday", ["saturday"]),
+        ("sunday", ["sunday"]),
+        # Abbreviations are matched with word boundaries elsewhere to
+        # avoid false hits inside full day names (e.g. "sat" in "saturday").
+        ("mon", ["monday"]),
+        ("tue", ["tuesday"]),
+        ("tues", ["tuesday"]),
+        ("wed", ["wednesday"]),
+        ("thu", ["thursday"]),
+        ("thur", ["thursday"]),
+        ("thurs", ["thursday"]),
+        ("fri", ["friday"]),
+        ("sat", ["saturday"]),
+        ("sun", ["sunday"]),
+    )
+
+    # Window radius around a time range to scan for day qualifiers.
+    _QUIET_HOURS_DAY_WINDOW = 30
 
     def _parse_quiet_hours(self, text: str) -> list[dict]:
         """
@@ -492,10 +611,21 @@ class OnboardingManager:
         Handles inputs like "10pm to 7am", "22:00 - 07:00", or
         "I don't need quiet hours". Returns a list of time-range dicts
         compatible with the notification manager's quiet hours format.
+
+        Supports multiple ranges (e.g. different times on weekdays vs.
+        weekends) by switching from ``re.search`` to ``re.finditer``.
+        For each range, we look for a day qualifier (weekday/weekend or a
+        specific day name) within ±_QUIET_HOURS_DAY_WINDOW characters of
+        the time match and pick the closest one. Ranges without a
+        qualifier default to every day of the week.
         """
+        import re
+
         text = text.lower().strip()
 
-        # If the user declines quiet hours, return an empty list
+        # If the user declines quiet hours, return an empty list.
+        # This short-circuit predates multi-range support and is kept
+        # to preserve existing behavior for inputs like "no" / "none".
         if "no" in text or "don't" in text or "none" in text:
             return []
 
@@ -508,11 +638,16 @@ class OnboardingManager:
         #   Group 5: end minutes  (optional, after colon)
         #   Group 6: end am/pm    (optional)
         # The separator between start and end can be "to" or "-".
-        import re
-        time_pattern = r'(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?\s*(?:to|-)\s*(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?'
-        match = re.search(time_pattern, text)
+        time_pattern = (
+            r"(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?"
+            r"\s*(?:to|-)\s*"
+            r"(\d{1,2})\s*(?::(\d{2}))?\s*(am|pm)?"
+        )
 
-        if match:
+        matches = list(re.finditer(time_pattern, text))
+
+        ranges: list[dict] = []
+        for match in matches:
             start_h = int(match.group(1))
             start_m = int(match.group(2) or 0)
             start_ampm = match.group(3)
@@ -526,21 +661,69 @@ class OnboardingManager:
             if end_ampm == "pm" and end_h < 12:
                 end_h += 12
             if start_ampm == "am" and start_h == 12:
-                start_h = 0   # 12am = midnight = 00:00
+                start_h = 0  # 12am = midnight = 00:00
             if end_ampm == "am" and end_h == 12:
-                end_h = 0     # 12am = midnight = 00:00
+                end_h = 0  # 12am = midnight = 00:00
 
-            # Default to every day of the week. The user can customize
-            # per-day ranges later through the settings UI.
-            return [{
-                "start": f"{start_h:02d}:{start_m:02d}",
-                "end": f"{end_h:02d}:{end_m:02d}",
-                "days": ["monday", "tuesday", "wednesday", "thursday",
-                         "friday", "saturday", "sunday"],
-            }]
+            days = self._find_days_near(text, match.start(), match.end())
 
-        # Default fallback: if the user said something like "yes" or
-        # "evening" without specific times, use a sensible default.
-        return [{"start": "22:00", "end": "07:00",
-                 "days": ["monday", "tuesday", "wednesday", "thursday",
-                          "friday", "saturday", "sunday"]}]
+            ranges.append(
+                {
+                    "start": f"{start_h:02d}:{start_m:02d}",
+                    "end": f"{end_h:02d}:{end_m:02d}",
+                    "days": days,
+                }
+            )
+
+        if ranges:
+            return ranges
+
+        # Default fallback: vague input like "yes" or "evening" — use a
+        # sensible default applied to every day.
+        return [{"start": "22:00", "end": "07:00", "days": list(self._ALL_DAYS)}]
+
+    def _find_days_near(self, text: str, start: int, end: int) -> list[str]:
+        """Return the day list nearest to the [start, end) time range.
+
+        Scans within ±_QUIET_HOURS_DAY_WINDOW chars of the time range for
+        a day qualifier (weekday/weekend/specific day, full or abbrev).
+        When several qualifiers fall inside the window — e.g.
+        "weekdays 10pm to 7am, weekends 11pm to 9am" — we pick the one
+        whose nearest edge is closest to the time match so each range
+        binds to its own qualifier. Returns _ALL_DAYS when no qualifier
+        is in range.
+        """
+        import re
+
+        radius = self._QUIET_HOURS_DAY_WINDOW
+        window_start = max(0, start - radius)
+        window_end = min(len(text), end + radius)
+
+        # Track best match: (distance, days). Lower distance wins.
+        best_dist: int | None = None
+        best_days: list[str] | None = None
+
+        for keyword, days in self._DAY_KEYWORDS:
+            # Abbreviations need word boundaries to avoid matching inside
+            # full day names ("sat" matching "saturday").
+            if len(keyword) <= 4:
+                pattern = re.compile(rf"\b{re.escape(keyword)}\b")
+            else:
+                pattern = re.compile(re.escape(keyword))
+
+            for m in pattern.finditer(text, window_start, window_end):
+                # Distance from the qualifier to the time range
+                if m.end() <= start:
+                    dist = start - m.end()
+                elif m.start() >= end:
+                    dist = m.start() - end
+                else:
+                    dist = 0
+
+                if dist > radius:
+                    continue
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_days = list(days)
+
+        return best_days if best_days is not None else list(self._ALL_DAYS)

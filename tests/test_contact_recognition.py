@@ -55,11 +55,22 @@ class TestParseContacts:
         assert result[0]["name"] == "Sarah"
         assert result[0]["relationship"] == "wife"
 
-    def test_plain_name_no_relationship(self, db):
-        """'Mom' → name='Mom', relationship=None (the word IS the name)"""
+    def test_bare_relationship_word_is_dropped(self, db):
+        """'Mom' alone yields no contact — see test_onboarding_input_validation.
+
+        The previous behavior (storing a contact literally named "Mom") was
+        a bug: a relationship label without a name isn't a person and
+        polluted UserPreferences. The parser now returns (None, "mom") and
+        ``_parse_contacts`` drops it.
+        """
         result = self._parse(db, "Mom")
+        assert result == []
+
+    def test_real_name_with_no_relationship_kept(self, db):
+        """A non-relationship word is still treated as a name."""
+        result = self._parse(db, "Alice")
         assert len(result) == 1
-        assert result[0]["name"] == "Mom"
+        assert result[0]["name"] == "Alice"
         assert result[0]["relationship"] is None
 
     def test_multi_word_relationship_hyphenated(self, db):
@@ -67,12 +78,12 @@ class TestParseContacts:
         assert result[0]["relationship"] == "step-brother"
 
     def test_comma_separated_mixed_formats(self, db):
+        """Real names parse; bare relationship words ('Mom') are dropped."""
         result = self._parse(db, "Tom - coworker, Nate my brother in law, Mom")
-        assert len(result) == 3
+        assert len(result) == 2
         assert result[0] == {"name": "Tom", "relationship": "coworker"}
         assert result[1]["name"] == "Nate"
         assert result[1]["relationship"] == "brother-in-law"
-        assert result[2] == {"name": "Mom", "relationship": None}
 
     def test_empty_input(self, db):
         result = self._parse(db, "")
