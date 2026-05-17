@@ -598,6 +598,54 @@ class FeedbackCollector:
                 ).fetchall()
                 result["top_dismissed_domains"] = {row["domain"]: row["c"] for row in domain_rows}
 
+                # Most-engaged domains (top 5) — mirror image of top_dismissed_domains.
+                # Lets operators see which event domains the user actively responds to,
+                # not just which ones they ignore.
+                engaged_domain_rows = conn.execute(
+                    """SELECT json_extract(context, '$.domain') as domain, COUNT(*) as c
+                       FROM feedback_log
+                       WHERE feedback_type = 'engaged'
+                         AND json_extract(context, '$.domain') IS NOT NULL
+                       GROUP BY domain ORDER BY c DESC LIMIT 5"""
+                ).fetchall()
+                result["top_engaged_domains"] = {row["domain"]: row["c"] for row in engaged_domain_rows}
+
+                # Breakdown by event source (e.g. notification_manager, rules_engine,
+                # prediction_engine). Sourced from context.source recorded with feedback.
+                # Rows without a source in their context are silently excluded.
+                source_rows = conn.execute(
+                    """SELECT json_extract(context, '$.source') as source, COUNT(*) as c
+                       FROM feedback_log
+                       WHERE json_extract(context, '$.source') IS NOT NULL
+                       GROUP BY source ORDER BY c DESC"""
+                ).fetchall()
+                result["by_source"] = {row["source"]: row["c"] for row in source_rows}
+
+                # Top dismissed sources (top 5) — answers "which subsystem's actions
+                # are getting dismissed most?" so we can target the noisiest producer.
+                dismissed_source_rows = conn.execute(
+                    """SELECT json_extract(context, '$.source') as source, COUNT(*) as c
+                       FROM feedback_log
+                       WHERE feedback_type = 'dismissed'
+                         AND json_extract(context, '$.source') IS NOT NULL
+                       GROUP BY source ORDER BY c DESC LIMIT 5"""
+                ).fetchall()
+                result["top_dismissed_sources"] = {row["source"]: row["c"] for row in dismissed_source_rows}
+
+                # 2D cross-tab: action_type × feedback_type. Produces a nested dict
+                # like {"notification": {"dismissed": 141, "engaged": 2}} so operators
+                # can immediately see which action types are net-negative.
+                cross_rows = conn.execute(
+                    """SELECT action_type, feedback_type, COUNT(*) as c
+                       FROM feedback_log
+                       GROUP BY action_type, feedback_type
+                       ORDER BY action_type, c DESC"""
+                ).fetchall()
+                cross_tab: dict[str, dict[str, int]] = {}
+                for row in cross_rows:
+                    cross_tab.setdefault(row["action_type"], {})[row["feedback_type"]] = row["c"]
+                result["by_action_and_feedback"] = cross_tab
+
                 # Recent feedback (last 24h count)
                 recent = conn.execute(
                     "SELECT COUNT(*) as c FROM feedback_log WHERE timestamp > datetime('now', '-1 day')"
