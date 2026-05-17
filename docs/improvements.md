@@ -41,6 +41,13 @@ Feel free to hand-add items above or below whatever the agent writes._
 <!-- AGENT-MANAGED: the planner adds/removes items here each wave. Human edits
      are preserved as long as they follow the item format below. -->
 
+- **Add post-write verification + WAL-checkpoint retry to decision extractor** · `broken_feature` — Re-queued from wave 3 (no PR opened yet); skip if wave-3 worker completes this.
+- **Add throughput counters and get_metrics() method to NATS event bus** · `code_quality` — Re-queued from wave 3 (no PR opened yet).
+- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` — Re-queued from wave 3 (no PR opened yet).
+- **Add per-strategy and skip-reason diagnostics to CalDAV/calendar conflict detector** · `data_quality` — Re-queued from wave 3 (no PR opened yet).
+- **Strengthen PIIShield redaction patterns (IBAN, IPv6, MAC, API keys) and add edge-case test coverage** · `code_quality` — Re-queued from wave 3 (no PR opened yet).
+- **Add Ollama health metrics with rolling success rate to AI engine** · `code_quality` — Re-queued from wave 3 (no PR opened yet).
+- **Add post-write verification (sampled) to relationship signal extractor** · `broken_feature` — Open PR #747 from wave 3, awaiting merge.
 - **Add prediction pipeline health section to admin UI** · `missing_feature` — Open PR #734 from wave 1, awaiting merge.
 - **Add post-write verification and WAL checkpoint to store_routine and store_prediction** · `code_quality` — Open PR #737 from wave 1, awaiting merge.
 - **Add post-execution verification to semantic inference and routine detection loops** · `code_quality` — Open PR #736 from wave 1, awaiting merge.
@@ -70,13 +77,13 @@ _Automatically updated each wave. Do not hand-edit unless a wave is stuck._
 
 <!-- AGENT-MANAGED -->
 
-- **Add post-write verification + WAL-checkpoint retry to decision extractor** · `broken_feature` (wave 3, slot 1)
-- **Add throughput counters and get_metrics() method to NATS event bus** · `code_quality` (wave 3, slot 2)
-- **Add regex-based task extraction fallback when AI engine is unavailable** · `missing_feature` (wave 3, slot 3)
-- **Add per-strategy and skip-reason diagnostics to CalDAV/calendar conflict detector** · `data_quality` (wave 3, slot 4)
-- **Strengthen PIIShield redaction patterns (IBAN, IPv6, MAC, API keys) and add edge-case test coverage** · `code_quality` (wave 3, slot 5)
-- **Add Ollama health metrics with rolling success rate to AI engine** · `code_quality` (wave 3, slot 6)
-- **Add post-write verification (sampled) to relationship signal extractor** · `broken_feature` (wave 3, slot 7)
+- **Add WAL-checkpoint retry to spatial extractor post-write verification** · `broken_feature` (wave 4, slot 1)
+- **Add connection metrics, heartbeat, and broadcast-failure diagnostics to WebSocket manager** · `code_quality` (wave 4, slot 2)
+- **Update unused-capability audit to reflect features now implemented (CalDAV conflict, comm templates, episodes)** · `cleanup` (wave 4, slot 3)
+- **Add per-strategy resolution counters and accuracy breakdown to behavioral accuracy tracker** · `data_quality` (wave 4, slot 4)
+- **Add embedding-failure tracking and per-source ingest counters to vector store** · `code_quality` (wave 4, slot 5)
+- **Add per-category extraction counters and skip-reason diagnostics to semantic fact inferrer** · `data_quality` (wave 4, slot 6)
+- **Tighten Pydantic schema validation in web/schemas.py for command, search, and rule endpoints** · `code_quality` (wave 4, slot 7)
 
 ## Completed
 
