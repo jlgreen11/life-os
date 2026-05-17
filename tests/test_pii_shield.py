@@ -658,3 +658,348 @@ def test_strip_preserves_whitespace():
     assert "   " in stripped
     restored = shield.restore(stripped, mapping)
     assert restored == text
+
+
+# ===========================================================================
+# IBAN Detection
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "text,iban,should_match",
+    [
+        # Positive matches — real IBAN formats from various countries
+        ("Wire to DE89370400440532013000 by Friday", "DE89370400440532013000", True),
+        ("UK account: GB82WEST12345698765432.", "GB82WEST12345698765432", True),
+        ("FR1420041010050500013M02606 is the IBAN", "FR1420041010050500013M02606", True),
+        # Edge case — IBAN embedded in a URL query string is still redacted
+        ("https://bank.test/?iban=NL91ABNA0417164300&amount=100", "NL91ABNA0417164300", True),
+        # Negative cases — too short, no country prefix, or pure digits
+        ("Code: AB12CD is invalid", None, False),  # only 6 chars, below 15
+        ("Order # 12345 is processed", None, False),  # pure digits
+    ],
+)
+def test_iban_detection(text, iban, should_match):
+    """IBAN redaction: covers real-world examples, URL embeds, and false-positive guards."""
+    shield = PIIShield()
+    stripped, mapping = shield.strip(text)
+
+    if should_match:
+        assert iban not in stripped, f"IBAN {iban!r} leaked into {stripped!r}"
+        assert "[IBAN_1]" in stripped
+        assert mapping["[IBAN_1]"] == iban
+    else:
+        assert "[IBAN_" not in stripped, f"unexpected IBAN match in {stripped!r}"
+
+
+def test_iban_length_validation():
+    """IBANs shorter than 15 or longer than 34 chars must NOT match.
+
+    The raw regex permits 5-34 chars; the strip() loop validates the 15-34 range.
+    """
+    shield = PIIShield()
+    # Too short — 14 chars total
+    text_short = "ID AB12CDEFGHIJKL was assigned"
+    stripped, _ = shield.strip(text_short)
+    assert "[IBAN_" not in stripped
+
+
+def test_multiple_ibans_unique_tokens():
+    """Multiple IBANs in one document each get a unique token."""
+    shield = PIIShield()
+    text = "Primary: DE89370400440532013000, Backup: GB82WEST12345698765432"
+
+    stripped, mapping = shield.strip(text)
+
+    assert "[IBAN_1]" in stripped
+    assert "[IBAN_2]" in stripped
+    assert mapping["[IBAN_1]"] != mapping["[IBAN_2]"]
+
+
+# ===========================================================================
+# IPv6 Detection
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "text,addr,should_match",
+    [
+        # Full 8-group IPv6
+        ("Server at 2001:0db8:85a3:0000:0000:8a2e:0370:7334 is up", "2001:0db8:85a3:0000:0000:8a2e:0370:7334", True),
+        # Compressed form
+        ("Loopback at ::1 responds", "::1", True),
+        # Common compressed form
+        ("Route via 2001:db8::1 next hop", "2001:db8::1", True),
+        # Negative — a single colon construct (host:port) shouldn't match
+        ("Connect to host:8080 for service", None, False),
+    ],
+)
+def test_ipv6_detection(text, addr, should_match):
+    """IPv6 redaction across full, compressed, and shorthand forms."""
+    shield = PIIShield()
+    stripped, _ = shield.strip(text)
+
+    if should_match:
+        assert "[IPV6_1]" in stripped
+        # The original literal address must not remain anywhere in stripped text
+        assert addr not in stripped
+    else:
+        assert "[IPV6_" not in stripped
+
+
+# ===========================================================================
+# MAC Address Detection
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "text,mac,should_match",
+    [
+        # Colon-separated MAC
+        ("Device MAC: 00:1A:2B:3C:4D:5E reports in", "00:1A:2B:3C:4D:5E", True),
+        # Dash-separated MAC (Windows-style)
+        ("Adapter AA-BB-CC-DD-EE-FF disconnected", "AA-BB-CC-DD-EE-FF", True),
+        # Lowercase hex
+        ("router de:ad:be:ef:00:01 down", "de:ad:be:ef:00:01", True),
+        # Negative — hex color code (6 contiguous hex chars) is NOT a MAC
+        ("Use color #aabbcc for the header", None, False),
+        # Negative — 5-octet string (one short)
+        ("Partial 00:1A:2B:3C:4D is not a MAC", None, False),
+    ],
+)
+def test_mac_detection(text, mac, should_match):
+    """MAC redaction: colon/dash separators, hex-color non-collision."""
+    shield = PIIShield()
+    stripped, mapping = shield.strip(text)
+
+    if should_match:
+        assert mac not in stripped
+        assert "[MAC_1]" in stripped
+        assert mapping["[MAC_1]"] == mac
+    else:
+        assert "[MAC_" not in stripped
+        # The hex color test specifically must keep the color intact
+        if "#aabbcc" in text:
+            assert "#aabbcc" in stripped
+
+
+# ===========================================================================
+# API Key Detection
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "text,key,should_match",
+    [
+        # OpenAI-style
+        ("Set OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz123456 in env", "sk-abcdefghijklmnopqrstuvwxyz123456", True),
+        # Stripe live key
+        ("pk_live_abcdefghijklmnopqrstuvwxyz0123 is the publishable", "pk_live_abcdefghijklmnopqrstuvwxyz0123", True),
+        # GitHub personal access token
+        ("Token: ghp_abcdefghijklmnopqrstuvwxyz0123456789", "ghp_abcdefghijklmnopqrstuvwxyz0123456789", True),
+        # AWS access key ID
+        ("AWS key AKIAIOSFODNN7EXAMPLE is exposed", "AKIAIOSFODNN7EXAMPLE", True),
+        # Negative — too short to be a real key
+        ("sk-abc123 is fake test data", None, False),
+        # Negative — no recognized prefix
+        ("Random string thisisnotakey1234567890abcdef", None, False),
+    ],
+)
+def test_api_key_detection(text, key, should_match):
+    """API key redaction across common provider prefixes."""
+    shield = PIIShield()
+    stripped, mapping = shield.strip(text)
+
+    if should_match:
+        assert key not in stripped
+        assert "[API_KEY_1]" in stripped
+        assert mapping["[API_KEY_1]"] == key
+    else:
+        assert "[API_KEY_" not in stripped
+
+
+# ===========================================================================
+# JWT Detection
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "text,jwt,should_match",
+    [
+        # Realistic JWT (HS256, simple payload)
+        (
+            "Authorization: Bearer "
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            True,
+        ),
+        # Edge case — JWT with URL-safe characters (- and _)
+        (
+            "Token=eyJhbGci_test123abc.eyJzdWIi-data456def.signature_part789xyz expired",
+            "eyJhbGci_test123abc.eyJzdWIi-data456def.signature_part789xyz",
+            True,
+        ),
+        # Negative — only two segments (not a valid JWT)
+        ("Header eyJabc.eyJdef but no signature", None, False),
+    ],
+)
+def test_jwt_detection(text, jwt, should_match):
+    """JWT redaction: three base64url segments separated by dots."""
+    shield = PIIShield()
+    stripped, mapping = shield.strip(text)
+
+    if should_match:
+        assert jwt not in stripped
+        assert "[JWT_1]" in stripped
+        assert mapping["[JWT_1]"] == jwt
+    else:
+        assert "[JWT_" not in stripped
+
+
+# ===========================================================================
+# Cross-Pattern Collision Tests
+# ===========================================================================
+
+
+def test_no_overlap_collisions():
+    """Paragraph with every PII type — each redaction tag appears exactly once.
+
+    This is the integration guard: verifies our ordering doesn't cause one
+    pattern to clobber another and that every category fires independently.
+    """
+    text = (
+        "Engineer Alice Chen (alice@example.com, phone 555-123-4567) "
+        "filed ticket from device 00:1A:2B:3C:4D:5E at IPv6 2001:db8::1. "
+        "Wire transfer DE89370400440532013000 cleared. "
+        "API key sk-abcdefghijklmnopqrstuvwxyz123456 was rotated. "
+        "Session JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c expired."
+    )
+    shield = PIIShield(known_names=["Alice Chen"])
+
+    stripped, mapping = shield.strip(text)
+
+    # Each pattern's tag must appear exactly once
+    assert stripped.count("[PERSON_1]") == 1
+    assert stripped.count("[EMAIL_1]") == 1
+    assert stripped.count("[PHONE_1]") == 1
+    assert stripped.count("[MAC_1]") == 1
+    assert stripped.count("[IPV6_1]") == 1
+    assert stripped.count("[IBAN_1]") == 1
+    assert stripped.count("[API_KEY_1]") == 1
+    assert stripped.count("[JWT_1]") == 1
+
+    # None of the original PII should leak
+    for needle in [
+        "Alice Chen",
+        "alice@example.com",
+        "555-123-4567",
+        "00:1A:2B:3C:4D:5E",
+        "2001:db8::1",
+        "DE89370400440532013000",
+        "sk-abcdefghijklmnopqrstuvwxyz123456",
+        "eyJhbGciOiJIUzI1NiJ9",
+    ]:
+        assert needle not in stripped, f"PII {needle!r} leaked"
+
+
+def test_mac_redacted_before_ipv6():
+    """A real MAC address must be tagged as MAC, not IPv6.
+
+    Both patterns share colon syntax; MAC runs first to claim 6-octet strings
+    that match the canonical MAC format.
+    """
+    shield = PIIShield()
+    text = "Device 00:1A:2B:3C:4D:5E is online"
+
+    stripped, mapping = shield.strip(text)
+
+    assert "[MAC_1]" in stripped
+    assert "[IPV6_" not in stripped
+
+
+def test_hex_color_not_mac():
+    """Hex color literals (`#aabbcc`) must not be redacted as MAC addresses."""
+    shield = PIIShield()
+    text = "The theme uses #aabbcc and #112233 as accent colors"
+
+    stripped, mapping = shield.strip(text)
+
+    assert "#aabbcc" in stripped
+    assert "#112233" in stripped
+    assert "[MAC_" not in stripped
+
+
+# ===========================================================================
+# Redaction Counters / Observability
+# ===========================================================================
+
+
+def test_redaction_counts_accumulate():
+    """stats() exposes per-category cumulative counts across strip() calls.
+
+    Counters must NOT reset between calls — operators rely on this to monitor
+    pattern fire rates in production.
+    """
+    shield = PIIShield()
+
+    shield.strip("Email alice@a.com, key sk-abcdefghijklmnopqrstuvwxyz1")
+    shield.strip("Another email bob@b.com")
+
+    stats = shield.stats()
+    assert stats["EMAIL"] == 2
+    assert stats["API_KEY"] == 1
+
+
+def test_redaction_counts_initial_zero():
+    """All categories start at zero before any strip() call."""
+    shield = PIIShield()
+    stats = shield.stats()
+
+    for category in ("EMAIL", "PHONE", "IBAN", "IPV6", "MAC", "API_KEY", "JWT", "PERSON", "ACCT"):
+        assert stats[category] == 0
+
+
+def test_stats_returns_copy():
+    """stats() returns a snapshot — mutating it must not affect internal state."""
+    shield = PIIShield()
+    shield.strip("Email test@example.com")
+
+    snapshot = shield.stats()
+    snapshot["EMAIL"] = 999
+
+    # Subsequent call should still reflect actual internal counters
+    assert shield.stats()["EMAIL"] == 1
+
+
+# ===========================================================================
+# Restore Round-Trip for New Patterns
+# ===========================================================================
+
+
+def test_restore_round_trip_iban():
+    """IBAN survives a strip → restore round trip without corruption."""
+    shield = PIIShield()
+    text = "Send to DE89370400440532013000 promptly"
+
+    stripped, mapping = shield.strip(text)
+    restored = shield.restore(stripped, mapping)
+
+    assert restored == text
+
+
+def test_restore_round_trip_jwt():
+    """JWT survives a strip → restore round trip without corruption."""
+    shield = PIIShield()
+    jwt = (
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    text = f"Bearer {jwt} attached"
+
+    stripped, mapping = shield.strip(text)
+    restored = shield.restore(stripped, mapping)
+
+    assert restored == text
