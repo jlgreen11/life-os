@@ -7,9 +7,9 @@ Reveals priorities, avoidance patterns, and natural rhythms.
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from models.core import EventType
 from services.signal_extractor.base import BaseExtractor
@@ -173,7 +173,7 @@ class CadenceExtractor(BaseExtractor):
         return signals
 
     def _calculate_response_time(self, original_message_id: str,
-                                  response_timestamp: str) -> Optional[float]:
+                                  response_timestamp: str) -> float | None:
         """Look up the original inbound message and calculate response time.
 
         Queries the event store for the event whose payload.message_id
@@ -348,7 +348,67 @@ class CadenceExtractor(BaseExtractor):
         except Exception as e:
             logger.warning("cadence: _compute_derived_metrics failed (non-fatal): %s", e)
 
+        # ── Data size diagnostics ─────────────────────────────────────────
+        # Serialize once to measure payload size before the write so unusually
+        # large payloads (e.g. runaway per_contact_* dicts) are visible in logs
+        # ahead of a potential silent write failure.  A serialization error
+        # here is also a strong leading indicator of why the downstream write
+        # might fail silently inside ``update_signal_profile``'s broad except.
+        try:
+            data_size = len(json.dumps(data))
+        except (TypeError, ValueError) as exc:
+            # Defer to update_signal_profile's own error handling — log here
+            # so the failing payload shape is captured before the write skips.
+            logger.error(
+                "CadenceExtractor: cadence profile not JSON-serializable "
+                "(keys=%s): %s",
+                list(data.keys()), exc,
+            )
+            data_size = -1
+        logger.debug(
+            "CadenceExtractor: writing cadence profile "
+            "(size=%d bytes, contacts=%d, threads=%d)",
+            data_size,
+            len(data.get("per_contact_inbound_count", {})),
+            len(data.get("thread_tracking", {}).get("threads", {})),
+        )
+
         self.ums.update_signal_profile("cadence", data)
+
+        # ── Post-write verification ───────────────────────────────────────
+        # Immediately read back to confirm the profile was persisted.  A
+        # missing read-back indicates a silent write failure (WAL corruption,
+        # database lock contention, or a JSON serialization error silently
+        # caught inside ``update_signal_profile``'s try/except).  Logging
+        # CRITICAL surfaces the failure so operators can investigate rather
+        # than discovering it indirectly from stale cadence-derived metrics.
+        # Cadence has the second-largest signal volume in the system (381K+
+        # samples) so a silent failure here would erase a major signal source.
+        verify = self.ums.get_signal_profile("cadence")
+        if not verify or verify.get("data") is None:
+            logger.critical(
+                "CadenceExtractor: cadence profile FAILED to persist after "
+                "write (size=%d bytes, contacts=%d, data_keys=%s)",
+                data_size,
+                len(data.get("per_contact_inbound_count", {})),
+                list(data.keys()),
+            )
+        else:
+            # On success, opportunistically force a WAL checkpoint so this
+            # write becomes visible to readers on other connections and the
+            # WAL file does not grow unbounded.  ``update_signal_profile``
+            # also performs a throttled checkpoint every 50 writes; this is
+            # additive insurance for the cadence path specifically given its
+            # write frequency.  A checkpoint failure is non-fatal: log a
+            # WARNING but never raise.
+            try:
+                self.ums.db.checkpoint_wal("user_model")
+            except Exception as wal_err:
+                logger.warning(
+                    "CadenceExtractor: WAL checkpoint after cadence "
+                    "profile write failed: %s",
+                    wal_err,
+                )
 
     # ------------------------------------------------------------------
     # Derived-metric computation — run after every profile update
@@ -710,7 +770,7 @@ class CadenceExtractor(BaseExtractor):
         if not isinstance(threads, dict) or not threads:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff_seconds = 24 * 3600  # 24 hours
 
         eligible_threads = []
