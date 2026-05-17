@@ -123,6 +123,185 @@ def _connect(db_path):
         return None
 
 
+# Event types that produce episodic memory — mirrors the canonical set in
+# scripts/backfill_episodes_from_events.py:EPISODIC_EVENT_TYPES and
+# main.py:_create_episode(). Used to compute backfill coverage so the metric
+# reflects only events that should have produced an episode.
+_EPISODIC_EVENT_TYPES: tuple[str, ...] = (
+    "email.received", "email.sent",
+    "message.received", "message.sent",
+    "call.received", "call.missed",
+    "calendar.event.created", "calendar.event.updated",
+    "finance.transaction.new",
+    "task.created", "task.completed",
+    "location.changed", "location.arrived", "location.departed",
+    "context.location", "context.activity",
+    "system.user.command",
+)
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp into an aware UTC datetime, or None on failure.
+
+    Episode/event timestamps in Life OS are written by SQLite's strftime() (no
+    timezone suffix) and by Python's isoformat() (with offset), so we accept
+    both and normalize to UTC.
+    """
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _episode_diagnostics(data_path: Path) -> dict:
+    """Compute episode-pipeline leading indicators from user_model.db + events.db.
+
+    Returns a dict with these keys:
+      - ``created_last_24h`` / ``created_last_7d``: episode counts by ``created_at``
+      - ``backfill_coverage``: dict with ``events_last_7d``, ``events_with_episode``,
+        ``coverage_pct`` for episodic-event types only
+      - ``avg_creation_lag_seconds``: median lag between event.timestamp and
+        episode.created_at over the last 1000 episodes (None when no sample)
+      - ``lag_sample_size``: how many episodes contributed to the lag stat
+      - ``interaction_type_distribution_last_7d``: episode counts by interaction_type
+        for episodes created in the last 7 days
+
+    The join between events.db and user_model.db is performed in Python rather
+    than via ATTACH DATABASE to avoid lock contention (the analyzer is read-only
+    but the live system holds write locks).
+    """
+    um_conn = _connect(data_path / "user_model.db")
+    ev_conn = _connect(data_path / "events.db")
+    try:
+        if not um_conn:
+            return {"error": "could not connect to user_model.db"}
+        if not ev_conn:
+            return {"error": "could not connect to events.db"}
+
+        diag: dict = {}
+
+        # Episode creation rate over the last 24h / 7d
+        created_24h = _query_one(
+            um_conn,
+            "SELECT COUNT(*) as c FROM episodes WHERE created_at > datetime('now', '-1 day')",
+        )
+        created_7d = _query_one(
+            um_conn,
+            "SELECT COUNT(*) as c FROM episodes WHERE created_at > datetime('now', '-7 days')",
+        )
+        diag["created_last_24h"] = created_24h["c"] if created_24h else 0
+        diag["created_last_7d"] = created_7d["c"] if created_7d else 0
+
+        # Backfill coverage — only meaningful for events that *should* produce
+        # an episode. Comparing against all events would always under-report
+        # because internal/system events never link to an episode.
+        placeholders = ",".join("?" * len(_EPISODIC_EVENT_TYPES))
+        recent_events = _query_params(
+            ev_conn,
+            f"""SELECT id FROM events
+                WHERE type IN ({placeholders})
+                  AND timestamp > datetime('now', '-7 days')""",
+            _EPISODIC_EVENT_TYPES,
+            [],
+        ) or []
+        total_recent = len(recent_events)
+        with_episodes = 0
+        if total_recent > 0:
+            event_ids = [r["id"] for r in recent_events]
+            # Chunk the IN-list to stay below SQLite's default 999-variable limit.
+            batch_size = 500
+            for start in range(0, len(event_ids), batch_size):
+                chunk = event_ids[start:start + batch_size]
+                ph = ",".join("?" * len(chunk))
+                row = _query_one_params(
+                    um_conn,
+                    f"SELECT COUNT(DISTINCT event_id) as c FROM episodes WHERE event_id IN ({ph})",
+                    tuple(chunk),
+                )
+                if row:
+                    with_episodes += row["c"]
+            coverage_pct = round((with_episodes / total_recent) * 100, 1)
+        else:
+            coverage_pct = None  # nothing to measure
+        diag["backfill_coverage"] = {
+            "events_last_7d": total_recent,
+            "events_with_episode": with_episodes,
+            "coverage_pct": coverage_pct,
+        }
+
+        # Creation lag — median is more robust than mean because a single
+        # backfill run can dump thousands of episodes with multi-hour lag.
+        recent_episodes = _query(
+            um_conn,
+            """SELECT event_id, created_at FROM episodes
+               WHERE event_id IS NOT NULL
+               ORDER BY created_at DESC LIMIT 1000""",
+            [],
+        ) or []
+        lags: list[float] = []
+        if recent_episodes:
+            ep_event_ids = [r["event_id"] for r in recent_episodes if r["event_id"]]
+            ts_map: dict[str, str] = {}
+            for start in range(0, len(ep_event_ids), 500):
+                chunk = ep_event_ids[start:start + 500]
+                ph = ",".join("?" * len(chunk))
+                rows = _query_params(
+                    ev_conn,
+                    f"SELECT id, timestamp FROM events WHERE id IN ({ph})",
+                    tuple(chunk),
+                    [],
+                ) or []
+                for r in rows:
+                    ts_map[r["id"]] = r["timestamp"]
+            for ep in recent_episodes:
+                ev_ts_raw = ts_map.get(ep["event_id"])
+                if not ev_ts_raw:
+                    continue
+                ev_dt = _parse_iso(ev_ts_raw)
+                ep_dt = _parse_iso(ep["created_at"])
+                if ev_dt is None or ep_dt is None:
+                    continue
+                lag = (ep_dt - ev_dt).total_seconds()
+                # Negative lags imply clock skew or out-of-order writes; skip them
+                # so the median reflects only forward-time pipeline latency.
+                if lag >= 0:
+                    lags.append(lag)
+        if lags:
+            lags_sorted = sorted(lags)
+            median_lag = lags_sorted[len(lags_sorted) // 2]
+            diag["avg_creation_lag_seconds"] = round(median_lag, 2)
+            diag["lag_sample_size"] = len(lags)
+        else:
+            diag["avg_creation_lag_seconds"] = None
+            diag["lag_sample_size"] = 0
+
+        # Interaction type distribution restricted to the last 7 days — the
+        # all-time distribution under workflow_diagnostics doesn't reveal whether
+        # recent traffic is dominated by stale 'unknown'/'communication' types.
+        itypes_7d = _query(
+            um_conn,
+            """SELECT interaction_type, COUNT(*) as c FROM episodes
+               WHERE created_at > datetime('now', '-7 days')
+               GROUP BY interaction_type ORDER BY c DESC""",
+            [],
+        ) or []
+        diag["interaction_type_distribution_last_7d"] = {
+            str(r["interaction_type"]): r["c"] for r in itypes_7d
+        }
+
+        return diag
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        if um_conn:
+            um_conn.close()
+        if ev_conn:
+            ev_conn.close()
+
+
 def analyze(data_dir: str = "./data") -> dict:
     """Analyze data quality across all Life OS databases.
 
@@ -727,6 +906,14 @@ def analyze(data_dir: str = "./data") -> dict:
             um_conn2.close()
 
     # -----------------------------------------------------------------------
+    # Episode diagnostics — creation rate, backfill coverage, and ingestion lag.
+    # Episodes feed routine detection, semantic facts, and predictions; surfacing
+    # leading indicators here lets us catch pipeline stalls before downstream
+    # tables go silent.
+    # -----------------------------------------------------------------------
+    report["sections"]["episode_diagnostics"] = _episode_diagnostics(data_path)
+
+    # -----------------------------------------------------------------------
     # Notification dismissal rate
     # -----------------------------------------------------------------------
     state_conn = _connect(data_path / "state.db")
@@ -1219,6 +1406,51 @@ def detect_anomalies(sections: dict) -> list[dict]:
                     "message": f"Signal profile '{profile_type}' is missing",
                     "recommendation": (
                         "Check signal extractor pipeline and run profile rebuild if needed"
+                    ),
+                })
+
+    # --- (l) Episode pipeline health ---
+    # The episode pipeline is the foundation for routine detection, semantic
+    # fact inference, and predictions. A stalled pipeline shows up here long
+    # before the downstream tables go silent.
+    ep_diag = sections.get("episode_diagnostics", {})
+    events_section = sections.get("events", {})
+    if isinstance(ep_diag, dict) and "error" not in ep_diag:
+        created_24h = ep_diag.get("created_last_24h", 0)
+        events_24h = events_section.get("last_24h", 0) if isinstance(events_section, dict) else 0
+        if created_24h == 0 and events_24h > 100:
+            anomalies.append({
+                "severity": "critical",
+                "category": "episode_creation_stalled",
+                "message": (
+                    "Episode creation appears stalled — events arriving but no new episodes "
+                    f"({events_24h} events vs {created_24h} episodes in last 24h)"
+                ),
+                "recommendation": (
+                    "Check _create_episode() in master_event_handler for errors; verify "
+                    "user_model.db is writable. Run scripts/backfill_episodes_from_events.py "
+                    "to recover unlinked events."
+                ),
+            })
+
+        backfill = ep_diag.get("backfill_coverage", {})
+        if isinstance(backfill, dict):
+            coverage_pct = backfill.get("coverage_pct")
+            events_count = backfill.get("events_last_7d", 0)
+            # Skip the warning when the sample is too small to be meaningful —
+            # otherwise a freshly-installed system would flag itself.
+            if coverage_pct is not None and coverage_pct < 50 and events_count > 50:
+                anomalies.append({
+                    "severity": "warning",
+                    "category": "episode_backfill_low",
+                    "message": (
+                        f"Episode backfill coverage is {coverage_pct}% — only "
+                        f"{backfill.get('events_with_episode', 0)}/{events_count} recent "
+                        "episodic events have corresponding episodes"
+                    ),
+                    "recommendation": (
+                        "Run scripts/backfill_episodes_from_events.py to create episodes "
+                        "for unlinked events"
                     ),
                 })
 

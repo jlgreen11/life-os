@@ -96,7 +96,15 @@ def _create_minimal_user_model_db(tmp_path):
             feedback TEXT
         )
     """)
-    conn.execute("CREATE TABLE IF NOT EXISTS episodes (id INTEGER PRIMARY KEY, interaction_type TEXT)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS episodes (
+            id INTEGER PRIMARY KEY,
+            event_id TEXT,
+            timestamp TEXT,
+            interaction_type TEXT,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )"""
+    )
     conn.execute("""
         CREATE TABLE IF NOT EXISTS semantic_facts (
             id INTEGER PRIMARY KEY,
@@ -230,6 +238,7 @@ class TestHealthyDatabase:
             "feedback",
             "source_weights",
             "workflow_diagnostics",
+            "episode_diagnostics",
         ]
         for section in expected_sections:
             assert section in report["sections"], f"Missing section: {section}"
@@ -1340,3 +1349,346 @@ class TestPredictionDetailAnomalies:
         report = analyze(str(tmp_path))
         categories = [a["category"] for a in report["anomalies"]]
         assert "prediction_type_monoculture" not in categories
+
+
+# ---------------------------------------------------------------------------
+# Episode diagnostics tests
+# ---------------------------------------------------------------------------
+
+
+def _insert_event(conn, event_id, event_type, timestamp):
+    """Insert an event row into events.db (helper for episode_diagnostics tests)."""
+    conn.execute(
+        "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+        (event_id, event_type, "test_source", timestamp),
+    )
+
+
+def _insert_episode(conn, ep_id, event_id, created_at, interaction_type="email_received"):
+    """Insert an episode row into user_model.db (helper for episode_diagnostics tests)."""
+    conn.execute(
+        """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (ep_id, event_id, created_at, interaction_type, created_at),
+    )
+
+
+class TestEpisodeDiagnostics:
+    """Tests for the episode_diagnostics top-level report section."""
+
+    def test_section_present_on_empty_dbs(self, tmp_path):
+        """episode_diagnostics section exists with zero counts on a clean DB."""
+        _create_all_dbs(tmp_path)
+        report = analyze(str(tmp_path))
+
+        ed = report["sections"].get("episode_diagnostics")
+        assert ed is not None
+        assert ed["created_last_24h"] == 0
+        assert ed["created_last_7d"] == 0
+        assert ed["backfill_coverage"]["events_last_7d"] == 0
+        assert ed["backfill_coverage"]["events_with_episode"] == 0
+        assert ed["backfill_coverage"]["coverage_pct"] is None
+        assert ed["avg_creation_lag_seconds"] is None
+        assert ed["lag_sample_size"] == 0
+        assert ed["interaction_type_distribution_last_7d"] == {}
+
+    def test_created_counts(self, tmp_path):
+        """created_last_24h and created_last_7d count episodes by created_at."""
+        _create_all_dbs(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+        # 2 episodes in last 24h
+        _insert_episode(conn, 1, "e1", "2099-01-01T00:00:00Z")  # in the future, "now" relative
+        # Use SQLite "now" arithmetic via direct insert to align with the script's clock
+        conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (10, 'e10', datetime('now', '-1 hour'), 'email_received', datetime('now', '-1 hour'))"""
+        )
+        conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (11, 'e11', datetime('now', '-12 hours'), 'email_received', datetime('now', '-12 hours'))"""
+        )
+        # 1 episode 5 days ago (in last 7d but not 24h)
+        conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (12, 'e12', datetime('now', '-5 days'), 'email_received', datetime('now', '-5 days'))"""
+        )
+        # 1 episode 10 days ago (outside 7d)
+        conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (13, 'e13', datetime('now', '-10 days'), 'email_received', datetime('now', '-10 days'))"""
+        )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        ed = report["sections"]["episode_diagnostics"]
+
+        # The single explicit '2099-...' insert + the two recent ones land in last_24h.
+        # SQLite datetime('now') compares lexicographically with our 2099 value, so it
+        # is also "> now-1 day". Real-world data won't have future timestamps, so this
+        # is fine for verifying the SQL filter — what matters is that the recent rows
+        # are counted and the 10-day-old one is not.
+        assert ed["created_last_24h"] >= 2
+        assert ed["created_last_7d"] >= 3
+        # The 10-day-old episode must be excluded from 7d
+        assert ed["created_last_7d"] < 5
+
+    def test_backfill_coverage_partial(self, tmp_path):
+        """backfill_coverage reports the fraction of recent episodic events with episodes."""
+        _create_all_dbs(tmp_path)
+        ev_conn = sqlite3.connect(str(tmp_path / "events.db"))
+        um_conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+
+        # 4 episodic events in last 7d
+        for i in range(4):
+            ev_conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'email.received', 'gmail', datetime('now', '-1 hour'))""",
+                (f"ev-{i}",),
+            )
+        # 2 non-episodic events (should be excluded from the denominator)
+        for i in range(2):
+            ev_conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'usermodel.prediction.generated', 'pe', datetime('now', '-1 hour'))""",
+                (f"pred-{i}",),
+            )
+        ev_conn.commit()
+        ev_conn.close()
+
+        # Only 2 of the 4 episodic events have episodes
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (1, 'ev-0', datetime('now'), 'email_received', datetime('now'))"""
+        )
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (2, 'ev-1', datetime('now'), 'email_received', datetime('now'))"""
+        )
+        um_conn.commit()
+        um_conn.close()
+
+        report = analyze(str(tmp_path))
+        bf = report["sections"]["episode_diagnostics"]["backfill_coverage"]
+
+        assert bf["events_last_7d"] == 4  # non-episodic excluded
+        assert bf["events_with_episode"] == 2
+        assert bf["coverage_pct"] == 50.0
+
+    def test_creation_lag_median(self, tmp_path):
+        """avg_creation_lag_seconds returns the median lag between event and episode."""
+        _create_all_dbs(tmp_path)
+        ev_conn = sqlite3.connect(str(tmp_path / "events.db"))
+        um_conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+
+        # Event at T=0, episode at T+10s → lag=10
+        ev_conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            ("ev-a", "email.received", "g", "2026-05-01T00:00:00Z"),
+        )
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (1, 'ev-a', '2026-05-01T00:00:00Z', 'email_received', '2026-05-01T00:00:10Z')"""
+        )
+        # Event at T=0, episode at T+30s → lag=30 (median of [10, 30, 60] = 30)
+        ev_conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            ("ev-b", "email.received", "g", "2026-05-02T00:00:00Z"),
+        )
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (2, 'ev-b', '2026-05-02T00:00:00Z', 'email_received', '2026-05-02T00:00:30Z')"""
+        )
+        # Event at T=0, episode at T+60s → lag=60
+        ev_conn.execute(
+            "INSERT INTO events (id, type, source, timestamp) VALUES (?, ?, ?, ?)",
+            ("ev-c", "email.received", "g", "2026-05-03T00:00:00Z"),
+        )
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (3, 'ev-c', '2026-05-03T00:00:00Z', 'email_received', '2026-05-03T00:01:00Z')"""
+        )
+        ev_conn.commit()
+        ev_conn.close()
+        um_conn.commit()
+        um_conn.close()
+
+        report = analyze(str(tmp_path))
+        ed = report["sections"]["episode_diagnostics"]
+
+        assert ed["lag_sample_size"] == 3
+        assert ed["avg_creation_lag_seconds"] == 30.0  # median
+
+    def test_interaction_type_distribution_last_7d(self, tmp_path):
+        """interaction_type_distribution_last_7d only includes recent episodes."""
+        _create_all_dbs(tmp_path)
+        um_conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+        # Recent: 2 email_received, 1 message_sent
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (1, 'e1', datetime('now'), 'email_received', datetime('now'))"""
+        )
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (2, 'e2', datetime('now'), 'email_received', datetime('now'))"""
+        )
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (3, 'e3', datetime('now'), 'message_sent', datetime('now'))"""
+        )
+        # Old: outside 7d window
+        um_conn.execute(
+            """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+               VALUES (4, 'e4', datetime('now', '-10 days'), 'meeting_scheduled', datetime('now', '-10 days'))"""
+        )
+        um_conn.commit()
+        um_conn.close()
+
+        report = analyze(str(tmp_path))
+        dist = report["sections"]["episode_diagnostics"]["interaction_type_distribution_last_7d"]
+
+        assert dist.get("email_received") == 2
+        assert dist.get("message_sent") == 1
+        assert "meeting_scheduled" not in dist
+
+    def test_missing_user_model_db_reports_error(self, tmp_path):
+        """When user_model.db is missing, episode_diagnostics gets an error key."""
+        _create_minimal_events_db(tmp_path)
+        _create_minimal_state_db(tmp_path)
+        _create_minimal_preferences_db(tmp_path)
+        _create_minimal_entities_db(tmp_path)
+
+        real_connect = _mod._connect
+
+        def failing(db_path):
+            if "user_model.db" in str(db_path):
+                return None
+            return real_connect(db_path)
+
+        with patch.object(_mod, "_connect", side_effect=failing):
+            report = analyze(str(tmp_path))
+
+        ed = report["sections"]["episode_diagnostics"]
+        assert "error" in ed
+        assert "user_model.db" in ed["error"]
+
+
+class TestEpisodeDiagnosticsAnomalies:
+    """Tests for anomaly detection driven by episode_diagnostics."""
+
+    def test_stalled_creation_critical_anomaly(self, tmp_path):
+        """Critical anomaly fires when events arrive but no episodes are created."""
+        _create_all_dbs(tmp_path)
+        # 150 events in last 24h, zero episodes
+        conn = sqlite3.connect(str(tmp_path / "events.db"))
+        for i in range(150):
+            conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'email.received', 'gmail', datetime('now', '-1 hour'))""",
+                (f"ev-{i}",),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        anomaly_cats = [a["category"] for a in report["anomalies"]]
+        assert "episode_creation_stalled" in anomaly_cats
+        # And it should be flagged as critical
+        for a in report["anomalies"]:
+            if a["category"] == "episode_creation_stalled":
+                assert a["severity"] == "critical"
+
+    def test_no_stalled_anomaly_when_events_low(self, tmp_path):
+        """No stalled anomaly when event volume is below the 100/24h threshold."""
+        _create_all_dbs(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "events.db"))
+        for i in range(10):
+            conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'email.received', 'gmail', datetime('now', '-1 hour'))""",
+                (f"ev-{i}",),
+            )
+        conn.commit()
+        conn.close()
+
+        report = analyze(str(tmp_path))
+        anomaly_cats = [a["category"] for a in report["anomalies"]]
+        assert "episode_creation_stalled" not in anomaly_cats
+
+    def test_low_backfill_coverage_warning(self, tmp_path):
+        """Warning fires when backfill coverage < 50% and event count is sufficient."""
+        _create_all_dbs(tmp_path)
+        ev_conn = sqlite3.connect(str(tmp_path / "events.db"))
+        um_conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+
+        # 100 episodic events in last 7d
+        for i in range(100):
+            ev_conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'email.received', 'gmail', datetime('now', '-2 hours'))""",
+                (f"ev-{i}",),
+            )
+        # Only 10 episodes link to those events → coverage = 10%
+        for i in range(10):
+            um_conn.execute(
+                """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+                   VALUES (?, ?, datetime('now'), 'email_received', datetime('now'))""",
+                (i, f"ev-{i}"),
+            )
+        ev_conn.commit()
+        ev_conn.close()
+        um_conn.commit()
+        um_conn.close()
+
+        report = analyze(str(tmp_path))
+        anomaly_cats = [a["category"] for a in report["anomalies"]]
+        assert "episode_backfill_low" in anomaly_cats
+        for a in report["anomalies"]:
+            if a["category"] == "episode_backfill_low":
+                assert a["severity"] == "warning"
+
+    def test_high_coverage_no_anomaly(self, tmp_path):
+        """No backfill anomaly when coverage is above 50%."""
+        _create_all_dbs(tmp_path)
+        ev_conn = sqlite3.connect(str(tmp_path / "events.db"))
+        um_conn = sqlite3.connect(str(tmp_path / "user_model.db"))
+
+        for i in range(100):
+            ev_conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'email.received', 'gmail', datetime('now', '-2 hours'))""",
+                (f"ev-{i}",),
+            )
+        # 80 of 100 have episodes → coverage = 80%
+        for i in range(80):
+            um_conn.execute(
+                """INSERT INTO episodes (id, event_id, timestamp, interaction_type, created_at)
+                   VALUES (?, ?, datetime('now'), 'email_received', datetime('now'))""",
+                (i, f"ev-{i}"),
+            )
+        ev_conn.commit()
+        ev_conn.close()
+        um_conn.commit()
+        um_conn.close()
+
+        report = analyze(str(tmp_path))
+        anomaly_cats = [a["category"] for a in report["anomalies"]]
+        assert "episode_backfill_low" not in anomaly_cats
+
+    def test_no_backfill_anomaly_when_sample_too_small(self, tmp_path):
+        """No backfill anomaly when fewer than 50 events exist (sample too small)."""
+        _create_all_dbs(tmp_path)
+        ev_conn = sqlite3.connect(str(tmp_path / "events.db"))
+        # Only 20 events — zero coverage but not enough to alarm
+        for i in range(20):
+            ev_conn.execute(
+                """INSERT INTO events (id, type, source, timestamp)
+                   VALUES (?, 'email.received', 'gmail', datetime('now', '-2 hours'))""",
+                (f"ev-{i}",),
+            )
+        ev_conn.commit()
+        ev_conn.close()
+
+        report = analyze(str(tmp_path))
+        anomaly_cats = [a["category"] for a in report["anomalies"]]
+        assert "episode_backfill_low" not in anomaly_cats
