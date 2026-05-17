@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 # Filters out one-off senders while ensuring real contacts are surfaced.
 MIN_INTERACTIONS_FOR_AUTO_CREATE = 2
 
+# Post-write verification is sampled — the relationship profile is the
+# highest-volume profile in the system (~8.8M samples) and verifying every
+# write would double the sqlite read load. We verify once every N writes,
+# which still catches sustained silent-failure regimes while keeping
+# verification overhead at ~1% of writes.
+PROFILE_VERIFY_SAMPLE_INTERVAL = 100
+
 
 def _name_from_email(addr: str) -> str:
     """Derive a human-readable display name from an email address.
@@ -109,6 +116,21 @@ class RelationshipExtractor(BaseExtractor):
     Builds the relationship graph — who matters, how they're connected,
     and the dynamics of each relationship.
     """
+
+    def __init__(self, db, user_model_store):
+        """Initialise the extractor and the sampled write-verification counter.
+
+        ``_profile_write_count`` tracks how many ``update_signal_profile`` calls
+        have happened for the relationship profile in the lifetime of this
+        process. It is used to throttle post-write verification to roughly 1%
+        of writes (see :data:`PROFILE_VERIFY_SAMPLE_INTERVAL`).
+        """
+        super().__init__(db, user_model_store)
+        # Counts attempted persistent writes of the "relationships" profile.
+        # Used to sample post-write verification rather than running it on
+        # every write — the relationship profile is the highest-volume profile
+        # in the system, so always-on verification doubles sqlite read load.
+        self._profile_write_count: int = 0
 
     def can_process(self, event: dict) -> bool:
         # Relationship mapping requires both directions: inbound messages tell
@@ -326,7 +348,89 @@ class RelationshipExtractor(BaseExtractor):
             n = profile["interaction_count"]
             profile["avg_message_length"] = (profile["avg_message_length"] * (n - 1) + signal["message_length"]) / n
 
+        # --- Pre-write JSON serialization guard ---
+        # update_signal_profile() catches all exceptions silently and writes
+        # would be lost without a trace if data contained a non-serializable
+        # type (set, datetime, Enum, Pydantic model, etc.). Checking first lets
+        # us identify the offending top-level key and skip the write so a
+        # corrupt payload does not clobber a good prior profile.
+        # The relationship profile is the highest-volume profile in the system,
+        # but json.dumps on a few hundred KB is still cheap relative to the
+        # sqlite roundtrip, so this guard runs on every write.
+        try:
+            json.dumps(data)
+        except (TypeError, ValueError) as exc:
+            bad_keys: list[str] = []
+            for key, val in data.items():
+                try:
+                    json.dumps({key: val})
+                except (TypeError, ValueError):
+                    bad_keys.append(f"{key}={type(val).__name__}")
+            logger.error(
+                "relationship_extractor: relationships data contains non-JSON-"
+                "serializable types — write SKIPPED to avoid clobbering prior "
+                "profile. Offending top-level keys: %s. Error: %s",
+                bad_keys or ["unknown"],
+                exc,
+            )
+            # Do NOT call _sync_contact_metrics: we have no confirmed write,
+            # and writing denormalized metrics that diverge from the signal
+            # profile would leave the contacts table inconsistent.
+            return
+
         self.ums.update_signal_profile("relationships", data)
+        self._profile_write_count += 1
+
+        # --- Sampled post-write verification with WAL checkpoint retry ---
+        # Verifying on every write doubles read load on the highest-volume
+        # profile in the system. We sample at PROFILE_VERIFY_SAMPLE_INTERVAL
+        # (every 100th write) — enough to catch sustained silent-failure
+        # regimes (broken disk, WAL corruption, sqlite locked) without the
+        # cost of always-on verification.
+        verified = True
+        if self._profile_write_count % PROFILE_VERIFY_SAMPLE_INTERVAL == 0:
+            verify = self.ums.get_signal_profile("relationships")
+            if not verify:
+                verified = False
+                logger.error(
+                    "relationship_extractor: relationships profile FAILED to "
+                    "persist after write (contacts=%d, write_count=%d) — "
+                    "retrying after WAL checkpoint",
+                    len(data.get("contacts", {})),
+                    self._profile_write_count,
+                )
+                try:
+                    self.db.checkpoint_wal("user_model")
+                except Exception as wal_err:
+                    logger.warning(
+                        "relationship_extractor: WAL checkpoint before retry "
+                        "failed: %s",
+                        wal_err,
+                    )
+                self.ums.update_signal_profile("relationships", data)
+                verify2 = self.ums.get_signal_profile("relationships")
+                if not verify2:
+                    logger.critical(
+                        "relationship_extractor: relationships profile STILL "
+                        "missing after WAL checkpoint retry (contacts=%d, "
+                        "write_count=%d). Check user_model.db integrity. "
+                        "Skipping contacts-table denormalization to avoid "
+                        "diverging from signal profile.",
+                        len(data.get("contacts", {})),
+                        self._profile_write_count,
+                    )
+                else:
+                    # Retry verified — the signal profile is now consistent.
+                    verified = True
+
+        if not verified:
+            # Don't denormalize to the contacts table when we cannot confirm
+            # the signal profile was actually persisted. The signal profile
+            # is authoritative; the contacts table mirrors a subset of it,
+            # and writing the new values here would create a state where
+            # contacts.last_contact / typical_response_time disagree with the
+            # signal profile that survived persistence.
+            return
 
         # Denormalize key metrics back to the contacts table so that contact
         # records are self-contained and fast to query without joining signal
